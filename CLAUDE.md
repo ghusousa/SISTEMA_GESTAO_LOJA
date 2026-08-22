@@ -19,11 +19,14 @@ contratos, ADRs). Mudou algo? Atualize o doc no mesmo commit.**
 .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0    # servidor
 .venv/bin/alembic upgrade head                            # migrations
 .venv/bin/pytest -q                                       # testes (usa loja_test)
-.venv/bin/python -m app.cli create-admin --email x@y.com --senha ... --nome "Dona"
+.venv/bin/python -m app.cli create-admin --nome "Dona" --email x@y.com --senha ...
+.venv/bin/python scripts/e2e.py                           # cenário de um dia de loja (API no ar)
 
 # Mobile (dentro de mobile/)
 npm start            # Expo
-npx tsc --noEmit     # typecheck
+npm run typecheck    # tsc --noEmit
+npm test             # camada de dinheiro (node --test via tsx)
+npm run bundle       # expo export: pega erro de import que o tsc não vê
 ```
 
 ## Convenções da API
@@ -56,3 +59,17 @@ npx tsc --noEmit     # typecheck
 `pytest` roda contra Postgres real (`loja_test`), migrations aplicadas. Cenários que não podem
 quebrar: rotação/reuso de refresh token, vendedor sem custo, venda atômica, estorno devolvendo
 estoque, concorrência do último item, idempotência por `client_uuid`.
+
+## Armadilhas já pagas (não repita)
+
+- **Fuso**: "hoje" é o dia no fuso da loja, nunca `date.today()` do servidor. Às 23h de São Paulo
+  o UTC já virou e a consulta devolve um caixa vazio.
+- **`response_model` por papel**: rota cuja resposta muda com o papel usa `response_model=None`,
+  senão o modelo da classe base apaga o campo extra do admin.
+- **Relacionamento ORM**: filtre no loader (`selectinload(X.y.and_(...))`), nunca reatribuindo a
+  coleção — o SQLAlchemy trataria os removidos como órfãos. Em releitura, `populate_existing=True`.
+- **Saldo**: `UPDATE` antes do `INSERT`, não `INSERT ... ON CONFLICT` — o Postgres avalia o CHECK
+  do valor inserido antes de detectar o conflito, e toda saída estouraria o CHECK.
+- **pytest-asyncio**: fixtures e testes precisam do mesmo escopo de loop, senão o asyncpg trava.
+- **`legacy-peer-deps` no mobile**: peers não se instalam sozinhos; `npm run bundle` é o que
+  revela o que falta.
