@@ -34,7 +34,11 @@ COPY docker/entrada.sh /usr/local/bin/entrada.sh
 
 # Rodar como root dentro do container é risco desnecessário: se a aplicação for
 # comprometida, o atacante começa sem privilégio.
-RUN chmod +x /usr/local/bin/entrada.sh \
+# O `sed` tira o CR de quem clonou no Windows antes do .gitattributes existir: com CRLF o
+# kernel procura o programa "/bin/sh\r" e responde "no such file or directory" sobre um
+# arquivo que está bem ali.
+RUN sed -i 's/\r$//' /usr/local/bin/entrada.sh \
+    && chmod +x /usr/local/bin/entrada.sh \
     && useradd --system --uid 10001 loja \
     && mkdir -p /srv/media \
     && chown -R loja /srv/media

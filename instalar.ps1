@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Instalador do Sistema de Gestão da Loja para Windows.
 
@@ -29,15 +29,40 @@ param(
 $ErrorActionPreference = "Stop"
 Set-Location -Path $PSScriptRoot
 
+# Programas externos (docker) escrevem em stderr sem que isso seja um erro de PowerShell.
+# Com ErrorActionPreference=Stop e os fluxos redirecionados, o 5.1 transforma essa saída em
+# exceção e mata o script antes de a mensagem explicativa aparecer. Esta função isola a
+# preferência e devolve só o código de saída, que é o que interessa.
+function RodarDocker {
+    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Argumentos)
+    $anterior = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & docker @Argumentos 2>&1 | Out-Null
+        return $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $anterior
+    }
+}
+
 function Titulo($t) { Write-Host ""; Write-Host $t -ForegroundColor Cyan }
 function Certo($t)  { Write-Host "  [ok] $t" -ForegroundColor Green }
 function Alerta($t) { Write-Host "  [!] $t" -ForegroundColor Yellow }
 function Morrer($t) { Write-Host ""; Write-Host "  [x] $t" -ForegroundColor Red; Write-Host ""; exit 1 }
 
 function Sortear([int]$tamanho = 32) {
-    $bytes = [byte[]]::new(64)
-    [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
-    ([Convert]::ToBase64String($bytes) -replace '[^A-Za-z0-9]', '').Substring(0, $tamanho)
+    # Create() + GetBytes() de instância funciona tanto no Windows PowerShell 5.1
+    # (.NET Framework) quanto no PowerShell 7 (.NET moderno). O estático ::Fill() só
+    # existe no segundo — usá-lo matava a instalação logo no começo, ao gerar a senha
+    # do banco, com "does not contain a method named 'Fill'".
+    $gerador = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $bytes = New-Object byte[] 96
+        $gerador.GetBytes($bytes)
+        ([Convert]::ToBase64String($bytes) -replace '[^A-Za-z0-9]', '').Substring(0, $tamanho)
+    } finally {
+        $gerador.Dispose()
+    }
 }
 
 function Perguntar($texto, $padrao, $valorAtual) {
@@ -70,6 +95,17 @@ function PerguntarSenha($texto, $valorAtual) {
 
 function EmailValido($e) { return $e -match '^[^@\s]+@[^@\s]+\.[^@\s]+$' }
 
+# A senha do banco viaja por dois lugares que mastigam pontuação, e por isso é restrita a
+# letras, números, hífen e sublinhado:
+#
+#   1. o .env, onde o docker compose EXPANDE $: uma senha "abc$def" vira "abc" caladamente,
+#      e a pessoa acha que configurou algo forte;
+#   2. a URL de conexão (postgresql://loja:SENHA@db:5432/loja), onde "/" e "#" quebram o
+#      endereço inteiro - o Python passa a ler "loja" como se fosse o servidor.
+#
+# Ninguém digita esta senha no dia a dia; 32 caracteres alfanuméricos sobram de força.
+function SenhaBancoValida($s) { return $s -match '^[A-Za-z0-9_-]{8,}$' }
+
 # Endereço sem DNS: localhost, vazio ou um IP. Decide HTTP puro em vez de HTTPS.
 function EnderecoLocal($d) {
     return (-not $d) -or ($d -eq "localhost") -or ($d -match '^\d+(\.\d+){3}$')
@@ -82,10 +118,10 @@ Titulo "Sistema de Gestão da Loja - instalação"
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     Morrer "O Docker Desktop não está instalado.`n      Baixe em: https://www.docker.com/products/docker-desktop"
 }
-docker compose version *> $null
-if ($LASTEXITCODE -ne 0) { Morrer "O Docker está sem o plugin 'compose'. Atualize o Docker Desktop." }
-docker info *> $null
-if ($LASTEXITCODE -ne 0) {
+if ((RodarDocker compose version) -ne 0) {
+    Morrer "O Docker está sem o plugin 'compose'. Atualize o Docker Desktop."
+}
+if ((RodarDocker info) -ne 0) {
     Morrer "O Docker está instalado mas não responde.`n      Abra o Docker Desktop e espere o ícone ficar verde."
 }
 Certo "Docker pronto"
@@ -124,9 +160,22 @@ if ((Test-Path .env) -and (-not $Forcar)) {
     Write-Host "  Esta senha fica só entre os containers; ninguém digita no dia a dia."
     if ((-not $Sim) -and (-not $SenhaBanco)) {
         $gerar = Read-Host "  Gerar uma senha forte automaticamente? [S/n]"
-        if ($gerar -match '^[Nn]') { $SenhaBanco = PerguntarSenha "Senha do banco" "" }
+        if ($gerar -match '^[Nn]') {
+            while ($true) {
+                $SenhaBanco = PerguntarSenha "Senha do banco" ""
+                if (SenhaBancoValida $SenhaBanco) { break }
+                Alerta "use só letras, números, hífen e sublinhado (mínimo 8)."
+                Alerta "pontuação quebra a URL de conexão do banco."
+                $SenhaBanco = ""
+            }
+        }
     }
     if (-not $SenhaBanco) { $SenhaBanco = Sortear 32; Certo "senha do banco gerada" }
+    if (-not (SenhaBancoValida $SenhaBanco)) {
+        Morrer ("a senha do banco só aceita letras, números, hífen e sublinhado (mínimo 8).`n" +
+                "      Pontuação quebra a URL de conexão - e um '`$' seria comido pelo compose.`n" +
+                "      Omita -SenhaBanco para o instalador gerar uma forte.")
+    }
 
     Titulo "4. Fuso horário"
     Write-Host "  Define o que é 'hoje' no caixa e nos relatórios."
@@ -157,22 +206,25 @@ if (-not $reaproveitado) {
     if ($Senha.Length -lt 8) { Morrer "a senha do dono precisa de ao menos 8 caracteres (-Senha)" }
 
     Titulo "Gravando a configuração"
-    $conteudo = @"
-# Gerado por instalar.ps1 - contém senhas. NÃO versione, não compartilhe.
-DOMINIO=$Dominio
-ENDERECO_PROXY=$enderecoProxy
-PORTA_HTTP=$PortaHttp
-PORTA_HTTPS=$PortaHttps
-
-SENHA_BANCO=$SenhaBanco
-JWT_SECRET=$(Sortear 64)
-
-AMBIENTE=$ambiente
-CORS_ORIGINS=$cors
-TIMEZONE_LOJA=$Fuso
-"@
+    # Linha a linha, unidas com LF na marra: se o arquivo saísse com CRLF (o fim de linha
+    # natural deste script no Windows), o docker compose levaria o \r junto DENTRO do valor
+    # e a senha do banco ganharia um carriage return invisível no fim.
+    $linhas = @(
+        "# Gerado por instalar.ps1 - contém senhas. NÃO versione, não compartilhe."
+        "DOMINIO=$Dominio"
+        "ENDERECO_PROXY=$enderecoProxy"
+        "PORTA_HTTP=$PortaHttp"
+        "PORTA_HTTPS=$PortaHttps"
+        ""
+        "SENHA_BANCO=$SenhaBanco"
+        "JWT_SECRET=$(Sortear 64)"
+        ""
+        "AMBIENTE=$ambiente"
+        "CORS_ORIGINS=$cors"
+        "TIMEZONE_LOJA=$Fuso"
+    )
     # UTF8 sem BOM: o docker compose não entende o marcador de byte-order no começo do .env.
-    [System.IO.File]::WriteAllText((Join-Path $PSScriptRoot ".env"), $conteudo,
+    [System.IO.File]::WriteAllText((Join-Path $PSScriptRoot ".env"), (($linhas -join "`n") + "`n"),
         (New-Object System.Text.UTF8Encoding $false))
     Certo ".env gravado"
 }
@@ -181,23 +233,65 @@ TIMEZONE_LOJA=$Fuso
 
 Titulo "Construindo e subindo os containers"
 Write-Host "  isto demora alguns minutos na primeira vez"
-docker compose up -d --build
-if ($LASTEXITCODE -ne 0) { Morrer "falha ao subir os containers (veja o erro acima)." }
+
+# A saída é mostrada E guardada: o build é longo e a pessoa precisa ver o progresso, mas se
+# falhar queremos ler o motivo para traduzir a mensagem do Docker em algo acionável.
+# GetTempPath() em vez de $env:TEMP: funciona em qualquer sistema onde o PowerShell rode.
+$registroUp = Join-Path ([System.IO.Path]::GetTempPath()) "loja-instalacao.log"
+$anteriorEAP = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+docker compose up -d --build 2>&1 | Tee-Object -FilePath $registroUp
+$codigoUp = $LASTEXITCODE
+$ErrorActionPreference = $anteriorEAP
+
+if ($codigoUp -ne 0) {
+    $motivo = ""
+    if (Test-Path $registroUp) { $motivo = (Get-Content $registroUp -Raw) }
+    if ($motivo -match 'ports are not available|address already in use|forbidden by its access permissions') {
+        Morrer ("A porta $PortaHttp já está sendo usada por outro programa.`n" +
+                "      Descubra quem está nela:  netstat -ano | findstr :$PortaHttp`n" +
+                "      No Windows costuma ser o IIS ou o serviço 'World Wide Web Publishing'.`n" +
+                "      Ou instale numa porta livre:  .\instalar.bat -Forcar -PortaHttp 8080")
+    }
+    Morrer "não foi possível subir os containers. O motivo está logo acima."
+}
 
 Titulo "Esperando o sistema responder"
 $pronto = $false
+$anteriorEAP = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
 foreach ($i in 1..90) {
-    $estado = (docker compose ps --format '{{.Service}} {{.Health}}' 2>$null |
-               Where-Object { $_ -like 'api *' }) -replace '^api\s+', ''
-    if ($estado -eq 'healthy') { $pronto = $true; break }
+    # `ps -q` + `inspect` em vez de `ps --format`: o template Go não é aceito por versões
+    # antigas do Compose, e ali o instalador acusaria a API de doente sem ela estar.
+    $idApi = @(docker compose ps -q api 2>$null) | Select-Object -First 1
+    if ($idApi) {
+        $estado = docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' $idApi 2>$null
+        if ($estado -eq 'healthy') { $pronto = $true; break }
+    }
     Start-Sleep -Seconds 2
 }
+$ErrorActionPreference = $anteriorEAP
 if (-not $pronto) {
     Write-Host "A API não ficou saudável. Os últimos registros:" -ForegroundColor Red
     docker compose logs --tail 40 api
-    Morrer "instalação interrompida. Corrija o erro acima e rode .\instalar.ps1 de novo."
+    Morrer "instalação interrompida. Corrija o erro acima e rode .\instalar.bat de novo."
 }
 Certo "API no ar, banco migrado"
+
+# A API estar saudável não garante que o proxy esteja publicando a porta. Antes de anunciar
+# o endereço, abre ele de verdade.
+try {
+    Invoke-WebRequest -UseBasicParsing -Uri "$urlFinal/app/" -TimeoutSec 15 | Out-Null
+    Certo "sistema web respondendo em $urlFinal/app/"
+} catch {
+    if ($ambiente -eq "producao") {
+        Alerta "o endereço ainda não responde - o certificado pode estar sendo emitido."
+        Alerta "acompanhe com: docker compose logs -f proxy"
+    } else {
+        Alerta "a API subiu, mas $urlFinal/app/ não respondeu."
+        Alerta "veja o proxy com: docker compose logs proxy"
+    }
+}
 
 # ---------------------------------------------------------------- dono da loja
 
@@ -213,6 +307,8 @@ if ($Email -and $Senha) {
     }
 } elseif ($reaproveitado) {
     Alerta "Configuração reaproveitada - a conta do dono não foi mexida."
+    Alerta "Para criar uma conta nova de administrador:"
+    Write-Host "    docker compose exec api python -m app.cli create-admin --nome ... --email ... --senha ..."
 }
 
 # ---------------------------------------------------------------- fim
@@ -228,7 +324,7 @@ Write-Host "    docker compose ps               ver se está no ar"
 Write-Host "    docker compose logs -f api      acompanhar o que acontece"
 Write-Host "    docker compose restart          reiniciar"
 Write-Host "    docker compose down             desligar (os dados ficam guardados)"
-Write-Host "    .\instalar.ps1                  religar depois de um down"
+Write-Host "    .\instalar.bat                  religar depois de um down"
 Write-Host ""
 
 if ($ambiente -eq "producao") {

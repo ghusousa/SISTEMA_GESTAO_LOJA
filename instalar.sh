@@ -91,6 +91,19 @@ perguntar_senha() {  # perguntar_senha <texto> <variável>
 
 email_valido() { printf '%s' "$1" | grep -Eq '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$'; }
 
+# A senha do banco viaja por dois lugares que mastigam pontuação, e por isso é restrita a
+# letras, números, hífen e sublinhado:
+#
+#   1. o .env, onde o docker compose EXPANDE $: uma senha "abc$def" vira "abc" caladamente,
+#      e a pessoa acha que configurou algo forte;
+#   2. a URL de conexão (postgresql://loja:SENHA@db:5432/loja), onde "/" e "#" quebram o
+#      endereço inteiro — o Python passa a ler "loja" como se fosse o servidor e a API não
+#      conecta em lugar nenhum.
+#
+# Ninguém digita esta senha no dia a dia, então restringir os caracteres não custa nada;
+# 32 caracteres alfanuméricos sobram de força.
+senha_banco_valida() { printf '%s' "$1" | grep -Eq '^[A-Za-z0-9_-]{8,}$'; }
+
 # Endereço sem DNS: localhost, vazio ou um IP. Decide HTTP puro em vez de HTTPS.
 endereco_local() {
     [ -z "$1" ] || [ "$1" = "localhost" ] || printf '%s' "$1" | grep -Eq '^[0-9]+(\.[0-9]+){3}$'
@@ -176,7 +189,15 @@ else
     if [ "$INTERATIVO" -eq 1 ] && [ -z "$SENHA_BANCO" ]; then
         read -r -p "  Gerar uma senha forte automaticamente? [S/n]: " gerar || true
         case "${gerar:-s}" in
-            [Nn]*) perguntar_senha "Senha do banco" SENHA_BANCO ;;
+            [Nn]*)
+                while :; do
+                    perguntar_senha "Senha do banco" SENHA_BANCO
+                    senha_banco_valida "$SENHA_BANCO" && break
+                    alerta "use só letras, números, hífen e sublinhado (mínimo 8)."
+                    alerta "pontuação quebra a URL de conexão do banco."
+                    SENHA_BANCO=""
+                done
+                ;;
             *)     SENHA_BANCO="$(sortear 32)"; certo "senha do banco gerada" ;;
         esac
     fi
@@ -195,6 +216,10 @@ if [ "$REAPROVEITADO" -eq 0 ]; then
     [ -n "$SENHA" ] || morrer "faltou --senha"
     [ "${#SENHA}" -ge 8 ] || morrer "a senha do dono precisa de ao menos 8 caracteres"
     [ -n "$SENHA_BANCO" ] || SENHA_BANCO="$(sortear 32)"
+    senha_banco_valida "$SENHA_BANCO" || morrer \
+"a senha do banco só aceita letras, números, hífen e sublinhado (mínimo 8).
+  Pontuação quebra a URL de conexão — e um '\$' seria comido pelo docker compose.
+  Deixe em branco para o instalador gerar uma forte."
 
     definir_endereco
 
@@ -222,13 +247,41 @@ fi
 
 titulo "Construindo e subindo os containers"
 passo "isto demora alguns minutos na primeira vez"
-docker compose up -d --build
+
+# A saída é mostrada E guardada: o build é longo e a pessoa precisa ver o progresso, mas se
+# falhar queremos ler o motivo para traduzir a mensagem do Docker em algo acionável.
+registro_up="$(mktemp)"
+set +e
+docker compose up -d --build 2>&1 | tee "$registro_up"
+codigo_up=${PIPESTATUS[0]}
+set -e
+
+if [ "$codigo_up" -ne 0 ]; then
+    if grep -qiE "ports are not available|address already in use|bind: permission denied|forbidden by its access permissions" "$registro_up"; then
+        rm -f "$registro_up"
+        morrer \
+"A porta $PORTA_HTTP já está sendo usada por outro programa.
+  Descubra quem está nela:
+      Linux/Mac:  sudo lsof -i :$PORTA_HTTP
+      Windows:    netstat -ano | findstr :$PORTA_HTTP
+  Ou instale numa porta livre:
+      ./instalar.sh --forcar --porta-http 8080"
+    fi
+    rm -f "$registro_up"
+    morrer "não foi possível subir os containers. O motivo está logo acima."
+fi
+rm -f "$registro_up"
 
 titulo "Esperando o sistema responder"
 pronto=0
 for _ in $(seq 1 90); do
-    estado="$(docker compose ps --format '{{.Service}} {{.Health}}' 2>/dev/null | awk '$1=="api"{print $2}')"
-    if [ "$estado" = "healthy" ]; then pronto=1; break; fi
+    # `ps -q` + `inspect` em vez de `ps --format`: o template Go não é aceito por versões
+    # antigas do Compose, e ali o instalador acusaria a API de doente sem ela estar.
+    id_api="$(docker compose ps -q api 2>/dev/null | head -1)"
+    if [ -n "$id_api" ]; then
+        estado="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$id_api" 2>/dev/null)"
+        [ "$estado" = "healthy" ] && { pronto=1; break; }
+    fi
     sleep 2
 done
 [ "$pronto" -eq 1 ] || {
@@ -238,6 +291,20 @@ done
     morrer "instalação interrompida. Corrija o erro acima e rode ./instalar.sh de novo."
 }
 certo "API no ar, banco migrado"
+
+# A API estar saudável não garante que o proxy esteja publicando a porta. Antes de anunciar
+# o endereço, abre ele de verdade.
+if command -v curl >/dev/null 2>&1; then
+    if curl -skf -o /dev/null --max-time 15 "$URL_FINAL/app/"; then
+        certo "sistema web respondendo em $URL_FINAL/app/"
+    elif [ "$AMBIENTE" = "producao" ]; then
+        alerta "o endereço ainda não responde — o certificado pode estar sendo emitido."
+        alerta "acompanhe com: docker compose logs -f proxy"
+    else
+        alerta "a API subiu, mas $URL_FINAL/app/ não respondeu."
+        alerta "veja o proxy com: docker compose logs proxy"
+    fi
+fi
 
 # ------------------------------------------------------------------ dono da loja
 

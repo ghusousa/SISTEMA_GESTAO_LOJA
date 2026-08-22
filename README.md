@@ -53,13 +53,34 @@ cd SISTEMA_GESTAO_LOJA
 ./instalar.sh
 ```
 
-**Windows** (PowerShell)
+**Windows**
+
+Baixe o projeto — pelo [ZIP do GitHub](https://github.com/ghusousa/SISTEMA_GESTAO_LOJA/archive/refs/heads/main.zip)
+(clique com o botão direito → *Extrair tudo*) ou com `git clone`. Depois, dentro da pasta:
+
+**Clique duas vezes em `instalar.bat`.** Só isso.
+
+Se preferir o terminal, abra o PowerShell na pasta e rode:
 
 ```powershell
-git clone https://github.com/ghusousa/SISTEMA_GESTAO_LOJA.git
-cd SISTEMA_GESTAO_LOJA
-.\instalar.ps1
+.\instalar.bat
 ```
+
+> **Por que `.bat` e não `.ps1`?** O Windows recusa scripts PowerShell não assinados e mostra
+> *"não está assinado digitalmente"* (`PSSecurityException`) — e ainda bloqueia arquivos vindos de
+> um ZIP baixado da internet. O `.bat` não passa por nenhuma das duas travas e chama o PowerShell
+> do jeito certo. Para rodar o `.ps1` direto, é preciso destravar antes:
+>
+> ```powershell
+> powershell -ExecutionPolicy Bypass -File .\instalar.ps1
+> ```
+>
+> Se nem isso passar, a política veio de uma regra da empresa (GPO) e ignora o `Bypass`. Nesse
+> caso peça a quem administra a máquina, ou rode o conteúdo por outro caminho:
+>
+> ```powershell
+> Get-Content .\instalar.ps1 -Raw | powershell -NoProfile -Command -
+> ```
 
 ### O que ele pergunta
 
@@ -118,7 +139,7 @@ ajusta o resto sozinho — inclusive o cookie de sessão, que em HTTP não pode 
 ```
 
 ```powershell
-.\instalar.ps1 -Dominio loja.minhaloja.com.br -Nome "Dona Maria" `
+.\instalar.bat -Dominio loja.minhaloja.com.br -Nome "Dona Maria" `
     -Email dona@minhaloja.com.br -Senha "uma-senha-boa" -Sim
 ```
 
@@ -141,10 +162,17 @@ Windows, isso depende do Docker Desktop estar marcado para iniciar com o sistema
 
 ### Atualizar
 
+**Linux / Mac**
+
 ```bash
 git pull
 ./instalar.sh                # reconstrói a imagem; as migrations rodam sozinhas ao subir
 ```
+
+**Windows** — se você clonou com git, é `git pull` e depois `instalar.bat`. Se baixou o ZIP,
+baixe o ZIP novo, extraia por cima **preservando o arquivo `.env`** (é ele que guarda as senhas
+desta instalação) e rode `instalar.bat`. Os dados ficam nos volumes do Docker, não na pasta, então
+trocar a pasta não perde venda nenhuma.
 
 Faça um backup antes (comando na seção de desinstalação) quando a atualização trouxer migration.
 
@@ -209,7 +237,7 @@ O app do celular: `cd mobile && npm install && npm start`.
 ./desinstalar.sh          # Linux/Mac
 ```
 ```powershell
-.\desinstalar.ps1         # Windows
+.\desinstalar.bat         # Windows (ou clique duas vezes)
 ```
 
 **Ele faz backup do banco antes de apagar qualquer coisa** e só continua depois que você digitar
@@ -236,7 +264,7 @@ docker compose restart api
 ```
 
 ```powershell
-.\instalar.ps1
+.\instalar.bat
 cmd /c "docker compose exec -T db pg_restore -U loja -d loja --clean < loja-backup-2026-08-22-1438.dump"
 docker compose restart api
 ```

@@ -53,7 +53,13 @@ if [ "$MANTER_DADOS" -eq 0 ] && [ "$FAZER_BACKUP" -eq 1 ]; then
     titulo "Backup antes de apagar"
     if docker compose ps --status running --format '{{.Service}}' 2>/dev/null | grep -qx db; then
         ARQUIVO_BACKUP="loja-backup-$(date +%Y-%m-%d-%H%M).dump"
-        if docker compose exec -T db pg_dump -U loja -Fc loja > "$ARQUIVO_BACKUP" 2>/dev/null; then
+        # O dump é escrito DENTRO do container e depois copiado, em vez de vir pelo cano da
+        # saída padrão. É um formato binário: qualquer shell no meio do caminho (o cmd do
+        # Windows, sobretudo) pode traduzir fim de linha e corromper o arquivo — e um backup
+        # corrompido só se descobre no dia em que ele é necessário.
+        if docker compose exec -T db pg_dump -U loja -Fc -f /tmp/backup.dump loja 2>/dev/null \
+           && docker compose cp db:/tmp/backup.dump "$ARQUIVO_BACKUP" >/dev/null 2>&1; then
+            docker compose exec -T db rm -f /tmp/backup.dump >/dev/null 2>&1 || true
             certo "salvo em $(pwd)/$ARQUIVO_BACKUP ($(du -h "$ARQUIVO_BACKUP" | cut -f1))"
             echo
             echo "  Para restaurar num sistema novo, depois de instalar:"
