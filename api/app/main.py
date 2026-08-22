@@ -3,6 +3,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
@@ -70,3 +71,14 @@ _montar_rotas()
 _media = Path(settings.media_dir)
 _media.mkdir(parents=True, exist_ok=True)
 app.mount("/media", StaticFiles(directory=str(_media)), name="media")
+
+# O sistema web é HTML e módulos ES, sem build: o próprio FastAPI entrega os arquivos e a
+# loja não precisa de um segundo processo no servidor. Em produção o Nginx pode servir a
+# mesma pasta direto, mas nada quebra se ele não fizer isso.
+_web = Path(__file__).resolve().parent.parent.parent / "web"
+if _web.is_dir():
+    app.mount("/app", StaticFiles(directory=str(_web), html=True), name="web")
+
+    @app.get("/", include_in_schema=False)
+    async def _abrir_sistema() -> RedirectResponse:
+        return RedirectResponse("/app/")
