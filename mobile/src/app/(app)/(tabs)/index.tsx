@@ -1,9 +1,10 @@
 /**
  * PDV: a tela onde a loja passa o dia.
  *
- * O scanner fica sempre ligado na metade de cima e o carrinho cresce embaixo — sem trocar
- * de modo, sem tocar em nada entre uma peça e outra. Venda comum sai em quatro toques:
- * bipar, Cobrar, escolher a forma, confirmar.
+ * A tela abre com o carrinho inteiro à vista e um botão para ler o código. A câmera só
+ * liga quando alguém pede: ligada o dia todo ela comia bateria, esquentava o aparelho e
+ * ficava apontada para a loja sem necessidade. Aberta, ela lê em sequência — não é preciso
+ * tocar em nada entre uma peça e outra.
  */
 
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -46,14 +47,17 @@ export default function Pdv() {
   // Códigos que a pessoa já viu e recusou cadastrar. Sem esta lista, a câmera continua
   // apontada para a mesma etiqueta desconhecida e reabre o diálogo a cada 1,5 s.
   const recusados = useRef(new Set<string>());
+  // A câmera só liga quando alguém pede. Ela nasceu ligada e ficava assim o dia inteiro:
+  // gastava bateria, esquentava o aparelho e deixava a lente apontada para a loja sem
+  // ninguém ter pedido nada.
+  const [camera, setCamera] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
       // A aba do PDV continua montada quando outra tela entra por cima (cadastro rápido,
       // cobrança) — e a câmera junto, lendo o que estiver na frente dela e enchendo o
-      // carrinho sozinha. Sai de foco, pausa; volta, retoma.
-      scanner.current?.retomar();
-      return () => scanner.current?.pausar();
+      // carrinho sozinha. Sair de foco desliga; voltar começa de novo com ela apagada.
+      return () => setCamera(false);
     }, []),
   );
 
@@ -142,15 +146,38 @@ export default function Pdv() {
 
   return (
     <View style={s.tela}>
-      <View style={[s.cameraArea, { marginTop: insets.top }]}>
-        <Scanner
-          controle={scanner}
-          aoLer={(codigo) => void aoLerCodigo(codigo)}
-          modo="continuo"
-          ocupado={buscando}
-          dica={buscando ? 'Consultando…' : 'Bipe a etiqueta da peça'}
-        />
-      </View>
+      {camera ? (
+        <View style={[s.cameraArea, { marginTop: insets.top }]}>
+          <Scanner
+            controle={scanner}
+            aoLer={(codigo) => void aoLerCodigo(codigo)}
+            modo="continuo"
+            ocupado={buscando}
+            dica={buscando ? 'Consultando…' : 'Bipe a etiqueta da peça'}
+            rodape={
+              <Pressable
+                onPress={() => setCamera(false)}
+                style={s.fecharCamera}
+                accessibilityRole="button"
+              >
+                <Text style={s.fecharCameraTexto}>Fechar câmera</Text>
+              </Pressable>
+            }
+          />
+        </View>
+      ) : (
+        <View style={[s.chamada, { paddingTop: insets.top + espaco.lg }]}>
+          <Pressable
+            onPress={() => setCamera(true)}
+            style={s.abrirCamera}
+            accessibilityRole="button"
+            accessibilityLabel="Ler código de barras"
+          >
+            <MaterialCommunityIcons name="barcode-scan" size={30} color="#FFF" />
+            <Text style={s.abrirCameraTexto}>Ler código de barras</Text>
+          </Pressable>
+        </View>
+      )}
 
       {!!aviso && (
         <Pressable
@@ -189,7 +216,9 @@ export default function Pdv() {
               size={40}
               color={cores.textoFraco}
             />
-            <Text style={s.vazioTexto}>Bipe a primeira peça para começar a venda</Text>
+            <Text style={s.vazioTexto}>
+              Toque em "Ler código de barras" e bipe a primeira peça
+            </Text>
           </View>
         ) : (
           <ScrollView contentContainerStyle={s.lista} keyboardShouldPersistTaps="handled">
@@ -266,6 +295,29 @@ export default function Pdv() {
 const s = StyleSheet.create({
   tela: { flex: 1, backgroundColor: cores.fundo },
   cameraArea: { height: '38%', backgroundColor: '#000' },
+
+  // Com a câmera desligada a chamada é enxuta: o carrinho ganha a tela, que é o que a
+  // pessoa olha entre uma peça e outra.
+  chamada: { paddingHorizontal: espaco.lg, paddingBottom: espaco.md },
+  abrirCamera: {
+    minHeight: ALVO_TOQUE + 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: espaco.sm,
+    borderRadius: raio.md,
+    backgroundColor: cores.primaria,
+  },
+  abrirCameraTexto: { color: '#FFF', fontSize: fonte.grande, fontWeight: '800' },
+  fecharCamera: {
+    minHeight: ALVO_TOQUE,
+    justifyContent: 'center',
+    paddingHorizontal: espaco.lg,
+    marginTop: espaco.sm,
+    borderRadius: raio.redondo,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  fecharCameraTexto: { color: '#FFF', fontWeight: '700', fontSize: fonte.pequena },
 
   aviso: { backgroundColor: cores.alertaFraco, padding: espaco.md },
   avisoTexto: { color: '#7A5A00', fontSize: fonte.base, fontWeight: '600' },
