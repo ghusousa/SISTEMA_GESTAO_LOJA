@@ -1,0 +1,32 @@
+"""Código de barras interno para peças que chegam sem etiqueta do fornecedor.
+
+Geramos um EAN-13 válido no prefixo 2 — a faixa que o padrão GS1 reserva para uso interno
+da loja, justamente para não colidir com nenhum produto do mundo. Sendo um EAN-13 de verdade,
+qualquer leitor (e a câmera do app) lê sem configuração especial.
+"""
+
+PREFIXO_INTERNO = "2"
+TAMANHO_PAYLOAD = 12  # 12 dígitos + 1 verificador
+
+
+def digito_verificador_ean13(payload: str) -> str:
+    """Dígito verificador do EAN-13: pesos 1 e 3 alternados, complemento de 10."""
+    if len(payload) != TAMANHO_PAYLOAD or not payload.isdigit():
+        raise ValueError("O payload do EAN-13 precisa ter exatamente 12 dígitos.")
+    soma = sum(int(d) * (1 if i % 2 == 0 else 3) for i, d in enumerate(payload))
+    return str((10 - soma % 10) % 10)
+
+
+def montar_codigo_interno(sequencia: int) -> str:
+    """Transforma o próximo valor da sequência do banco em um EAN-13 interno."""
+    corpo = str(sequencia).rjust(TAMANHO_PAYLOAD - len(PREFIXO_INTERNO), "0")
+    payload = f"{PREFIXO_INTERNO}{corpo}"
+    if len(payload) != TAMANHO_PAYLOAD:
+        raise ValueError("A sequência de códigos internos estourou o formato EAN-13.")
+    return payload + digito_verificador_ean13(payload)
+
+
+def ean13_valido(codigo: str) -> bool:
+    if len(codigo) != TAMANHO_PAYLOAD + 1 or not codigo.isdigit():
+        return False
+    return digito_verificador_ean13(codigo[:TAMANHO_PAYLOAD]) == codigo[-1]

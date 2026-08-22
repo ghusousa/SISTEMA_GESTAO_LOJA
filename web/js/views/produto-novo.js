@@ -1,0 +1,291 @@
+/**
+ * Cadastro de produto com a grade inteira de uma vez.
+ *
+ * Roupa não se cadastra peça a peça: chega uma camiseta em P, M, G e GG, mesmo preço, mesmo
+ * custo. A tela nasce com os valores padrão em cima e os botões de tamanho geram as linhas
+ * já preenchidas — sobra digitar o código de cada etiqueta.
+ */
+
+import { api } from '../api.js';
+import { paraDecimalString } from '../dinheiro.js';
+import { ir } from '../router.js';
+import { aviso, avisarErro, cru, html, ligarCampoDinheiro, modal } from '../ui.js';
+
+const TAMANHOS_RAPIDOS = ['PP', 'P', 'M', 'G', 'GG', 'XG'];
+
+export async function render(raiz, _params, consulta) {
+  const codigoInicial = consulta.codigo || '';
+
+  raiz.innerHTML = html`
+    <div class="pagina">
+      <div class="pagina__topo">
+        <div>
+          <a class="botao botao--fantasma botao--pequeno" href="#/produtos">← Produtos</a>
+          <h1>Novo produto</h1>
+          <p class="texto-suave">Preencha os dados, escolha os tamanhos e confira os códigos.</p>
+        </div>
+      </div>
+
+      <div class="cartao" style="margin-bottom:16px">
+        <div class="cartao__corpo">
+          <div class="linha-campos">
+            <label class="campo">
+              <span>Nome do produto</span>
+              <input data-nome placeholder="Ex.: Camiseta Básica Algodão" maxlength="120" />
+            </label>
+            <label class="campo">
+              <span>Categoria</span>
+              <span style="display:flex;gap:8px">
+                <select data-categoria></select>
+                <button class="botao botao--neutro botao--pequeno" data-nova-categoria type="button">+</button>
+              </span>
+            </label>
+          </div>
+          <label class="campo">
+            <span>Descrição <span class="campo__dica">opcional</span></span>
+            <input data-descricao maxlength="2000" placeholder="Tecido, modelagem, observações" />
+          </label>
+        </div>
+      </div>
+
+      <div class="cartao" style="margin-bottom:16px">
+        <div class="cartao__topo">
+          <h2>Valores padrão da grade</h2>
+          <button class="botao botao--neutro botao--pequeno" data-aplicar type="button">Aplicar a todas</button>
+        </div>
+        <div class="cartao__corpo">
+          <div class="linha-campos">
+            <label class="campo">
+              <span>Preço de venda</span>
+              <input data-padrao-venda inputmode="numeric" />
+            </label>
+            <label class="campo">
+              <span>Preço de custo</span>
+              <input data-padrao-custo inputmode="numeric" />
+            </label>
+            <label class="campo">
+              <span>Estoque mínimo</span>
+              <input data-padrao-minimo type="number" min="0" step="1" value="2" />
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="cartao">
+        <div class="cartao__topo">
+          <h2>Peças da grade</h2>
+          <div class="pagina__acoes">
+            ${TAMANHOS_RAPIDOS.map(
+              (t) => html`<button class="botao botao--neutro botao--pequeno" data-tamanho="${t}" type="button">${t}</button>`,
+            )}
+            <button class="botao botao--neutro botao--pequeno" data-linha-livre type="button">Outro</button>
+          </div>
+        </div>
+        <div class="tabela-rolagem" style="border:0;box-shadow:none;border-radius:0">
+          <table>
+            <thead>
+              <tr>
+                <th>Tamanho</th>
+                <th>Cor</th>
+                <th>Código de barras</th>
+                <th class="direita">Venda</th>
+                <th class="direita">Custo</th>
+                <th class="direita">Entrada</th>
+                <th class="direita">Mínimo</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody data-linhas></tbody>
+          </table>
+        </div>
+        <div class="cartao__corpo" data-sem-linhas>
+          <p class="texto-suave centro">
+            Clique nos tamanhos acima para montar a grade. Cada tamanho vira uma peça com código próprio.
+          </p>
+        </div>
+      </div>
+
+      <div class="pagina__acoes" style="justify-content:flex-end;margin-top:16px">
+        <a class="botao botao--neutro" href="#/produtos">Cancelar</a>
+        <button class="botao botao--acao botao--grande" data-salvar type="button">Cadastrar produto</button>
+      </div>
+    </div>
+  `;
+
+  const corpoLinhas = raiz.querySelector('[data-linhas]');
+  const avisoSemLinhas = raiz.querySelector('[data-sem-linhas]');
+  const seletorCategoria = raiz.querySelector('[data-categoria]');
+
+  const padraoVenda = ligarCampoDinheiro(raiz.querySelector('[data-padrao-venda]'), 0);
+  const padraoCusto = ligarCampoDinheiro(raiz.querySelector('[data-padrao-custo]'), 0);
+  const padraoMinimo = raiz.querySelector('[data-padrao-minimo]');
+
+  /** Cada linha guarda os próprios campos de dinheiro para ler na hora de salvar. */
+  const linhas = [];
+
+  async function carregarCategorias(selecionar) {
+    try {
+      const { items } = await api.get('/categorias', { size: 100 });
+      seletorCategoria.innerHTML = items.map((c) => html`<option value="${c.id}">${c.nome}</option>`).join('');
+      if (selecionar) seletorCategoria.value = String(selecionar);
+      if (!items.length) {
+        seletorCategoria.innerHTML = '<option value="">Cadastre uma categoria</option>';
+      }
+    } catch (erro) {
+      avisarErro(erro);
+    }
+  }
+
+  function adicionarLinha(tamanho = '') {
+    const tr = document.createElement('tr');
+    tr.innerHTML = html`
+      <td><input data-t value="${tamanho}" placeholder="P" maxlength="20" style="width:78px" /></td>
+      <td><input data-c value="Única" maxlength="40" style="width:120px" /></td>
+      <td>
+        <span style="display:flex;gap:6px">
+          <input data-cod maxlength="32" placeholder="Bipe ou gere" style="width:150px" />
+          <button class="botao botao--neutro botao--pequeno" data-gerar type="button" title="Gerar código interno">#</button>
+        </span>
+      </td>
+      <td><input data-v inputmode="numeric" style="width:96px;text-align:right" /></td>
+      <td><input data-cu inputmode="numeric" style="width:96px;text-align:right" /></td>
+      <td><input data-e type="number" min="0" step="1" value="0" style="width:80px;text-align:right" /></td>
+      <td><input data-m type="number" min="0" step="1" style="width:80px;text-align:right" /></td>
+      <td class="direita">
+        <button class="botao-icone botao-icone--perigo" data-remover type="button" aria-label="Tirar esta peça">✕</button>
+      </td>
+    `;
+    corpoLinhas.append(tr);
+
+    const registro = {
+      tr,
+      venda: ligarCampoDinheiro(tr.querySelector('[data-v]'), padraoVenda.valor()),
+      custo: ligarCampoDinheiro(tr.querySelector('[data-cu]'), padraoCusto.valor()),
+    };
+    tr.querySelector('[data-m]').value = padraoMinimo.value || '0';
+    linhas.push(registro);
+
+    tr.querySelector('[data-remover]').addEventListener('click', () => {
+      linhas.splice(linhas.indexOf(registro), 1);
+      tr.remove();
+      atualizarVazio();
+    });
+    tr.querySelector('[data-gerar]').addEventListener('click', async (e) => {
+      e.currentTarget.disabled = true;
+      try {
+        const { codigo } = await api.post('/variantes/gerar-codigo-interno', {});
+        tr.querySelector('[data-cod]').value = codigo;
+      } catch (erro) {
+        avisarErro(erro);
+      } finally {
+        e.currentTarget.disabled = false;
+      }
+    });
+
+    atualizarVazio();
+    return tr;
+  }
+
+  const atualizarVazio = () => {
+    avisoSemLinhas.hidden = linhas.length > 0;
+  };
+
+  /* ------------------------------------------------------------------- ações */
+
+  raiz.querySelectorAll('[data-tamanho]').forEach((b) =>
+    b.addEventListener('click', () => adicionarLinha(b.dataset.tamanho).querySelector('[data-cod]').focus()),
+  );
+  raiz.querySelector('[data-linha-livre]').addEventListener('click', () => {
+    adicionarLinha().querySelector('[data-t]').focus();
+  });
+
+  raiz.querySelector('[data-aplicar]').addEventListener('click', () => {
+    linhas.forEach((l) => {
+      l.venda.definir(padraoVenda.valor());
+      l.custo.definir(padraoCusto.valor());
+      l.tr.querySelector('[data-m]').value = padraoMinimo.value || '0';
+    });
+    aviso('Valores aplicados a toda a grade.');
+  });
+
+  raiz.querySelector('[data-nova-categoria]').addEventListener('click', async () => {
+    const nome = await modal({
+      titulo: 'Nova categoria',
+      largura: '400px',
+      render: () => html`
+        <label class="campo">
+          <span>Nome</span>
+          <input data-nome placeholder="Ex.: Vestidos" maxlength="80" />
+        </label>
+        <div class="modal__acoes">
+          <button class="botao botao--neutro" data-nao>Cancelar</button>
+          <button class="botao" data-ok>Criar</button>
+        </div>
+      `,
+      aoAbrir: (corpo, fechar) => {
+        corpo.querySelector('[data-nao]').addEventListener('click', () => fechar(undefined));
+        corpo.querySelector('[data-ok]').addEventListener('click', () => fechar(corpo.querySelector('[data-nome]').value.trim()));
+      },
+    });
+    if (!nome) return;
+    try {
+      const criada = await api.post('/categorias', { nome });
+      await carregarCategorias(criada.id);
+      aviso(`Categoria "${criada.nome}" criada.`);
+    } catch (erro) {
+      avisarErro(erro);
+    }
+  });
+
+  raiz.querySelector('[data-salvar]').addEventListener('click', salvar);
+
+  async function salvar(evento) {
+    const botao = evento.currentTarget;
+    const nome = raiz.querySelector('[data-nome]').value.trim();
+    const categoriaId = Number(seletorCategoria.value);
+
+    if (nome.length < 2) return aviso('Dê um nome ao produto.', 'alerta');
+    if (!categoriaId) return aviso('Escolha uma categoria.', 'alerta');
+    if (!linhas.length) return aviso('Monte a grade: pelo menos uma peça.', 'alerta');
+
+    const variantes = linhas.map((l) => ({
+      tamanho: l.tr.querySelector('[data-t]').value.trim(),
+      cor: l.tr.querySelector('[data-c]').value.trim() || 'Única',
+      codigo_barras: l.tr.querySelector('[data-cod]').value.trim() || null,
+      preco_venda: paraDecimalString(l.venda.valor()),
+      preco_custo: paraDecimalString(l.custo.valor()),
+      estoque_inicial: Number(l.tr.querySelector('[data-e]').value) || 0,
+      estoque_minimo: Number(l.tr.querySelector('[data-m]').value) || 0,
+    }));
+
+    if (variantes.some((v) => !v.tamanho)) return aviso('Toda peça precisa de um tamanho.', 'alerta');
+    if (variantes.some((v) => Number(v.preco_venda) <= 0))
+      return aviso('Toda peça precisa de preço de venda.', 'alerta');
+
+    botao.disabled = true;
+    botao.innerHTML = cru('<span class="giro" aria-hidden="true"></span> Cadastrando…');
+    try {
+      const produto = await api.post('/produtos', {
+        nome,
+        categoria_id: categoriaId,
+        descricao: raiz.querySelector('[data-descricao]').value.trim() || null,
+        variantes,
+      });
+      aviso(`"${produto.nome}" cadastrado com ${produto.variantes.length} peças.`);
+      ir(`/produtos/${produto.id}`);
+    } catch (erro) {
+      avisarErro(erro);
+      botao.disabled = false;
+      botao.textContent = 'Cadastrar produto';
+    }
+  }
+
+  await carregarCategorias();
+  // Veio do PDV com um código que não existia: a primeira peça já nasce com ele.
+  if (codigoInicial) {
+    const linha = adicionarLinha();
+    linha.querySelector('[data-cod]').value = codigoInicial;
+    aviso(`Código ${codigoInicial} já preenchido na primeira peça.`);
+  }
+  raiz.querySelector('[data-nome]').focus();
+}

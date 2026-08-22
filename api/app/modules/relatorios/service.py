@@ -1,0 +1,286 @@
+"""Relatórios: leitura analítica sobre as tabelas de venda, estoque e despesa.
+
+Como `caixa`, este módulo é a exceção documentada à regra de não olhar tabela alheia:
+ele só lê, nunca escreve, e agregação em SQL é ordens de grandeza mais barata do que
+carregar objetos para somar em Python.
+"""
+
+from datetime import date, timedelta
+from decimal import ROUND_HALF_UP, Decimal
+
+from sqlalchemy import case, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.exceptions import Validacao
+from app.modules.caixa.service import dia_da_loja
+from app.modules.catalogo.models import Product, ProductVariant
+from app.modules.despesas.models import Expense, ExpenseCategory
+from app.modules.estoque.models import StockBalance
+from app.modules.relatorios.schemas import (
+    DespesaCategoriaOut,
+    DiaVendaOut,
+    EstoqueBaixoOut,
+    MaisVendidoOut,
+    ResumoOut,
+)
+from app.modules.vendas.models import Sale, SaleItem, StatusVenda
+
+ZERO = Decimal("0.00")
+MAX_DIAS = 366
+
+
+def _centavos(valor: Decimal) -> Decimal:
+    return Decimal(valor or 0).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+class RelatorioService:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    @staticmethod
+    def validar_periodo(inicio: date, fim: date) -> None:
+        if inicio > fim:
+            raise Validacao("A data inicial é depois da final.")
+        if (fim - inicio) > timedelta(days=MAX_DIAS):
+            raise Validacao(
+                f"O período não pode passar de {MAX_DIAS} dias.",
+                {"dias_pedidos": (fim - inicio).days},
+            )
+
+    def _vendas_do_periodo(self, inicio: date, fim: date):
+        """Só vendas concluídas: cancelada não fatura nem consome mercadoria."""
+        return (
+            dia_da_loja(Sale.sold_at).between(inicio, fim),
+            Sale.status == StatusVenda.CONCLUIDA,
+        )
+
+    async def resumo(self, inicio: date, fim: date) -> ResumoOut:
+        self.validar_periodo(inicio, fim)
+        filtros = self._vendas_do_periodo(inicio, fim)
+
+        # Faturamento sai do total da venda (já com desconto); o CMV, do custo congelado
+        # dos itens. Somar line_total daria o bruto e inflaria a margem.
+        faturamento, qtd_vendas = (
+            await self.session.execute(
+                select(func.coalesce(func.sum(Sale.total), 0), func.count()).where(*filtros)
+            )
+        ).one()
+
+        cmv, qtd_pecas = (
+            await self.session.execute(
+                select(
+                    func.coalesce(func.sum(SaleItem.unit_cost * SaleItem.quantity), 0),
+                    func.coalesce(func.sum(SaleItem.quantity), 0),
+                )
+                .join(Sale, Sale.id == SaleItem.sale_id)
+                .where(*filtros)
+            )
+        ).one()
+
+        despesas = await self.session.scalar(
+            select(func.coalesce(func.sum(Expense.amount), 0)).where(
+                Expense.expense_date.between(inicio, fim), Expense.deleted_at.is_(None)
+            )
+        )
+
+        canceladas = await self.session.scalar(
+            select(func.count()).where(
+                dia_da_loja(Sale.sold_at).between(inicio, fim),
+                Sale.status == StatusVenda.CANCELADA,
+            )
+        )
+
+        faturamento = _centavos(faturamento)
+        cmv = _centavos(cmv)
+        despesas = _centavos(despesas)
+        lucro_bruto = faturamento - cmv
+        margem = (
+            (lucro_bruto / faturamento * 100).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+            if faturamento > 0
+            else ZERO
+        )
+        ticket = _centavos(faturamento / qtd_vendas) if qtd_vendas else ZERO
+
+        return ResumoOut(
+            inicio=inicio,
+            fim=fim,
+            faturamento=faturamento,
+            custo_mercadoria_vendida=cmv,
+            lucro_bruto=lucro_bruto,
+            despesas=despesas,
+            resultado=lucro_bruto - despesas,
+            margem_bruta_pct=margem,
+            quantidade_vendas=int(qtd_vendas),
+            quantidade_pecas=int(qtd_pecas),
+            ticket_medio=ticket,
+            vendas_canceladas=int(canceladas or 0),
+        )
+
+    async def vendas_por_dia(self, inicio: date, fim: date) -> list[DiaVendaOut]:
+        """Série diária sem buracos: dia sem venda aparece zerado, senão o gráfico mente."""
+        self.validar_periodo(inicio, fim)
+        filtros = self._vendas_do_periodo(inicio, fim)
+        dia = dia_da_loja(Sale.sold_at).label("dia")
+
+        linhas = (
+            await self.session.execute(
+                select(dia, func.sum(Sale.total), func.count()).where(*filtros).group_by(dia)
+            )
+        ).all()
+        totais = {data: (faturado, qtd) for data, faturado, qtd in linhas}
+        pecas = dict(
+            (
+                await self.session.execute(
+                    select(dia, func.sum(SaleItem.quantity))
+                    .join(Sale, Sale.id == SaleItem.sale_id)
+                    .where(*filtros)
+                    .group_by(dia)
+                )
+            ).all()
+        )
+
+        serie: list[DiaVendaOut] = []
+        atual = inicio
+        while atual <= fim:
+            faturamento, quantidade = totais.get(atual, (0, 0))
+            serie.append(
+                DiaVendaOut(
+                    data=atual,
+                    faturamento=_centavos(faturamento),
+                    quantidade_vendas=int(quantidade),
+                    quantidade_pecas=int(pecas.get(atual, 0)),
+                )
+            )
+            atual += timedelta(days=1)
+        return serie
+
+    async def mais_vendidos(self, inicio: date, fim: date, limite: int) -> list[MaisVendidoOut]:
+        """Ranking por quantidade. Faturamento aqui é o bruto do item, sem rateio do desconto."""
+        self.validar_periodo(inicio, fim)
+        filtros = self._vendas_do_periodo(inicio, fim)
+        linhas = (
+            await self.session.execute(
+                select(
+                    SaleItem.variant_id,
+                    Product.name,
+                    ProductVariant.size,
+                    ProductVariant.color,
+                    ProductVariant.barcode,
+                    func.sum(SaleItem.quantity),
+                    func.sum(SaleItem.unit_price * SaleItem.quantity),
+                    func.sum(
+                        (SaleItem.unit_price - SaleItem.unit_cost) * SaleItem.quantity
+                    ),
+                )
+                .join(Sale, Sale.id == SaleItem.sale_id)
+                .join(ProductVariant, ProductVariant.id == SaleItem.variant_id)
+                .join(Product, Product.id == ProductVariant.product_id)
+                .where(*filtros)
+                .group_by(
+                    SaleItem.variant_id,
+                    Product.name,
+                    ProductVariant.size,
+                    ProductVariant.color,
+                    ProductVariant.barcode,
+                )
+                .order_by(func.sum(SaleItem.quantity).desc())
+                .limit(limite)
+            )
+        ).all()
+        return [
+            MaisVendidoOut(
+                variante_id=variante_id,
+                produto=produto,
+                tamanho=tamanho,
+                cor=cor,
+                codigo_barras=codigo,
+                quantidade=int(quantidade),
+                faturamento=_centavos(faturamento),
+                lucro_bruto=_centavos(lucro),
+            )
+            for variante_id, produto, tamanho, cor, codigo, quantidade, faturamento, lucro in linhas
+        ]
+
+    async def despesas_por_categoria(
+        self, inicio: date, fim: date
+    ) -> list[DespesaCategoriaOut]:
+        self.validar_periodo(inicio, fim)
+        linhas = (
+            await self.session.execute(
+                select(
+                    ExpenseCategory.id,
+                    ExpenseCategory.name,
+                    func.sum(Expense.amount),
+                    func.count(),
+                )
+                .join(Expense, Expense.category_id == ExpenseCategory.id)
+                .where(
+                    Expense.expense_date.between(inicio, fim), Expense.deleted_at.is_(None)
+                )
+                .group_by(ExpenseCategory.id, ExpenseCategory.name)
+                .order_by(func.sum(Expense.amount).desc())
+            )
+        ).all()
+        total_geral = sum((Decimal(linha[2]) for linha in linhas), ZERO)
+        return [
+            DespesaCategoriaOut(
+                categoria_id=categoria_id,
+                categoria=nome,
+                total=_centavos(total),
+                percentual=(
+                    (Decimal(total) / total_geral * 100).quantize(
+                        Decimal("0.01"), rounding=ROUND_HALF_UP
+                    )
+                    if total_geral > 0
+                    else ZERO
+                ),
+                quantidade=int(quantidade),
+            )
+            for categoria_id, nome, total, quantidade in linhas
+        ]
+
+    async def estoque_baixo(self) -> list[EstoqueBaixoOut]:
+        """Fotografia do agora: peças no mínimo ou abaixo. Não tem período por natureza."""
+        saldo = func.coalesce(StockBalance.quantity, 0)
+        linhas = (
+            await self.session.execute(
+                select(
+                    ProductVariant.id,
+                    Product.name,
+                    ProductVariant.size,
+                    ProductVariant.color,
+                    ProductVariant.barcode,
+                    saldo,
+                    ProductVariant.min_stock,
+                    ProductVariant.cost_price,
+                )
+                .join(Product, Product.id == ProductVariant.product_id)
+                .outerjoin(StockBalance, StockBalance.variant_id == ProductVariant.id)
+                .where(
+                    ProductVariant.deleted_at.is_(None),
+                    Product.deleted_at.is_(None),
+                    saldo <= ProductVariant.min_stock,
+                )
+                .order_by(
+                    case((ProductVariant.min_stock == 0, 1), else_=0),
+                    saldo - ProductVariant.min_stock,
+                    Product.name,
+                )
+            )
+        ).all()
+        return [
+            EstoqueBaixoOut(
+                variante_id=variante_id,
+                produto=produto,
+                tamanho=tamanho,
+                cor=cor,
+                codigo_barras=codigo,
+                saldo=int(quantidade),
+                estoque_minimo=int(minimo),
+                faltam=max(int(minimo) - int(quantidade), 0),
+                preco_custo=custo,
+            )
+            for variante_id, produto, tamanho, cor, codigo, quantidade, minimo, custo in linhas
+        ]
