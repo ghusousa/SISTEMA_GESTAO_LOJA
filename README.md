@@ -24,6 +24,7 @@ fecha o caixa. Mesma API, mesmas regras, mesmos papéis.
 | **Saber o resultado** | Faturamento, custo das peças vendidas, lucro bruto, despesas e o que sobrou. Mais vendidos, curva de vendas por dia e o que precisa repor. |
 | **Fechar o caixa** | Conferir o esperado por forma de pagamento contra o contado. A diferença aparece — não é escondida. |
 | **Trabalhar sem celular** | O sistema web faz tudo pelo computador: o leitor USB de balcão digita o código como se fosse teclado, e o PDV entende. `F2` cobra, `F4` desconta, `Esc` limpa. |
+| **Vender pelo celular** | Cada vendedor entra com o próprio login no app e usa a câmera como leitor: bipa a etiqueta, vê o preço e fecha a venda andando pela loja. Um mesmo instalador serve para todos os aparelhos. |
 
 **Dois papéis.** O **administrador** vê tudo. O **vendedor** cadastra, consulta estoque e vende, mas
 nunca recebe preço de custo, lucro ou despesas — a filtragem acontece no servidor, não escondendo
@@ -213,8 +214,32 @@ New-NetFirewallRule -DisplayName "Sistema da Loja" -Direction Inbound `
 
 > `-Profile Private` de propósito: libera na rede da loja, não em Wi-Fi público.
 
-Para o **app do celular**, aponte o `EXPO_PUBLIC_API_URL` para esse mesmo endereço — instruções em
-[docs/DEPLOY.md](docs/DEPLOY.md).
+Para o **app do celular**, é esse mesmo endereço que o vendedor informa na primeira abertura —
+o app pergunta e guarda no aparelho.
+
+### App do celular — cada vendedor com o seu
+
+O celular vira o leitor: o vendedor aponta a câmera para a etiqueta, vê o preço e fecha a venda.
+Cada um entra com o próprio login de VENDEDOR, e o que ele não pode ver — custo, lucro, despesas,
+relatórios — continua barrado no servidor, não escondido na tela.
+
+**Um instalador serve para todos os celulares.** O endereço do servidor é perguntado na primeira
+abertura e guardado no aparelho, em vez de ficar preso ao build. Se a loja trocar de IP, ninguém
+reinstala nada: é só "Mais → Conectado em…" e informar o novo endereço.
+
+O passo a passo para gerar o `.apk` (na nuvem da Expo, sem instalar Android Studio) e colocá-lo
+nos celulares está em
+[docs/DEPLOY.md](docs/DEPLOY.md#parte-2--app-no-celular-dos-vendedores).
+
+Para desenvolver o app:
+
+```bash
+cd mobile
+npm install
+npm start                                  # abra no Expo Go, ou npm run android
+```
+
+O celular e o computador precisam estar na mesma rede — `localhost`, para o celular, é ele mesmo.
 
 ### Rede que inspeciona HTTPS
 

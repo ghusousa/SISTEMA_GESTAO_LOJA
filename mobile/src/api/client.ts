@@ -8,27 +8,20 @@
  */
 
 import axios, { AxiosError, type AxiosInstance, type InternalAxiosRequestConfig } from 'axios';
-import Constants from 'expo-constants';
 
 import { lerAccessToken, lerRefreshToken, limparSessao, salvarTokens } from './sessao';
+import { enderecoSugerido, servidorEmCache } from './servidor';
 import type { ErroApi, Tokens } from './tipos';
 
-function descobrirBaseUrl(): string {
-  const configurada = process.env.EXPO_PUBLIC_API_URL;
-  if (configurada) return configurada.replace(/\/$/, '');
-
-  // Em desenvolvimento, o celular não enxerga "localhost" — ele precisa do IP da máquina
-  // que roda o Metro, que o próprio Expo informa.
-  const host = Constants.expoConfig?.hostUri?.split(':')[0];
-  if (host) return `http://${host}:8000`;
-
-  return 'http://localhost:8000';
+/**
+ * O endereço do servidor é escolhido no celular (api/servidor.ts) e pode mudar sem
+ * recompilar, então NÃO dá para congelá-lo aqui: cada requisição pergunta qual é o atual.
+ */
+export function baseAtual(): string {
+  return servidorEmCache() ?? enderecoSugerido();
 }
 
-export const BASE_URL = descobrirBaseUrl();
-
 export const api: AxiosInstance = axios.create({
-  baseURL: `${BASE_URL}/api/v1`,
   timeout: 15000,
   headers: { 'Content-Type': 'application/json' },
 });
@@ -44,6 +37,10 @@ export function registrarPerdaDeSessao(callback: () => void): void {
 }
 
 api.interceptors.request.use(async (config) => {
+  // A base vem daqui, e não do `create`, porque o servidor pode ser trocado com o app
+  // aberto — em "Mais → Servidor". Fixá-la na criação deixaria o app falando com o
+  // endereço antigo até alguém fechar e abrir de novo.
+  config.baseURL = `${baseAtual()}/api/v1`;
   const token = await lerAccessToken();
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
@@ -55,7 +52,7 @@ async function renovarSessao(): Promise<string | null> {
   try {
     // Cliente separado: passar pelo `api` cairia no interceptor e viraria recursão.
     const { data } = await axios.post<Tokens>(
-      `${BASE_URL}/api/v1/auth/refresh`,
+      `${baseAtual()}/api/v1/auth/refresh`,
       { refresh_token: refresh },
       { timeout: 15000 },
     );
@@ -118,5 +115,5 @@ export function detalheDoErro(erro: unknown): Record<string, unknown> | null {
  */
 export function urlDaFoto(caminho: string | null | undefined): string | null {
   if (!caminho) return null;
-  return caminho.startsWith('http') ? caminho : `${BASE_URL}${caminho}`;
+  return caminho.startsWith("http") ? caminho : `${baseAtual()}${caminho}`;
 }

@@ -74,6 +74,8 @@ npm run bundle       # expo export: pega erro de import que o tsc não vê
 - Dinheiro no app = **centavos inteiros** (`lib/money.ts`); converte na borda da API. Proibido `parseFloat` em valor.
 - Estado do servidor → TanStack Query. Rascunho/sessão (carrinho do PDV, entrada) → Zustand.
 - Tokens só em `expo-secure-store`; interceptor 401 → refresh (mutex) → refaz → falhou: logout.
+- Endereço do servidor é do APARELHO (`api/servidor.ts`), não do build: um `.apk` serve para todas
+  as lojas e trocar de IP não exige reinstalar. `baseAtual()` resolve a base a cada requisição.
 
 ## Testes
 

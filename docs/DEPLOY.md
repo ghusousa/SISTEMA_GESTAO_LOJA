@@ -245,56 +245,71 @@ Não há instalação: o sistema web é uma página. O que precisa de cuidado é
 4. **Impressora de recibo**, se houver: o botão "Imprimir recibo" abre uma janela e chama a
    impressão do navegador. Deixe a impressora como padrão do sistema. Não é documento fiscal.
 
-## Parte 2 — App nas lojas
+## Parte 2 — App no celular dos vendedores
 
-### Configuração
+Cada vendedor tem o próprio login (papel VENDEDOR) e usa o celular como leitor: aponta a câmera
+para a etiqueta, vê o preço e fecha a venda. Custo, lucro, despesas e relatórios continuam só com
+o ADMIN — quem corta é o servidor.
 
-O app precisa saber o endereço da API. Em `mobile/.env` (lido pelo Expo no build):
+### Um instalador serve para todos
 
-```ini
-EXPO_PUBLIC_API_URL=https://api.sualoja.com.br
-```
+O endereço do servidor **não** é fixado na hora de compilar: o app pergunta na primeira abertura
+e guarda no aparelho. Isso muda a operação inteira:
 
-Ajuste também `mobile/app.json`: `expo.name`, `expo.slug`, `ios.bundleIdentifier`,
-`android.package` e o `projectId` do EAS.
+- o mesmo arquivo `.apk` vai para todos os celulares, sem gerar um por loja;
+- se o servidor mudar de IP, ninguém reinstala nada — é só "Mais → Conectado em…" e informar o
+  novo endereço;
+- o vendedor faz isso uma vez; depois é só e-mail e senha.
 
-### Build
+Se quiser adiantar o preenchimento, defina `EXPO_PUBLIC_API_URL` no build: o endereço aparece já
+sugerido na tela, e a pessoa só confirma.
+
+> **Servidor sem HTTPS.** O `app.json` libera tráfego `http://` no Android
+> (`usesCleartextTraffic`) e no iOS (`NSAllowsArbitraryLoads`), porque a loja costuma começar com
+> um IP e sem domínio. É o que faz o app conseguir falar com `http://192.168.0.10`. Quando você
+> apontar um domínio para o servidor, o instalador emite o certificado sozinho e passa a valer
+> `https://` — aí vale tirar essas duas permissões e gerar um build novo, porque em HTTP a senha
+> do vendedor trafega em texto claro na rede.
+
+### Gerar o APK
+
+O build acontece na nuvem da Expo: não é preciso instalar Android Studio nem SDK.
 
 ```bash
 cd mobile
+npm install
 npm install -g eas-cli
-eas login
-eas build:configure
+eas login                      # conta gratuita em expo.dev
+eas build --profile preview --platform android
 ```
 
-`eas.json` com três perfis — o de `preview` gera um APK que instala direto no celular, sem loja,
-que é como a maioria das lojas pequenas começa:
+Ao final, o EAS devolve um link para baixar o `.apk`. O `eas.json` do projeto já vem com o perfil
+`preview` configurado para APK — que instala direto no celular, sem passar por loja, e é como a
+maioria das lojas pequenas começa.
 
-```json
-{
-  "build": {
-    "development": { "developmentClient": true, "distribution": "internal" },
-    "preview": {
-      "distribution": "internal",
-      "android": { "buildType": "apk" },
-      "env": { "EXPO_PUBLIC_API_URL": "https://api.sualoja.com.br" }
-    },
-    "production": {
-      "autoIncrement": true,
-      "env": { "EXPO_PUBLIC_API_URL": "https://api.sualoja.com.br" }
-    }
-  }
-}
-```
+Antes do primeiro build, ajuste em `mobile/app.json` o que identifica o seu app:
+`expo.name`, `expo.slug`, `android.package`, `ios.bundleIdentifier` e o `extra.eas.projectId`
+(o `eas build` preenche o projectId sozinho na primeira vez).
 
-```bash
-eas build --profile preview  --platform android    # APK para instalar na mão
-eas build --profile production --platform android  # AAB para a Play Store
-eas submit --platform android
-```
+### Instalar no celular do vendedor
 
-Para iOS é preciso conta no Apple Developer Program; o fluxo é o mesmo trocando
-`--platform ios`.
+1. Mande o `.apk` para o aparelho (WhatsApp, link, cabo — tanto faz).
+2. Abra o arquivo. O Android vai avisar que é de "fonte desconhecida": autorize só desta vez.
+3. Na primeira abertura o app pede o **endereço do servidor**. Informe o mesmo que aparece no
+   navegador do computador do balcão, sem o final — o app aceita colar o endereço inteiro e
+   aproveita só o que interessa.
+4. O vendedor entra com o e-mail e a senha que você criou em **Usuários**.
+5. Na primeira leitura o Android pede permissão de câmera. Autorize.
+
+### iPhone
+
+Precisa de conta paga no Apple Developer Program (US$ 99/ano) e o fluxo é o mesmo trocando
+`--platform ios`. Sem essa conta, dá para usar o **Expo Go**: instale-o pela App Store e o
+vendedor abre o projeto por lá — funciona, mas exige que o servidor de desenvolvimento esteja no
+ar, então serve para testar, não para o dia a dia.
+
+Como o sistema web também funciona no navegador do celular, um iPhone sem app instalado ainda
+consegue vender abrindo o endereço da loja no Safari — só não lê o código pela câmera.
 
 ### Antes de entregar para a equipe
 

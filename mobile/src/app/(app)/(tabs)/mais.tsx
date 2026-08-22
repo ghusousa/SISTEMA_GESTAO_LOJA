@@ -2,10 +2,11 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { BASE_URL } from '@/api/client';
+import { baseAtual } from '@/api/client';
 import { Cartao, Etiqueta } from '@/components/ui';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
 import { useAuthStore } from '@/stores/authStore';
+import { useServidorStore } from '@/stores/servidorStore';
 
 interface Opcao {
   rotulo: string;
@@ -48,6 +49,7 @@ export default function Mais() {
   const router = useRouter();
   const usuario = useAuthStore((e) => e.usuario);
   const sair = useAuthStore((e) => e.sair);
+  const esquecerServidor = useServidorStore((e) => e.esquecer);
   const ehAdmin = usuario?.papel === 'ADMIN';
 
   return (
@@ -102,13 +104,47 @@ export default function Mais() {
         </View>
       </Pressable>
 
-      <Text style={s.rodape}>Conectado em {BASE_URL}</Text>
+      <Pressable
+        style={s.servidor}
+        onPress={() =>
+          Alert.alert(
+            'Trocar de servidor',
+            `Este celular fala com ${baseAtual()}.\n\n` +
+              'Trocar desconecta você e pede o endereço de novo. Use se a loja mudou de ' +
+              'servidor ou se você configurou o endereço errado.',
+            [
+              { text: 'Ficar como está', style: 'cancel' },
+              {
+                text: 'Trocar',
+                style: 'destructive',
+                onPress: () => {
+                  // A ordem importa: sair primeiro revoga a sessão no servidor ANTIGO,
+                  // que é justamente quem ainda a reconhece.
+                  void sair().then(() => esquecerServidor());
+                },
+              },
+            ],
+          )
+        }
+      >
+        <MaterialCommunityIcons name="server-network" size={18} color={cores.textoFraco} />
+        <Text style={s.rodape}>Conectado em {baseAtual()}</Text>
+      </Pressable>
     </ScrollView>
   );
 }
 
 const s = StyleSheet.create({
   conteudo: { padding: espaco.lg, paddingBottom: espaco.xxl },
+
+  servidor: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: espaco.xs,
+    marginTop: espaco.xl,
+    padding: espaco.sm,
+  },
 
   perfil: { flexDirection: 'row', gap: espaco.lg, alignItems: 'center' },
   avatar: {
