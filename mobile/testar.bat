@@ -6,7 +6,7 @@ REM   testar.bat --tunel   redes diferentes, ou Wi-Fi que isola aparelhos
 setlocal
 cd /d "%~dp0"
 
-where node >/dev/null 2>&1
+where node >nul 2>&1
 if errorlevel 1 (
   echo.
   echo   [x] O Node.js nao esta instalado - o Expo precisa dele.
@@ -17,6 +17,23 @@ if errorlevel 1 (
   echo       Depois de instalar, FECHE esta janela e abra outra, senao o
   echo       Windows ainda nao enxerga o node.
   echo.
+  pause
+  exit /b 1
+)
+
+REM O Metro exige 20.19.4. Sem esta conferencia, o erro so aparece depois de
+REM baixar umas setecentas dependencias - e nao diz que o problema e a versao.
+node -e "const v=process.versions.node.split('.').map(Number);process.exit(v[0]>20||(v[0]===20&&(v[1]>19||(v[1]===19&&v[2]>=4)))?0:1)"
+if errorlevel 1 (
+  echo.
+  echo   [x] O Node.js instalado e antigo demais para o Expo.
+  echo       E preciso a versao 20.19.4 ou mais nova.
+  echo.
+  echo       Atualize com:  winget upgrade OpenJS.NodeJS.LTS
+  echo.
+  echo       Depois de atualizar, FECHE esta janela e abra outra.
+  echo.
+  node -v
   pause
   exit /b 1
 )

@@ -23,6 +23,18 @@ command -v node >/dev/null 2>&1 || {
     exit 1
 }
 
+# O Metro exige 20.19.4. Sem esta conferência, o erro só aparece depois de baixar
+# umas setecentas dependências — e não diz que o problema é a versão do Node.
+node -e 'const [a,b,c]=process.versions.node.split(".").map(Number);
+         process.exit(a>20 || (a===20 && (b>19 || (b===19 && c>=4))) ? 0 : 1)' || {
+    printf '\n%s✗ Node.js %s é antigo demais.%s\n' "$AMARELO" "$(node -v)" "$NORMAL"
+    echo "  O Expo precisa da versão 20.19.4 ou mais nova."
+    echo "  Ubuntu: sudo apt install -y nodejs npm   (ou use o nvm)"
+    echo "  Mac:    brew upgrade node"
+    echo
+    exit 1
+}
+
 printf '\n%sPreparando o app%s\n' "$FORTE$AZUL" "$NORMAL"
 if [ ! -d node_modules ]; then
     echo "  → instalando as dependências (só na primeira vez, demora alguns minutos)…"

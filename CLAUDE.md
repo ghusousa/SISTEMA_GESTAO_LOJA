@@ -11,7 +11,8 @@ contratos, ADRs). Mudou algo? Atualize o doc no mesmo commit.**
 
 - API: Python 3.11+ · FastAPI · SQLAlchemy 2.0 async + asyncpg · Alembic · Pydantic v2 · pytest + httpx · PostgreSQL 16
 - Web: HTML + CSS + módulos ES, **zero build**. Roteador por hash próprio; servida em `/app` pelo FastAPI
-- Mobile: Expo (managed) · TypeScript · expo-router · TanStack Query · Zustand · react-hook-form + zod · expo-camera
+- Mobile: **Expo SDK 54** (managed) · TypeScript · expo-router · TanStack Query · Zustand ·
+  react-hook-form + zod · expo-camera. Node ≥ 20.19.4
 - Senhas: `bcrypt` direto (NÃO passlib — incompatível com bcrypt 5.x)
 
 ## Comandos
@@ -102,8 +103,12 @@ estoque, concorrência do último item, idempotência por `client_uuid`.
 - **Saldo**: `UPDATE` antes do `INSERT`, não `INSERT ... ON CONFLICT` — o Postgres avalia o CHECK
   do valor inserido antes de detectar o conflito, e toda saída estouraria o CHECK.
 - **pytest-asyncio**: fixtures e testes precisam do mesmo escopo de loop, senão o asyncpg trava.
-- **`legacy-peer-deps` no mobile**: peers não se instalam sozinhos; `npm run bundle` é o que
-  revela o que falta.
+- **SDK do mobile é 54 de propósito**: 54 é o último Expo Go publicado na App Store e na Play
+  Store (ADR-14). Subir de SDK mata o teste por QR — só resta *development build*. Ao mexer em
+  dependência do Expo, use `npx expo install --fix` e feche com `npx expo-doctor`.
+- **`npm run bundle` no mobile**: o `tsc` não vê import quebrado de dependência nativa; o
+  bundle vê. Rode-o sempre que mexer em dependência (foi assim que apareceu a falta do
+  `react-native-worklets`, peer do reanimated 4).
 - **Campo de dinheiro preenchido**: valor sugerido (o que falta pagar, o esperado no caixa) é
   substituído pelo primeiro dígito depois de focar; do segundo em diante empurra pela direita.
   Sem isso, digitar `200` sobre `179,70` virava R$ 17.970,00 — e um troco de R$ 9.999.820,29.

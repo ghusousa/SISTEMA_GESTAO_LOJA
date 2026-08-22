@@ -264,12 +264,12 @@ e guarda no aparelho. Isso muda a operação inteira:
 Se quiser adiantar o preenchimento, defina `EXPO_PUBLIC_API_URL` no build: o endereço aparece já
 sugerido na tela, e a pessoa só confirma.
 
-> **Servidor sem HTTPS.** O `app.json` libera tráfego `http://` no Android
-> (`usesCleartextTraffic`) e no iOS (`NSAllowsArbitraryLoads`), porque a loja costuma começar com
-> um IP e sem domínio. É o que faz o app conseguir falar com `http://192.168.0.10`. Quando você
-> apontar um domínio para o servidor, o instalador emite o certificado sozinho e passa a valer
-> `https://` — aí vale tirar essas duas permissões e gerar um build novo, porque em HTTP a senha
-> do vendedor trafega em texto claro na rede.
+> **Servidor sem HTTPS.** O `app.json` libera tráfego `http://` no Android (plugin
+> `expo-build-properties`, chave `usesCleartextTraffic`) e no iOS (`NSAllowsArbitraryLoads`),
+> porque a loja costuma começar com um IP e sem domínio. É o que faz o app conseguir falar com
+> `http://192.168.0.10`. Quando você apontar um domínio para o servidor, o instalador emite o
+> certificado sozinho e passa a valer `https://` — aí vale tirar essas duas permissões e gerar
+> um build novo, porque em HTTP a senha do vendedor trafega em texto claro na rede.
 
 ### Gerar o APK
 
@@ -304,12 +304,30 @@ Antes do primeiro build, ajuste em `mobile/app.json` o que identifica o seu app:
 ### iPhone
 
 Precisa de conta paga no Apple Developer Program (US$ 99/ano) e o fluxo é o mesmo trocando
-`--platform ios`. Sem essa conta, dá para usar o **Expo Go**: instale-o pela App Store e o
-vendedor abre o projeto por lá — funciona, mas exige que o servidor de desenvolvimento esteja no
-ar, então serve para testar, não para o dia a dia.
+`--platform ios`. Não existe atalho gratuito equivalente ao `.apk`: a Apple não deixa instalar
+app fora da App Store ou do TestFlight, e o TestFlight também exige a mesma conta paga.
 
-Como o sistema web também funciona no navegador do celular, um iPhone sem app instalado ainda
-consegue vender abrindo o endereço da loja no Safari — só não lê o código pela câmera.
+O **Expo Go** não substitui isso no dia a dia — ele só abre um projeto enquanto o servidor de
+desenvolvimento estiver no ar, num computador ligado. Serve para testar, não para vender.
+
+Como o sistema web funciona no navegador do celular, um iPhone sem app ainda consegue vender
+abrindo o endereço da loja no Safari — e dá para "Adicionar à Tela de Início", que deixa um
+ícone igual ao de um app. O que se perde é a leitura pela câmera: no Safari a venda começa
+digitando o código da etiqueta.
+
+### Equipe com Android e iPhone misturados
+
+É o caso mais comum, e a divisão fica assim:
+
+| Aparelho | Como o vendedor usa | Custo |
+|---|---|---|
+| **Android** | `.apk` gerado pelo `eas build --profile preview`, instalado direto | grátis |
+| **iPhone**, com conta Apple | build `--platform ios` distribuído por TestFlight | US$ 99/ano |
+| **iPhone**, sem conta Apple | sistema web no Safari, com ícone na tela de início | grátis |
+
+Vale começar pelo Android — que costuma ser a maioria — e deixar os iPhones no Safari. O login,
+os papéis e os dados são os mesmos nos três caminhos: quem separa o que cada um vê é o servidor,
+não o aparelho. Se depois o volume justificar, a conta da Apple entra sem mexer no código.
 
 ### Antes de entregar para a equipe
 

@@ -263,6 +263,20 @@ antes de gravar, porque o que a pessoa tem à mão é a barra do navegador do ba
 inicial. O custo é uma tela a mais no primeiro uso; o ganho é um instalador único para toda a
 equipe.
 
+**ADR-14 — O app fica no Expo SDK 54, e o teto é da Apple, não nosso.**
+O SDK 57 é o estável atual e o app rodava nele. Mesmo assim ficamos no 54, porque **54 é a última
+versão do Expo Go publicada na App Store e na Play Store**: o Expo Go para SDK 55 travou na
+aprovação da Apple e a Expo parou de publicar novas versões. Num projeto acima do 54, o celular
+responde *"Project is incompatible with this version of Expo Go"* e não há atualização que
+resolva — o app da loja já está no topo. Como o teste por QR é o único caminho gratuito para
+alguém abrir o app num iPhone (a Apple não permite instalar fora da loja sem conta paga), perder
+o Expo Go custaria mais do que ficar um SDK atrás. O 54 continua recebendo correções.
+Consequências: `expo`, `expo-*`, `react-native` e `react` seguem a tabela do SDK 54
+(`npx expo install --fix` alinha); o `usesCleartextTraffic` do Android saiu do `app.json` — cujo
+schema no 54 não o aceita — e passou para o plugin `expo-build-properties`; e o Node precisa ser
+**≥ 20.19.4**, exigência do Metro e do React Native 0.81. Para subir de SDK no futuro, o preço a
+pagar é trocar o Expo Go por um *development build*.
+
 ## 4. Contratos de API
 
 Prefixo `/api/v1`. Auth: `Authorization: Bearer <access_token>`.

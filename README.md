@@ -284,7 +284,9 @@ Ou baixe a versão **LTS** em <https://nodejs.org>.
 > aberta não enxerga o que acabou de entrar no PATH — e o erro seguinte seria "node não é
 > reconhecido", que não explica isso.
 
-Confira com `node -v`. Precisa ser 20 ou mais novo.
+Confira com `node -v`. Precisa ser **20.19.4 ou mais novo** — um 20.18 instalado há um ano
+não serve, e o erro que ele dá (`Node.js is outdated and unsupported`) aparece só lá na
+frente, depois de baixar tudo.
 
 ### 2. Subir o app
 
@@ -364,16 +366,14 @@ funciona em qualquer rede, só mais devagar.
 ./testar.sh --tunel
 ```
 
-**"Project is incompatible with this version of Expo Go"** — o Expo Go instalado é mais antigo que
-o projeto. Este projeto usa o **SDK 57**, que pede **Expo Go 57.x**. Atualize o app pela loja:
+**"Project is incompatible with this version of Expo Go"** — não deveria mais acontecer, mas se
+acontecer é desalinhamento de SDK. Este projeto está no **SDK 54** de propósito: **54 é a última
+versão do Expo Go publicada na App Store e na Play Store**. A Expo parou de publicar o Expo Go
+para SDK 55 e mais recentes, então "atualizar o Expo Go" não resolve nada — já está no topo.
+Se você atualizar o projeto para um SDK acima do 54, o teste por QR deixa de existir e o único
+caminho passa a ser gerar um *development build*.
 
-- **iPhone:** App Store → toque na sua foto no canto → role até *Atualizações disponíveis* → Expo Go.
-  Se não aparecer, apague o Expo Go e instale de novo — o iOS às vezes segura a atualização.
-- **Android:** Play Store → seu perfil → *Gerenciar apps* → Expo Go → Atualizar.
-
-Para conferir a versão instalada, abra o Expo Go: ela aparece na tela inicial, embaixo.
-
-**Node.js desatualizado.** O Expo avisa `Node.js (vX) is outdated and unsupported`. O SDK 57 exige
+**Node.js desatualizado.** O Expo avisa `Node.js (vX) is outdated and unsupported`. É preciso
 **Node 20.19.4 ou mais novo**. No Windows: `winget upgrade OpenJS.NodeJS.LTS` (e feche o terminal
 antes de tentar de novo). Confira com `node -v`.
 
