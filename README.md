@@ -231,15 +231,25 @@ O passo a passo para gerar o `.apk` (na nuvem da Expo, sem instalar Android Stud
 nos celulares está em
 [docs/DEPLOY.md](docs/DEPLOY.md#parte-2--app-no-celular-dos-vendedores).
 
-Para desenvolver o app:
+**Testar antes de gerar o instalador.** Dá para abrir o app no celular pelo **Expo Go**, sem
+compilar nada:
 
 ```bash
 cd mobile
-npm install
-npm start                                  # abra no Expo Go, ou npm run android
+./testar.sh                # Windows: testar.bat (ou clique duas vezes)
 ```
 
-O celular e o computador precisam estar na mesma rede — `localhost`, para o celular, é ele mesmo.
+Ele instala o que falta, sobe o servidor de desenvolvimento e mostra um QR. Instale o **Expo Go**
+no celular (Play Store ou App Store), deixe-o na mesma rede Wi-Fi do computador e aponte a câmera
+para o QR. O app abre e pede o endereço do servidor — o mesmo que você usa no navegador.
+
+Se o QR não carregar, o Wi-Fi pode estar isolando os aparelhos ou o firewall bloqueando a porta
+8081. Nesse caso: `./testar.sh --tunel` (Windows: `testar.bat --tunel`), que funciona em qualquer
+rede, só mais devagar.
+
+> O celular precisa alcançar **duas** coisas diferentes: o computador que roda o Expo (por isso a
+> mesma Wi-Fi) e o servidor da loja (que pode estar em qualquer lugar, inclusive numa VPS). Com o
+> instalador `.apk` pronto, só a segunda continua valendo.
 
 ### Rede que inspeciona HTTPS
 
