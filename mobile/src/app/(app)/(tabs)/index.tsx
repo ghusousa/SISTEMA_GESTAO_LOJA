@@ -7,7 +7,7 @@
  */
 
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { useCallback, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -16,7 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { codigoDoErro, mensagemDoErro } from '@/api/client';
 import { catalogo } from '@/api/endpoints';
 import { CodigoManual } from '@/components/CodigoManual';
-import { Scanner } from '@/components/Scanner';
+import { Scanner, type ScannerRef } from '@/components/Scanner';
 import { Botao } from '@/components/ui';
 import { useConexao } from '@/components/BannerConexao';
 import { formatar, paraCentavos } from '@/lib/money';
@@ -42,10 +42,34 @@ export default function Pdv() {
   const [aviso, setAviso] = useState<string | null>(null);
   // Evita duas buscas simultâneas quando a câmera insiste no mesmo código.
   const buscaEmAndamento = useRef(false);
+  const scanner = useRef<ScannerRef | null>(null);
+  // Códigos que a pessoa já viu e recusou cadastrar. Sem esta lista, a câmera continua
+  // apontada para a mesma etiqueta desconhecida e reabre o diálogo a cada 1,5 s.
+  const recusados = useRef(new Set<string>());
+
+  useFocusEffect(
+    useCallback(() => {
+      // A aba do PDV continua montada quando outra tela entra por cima (cadastro rápido,
+      // cobrança) — e a câmera junto, lendo o que estiver na frente dela e enchendo o
+      // carrinho sozinha. Sai de foco, pausa; volta, retoma.
+      scanner.current?.retomar();
+      return () => scanner.current?.pausar();
+    }, []),
+  );
 
   const aoLerCodigo = useCallback(
-    async (codigo: string) => {
+    async (codigo: string, origem: 'camera' | 'digitado' = 'camera') => {
       if (buscaEmAndamento.current) return;
+
+      // Já perguntamos por este código e a resposta foi "agora não": basta o aviso na
+      // tela. Sem consulta e sem vibrar, porque a etiqueta segue na frente da câmera.
+      // Digitar o mesmo código à mão é outra história — aí a pessoa quer, e o convite
+      // para cadastrar volta a aparecer.
+      if (origem === 'camera' && recusados.current.has(codigo)) {
+        setAviso(`Código ${codigo} não está cadastrado.`);
+        return;
+      }
+
       buscaEmAndamento.current = true;
       setBuscando(true);
       setAviso(null);
@@ -65,12 +89,25 @@ export default function Pdv() {
       } catch (erro) {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
         if (codigoDoErro(erro) === 'NAO_ENCONTRADO') {
+          // A câmera para enquanto o diálogo está na frente dela; só assim ele não
+          // reabre sozinho por trás e vira uma pilha de avisos iguais.
+          scanner.current?.pausar();
           Alert.alert(
             'Peça não cadastrada',
             `Nenhuma peça com o código ${codigo}. Quer cadastrar agora?`,
             [
-              { text: 'Agora não', style: 'cancel' },
               {
+                text: 'Agora não',
+                style: 'cancel',
+                onPress: () => {
+                  recusados.current.add(codigo);
+                  setAviso(`Código ${codigo} não está cadastrado.`);
+                  scanner.current?.retomar();
+                },
+              },
+              {
+                // Sem retomar aqui: quem devolve a câmera é o foco, quando esta tela
+                // voltar. Retomar agora deixaria a câmera lendo por baixo do cadastro.
                 text: 'Cadastrar',
                 onPress: () =>
                   router.push({
@@ -79,6 +116,11 @@ export default function Pdv() {
                   }),
               },
             ],
+            // No Android dá para fechar o diálogo pelo botão voltar, sem tocar em
+            // nenhum dos dois botões. Sem isto o PDV ficaria mudo, com a câmera
+            // pausada, e ninguém entenderia por que parou de bipar. (No iOS o RN
+            // ignora esta opção — lá não existe como sair sem escolher.)
+            { onDismiss: () => scanner.current?.retomar() },
           );
         } else {
           setAviso(mensagemDoErro(erro, 'Não deu para consultar a peça.'));
@@ -102,6 +144,7 @@ export default function Pdv() {
     <View style={s.tela}>
       <View style={[s.cameraArea, { marginTop: insets.top }]}>
         <Scanner
+          controle={scanner}
           aoLer={(codigo) => void aoLerCodigo(codigo)}
           modo="continuo"
           ocupado={buscando}
@@ -110,7 +153,15 @@ export default function Pdv() {
       </View>
 
       {!!aviso && (
-        <Pressable onPress={() => setAviso(null)} style={s.aviso}>
+        <Pressable
+          onPress={() => {
+            // Tocar no aviso é a saída para quem cadastrou a peça por outro caminho:
+            // limpa a lista de recusados e a próxima leitura consulta de novo.
+            recusados.current.clear();
+            setAviso(null);
+          }}
+          style={s.aviso}
+        >
           <Text style={s.avisoTexto}>{aviso}</Text>
         </Pressable>
       )}
@@ -122,7 +173,7 @@ export default function Pdv() {
           </Text>
           <View style={s.carrinhoAcoes}>
             {/* Etiqueta rasgada ou desbotada é rotina: sem esta saída a peça não vende. */}
-            <CodigoManual aoConfirmar={(codigo) => void aoLerCodigo(codigo)} />
+            <CodigoManual aoConfirmar={(codigo) => void aoLerCodigo(codigo, 'digitado')} />
             {itens.length > 0 && (
               <Pressable onPress={confirmarLimpeza} hitSlop={12}>
                 <Text style={s.limpar}>Limpar</Text>

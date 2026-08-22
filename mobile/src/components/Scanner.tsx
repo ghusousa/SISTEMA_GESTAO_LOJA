@@ -2,9 +2,8 @@
  * Leitor de código de barras.
  *
  * A câmera dispara `onBarcodeScanned` a cada frame em que enxerga o código — um único bipe
- * do operador vira dezenas de eventos. Sem defesa, uma peça entraria dez vezes no carrinho.
- * Por isso há duas travas: o mesmo código só passa de novo depois de 1,5 s (tempo de afastar
- * e reaproximar a etiqueta) e qualquer código respeita 400 ms de intervalo entre leituras.
+ * do operador vira dezenas de eventos. Quem decide o que passa é `lib/leitura.ts`, testado
+ * à parte; aqui só ficam a câmera, a moldura e o estado que alimenta aquela decisão.
  */
 
 import { CameraView, useCameraPermissions, type BarcodeType } from 'expo-camera';
@@ -13,17 +12,25 @@ import { useCallback, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Botao } from '@/components/ui';
+import { decidirLeitura } from '@/lib/leitura';
 import { ALVO_TOQUE, cores, espaco, fonte, raio } from '@/lib/tema';
 
 /** EAN-13/EAN-8 cobrem etiqueta de fornecedor; Code 128 e UPC aparecem em peças importadas. */
 const TIPOS: BarcodeType[] = ['ean13', 'ean8', 'code128', 'upc_a', 'upc_e'];
 
-const ESPERA_MESMO_CODIGO = 1500;
-const ESPERA_QUALQUER = 400;
-
 export interface ScannerRef {
   /** Libera uma nova leitura no modo 'unico' (ex.: o código bipado não existia). */
   reativar: () => void;
+  /**
+   * Para de ler enquanto existe um diálogo na frente da câmera.
+   *
+   * `Alert.alert` não bloqueia nada: a câmera continua enxergando a mesma etiqueta e,
+   * passados os 1,5 s da trava, dispara outra leitura — o iOS empilha os alertas e a
+   * pessoa fecha o mesmo aviso cinco vezes seguidas.
+   */
+  pausar: () => void;
+  /** Volta a ler mantendo a trava do último código, senão o diálogo reabre sozinho. */
+  retomar: () => void;
 }
 
 interface Props {
@@ -74,25 +81,43 @@ export function Scanner({
         instanteQualquer.current = 0;
         setUltimoLido(null);
       },
+      pausar: () => {
+        pausado.current = true;
+      },
+      retomar: () => {
+        pausado.current = false;
+        // As travas recomeçam a contar agora, e não no instante da leitura que abriu o
+        // diálogo: o operador precisa desses 1,5 s para afastar o celular da etiqueta.
+        const agora = Date.now();
+        instanteUltimoCodigo.current = agora;
+        instanteQualquer.current = agora;
+      },
     };
   }
 
   const tratarLeitura = useCallback(
     ({ data }: { data: string }) => {
-      if (!ativo || pausado.current) return;
-
-      if (ocupadoRef.current) {
-        // Avisa em vez de engolir: o operador precisa saber que precisa bipar de novo.
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-        return;
-      }
+      if (!ativo) return;
 
       const agora = Date.now();
-      if (agora - instanteQualquer.current < ESPERA_QUALQUER) return;
-      if (
-        data === ultimoCodigo.current &&
-        agora - instanteUltimoCodigo.current < ESPERA_MESMO_CODIGO
-      ) {
+      const decisao = decidirLeitura(
+        {
+          ultimoCodigo: ultimoCodigo.current,
+          instanteUltimoCodigo: instanteUltimoCodigo.current,
+          instanteQualquer: instanteQualquer.current,
+          pausado: pausado.current,
+          ocupado: ocupadoRef.current,
+        },
+        data,
+        agora,
+      );
+
+      if (decisao === 'ignorar') return;
+
+      if (decisao === 'avisar-ocupado') {
+        // Avisa em vez de engolir: o operador precisa saber que precisa bipar de novo.
+        instanteQualquer.current = agora;
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
         return;
       }
 

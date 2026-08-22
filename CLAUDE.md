@@ -109,6 +109,10 @@ estoque, concorrência do último item, idempotência por `client_uuid`.
 - **`npm run bundle` no mobile**: o `tsc` não vê import quebrado de dependência nativa; o
   bundle vê. Rode-o sempre que mexer em dependência (foi assim que apareceu a falta do
   `react-native-worklets`, peer do reanimated 4).
+- **`Alert.alert` não para a câmera**: o diálogo não bloqueia nada; a câmera segue lendo a
+  mesma etiqueta por baixo e, passada a trava de 1,5 s, empilha outro alerta igual. Antes de
+  abrir diálogo sobre o scanner, `pausar()`; ao fechar, `retomar()`. As regras de tempo
+  moram em `mobile/src/lib/leitura.ts`, com teste.
 - **Campo de dinheiro preenchido**: valor sugerido (o que falta pagar, o esperado no caixa) é
   substituído pelo primeiro dígito depois de focar; do segundo em diante empurra pela direita.
   Sem isso, digitar `200` sobre `179,70` virava R$ 17.970,00 — e um troco de R$ 9.999.820,29.
