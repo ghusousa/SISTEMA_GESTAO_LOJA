@@ -1,0 +1,314 @@
+/**
+ * Usuários da loja.
+ *
+ * Quem manda no que cada papel enxerga é o servidor. Esta tela só administra quem existe:
+ * o VENDEDOR nunca vê custo, lucro nem despesas, mesmo que abra a URL na mão.
+ */
+
+import { api } from '../api.js';
+import { trocarConsulta } from '../router.js';
+import { sessao } from '../store.js';
+import {
+  aviso,
+  avisarErro,
+  carregando,
+  comAtraso,
+  confirmar,
+  cru,
+  data as formatarData,
+  erroBloco,
+  etiqueta,
+  html,
+  ligarPaginacao,
+  modal,
+  paginacao,
+  vazio,
+} from '../ui.js';
+
+const TAMANHO = 25;
+
+export async function render(raiz, _params, consulta) {
+  const filtros = {
+    q: consulta.q || '',
+    papel: consulta.papel || '',
+    ativo: consulta.ativo || '',
+    page: Number(consulta.page) || 1,
+  };
+
+  raiz.innerHTML = html`
+    <div class="pagina">
+      <div class="pagina__topo">
+        <div>
+          <h1>Usuários</h1>
+          <p class="texto-suave">
+            O dono vê tudo. O vendedor cadastra, consulta estoque e vende — sem custo, lucro ou despesas.
+          </p>
+        </div>
+        <div class="pagina__acoes">
+          <button class="botao" data-novo>Novo usuário</button>
+        </div>
+      </div>
+
+      <div class="filtros">
+        <label class="campo campo--busca">
+          <span>Buscar</span>
+          <input data-q type="search" placeholder="Nome ou e-mail" value="${filtros.q}" />
+        </label>
+        <label class="campo">
+          <span>Papel</span>
+          <select data-papel>
+            <option value="">Todos</option>
+            <option value="ADMIN" ${cru(filtros.papel === 'ADMIN' ? 'selected' : '')}>Dono</option>
+            <option value="VENDEDOR" ${cru(filtros.papel === 'VENDEDOR' ? 'selected' : '')}>Vendedor</option>
+          </select>
+        </label>
+        <label class="campo">
+          <span>Situação</span>
+          <select data-ativo>
+            <option value="">Todos</option>
+            <option value="true" ${cru(filtros.ativo === 'true' ? 'selected' : '')}>Ativos</option>
+            <option value="false" ${cru(filtros.ativo === 'false' ? 'selected' : '')}>Desativados</option>
+          </select>
+        </label>
+      </div>
+
+      <div data-lista></div>
+    </div>
+  `;
+
+  const areaLista = raiz.querySelector('[data-lista]');
+
+  async function carregar() {
+    areaLista.innerHTML = carregando();
+    trocarConsulta(filtros);
+    try {
+      const pagina = await api.get('/usuarios', { ...filtros, size: TAMANHO });
+      desenhar(pagina);
+    } catch (erro) {
+      areaLista.innerHTML = erroBloco(erro.textoAmigavel);
+    }
+  }
+
+  function desenhar(pagina) {
+    if (!pagina.items.length) {
+      areaLista.innerHTML = vazio('Nenhum usuário encontrado', 'Tire os filtros ou cadastre alguém.');
+      return;
+    }
+
+    const eu = sessao.get().usuario?.id;
+
+    areaLista.innerHTML = html`
+      <div class="tabela-rolagem">
+        <table>
+          <thead>
+            <tr>
+              <th>Nome</th>
+              <th>E-mail</th>
+              <th>Papel</th>
+              <th>Situação</th>
+              <th>Desde</th>
+              <th class="direita">Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${pagina.items.map(
+              (u) => html`
+                <tr>
+                  <td>
+                    <span class="celula-principal">${u.nome}</span>
+                    ${u.id === eu ? cru(html`<span class="celula-secundaria">é você</span>`) : ''}
+                  </td>
+                  <td class="texto-suave">${u.email}</td>
+                  <td>${u.papel === 'ADMIN' ? etiqueta('Dono', 'info') : etiqueta('Vendedor')}</td>
+                  <td>${u.ativo ? etiqueta('Ativo', 'ok') : etiqueta('Desativado', 'perigo')}</td>
+                  <td class="texto-suave">${formatarData(u.criado_em)}</td>
+                  <td class="direita">
+                    <button class="botao-icone" data-editar="${u.id}" title="Editar" aria-label="Editar ${u.nome}">✏️</button>
+                    <button class="botao-icone" data-senha="${u.id}" title="Redefinir senha" aria-label="Redefinir senha de ${u.nome}">🔑</button>
+                  </td>
+                </tr>
+              `,
+            )}
+          </tbody>
+        </table>
+      </div>
+      ${paginacao({ total: pagina.total, page: pagina.page, size: pagina.size })}
+    `;
+
+    areaLista.querySelectorAll('[data-editar]').forEach((b) =>
+      b.addEventListener('click', () => editar(pagina.items.find((u) => u.id === Number(b.dataset.editar)))),
+    );
+    areaLista.querySelectorAll('[data-senha]').forEach((b) =>
+      b.addEventListener('click', () => redefinirSenha(pagina.items.find((u) => u.id === Number(b.dataset.senha)))),
+    );
+    ligarPaginacao(areaLista, (p) => {
+      filtros.page = p;
+      carregar();
+    });
+  }
+
+  async function novo() {
+    const criou = await modal({
+      titulo: 'Novo usuário',
+      largura: '450px',
+      render: () => html`
+        <label class="campo">
+          <span>Nome</span>
+          <input data-nome maxlength="120" placeholder="Ex.: Ana Paula" />
+        </label>
+        <label class="campo">
+          <span>E-mail <span class="campo__dica">é com ele que a pessoa entra</span></span>
+          <input data-email type="email" placeholder="ana@sualoja.com.br" />
+        </label>
+        <label class="campo">
+          <span>Senha <span class="campo__dica">mínimo de 8 caracteres</span></span>
+          <input data-senha type="password" autocomplete="new-password" />
+        </label>
+        <label class="campo">
+          <span>Papel</span>
+          <select data-papel>
+            <option value="VENDEDOR">Vendedor — vende e consulta, sem custo nem despesas</option>
+            <option value="ADMIN">Dono — vê e faz tudo</option>
+          </select>
+        </label>
+        <div class="modal__acoes">
+          <button class="botao botao--neutro" data-nao>Cancelar</button>
+          <button class="botao" data-ok>Criar</button>
+        </div>
+      `,
+      aoAbrir: (corpo, fechar) => {
+        corpo.querySelector('[data-nao]').addEventListener('click', () => fechar(false));
+        corpo.querySelector('[data-ok]').addEventListener('click', async (e) => {
+          const senha = corpo.querySelector('[data-senha]').value;
+          if (senha.length < 8) return aviso('A senha precisa de pelo menos 8 caracteres.', 'alerta');
+          e.currentTarget.disabled = true;
+          try {
+            await api.post('/usuarios', {
+              nome: corpo.querySelector('[data-nome]').value.trim(),
+              email: corpo.querySelector('[data-email]').value.trim(),
+              senha,
+              papel: corpo.querySelector('[data-papel]').value,
+            });
+            aviso('Usuário criado.');
+            fechar(true);
+          } catch (erro) {
+            avisarErro(erro);
+            e.currentTarget.disabled = false;
+          }
+        });
+      },
+    });
+    if (criou) carregar();
+  }
+
+  async function editar(usuario) {
+    const eu = sessao.get().usuario?.id === usuario.id;
+
+    const salvou = await modal({
+      titulo: `Editar ${usuario.nome}`,
+      largura: '450px',
+      render: () => html`
+        <label class="campo">
+          <span>Nome</span>
+          <input data-nome value="${usuario.nome}" maxlength="120" />
+        </label>
+        <label class="campo">
+          <span>Papel</span>
+          <select data-papel ${cru(eu ? 'disabled' : '')}>
+            <option value="VENDEDOR" ${cru(usuario.papel === 'VENDEDOR' ? 'selected' : '')}>Vendedor</option>
+            <option value="ADMIN" ${cru(usuario.papel === 'ADMIN' ? 'selected' : '')}>Dono</option>
+          </select>
+          ${eu ? cru('<span class="campo__dica">você não pode mudar o próprio papel</span>') : ''}
+        </label>
+        <label class="marcador">
+          <input type="checkbox" data-ativo ${cru(usuario.ativo ? 'checked' : '')} ${cru(eu ? 'disabled' : '')} />
+          <span>Pode entrar no sistema</span>
+        </label>
+        ${eu ? cru('<p class="campo__dica">você não pode desativar a própria conta</p>') : ''}
+        <div class="modal__acoes">
+          <button class="botao botao--neutro" data-nao>Cancelar</button>
+          <button class="botao" data-ok>Salvar</button>
+        </div>
+      `,
+      aoAbrir: (corpo, fechar) => {
+        corpo.querySelector('[data-nao]').addEventListener('click', () => fechar(false));
+        corpo.querySelector('[data-ok]').addEventListener('click', async (e) => {
+          e.currentTarget.disabled = true;
+          const dados = { nome: corpo.querySelector('[data-nome]').value.trim() };
+          if (!eu) {
+            dados.papel = corpo.querySelector('[data-papel]').value;
+            dados.ativo = corpo.querySelector('[data-ativo]').checked;
+          }
+          try {
+            await api.patch(`/usuarios/${usuario.id}`, dados);
+            aviso('Usuário atualizado.');
+            fechar(true);
+          } catch (erro) {
+            avisarErro(erro);
+            e.currentTarget.disabled = false;
+          }
+        });
+      },
+    });
+    if (salvou) carregar();
+  }
+
+  async function redefinirSenha(usuario) {
+    const nova = await modal({
+      titulo: `Nova senha para ${usuario.nome}`,
+      largura: '430px',
+      render: () => html`
+        <p class="texto-suave">
+          A pessoa entra com a nova senha na próxima vez. As sessões abertas dela caem.
+        </p>
+        <label class="campo">
+          <span>Nova senha <span class="campo__dica">mínimo de 8 caracteres</span></span>
+          <input data-senha type="password" autocomplete="new-password" />
+        </label>
+        <div class="modal__acoes">
+          <button class="botao botao--neutro" data-nao>Cancelar</button>
+          <button class="botao" data-ok>Redefinir</button>
+        </div>
+      `,
+      aoAbrir: (corpo, fechar) => {
+        corpo.querySelector('[data-nao]').addEventListener('click', () => fechar(undefined));
+        corpo.querySelector('[data-ok]').addEventListener('click', () => fechar(corpo.querySelector('[data-senha]').value));
+      },
+    });
+    if (!nova) return;
+    if (nova.length < 8) return aviso('A senha precisa de pelo menos 8 caracteres.', 'alerta');
+
+    const certeza = await confirmar({
+      titulo: 'Confirmar troca de senha',
+      mensagem: `${usuario.nome} vai precisar entrar de novo com a senha nova.`,
+      confirmarTexto: 'Redefinir',
+    });
+    if (!certeza) return;
+
+    try {
+      await api.patch(`/usuarios/${usuario.id}/senha`, { nova_senha: nova });
+      aviso('Senha redefinida.');
+    } catch (erro) {
+      avisarErro(erro);
+    }
+  }
+
+  raiz.querySelector('[data-novo]').addEventListener('click', novo);
+  raiz.querySelector('[data-q]').addEventListener(
+    'input',
+    comAtraso((e) => {
+      filtros.q = e.target.value.trim();
+      filtros.page = 1;
+      carregar();
+    }),
+  );
+  ['papel', 'ativo'].forEach((nome) =>
+    raiz.querySelector(`[data-${nome}]`).addEventListener('change', (e) => {
+      filtros[nome] = e.target.value;
+      filtros.page = 1;
+      carregar();
+    }),
+  );
+
+  await carregar();
+}

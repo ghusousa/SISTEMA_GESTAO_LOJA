@@ -229,6 +229,27 @@ repositório — administrador sem senha. Falhar no boot é a única forma de is
 
 ---
 
+**ADR-11 — Sistema web em JavaScript puro, servido pela própria API.**
+A loja roda numa VPS pequena e quem mantém o sistema é uma pessoa. Um segundo processo Node no
+servidor (Next.js, Vite em SSR) seria mais um serviço para subir, vigiar e atualizar em troca de
+nada que este sistema precise: não há SEO a fazer, não há time de frontend, e a tela mais crítica
+(o PDV) é a que menos muda. Então `web/` é HTML + CSS + módulos ES lidos do disco, montados pelo
+FastAPI em `/app` com `StaticFiles(html=True)`. Deploy é copiar arquivos; desenvolvimento é
+recarregar a página. O custo aceito é escrever à mão o que um framework daria pronto — roteador por
+hash, escape de HTML, um store de 30 linhas — e está tudo em `web/js/`, com menos de 300 linhas por
+tela. Em produção o Nginx pode servir a mesma pasta direto, e nada quebra se não servir.
+
+**ADR-12 — No navegador, refresh em cookie `httpOnly`; no app, no cofre do sistema.**
+O celular tem `expo-secure-store`; o navegador não tem equivalente, e refresh token em
+`localStorage` é lido por qualquer script que entre na página. Então `POST /auth/login` grava o
+refresh num cookie `httpOnly`, `SameSite=strict`, com `path=/api/v1/auth` e `Secure` fora de
+desenvolvimento — o JavaScript da página nunca o enxerga. O access token vive só em memória, e
+recarregar a página reergue a sessão chamando `/auth/refresh` sem corpo nenhum: o cookie viaja
+sozinho. `/auth/refresh` e `/auth/logout` aceitam o token **no corpo ou no cookie**, então o app do
+celular continua funcionando sem alteração. Um 401 dispara uma renovação compartilhada por todas as
+requisições em voo (mutex): duas rotações simultâneas com o mesmo refresh seriam lidas como token
+roubado e derrubariam a família inteira.
+
 ## 4. Contratos de API
 
 Prefixo `/api/v1`. Auth: `Authorization: Bearer <access_token>`.
@@ -337,7 +358,41 @@ carrinho e invalida `['saldos']`, `['vendas']`, `['caixa']`.
 
 ---
 
-## 6. Testes
+## 6. Sistema web
+
+`web/`, servido em `/app` pela própria API (ADR-11). Sem build: `index.html`, `css/estilo.css` e
+módulos ES em `js/`.
+
+| Arquivo | Papel |
+|---|---|
+| `js/api.js` | `fetch` com access token em memória, renovação sob mutex no 401, erros já traduzidos em `{code, message}` |
+| `js/router.js` | Roteador por hash (`#/produtos/12`), views carregadas sob demanda com `import()`, guarda por papel |
+| `js/store.js` | Sessão e carrinho do PDV — um objeto e quem quiser ser avisado se inscreve |
+| `js/ui.js` | Template `html` com escape automático, modal, avisos, paginação, formatação pt-BR, campo de dinheiro |
+| `js/dinheiro.js` | Espelho de `mobile/src/lib/money.ts`. Centavos inteiros; **se mudar lá, mude aqui** |
+| `js/leitor.js` | Captura do leitor USB (teclado) e foco permanente no campo de leitura |
+| `js/grafico.js` | Barras e proporções em SVG escrito à mão — sem biblioteca, sem CDN |
+| `js/views/*.js` | Uma tela por arquivo, `export function render(raiz, params, consulta)` |
+
+**Leitor USB.** O leitor de balcão é um teclado: digita os dígitos em rajada e manda Enter. Não há
+API de navegador para isso. `leitor.js` ouve o `keydown` do documento inteiro em fase de captura,
+acumula caracteres alfanuméricos, reinicia o buffer depois de 300 ms de silêncio (leitor não pausa;
+dedo humano pausa) e dispara no Enter. Campos de texto comuns são ignorados — senão digitar o nome
+de um produto viraria bipada —, com exceção do campo marcado `data-leitor`, que é onde o código
+também pode ser digitado à mão. O PDV trava o mesmo código por 1,2 s (bipe duplo não vende duas
+peças); entrada e inventário usam 250 ms, porque ali bipar dez vezes a mesma etiqueta são dez peças.
+
+**Segurança da tela.** Nada vindo do servidor entra em `innerHTML` sem escape: o template `html`
+escapa tudo que for interpolado, e HTML confiável só entra marcado com `cru()`. O template devolve
+um valor já marcado, para que um template dentro do outro continue sendo HTML.
+
+**Papéis.** O menu esconde o que o vendedor não usa e o roteador barra a rota por papel, mas isso é
+conveniência: quem garante é a API (ADR-5). Abrir `#/relatorios` na mão mostra "Área restrita", e
+mesmo que mostrasse a tela, a API responderia 403.
+
+---
+
+## 7. Testes
 
 `pytest` contra Postgres real (`loja_test`), migrations aplicadas, transação por teste.
 Cenários obrigatórios: rotação de refresh e detecção de reuso · vendedor não recebe `preco_custo` e

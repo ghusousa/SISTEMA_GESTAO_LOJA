@@ -1,11 +1,17 @@
 # Sistema de Gestão de Loja de Roupas
 
-Estoque, PDV, despesas e resultado do mês — pelo celular, bipando o código de barras da peça.
+Estoque, PDV, despesas e resultado do mês — bipando o código de barras da peça, no celular ou no
+computador do balcão.
 
 - **`api/`** — FastAPI + PostgreSQL. É onde ficam as regras e a verdade dos dados.
+- **`web/`** — sistema web completo, servido pela própria API. JavaScript puro, sem build.
 - **`mobile/`** — app React Native (Expo) para Android e iOS.
 - **`docs/`** — [SPEC.md](docs/SPEC.md) (o que o sistema faz) e [ARQUITETURA.md](docs/ARQUITETURA.md)
   (modelo de dados, contratos e as decisões, com o porquê de cada uma).
+
+**As duas telas fazem o mesmo.** O app existe para andar pela loja com a câmera; o sistema web
+existe para o balcão, com leitor USB e teclado — que é onde se digita preço, se lança despesa e se
+fecha o caixa. Mesma API, mesmas regras, mesmos papéis.
 
 ## O que dá para fazer
 
@@ -17,6 +23,7 @@ Estoque, PDV, despesas e resultado do mês — pelo celular, bipando o código d
 | **Controlar despesas** | Aluguel, energia, fornecedores. Contas fixas se repetem para o mês seguinte sem duplicar. |
 | **Saber o resultado** | Faturamento, custo das peças vendidas, lucro bruto, despesas e o que sobrou. Mais vendidos, curva de vendas por dia e o que precisa repor. |
 | **Fechar o caixa** | Conferir o esperado por forma de pagamento contra o contado. A diferença aparece — não é escondida. |
+| **Trabalhar sem celular** | O sistema web faz tudo pelo computador: o leitor USB de balcão digita o código como se fosse teclado, e o PDV entende. `F2` cobra, `F4` desconta, `Esc` limpa. |
 
 **Dois papéis.** O **administrador** vê tudo. O **vendedor** cadastra, consulta estoque e vende, mas
 nunca recebe preço de custo, lucro ou despesas — a filtragem acontece no servidor, não escondendo
@@ -53,7 +60,15 @@ A documentação interativa fica em `http://localhost:8000/docs`.
 > O primeiro administrador vem pelo CLI porque criar usuário exige um admin autenticado — sem
 > isso, uma instalação nova não teria por onde entrar.
 
-### 3. App
+### 3. Sistema web
+
+Não precisa de nada: a API já entrega a pasta `web/`. Com o servidor no ar, abra
+**<http://localhost:8000/app/>** (a raiz `/` também redireciona para lá).
+
+Não há build, bundler nem processo Node — são HTML, CSS e módulos ES lidos direto do disco.
+Editar um arquivo e recarregar a página é o ciclo de desenvolvimento inteiro.
+
+### 4. App
 
 ```bash
 cd mobile
@@ -73,7 +88,7 @@ O celular e o computador precisam estar na mesma rede — `localhost`, para o ce
 ## Testes
 
 ```bash
-cd api    && .venv/bin/pytest -q            # 96 testes contra Postgres real
+cd api    && .venv/bin/pytest -q            # 106 testes contra Postgres real
 cd mobile && npm run typecheck && npm test  # TypeScript + camada de dinheiro
 ```
 
@@ -103,3 +118,11 @@ O guia de produção (VPS Ubuntu com systemd, Nginx, SSL, backup e atualização
   negativo. Se um número parecer errado, o extrato tem a resposta.
 - **Venda e entrada são idempotentes** por `client_uuid`: reenviar depois de um timeout não
   duplica nada. Vale para o app e para qualquer integração futura.
+- **Leitor USB é teclado.** O leitor de balcão não tem driver nem API: ele digita os dígitos em
+  rajada e aperta Enter. O PDV web ouve o teclado inteiro, então funciona mesmo com o foco perdido
+  em um botão — e o mesmo campo aceita o código digitado à mão quando a etiqueta está rasgada.
+- **Campo de dinheiro que já vem preenchido é sugestão.** O primeiro dígito depois de focar
+  recomeça o número; do segundo em diante, empurra pela direita (estilo caixa registradora).
+  Sem isso, digitar `200` sobre um campo mostrando `179,70` daria R$ 17.970,00.
+- **No navegador o refresh token fica em cookie `httpOnly`**, nunca em `localStorage`: o access
+  token vive só na memória da página e a sessão volta sozinha ao recarregar.

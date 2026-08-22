@@ -125,7 +125,7 @@ server {
 
     client_max_body_size 6M;          # fotos de produto
     gzip on;
-    gzip_types application/json;
+    gzip_types application/json application/javascript text/css text/html;
 
     location / {
         proxy_pass http://unix:/run/loja/api.sock;
@@ -141,8 +141,20 @@ server {
         expires 30d;
         access_log off;
     }
+
+    # Sistema web direto do disco. A API já serve esta mesma pasta em /app — isto só tira
+    # do Python o trabalho de entregar arquivo estático. Se remover este bloco, continua
+    # funcionando pelo proxy.
+    location /app/ {
+        alias /opt/loja/web/;
+        try_files $uri $uri/ /app/index.html;   # rota por hash: tudo cai no index
+        expires 1h;
+    }
 }
 ```
+
+Depois de subir, abra `https://api.sualoja.com.br/app/` — é o endereço que fica no atalho da área
+de trabalho do computador do balcão.
 
 ```bash
 sudo ln -s /etc/nginx/sites-available/loja /etc/nginx/sites-enabled/
@@ -193,6 +205,11 @@ git pull --ff-only
 cd api
 .venv/bin/pip install -e . --quiet
 .venv/bin/alembic upgrade head
+
+# Sistema web: são arquivos estáticos, o git pull acima já os atualizou. Este rsync só
+# existe se o Nginx estiver servindo /app de uma pasta separada (bloco location /app/).
+rsync -a --delete /opt/loja/app/web/ /opt/loja/web/
+
 sudo systemctl restart loja-api
 sleep 2
 curl -fsS http://localhost/health > /dev/null && echo "no ar" || (echo "FALHOU"; exit 1)
@@ -201,6 +218,27 @@ curl -fsS http://localhost/health > /dev/null && echo "no ar" || (echo "FALHOU";
 Faça um backup antes de qualquer atualização que traga migration.
 
 ---
+
+## Parte 1b — O computador do balcão
+
+Não há instalação: o sistema web é uma página. O que precisa de cuidado é o resto do balcão.
+
+1. **Atalho na área de trabalho** apontando para `https://api.sualoja.com.br/app/`. No Chrome,
+   *Mais ferramentas → Criar atalho → Abrir como janela* deixa o PDV em tela cheia, sem barra de
+   endereço para alguém digitar errado no meio do atendimento.
+2. **Leitor de código de barras USB.** Compre um leitor "keyboard wedge" (é o padrão; os de balcão
+   quase todos são). Ele não precisa de driver: liga na USB e digita. Duas conferências antes de
+   entregar para a equipe:
+   - **Sufixo Enter ligado.** É o que fecha a leitura. Quase todo leitor vem assim de fábrica; se
+     não vier, o manual traz um código de barras de configuração para ativar.
+   - **Layout do teclado.** Se o leitor estiver configurado como teclado americano e o Windows como
+     ABNT2 (ou vice-versa), os dígitos ainda saem certos, mas conferir uma etiqueta com letras
+     evita surpresa. Teste no Bloco de Notas antes de testar no sistema.
+3. **Teste de aceitação, com a loja aberta ainda não.** Abra o PDV, **não clique em nada** e bipe
+   uma etiqueta: a peça tem que entrar sozinha. Esse é o comportamento que a equipe vai usar o dia
+   inteiro — se só funcionar clicando no campo antes, algo está errado.
+4. **Impressora de recibo**, se houver: o botão "Imprimir recibo" abre uma janela e chama a
+   impressão do navegador. Deixe a impressora como padrão do sistema. Não é documento fiscal.
 
 ## Parte 2 — App nas lojas
 

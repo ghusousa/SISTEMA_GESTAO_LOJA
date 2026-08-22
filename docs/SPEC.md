@@ -14,7 +14,13 @@ despesas e enxergar quanto sobrou no fim do mês.
 | **VENDEDOR** (funcionário) | Cadastra produtos, consulta estoque, registra entradas, vende, cancela a própria venda do dia | Preço de custo, lucro/margem, despesas, relatórios, usuários |
 
 A restrição do vendedor é aplicada **no servidor** (schemas de resposta distintos + checagem de papel
-no service). O app apenas oculta as abas.
+no service). O app e o sistema web apenas ocultam as abas.
+
+**Onde se usa.** O mesmo sistema em duas telas, com as mesmas regras e os mesmos papéis:
+o **app** (Android/iOS) para andar pela loja bipando com a câmera, e o **sistema web** no
+computador do balcão, onde o leitor USB digita o código como teclado e o teclado resolve
+o que é chato no celular — digitar preço, lançar despesa, fechar o caixa, editar a grade.
+A loja consegue operar 100% sem celular.
 
 ## Entidades centrais
 
