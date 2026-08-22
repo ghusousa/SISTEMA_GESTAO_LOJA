@@ -12,7 +12,7 @@ Invariantes garantidas aqui:
   nunca estoque negativo.
 """
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -58,24 +58,45 @@ async def aplicar_movimento(
     if delta == 0:
         raise ValueError("Movimentação com quantidade zero não faz sentido.")
 
-    stmt = (
-        insert(StockBalance)
-        .values(variant_id=variante_id, quantity=delta)
-        .on_conflict_do_update(
-            index_elements=[StockBalance.variant_id],
-            set_={"quantity": StockBalance.quantity + delta},
-        )
+    # UPDATE primeiro, INSERT só se a peça ainda não tem linha de saldo. Um
+    # `INSERT ... ON CONFLICT DO UPDATE` não serve aqui: o Postgres avalia o CHECK do
+    # valor inserido ANTES de detectar o conflito, então toda saída (delta negativo) de
+    # uma peça já existente estouraria o CHECK sem nem chegar no UPDATE.
+    atualizar = (
+        update(StockBalance)
+        .where(StockBalance.variant_id == variante_id)
+        .values(quantity=StockBalance.quantity + delta)
         .returning(StockBalance.quantity)
     )
     try:
-        saldo_apos = int((await session.execute(stmt)).scalar_one())
+        saldo_apos = (await session.execute(atualizar)).scalar_one_or_none()
+
+        if saldo_apos is None:
+            if delta < 0:
+                raise EstoqueInsuficiente(
+                    "Esta peça não tem estoque.",
+                    {"variante_id": variante_id, "quantidade_solicitada": abs(delta)},
+                )
+            # ON CONFLICT cobre a corrida entre duas primeiras entradas da mesma peça.
+            criar = (
+                insert(StockBalance)
+                .values(variant_id=variante_id, quantity=delta)
+                .on_conflict_do_update(
+                    index_elements=[StockBalance.variant_id],
+                    set_={"quantity": StockBalance.quantity + delta},
+                )
+                .returning(StockBalance.quantity)
+            )
+            saldo_apos = (await session.execute(criar)).scalar_one()
     except IntegrityError as exc:
-        # Só o CHECK quantity >= 0 pode falhar aqui: a corrida foi perdida.
+        # Só o CHECK quantity >= 0 chega aqui: a corrida pelo último item foi perdida.
         await session.rollback()
         raise EstoqueInsuficiente(
             "Estoque insuficiente para concluir a operação.",
             {"variante_id": variante_id, "quantidade_solicitada": abs(delta)},
         ) from exc
+
+    saldo_apos = int(saldo_apos)
 
     movimento = StockMovement(
         variant_id=variante_id,
