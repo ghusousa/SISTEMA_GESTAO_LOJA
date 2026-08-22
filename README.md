@@ -231,25 +231,10 @@ O passo a passo para gerar o `.apk` (na nuvem da Expo, sem instalar Android Stud
 nos celulares está em
 [docs/DEPLOY.md](docs/DEPLOY.md#parte-2--app-no-celular-dos-vendedores).
 
-**Testar antes de gerar o instalador.** Dá para abrir o app no celular pelo **Expo Go**, sem
-compilar nada:
-
-```bash
-cd mobile
-./testar.sh                # Windows: testar.bat (ou clique duas vezes)
-```
-
-Ele instala o que falta, sobe o servidor de desenvolvimento e mostra um QR. Instale o **Expo Go**
-no celular (Play Store ou App Store), deixe-o na mesma rede Wi-Fi do computador e aponte a câmera
-para o QR. O app abre e pede o endereço do servidor — o mesmo que você usa no navegador.
-
-Se o QR não carregar, o Wi-Fi pode estar isolando os aparelhos ou o firewall bloqueando a porta
-8081. Nesse caso: `./testar.sh --tunel` (Windows: `testar.bat --tunel`), que funciona em qualquer
-rede, só mais devagar.
-
-> O celular precisa alcançar **duas** coisas diferentes: o computador que roda o Expo (por isso a
-> mesma Wi-Fi) e o servidor da loja (que pode estar em qualquer lugar, inclusive numa VPS). Com o
-> instalador `.apk` pronto, só a segunda continua valendo.
+**Para testar no seu celular agora, sem gerar instalador**, veja
+[Rodar o app no celular](#rodar-o-app-no-celular) mais abaixo. Para gerar o `.apk` e distribuir
+para a equipe, o passo a passo está em
+[docs/DEPLOY.md](docs/DEPLOY.md#parte-2--app-no-celular-dos-vendedores).
 
 ### Rede que inspeciona HTTPS
 
@@ -276,6 +261,132 @@ cp .env.example .env                       # ajuste DATABASE_URL e JWT_SECRET
 
 O sistema web fica em <http://localhost:8000/app/> e a documentação da API em `/docs`.
 O app do celular: `cd mobile && npm install && npm start`.
+
+## Rodar o app no celular
+
+Dá para abrir o app no seu celular em poucos minutos, **sem compilar nada**, usando o **Expo Go**.
+É assim que se testa antes de gerar o instalador para a equipe.
+
+### 1. Node.js no computador
+
+O Expo roda sobre o Node. É o único programa a mais que você precisa — o Docker não serve para
+isto.
+
+| Sistema | Comando |
+|---|---|
+| **Windows** | `winget install -e --id OpenJS.NodeJS.LTS` |
+| **Ubuntu / Linux** | `sudo apt install -y nodejs npm` |
+| **Mac** | `brew install node` |
+
+Ou baixe a versão **LTS** em <https://nodejs.org>.
+
+> **No Windows, depois de instalar, feche o terminal e abra outro.** A janela que já estava
+> aberta não enxerga o que acabou de entrar no PATH — e o erro seguinte seria "node não é
+> reconhecido", que não explica isso.
+
+Confira com `node -v`. Precisa ser 20 ou mais novo.
+
+### 2. Subir o app
+
+**Windows** (PowerShell, na pasta do projeto):
+
+```powershell
+cd mobile
+.\testar.bat
+```
+
+**Linux / Mac**:
+
+```bash
+cd mobile
+./testar.sh
+```
+
+Na primeira vez ele instala as dependências — demora alguns minutos e não pede nada. Depois sobe
+o servidor de desenvolvimento e o terminal fica assim:
+
+```
+› Metro waiting on exp://192.168.0.15:8081
+› Scan the QR code above with Expo Go (Android) or the Camera app (iOS)
+
+  ▄▄▄▄▄▄▄  ▄▀ ▀▄▄  ▄▄▄▄▄▄▄
+  █ ▄▄▄ █ ▀█▄ ▄▀█  █ ▄▄▄ █      (o QR de verdade aparece aqui)
+  █ ███ █ █▀▄▀ ▄▀  █ ███ █
+  ▀▀▀▀▀▀▀ ▀ ▀ ▀ ▀  ▀▀▀▀▀▀▀
+
+› Press a │ open Android    › Press r │ reload app
+› Press w │ open web        › Press ? │ show all commands
+```
+
+**Deixe essa janela aberta** — é ela que serve o app. Fechar derruba o celular.
+
+### 3. No celular
+
+1. Instale o **Expo Go** (Play Store ou App Store).
+2. Deixe o celular na **mesma rede Wi-Fi** do computador.
+3. **Android:** abra o Expo Go e toque em *Scan QR code*.
+   **iPhone:** abra a câmera normal e aponte para o QR.
+4. O app abre e pede o **endereço do servidor da loja** — o mesmo que você digita no navegador do
+   balcão. Pode colar o endereço inteiro; o app aproveita só a parte que interessa.
+5. Entre com um login de **vendedor**, criado em *Usuários* no sistema web.
+
+### Teclas úteis enquanto roda
+
+Com a janela do terminal em foco:
+
+| Tecla | O que faz |
+|---|---|
+| `r` | recarrega o app no celular |
+| `a` | abre num emulador Android conectado |
+| `w` | abre no navegador do computador (útil para ver rápido) |
+| `j` | abre o depurador |
+| `?` | lista todos os comandos |
+| `Ctrl+C` | encerra |
+
+### Quando o QR não carrega
+
+Quase sempre é rede, não o app.
+
+**Firewall do Windows** bloqueando a porta 8081. No PowerShell **como administrador**, uma vez:
+
+```powershell
+New-NetFirewallRule -DisplayName "Expo" -Direction Inbound `
+    -LocalPort 8081 -Protocol TCP -Action Allow -Profile Private
+```
+
+**Wi-Fi que isola os aparelhos** (comum em prédio, hotel e rede de visitante): use o túnel, que
+funciona em qualquer rede, só mais devagar.
+
+```powershell
+.\testar.bat --tunel
+```
+```bash
+./testar.sh --tunel
+```
+
+**Erro de versão do SDK no Expo Go:** a versão da loja é mais antiga que a do projeto. Atualize o
+Expo Go; se persistir, é preciso alinhar o SDK do projeto.
+
+**Bundle travado ou comportamento estranho** depois de mexer em dependências: limpe o cache com
+`npx expo start -c`.
+
+> **Duas conexões diferentes, e é aqui que a maioria se perde.** O celular precisa alcançar o
+> **computador que roda o Expo** — por isso a mesma Wi-Fi — e também o **servidor da loja**, que
+> pode estar em qualquer lugar, inclusive numa VPS pública, e funciona até no 4G. Quando o `.apk`
+> estiver pronto, só a segunda continua valendo: o vendedor usa de onde quiser.
+
+### Outros comandos do app
+
+Todos dentro de `mobile/`:
+
+```bash
+npm start                  # o mesmo que testar.sh, sem as explicações
+npm run android            # abre direto num emulador/aparelho Android conectado
+npm run web                # abre no navegador do computador
+npm run typecheck          # confere os tipos (tsc --noEmit)
+npm test                   # testes da camada de dinheiro
+npm run bundle             # empacota; pega erro de import que o typecheck não vê
+```
 
 ## Desinstalar
 
