@@ -39,3 +39,6 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Export web (gerado por npm run web:build)
+dist-web/

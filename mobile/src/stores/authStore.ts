@@ -61,7 +61,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   async restaurar() {
-    const salvo = await lerUsuarioSalvo();
+    // Nada aqui pode estourar: uma falha na leitura da sessão travaria o app na abertura,
+    // e a loja ficaria sem PDV por causa de um token ilegível.
+    const salvo = await lerUsuarioSalvo().catch(() => null);
     if (!salvo) {
       set({ usuario: null, carregando: false });
       return;

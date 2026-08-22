@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { codigoDoErro, mensagemDoErro } from '@/api/client';
 import { catalogo } from '@/api/endpoints';
+import { CodigoManual } from '@/components/CodigoManual';
 import { Scanner } from '@/components/Scanner';
 import { Botao } from '@/components/ui';
 import { useConexao } from '@/components/BannerConexao';
@@ -119,11 +120,15 @@ export default function Pdv() {
           <Text style={s.carrinhoTitulo}>
             {pecas === 0 ? 'Carrinho vazio' : `${pecas} ${pecas === 1 ? 'peça' : 'peças'}`}
           </Text>
-          {itens.length > 0 && (
-            <Pressable onPress={confirmarLimpeza} hitSlop={12}>
-              <Text style={s.limpar}>Limpar</Text>
-            </Pressable>
-          )}
+          <View style={s.carrinhoAcoes}>
+            {/* Etiqueta rasgada ou desbotada é rotina: sem esta saída a peça não vende. */}
+            <CodigoManual aoConfirmar={(codigo) => void aoLerCodigo(codigo)} />
+            {itens.length > 0 && (
+              <Pressable onPress={confirmarLimpeza} hitSlop={12}>
+                <Text style={s.limpar}>Limpar</Text>
+              </Pressable>
+            )}
+          </View>
         </View>
 
         {itens.length === 0 ? (
@@ -224,6 +229,7 @@ const s = StyleSheet.create({
     paddingBottom: espaco.sm,
   },
   carrinhoTitulo: { fontSize: fonte.base, fontWeight: '700', color: cores.textoSuave },
+  carrinhoAcoes: { flexDirection: 'row', alignItems: 'center', gap: espaco.lg },
   limpar: { color: cores.perigo, fontWeight: '700', fontSize: fonte.pequena },
 
   vazio: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: espaco.sm },

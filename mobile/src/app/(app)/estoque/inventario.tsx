@@ -14,6 +14,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 
 import { codigoDoErro, mensagemDoErro } from '@/api/client';
 import { catalogo, estoque } from '@/api/endpoints';
+import { CodigoManual } from '@/components/CodigoManual';
 import { Scanner } from '@/components/Scanner';
 import { Botao, Etiqueta } from '@/components/ui';
 import { invalidarAposMovimentoEstoque } from '@/lib/queryClient';
@@ -110,6 +111,10 @@ export default function Inventario() {
         />
       </View>
 
+      <View style={s.barraCodigo}>
+        <CodigoManual aoConfirmar={(codigo) => void aoLer(codigo)} />
+      </View>
+
       {!!aviso && (
         <Pressable onPress={() => setAviso(null)} style={s.aviso}>
           <Text style={s.avisoTexto}>{aviso}</Text>
@@ -188,6 +193,11 @@ const s = StyleSheet.create({
   tela: { flex: 1, backgroundColor: cores.fundo },
   cameraArea: { height: '32%', backgroundColor: '#000' },
 
+  barraCodigo: {
+    paddingHorizontal: espaco.lg,
+    paddingTop: espaco.sm,
+    alignItems: 'flex-start',
+  },
   aviso: { backgroundColor: cores.perigoFraco, padding: espaco.md },
   avisoTexto: { color: cores.perigo, fontSize: fonte.pequena, fontWeight: '600' },
 

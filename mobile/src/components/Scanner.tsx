@@ -118,8 +118,8 @@ export function Scanner({
       <View style={s.aviso}>
         <Text style={s.avisoTitulo}>A câmera precisa de permissão</Text>
         <Text style={s.avisoTexto}>
-          É com ela que o app lê o código de barras das peças. Sem isso, dá para buscar
-          digitando o código.
+          É com ela que o app lê o código de barras das peças. Sem a câmera, use
+          "Digitar código" para buscar a peça pelo número da etiqueta.
         </Text>
         <Botao titulo="Permitir câmera" onPress={() => void pedirPermissao()} />
       </View>
@@ -178,10 +178,15 @@ const s = StyleSheet.create({
   lanternaAtiva: { backgroundColor: cores.alerta },
   lanternaTexto: { color: '#FFF', fontWeight: '700', fontSize: fonte.pequena },
 
+  // `flex: 1` em vez de altura fixa: a moldura ocupa o que sobra entre a lanterna e a
+  // dica. Com `aspectRatio` ela estourava a área da câmera em tela curta e empurrava o
+  // rodapé — junto com o botão de digitar o código — para fora do alcance do dedo.
   moldura: {
     alignSelf: 'center',
     width: '82%',
-    aspectRatio: 1.6,
+    flex: 1,
+    maxHeight: 240,
+    marginVertical: espaco.sm,
     borderWidth: 3,
     borderColor: 'rgba(255,255,255,0.9)',
     borderRadius: raio.lg,

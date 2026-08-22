@@ -11,6 +11,7 @@ import { Alert, Modal, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { codigoDoErro, mensagemDoErro } from '@/api/client';
 import { catalogo, estoque } from '@/api/endpoints';
 import type { VarianteLookup } from '@/api/tipos';
+import { CodigoManual } from '@/components/CodigoManual';
 import { Scanner, type ScannerRef } from '@/components/Scanner';
 import { Botao, Campo, Cartao } from '@/components/ui';
 import { invalidarAposMovimentoEstoque } from '@/lib/queryClient';
@@ -80,6 +81,7 @@ export default function AjusteEstoque() {
           rodape={
             <>
               {!!erro && <Text style={s.erroScanner}>{erro}</Text>}
+              <CodigoManual aoConfirmar={(codigo) => void buscar(codigo)} />
               <Botao titulo="Voltar" variante="secundario" onPress={() => router.back()} />
             </>
           }
