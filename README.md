@@ -34,14 +34,25 @@ números na tela.
 **Um comando.** O instalador pergunta o endereço, os dados do dono e a senha do banco, sobe tudo
 em Docker e termina com o sistema **já rodando**.
 
-### O único pré-requisito: Docker
+### Pré-requisito: nenhum
 
-| | |
+O instalador cuida de tudo, inclusive de instalar o **Docker** se ele não estiver na máquina —
+ele pergunta antes, e você responde Enter. Python, PostgreSQL e Node não são instalados: rodam
+dentro dos containers e somem junto com eles.
+
+| Sistema | O que o instalador faz |
 |---|---|
-| **Ubuntu / Linux** | `curl -fsSL https://get.docker.com \| sudo sh`<br>depois `sudo usermod -aG docker $USER` e saia/entre na sessão |
-| **Windows / Mac** | [Docker Desktop](https://www.docker.com/products/docker-desktop) — instale e espere o ícone ficar verde |
+| **Ubuntu / Linux** | Instala o Docker pelo script oficial (`get.docker.com`), liga o serviço e põe seu usuário no grupo `docker`. Precisa de `sudo`. |
+| **Windows** | Instala o Docker Desktop pelo `winget`, abre e espera ficar pronto. O Windows pede permissão de administrador — aceite. |
+| **Mac** | Instala o Docker Desktop pelo Homebrew, se você tiver o `brew`. |
 
-Python, PostgreSQL e Node **não** precisam ser instalados: tudo roda dentro dos containers.
+Se preferir instalar o Docker por conta própria, use `--sem-docker` (Windows: `-SemDocker`) e o
+instalador só verifica, sem mexer no sistema.
+
+> **No Linux, uma observação.** Depois de instalar o Docker, seu usuário entra no grupo `docker`,
+> mas isso só passa a valer no próximo login. Para a instalação não parar no meio, o instalador
+> usa `sudo docker` pelo resto da execução e avisa. Saia e entre na sessão para dispensar o
+> `sudo` no dia a dia.
 
 ### Instalar
 
@@ -58,7 +69,7 @@ cd SISTEMA_GESTAO_LOJA
 Baixe o projeto — pelo [ZIP do GitHub](https://github.com/ghusousa/SISTEMA_GESTAO_LOJA/archive/refs/heads/main.zip)
 (clique com o botão direito → *Extrair tudo*) ou com `git clone`. Depois, dentro da pasta:
 
-**Clique duas vezes em `instalar.bat`.** Só isso.
+**Clique duas vezes em `instalar.bat`.** Só isso — se faltar o Docker, ele instala.
 
 Se preferir o terminal, abra o PowerShell na pasta e rode:
 
@@ -144,7 +155,7 @@ ajusta o resto sozinho — inclusive o cookie de sessão, que em HTTP não pode 
 ```
 
 Outras opções: `--senha-banco`, `--fuso`, `--porta-http`, `--porta-https`, `--forcar`
-(refaz o `.env` do zero). Rodar o instalador de novo é seguro: sem `--forcar`, ele reaproveita a
+(refaz o `.env` do zero) e `--sem-docker` (não instala o Docker automaticamente). Rodar o instalador de novo é seguro: sem `--forcar`, ele reaproveita a
 configuração e só religa o que estiver parado.
 
 ### O dia a dia

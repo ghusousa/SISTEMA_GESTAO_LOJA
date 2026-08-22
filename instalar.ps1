@@ -11,6 +11,10 @@
 
 .EXAMPLE
     .\instalar.ps1 -Dominio loja.exemplo.com.br -Email dona@loja.com -Nome "Dona Maria" -Senha "..." -Sim
+
+.NOTES
+    Se o Docker Desktop não estiver instalado, o instalador instala pelo winget.
+    Use -SemDocker para impedir.
 #>
 [CmdletBinding()]
 param(
@@ -23,7 +27,8 @@ param(
     [string]$PortaHttp = "80",
     [string]$PortaHttps = "443",
     [switch]$Sim,
-    [switch]$Forcar
+    [switch]$Forcar,
+    [switch]$SemDocker
 )
 
 $ErrorActionPreference = "Stop"
@@ -113,18 +118,147 @@ function EnderecoLocal($d) {
 
 # ---------------------------------------------------------------- verificações
 
+# Depois de instalar, o docker.exe existe mas o PATH desta janela ainda é o de antes.
+# Sem recarregar, o instalador diria que o Docker não foi instalado - logo depois de
+# instalá-lo com sucesso.
+# $env:OS existe no Windows tanto no PowerShell 5.1 quanto no 7 ($IsWindows só existe no 7).
+$EhWindows = ($env:OS -eq 'Windows_NT')
+
+function AtualizarPath {
+    if (-not $EhWindows) { return }
+    # Os dois podem vir nulos; juntar sem filtrar produziria um PATH começando com ";" e
+    # apagaria o que já estava lá - o instalador passaria a não achar nem o docker nem nada.
+    $partes = @(
+        [System.Environment]::GetEnvironmentVariable("Path", "Machine")
+        [System.Environment]::GetEnvironmentVariable("Path", "User")
+    ) | Where-Object { $_ }
+    if ($partes) { $env:Path = ($partes -join ";") }
+
+    if ($env:ProgramFiles) {
+        $extra = Join-Path $env:ProgramFiles "Docker\Docker\resources\bin"
+        if ((Test-Path $extra) -and ($env:Path -notlike "*$extra*")) { $env:Path += ";$extra" }
+    }
+}
+
+function DockerResponde {
+    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { return $false }
+    return ((RodarDocker info) -eq 0)
+}
+
+function EsperarDocker([int]$segundos = 180) {
+    $fim = (Get-Date).AddSeconds($segundos)
+    while ((Get-Date) -lt $fim) {
+        AtualizarPath
+        if (DockerResponde) { return $true }
+        Start-Sleep -Seconds 5
+    }
+    return $false
+}
+
+function AbrirDockerDesktop {
+    if (-not $env:ProgramFiles) { return $false }
+    $exe = Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"
+    if (Test-Path $exe) {
+        Start-Process -FilePath $exe | Out-Null
+        return $true
+    }
+    return $false
+}
+
+function InstalarDockerDesktop {
+    # winget vem de fábrica no Windows 11 e no 10 atualizado (via App Installer).
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) { return 2 }
+
+    Write-Host "  → instalando o Docker Desktop pelo winget…"
+    Write-Host "     (o Windows vai pedir permissão de administrador; aceite)"
+    Write-Host "     isto demora vários minutos e baixa cerca de 500 MB"
+
+    $anterior = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    winget install --exact --id Docker.DockerDesktop `
+        --accept-package-agreements --accept-source-agreements --disable-interactivity
+    $codigo = $LASTEXITCODE
+    $ErrorActionPreference = $anterior
+
+    # winget devolve códigos próprios; alguns significam "já está instalado" ou
+    # "precisa reiniciar", que não são falha de verdade.
+    if ($codigo -eq 0) { return 0 }
+    if ($codigo -eq -1978335189) { return 0 }   # já instalado
+    if ($codigo -eq -1978335212) { return 2 }   # pacote não encontrado
+    if ($codigo -eq 3010) { return 4 }          # instalado, exige reiniciar
+    return 1
+}
+
+function GarantirDocker {
+    AtualizarPath
+    if (DockerResponde) { Certo "Docker pronto"; return }
+
+    # Instalado mas parado - o caso mais comum no Windows, porque o Docker Desktop não
+    # sobe junto com a sessão a menos que esteja configurado para isso.
+    if (Get-Command docker -ErrorAction SilentlyContinue) {
+        Write-Host "  → o Docker está instalado mas não respondeu; abrindo o Docker Desktop…"
+        if (AbrirDockerDesktop) {
+            Write-Host "     ele leva de um a três minutos para ficar pronto"
+            if (EsperarDocker 240) { Certo "Docker respondendo"; return }
+        }
+        Morrer ("O Docker está instalado mas não responde.`n" +
+                "      Abra o Docker Desktop pelo menu Iniciar, espere o ícone da baleia`n" +
+                "      ficar verde no canto da tela, e rode .\instalar.bat de novo.")
+    }
+
+    Alerta "O Docker não está instalado - é o único programa de que este sistema precisa."
+
+    if ($SemDocker) {
+        Morrer ("Instalação automática desligada por -SemDocker.`n" +
+                "      Baixe em https://www.docker.com/products/docker-desktop e rode de novo.")
+    }
+
+    if (-not $Sim) {
+        Write-Host "  Ele é gratuito e é o que faz o banco, a API e o site rodarem isolados."
+        $r = Read-Host "  Instalar o Docker Desktop agora? [S/n]"
+        if ($r -match '^[Nn]') { Morrer "instalação cancelada. Nada foi mexido no sistema." }
+    }
+
+    Titulo "Instalando o Docker Desktop"
+    $resultado = InstalarDockerDesktop
+
+    switch ($resultado) {
+        0 { }
+        2 { Morrer ("Não achei o winget para instalar automaticamente.`n" +
+                    "      Baixe o Docker Desktop em https://www.docker.com/products/docker-desktop,`n" +
+                    "      instale, abra, espere o ícone ficar verde e rode .\instalar.bat de novo.") }
+        4 { Morrer ("O Docker Desktop foi instalado, mas o Windows precisa REINICIAR para`n" +
+                    "      terminar (ele liga o WSL2, que o Docker usa por baixo).`n" +
+                    "      Reinicie o computador, abra o Docker Desktop, espere ficar verde`n" +
+                    "      e rode .\instalar.bat de novo.") }
+        default { Morrer ("A instalação do Docker Desktop falhou (código $resultado).`n" +
+                          "      Baixe e instale à mão: https://www.docker.com/products/docker-desktop") }
+    }
+
+    AtualizarPath
+    Write-Host "  → abrindo o Docker Desktop…"
+    AbrirDockerDesktop | Out-Null
+    Write-Host "     a primeira abertura leva alguns minutos"
+
+    if (-not (EsperarDocker 300)) {
+        Morrer ("O Docker foi instalado, mas não respondeu a tempo.`n" +
+                "      Isso costuma significar uma de duas coisas:`n" +
+                "        1. o Windows precisa reiniciar para ligar o WSL2 - reinicie e tente de novo;`n" +
+                "        2. o Docker Desktop ainda está subindo - espere o ícone da baleia ficar`n" +
+                "           verde no canto da tela.`n" +
+                "      Depois rode .\instalar.bat de novo: ele continua de onde parou.")
+    }
+
+    Certo "Docker instalado e no ar"
+}
+
 Titulo "Sistema de Gestão da Loja - instalação"
 
-if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
-    Morrer "O Docker Desktop não está instalado.`n      Baixe em: https://www.docker.com/products/docker-desktop"
-}
+GarantirDocker
+
 if ((RodarDocker compose version) -ne 0) {
     Morrer "O Docker está sem o plugin 'compose'. Atualize o Docker Desktop."
 }
-if ((RodarDocker info) -ne 0) {
-    Morrer "O Docker está instalado mas não responde.`n      Abra o Docker Desktop e espere o ícone ficar verde."
-}
-Certo "Docker pronto"
 
 # ---------------------------------------------------------------- perguntas
 
@@ -201,6 +335,20 @@ if (EnderecoLocal $Dominio) {
 }
 
 if (-not $reaproveitado) {
+    # -Forcar redesenha a CONFIGURAÇÃO, mas a senha do banco tem uma peculiaridade: o
+    # Postgres só a grava quando cria os dados pela primeira vez. Com o volume já existente,
+    # sortear uma senha nova trancaria a API fora do próprio banco.
+    if ((Test-Path .env) -and ((RodarDocker volume inspect loja_dados-do-banco) -eq 0)) {
+        $linhaSenha = Select-String -Path .env -Pattern '^SENHA_BANCO=(.*)$' | Select-Object -First 1
+        if ($linhaSenha) {
+            $senhaExistente = $linhaSenha.Matches[0].Groups[1].Value
+            if ($senhaExistente -and ($senhaExistente -ne $SenhaBanco)) {
+                $SenhaBanco = $senhaExistente
+                Alerta "o banco já existe: mantendo a senha atual dele"
+            }
+        }
+    }
+
     if (-not $Nome)  { Morrer "faltou -Nome" }
     if (-not (EmailValido $Email)) { Morrer "e-mail inválido ou ausente (-Email)" }
     if ($Senha.Length -lt 8) { Morrer "a senha do dono precisa de ao menos 8 caracteres (-Senha)" }
@@ -256,7 +404,32 @@ if ($codigoUp -ne 0) {
     Morrer "não foi possível subir os containers. O motivo está logo acima."
 }
 
+function SincronizarSenhaBanco {
+    # O Postgres grava POSTGRES_PASSWORD só quando CRIA os dados. Num banco que já existia -
+    # depois de um -Forcar, de um .env refeito, ou de restaurar um backup noutra máquina - a
+    # senha do arquivo e a do banco divergem, e a API fica batendo numa porta que não abre.
+    #
+    # A imagem oficial do Postgres confia em conexões pelo socket local dentro do container,
+    # então dá para alinhar as duas sem saber a senha antiga: o .env passa a ser a verdade.
+    #
+    # A senha entra no SQL sem escape, e isso é seguro porque SenhaBancoValida já a
+    # restringiu a letras, números, hífen e sublinhado.
+    $anterior = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    foreach ($i in 1..30) {
+        docker compose exec -T db pg_isready -U loja -d loja 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) { break }
+        Start-Sleep -Seconds 2
+    }
+    docker compose exec -T db psql -q -v ON_ERROR_STOP=1 -U loja -d loja `
+        -c "ALTER USER loja PASSWORD '$SenhaBanco';" 2>&1 | Out-Null
+    $ErrorActionPreference = $anterior
+}
+
 Titulo "Esperando o sistema responder"
+
+SincronizarSenhaBanco
+
 $pronto = $false
 $anteriorEAP = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'

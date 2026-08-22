@@ -9,6 +9,8 @@
 #   ./instalar.sh --dominio loja.exemplo.com.br --email dona@loja.com \
 #                 --nome "Dona Maria" --senha "..." --senha-banco "..." --sim
 #
+# Se o Docker não estiver instalado, o instalador instala. Use --sem-docker para impedir.
+#
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -27,7 +29,7 @@ morrer()  { printf '\n%s✗ %s%s\n\n' "$VERMELHO" "$1" "$NORMAL" >&2; exit 1; }
 
 DOMINIO=""; EMAIL=""; NOME=""; SENHA=""; SENHA_BANCO=""
 FUSO="America/Sao_Paulo"; PORTA_HTTP="80"; PORTA_HTTPS="443"
-INTERATIVO=1; FORCAR=0
+INTERATIVO=1; FORCAR=0; INSTALAR_DOCKER=1
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -41,6 +43,7 @@ while [ $# -gt 0 ]; do
         --porta-https)  PORTA_HTTPS="${2:-}"; shift 2 ;;
         --sim|-y)       INTERATIVO=0; shift ;;
         --forcar)       FORCAR=1; shift ;;
+        --sem-docker)   INSTALAR_DOCKER=0; shift ;;
         -h|--help)      sed -n '3,11p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *)              morrer "opção desconhecida: $1" ;;
     esac
@@ -132,25 +135,206 @@ definir_endereco() {
     fi
 }
 
+# ------------------------------------------------------- instalação do Docker
+
+# Todo comando de Docker passa por aqui.
+#
+# O motivo é o grupo `docker`: numa instalação recém-feita, o usuário é adicionado ao grupo,
+# mas essa participação SÓ VALE na próxima sessão. Se o instalador insistisse em `docker`
+# puro, ele instalaria o Docker com sucesso e morreria na linha seguinte com "permission
+# denied" — obrigando a pessoa a sair, entrar e recomeçar. Com o prefixo, a mesma execução
+# vai até o fim.
+PREFIXO_DOCKER=""
+dk() {
+    if [ -n "$PREFIXO_DOCKER" ]; then sudo docker "$@"; else docker "$@"; fi
+}
+
+como_root() {
+    if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo "$@"; fi
+}
+
+tem_root() { [ "$(id -u)" -eq 0 ] || command -v sudo >/dev/null 2>&1; }
+
+# Descobre se o Docker responde e se é preciso sudo. Devolve 1 se não responder de jeito
+# nenhum.
+definir_prefixo_docker() {
+    if docker info >/dev/null 2>&1; then PREFIXO_DOCKER=""; return 0; fi
+    if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null \
+       && sudo docker info >/dev/null 2>&1; then
+        PREFIXO_DOCKER="sudo"; return 0
+    fi
+    if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1 && sudo docker info >/dev/null 2>&1; then
+        PREFIXO_DOCKER="sudo"; return 0
+    fi
+    return 1
+}
+
+esperar_docker() {  # esperar_docker <segundos>
+    local limite="${1:-60}" i=0
+    while [ "$i" -lt "$limite" ]; do
+        definir_prefixo_docker && return 0
+        i=$((i + 2)); sleep 2
+    done
+    return 1
+}
+
+instalar_docker_linux() {
+    tem_root || return 3
+
+    local baixador=""
+    if command -v curl >/dev/null 2>&1; then baixador="curl"
+    elif command -v wget >/dev/null 2>&1; then baixador="wget"
+    else
+        passo "instalando o curl primeiro…"
+        if command -v apt-get >/dev/null 2>&1; then
+            como_root apt-get update -qq >/dev/null 2>&1 || true
+            como_root apt-get install -y -qq curl >/dev/null 2>&1 || true
+        elif command -v dnf >/dev/null 2>&1; then
+            como_root dnf install -y -q curl >/dev/null 2>&1 || true
+        fi
+        command -v curl >/dev/null 2>&1 && baixador="curl" || return 2
+    fi
+
+    passo "baixando o instalador oficial do Docker (get.docker.com)…"
+    local script; script="$(mktemp)"
+    if [ "$baixador" = "curl" ]; then
+        curl -fsSL https://get.docker.com -o "$script" || { rm -f "$script"; return 1; }
+    else
+        wget -qO "$script" https://get.docker.com || { rm -f "$script"; return 1; }
+    fi
+
+    passo "instalando — isto demora alguns minutos e não pede nada…"
+    # O script oficial cobre Ubuntu, Debian, Fedora, CentOS e derivados, e já traz o plugin
+    # `docker compose` v2 junto. É a rota que a própria Docker recomenda para servidor.
+    if ! como_root sh "$script" >/dev/null 2>&1; then
+        rm -f "$script"; return 1
+    fi
+    rm -f "$script"
+
+    passo "ligando o serviço…"
+    if command -v systemctl >/dev/null 2>&1; then
+        como_root systemctl enable --now docker >/dev/null 2>&1 || true
+    else
+        # Sem systemd (WSL antigo, alguns containers): tenta o init tradicional.
+        como_root service docker start >/dev/null 2>&1 || true
+    fi
+
+    if [ "$(id -u)" -ne 0 ]; then
+        # Vale a partir do próximo login. Nesta execução, quem resolve é o PREFIXO_DOCKER.
+        como_root usermod -aG docker "$(id -un)" >/dev/null 2>&1 || true
+    fi
+    return 0
+}
+
+instalar_docker_mac() {
+    command -v brew >/dev/null 2>&1 || return 2
+    passo "instalando o Docker Desktop pelo Homebrew…"
+    brew install --cask docker >/dev/null 2>&1 || return 1
+    passo "abrindo o Docker Desktop…"
+    open -a Docker >/dev/null 2>&1 || true
+    return 0
+}
+
+garantir_docker() {
+    if command -v docker >/dev/null 2>&1 && definir_prefixo_docker; then
+        certo "Docker pronto ($(dk --version 2>/dev/null | cut -d, -f1))"
+        return 0
+    fi
+
+    # Instalado mas parado: tentar ligar antes de sair instalando de novo.
+    if command -v docker >/dev/null 2>&1; then
+        passo "o Docker está instalado mas não respondeu; tentando ligar…"
+        if command -v systemctl >/dev/null 2>&1 && tem_root; then
+            como_root systemctl start docker >/dev/null 2>&1 || true
+        elif [ "$(uname -s)" = "Darwin" ]; then
+            open -a Docker >/dev/null 2>&1 || true
+        fi
+        if esperar_docker 60; then
+            certo "Docker respondendo"
+            return 0
+        fi
+        morrer \
+"O Docker está instalado mas não responde.
+  Linux:  sudo systemctl start docker
+  Mac:    abra o Docker Desktop e espere o ícone ficar verde.
+  Se acabou de instalar, pode ser preciso sair e entrar na sessão de novo."
+    fi
+
+    # Não está instalado.
+    alerta "O Docker não está instalado — é o único programa de que este sistema precisa."
+
+    if [ "$INSTALAR_DOCKER" -eq 0 ]; then
+        morrer \
+"Instalação automática desligada por --sem-docker.
+  Instale à mão e rode de novo:
+      Linux:  curl -fsSL https://get.docker.com | sudo sh
+      Mac:    brew install --cask docker"
+    fi
+
+    if [ "$INTERATIVO" -eq 1 ]; then
+        echo "  Ele é gratuito e é o que faz o banco, a API e o site rodarem isolados."
+        local resposta=""
+        read -r -p "  Instalar o Docker agora? [S/n]: " resposta || true
+        case "${resposta:-s}" in
+            [Nn]*) morrer "instalação cancelada. Nada foi mexido no sistema." ;;
+        esac
+    fi
+
+    titulo "Instalando o Docker"
+    local resultado=0
+    case "$(uname -s)" in
+        Linux)  instalar_docker_linux || resultado=$? ;;
+        Darwin) instalar_docker_mac   || resultado=$? ;;
+        *)      resultado=9 ;;
+    esac
+
+    case "$resultado" in
+        0) ;;
+        2) morrer \
+"Não encontrei como baixar o Docker nesta máquina.
+  Instale à mão e rode ./instalar.sh de novo:
+      Linux:  curl -fsSL https://get.docker.com | sudo sh
+      Mac:    instale o Homebrew (https://brew.sh) ou baixe o Docker Desktop." ;;
+        3) morrer \
+"Instalar o Docker precisa de permissão de administrador, e este usuário não tem sudo.
+  Peça a quem administra o servidor para rodar:
+      curl -fsSL https://get.docker.com | sudo sh
+      sudo usermod -aG docker $(id -un)
+  Depois entre de novo na sessão e rode ./instalar.sh." ;;
+        9) morrer \
+"Não sei instalar o Docker automaticamente em $(uname -s).
+  Baixe em https://www.docker.com/products/docker-desktop e rode ./instalar.sh de novo." ;;
+        *) morrer \
+"A instalação do Docker falhou.
+  Tente à mão para ver a mensagem completa:
+      curl -fsSL https://get.docker.com | sudo sh" ;;
+    esac
+
+    passo "esperando o Docker subir…"
+    if ! esperar_docker 120; then
+        morrer \
+"O Docker foi instalado, mas não respondeu a tempo.
+  No Mac, abra o Docker Desktop e espere o ícone ficar verde.
+  No Linux, tente: sudo systemctl start docker
+  Depois rode ./instalar.sh de novo — ele continua de onde parou."
+    fi
+
+    certo "Docker instalado e no ar ($(dk --version 2>/dev/null | cut -d, -f1))"
+    [ -n "$PREFIXO_DOCKER" ] && \
+        alerta "usando 'sudo docker' nesta execução; saia e entre na sessão para dispensar o sudo"
+    return 0
+}
+
 # ------------------------------------------------------------------ verificações
 
 titulo "Sistema de Gestão da Loja — instalação"
 
-command -v docker >/dev/null 2>&1 || morrer \
-"O Docker não está instalado.
-  Ubuntu:  curl -fsSL https://get.docker.com | sudo sh
-  Windows/Mac: https://www.docker.com/products/docker-desktop"
+garantir_docker
 
-docker compose version >/dev/null 2>&1 || morrer \
+dk compose version >/dev/null 2>&1 || morrer \
 "O Docker está instalado, mas sem o plugin 'compose'.
-  Ubuntu: sudo apt install docker-compose-plugin"
-
-docker info >/dev/null 2>&1 || morrer \
-"O Docker está instalado mas não responde.
-  Ubuntu: sudo systemctl start docker  (e 'sudo usermod -aG docker \$USER' + relogar)
-  Windows/Mac: abra o Docker Desktop e espere ficar verde."
-
-certo "Docker pronto ($(docker --version | cut -d, -f1))"
+  Ubuntu: sudo apt install docker-compose-plugin
+  Ou reinstale pelo caminho oficial: curl -fsSL https://get.docker.com | sudo sh"
 
 # ------------------------------------------------------------------ perguntas
 
@@ -223,6 +407,19 @@ if [ "$REAPROVEITADO" -eq 0 ]; then
 
     definir_endereco
 
+    # --forcar redesenha a CONFIGURAÇÃO (domínio, portas, fuso), mas a senha do banco tem uma
+    # peculiaridade: o Postgres só a grava quando cria os dados pela primeira vez. Se o volume
+    # já existe e o instalador sorteasse uma senha nova, a API ficaria trancada fora do próprio
+    # banco — "esperando o banco responder" para sempre, com o banco saudável ao lado.
+    if [ -f .env ] && dk volume inspect loja_dados-do-banco >/dev/null 2>&1; then
+        senha_existente="$(grep -E '^SENHA_BANCO=' .env | cut -d= -f2- || true)"
+        if [ -n "$senha_existente" ] && [ "$senha_existente" != "$SENHA_BANCO" ]; then
+            SENHA_BANCO="$senha_existente"
+            alerta "o banco já existe: mantendo a senha atual dele"
+            alerta "(para trocá-la de verdade é preciso apagar os dados com ./desinstalar.sh)"
+        fi
+    fi
+
     titulo "Gravando a configuração"
     umask 077                      # o .env carrega senhas: só o dono do arquivo lê.
     cat > .env <<FIM
@@ -245,6 +442,26 @@ fi
 
 # ------------------------------------------------------------------ subir
 
+sincronizar_senha_banco() {
+    # O Postgres grava POSTGRES_PASSWORD só quando CRIA os dados. Num banco que já existia —
+    # depois de um --forcar, de um .env refeito, ou de restaurar um backup noutra máquina — a
+    # senha do arquivo e a do banco divergem, e a API fica batendo numa porta que não abre,
+    # repetindo "esperando o banco responder" com o banco saudável ao lado.
+    #
+    # A imagem oficial do Postgres confia em conexões pelo socket local dentro do container,
+    # então dá para alinhar as duas sem saber a senha antiga: o .env passa a ser a verdade.
+    #
+    # A senha entra no SQL sem escape, e isso é seguro porque `senha_banco_valida` já a
+    # restringiu a letras, números, hífen e sublinhado.
+    local i=0
+    while [ "$i" -lt 30 ]; do
+        dk compose exec -T db pg_isready -U loja -d loja >/dev/null 2>&1 && break
+        i=$((i + 1)); sleep 2
+    done
+    dk compose exec -T db psql -q -v ON_ERROR_STOP=1 -U loja -d loja \
+        -c "ALTER USER loja PASSWORD '$SENHA_BANCO';" >/dev/null 2>&1 || true
+}
+
 titulo "Construindo e subindo os containers"
 passo "isto demora alguns minutos na primeira vez"
 
@@ -252,7 +469,7 @@ passo "isto demora alguns minutos na primeira vez"
 # falhar queremos ler o motivo para traduzir a mensagem do Docker em algo acionável.
 registro_up="$(mktemp)"
 set +e
-docker compose up -d --build 2>&1 | tee "$registro_up"
+dk compose up -d --build 2>&1 | tee "$registro_up"
 codigo_up=${PIPESTATUS[0]}
 set -e
 
@@ -273,13 +490,16 @@ fi
 rm -f "$registro_up"
 
 titulo "Esperando o sistema responder"
+
+sincronizar_senha_banco
+
 pronto=0
 for _ in $(seq 1 90); do
     # `ps -q` + `inspect` em vez de `ps --format`: o template Go não é aceito por versões
     # antigas do Compose, e ali o instalador acusaria a API de doente sem ela estar.
-    id_api="$(docker compose ps -q api 2>/dev/null | head -1)"
+    id_api="$(dk compose ps -q api 2>/dev/null | head -1)"
     if [ -n "$id_api" ]; then
-        estado="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$id_api" 2>/dev/null)"
+        estado="$(dk inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$id_api" 2>/dev/null)"
         [ "$estado" = "healthy" ] && { pronto=1; break; }
     fi
     sleep 2
@@ -287,7 +507,7 @@ done
 [ "$pronto" -eq 1 ] || {
     printf '\n%s' "$VERMELHO"
     echo "A API não ficou saudável. Os últimos registros:"; printf '%s\n' "$NORMAL"
-    docker compose logs --tail 40 api
+    dk compose logs --tail 40 api
     morrer "instalação interrompida. Corrija o erro acima e rode ./instalar.sh de novo."
 }
 certo "API no ar, banco migrado"
@@ -311,23 +531,25 @@ fi
 if [ -n "$EMAIL" ] && [ -n "$SENHA" ]; then
     # `create-admin` não duplica: se a conta já existe e está ativa, ele avisa e sai bem.
     titulo "Criando a conta do dono"
-    if docker compose exec -T api python -m app.cli create-admin \
+    if dk compose exec -T api python -m app.cli create-admin \
             --nome "$NOME" --email "$EMAIL" --senha "$SENHA"; then
         certo "conta pronta"
     else
         alerta "não foi possível criar a conta (veja a mensagem acima)."
         alerta "o sistema está no ar; crie a conta depois com:"
-        echo "    docker compose exec api python -m app.cli create-admin --nome ... --email ... --senha ..."
+        echo "    ${PREFIXO_DOCKER:+sudo }docker compose exec api python -m app.cli create-admin --nome ... --email ... --senha ..."
     fi
 elif [ "$REAPROVEITADO" -eq 1 ]; then
     alerta "Configuração reaproveitada — a conta do dono não foi mexida."
     alerta "Para criar uma conta nova de administrador:"
-    echo "    docker compose exec api python -m app.cli create-admin --nome ... --email ... --senha ..."
+    echo "    ${PREFIXO_DOCKER:+sudo }docker compose exec api python -m app.cli create-admin --nome ... --email ... --senha ..."
 fi
 
 # ------------------------------------------------------------------ fim
 
 titulo "Pronto — o sistema está rodando"
+CMD_DOCKER="docker"
+[ -n "$PREFIXO_DOCKER" ] && CMD_DOCKER="sudo docker"
 cat <<FIM
 
   Endereço:  ${FORTE}${URL_FINAL}/app/${NORMAL}
@@ -335,10 +557,10 @@ cat <<FIM
   Entrar:    ${EMAIL:-<a conta já existente>}
 
   Comandos do dia a dia:
-    docker compose ps               ver se está no ar
-    docker compose logs -f api      acompanhar o que acontece
-    docker compose restart          reiniciar
-    docker compose down             desligar (os dados ficam guardados)
+    ${CMD_DOCKER} compose ps               ver se está no ar
+    ${CMD_DOCKER} compose logs -f api      acompanhar o que acontece
+    ${CMD_DOCKER} compose restart          reiniciar
+    ${CMD_DOCKER} compose down             desligar (os dados ficam guardados)
     ./instalar.sh                   religar depois de um down
 
 FIM
