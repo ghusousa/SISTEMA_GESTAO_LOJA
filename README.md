@@ -364,8 +364,22 @@ funciona em qualquer rede, só mais devagar.
 ./testar.sh --tunel
 ```
 
-**Erro de versão do SDK no Expo Go:** a versão da loja é mais antiga que a do projeto. Atualize o
-Expo Go; se persistir, é preciso alinhar o SDK do projeto.
+**"Project is incompatible with this version of Expo Go"** — o Expo Go instalado é mais antigo que
+o projeto. Este projeto usa o **SDK 57**, que pede **Expo Go 57.x**. Atualize o app pela loja:
+
+- **iPhone:** App Store → toque na sua foto no canto → role até *Atualizações disponíveis* → Expo Go.
+  Se não aparecer, apague o Expo Go e instale de novo — o iOS às vezes segura a atualização.
+- **Android:** Play Store → seu perfil → *Gerenciar apps* → Expo Go → Atualizar.
+
+Para conferir a versão instalada, abra o Expo Go: ela aparece na tela inicial, embaixo.
+
+**Node.js desatualizado.** O Expo avisa `Node.js (vX) is outdated and unsupported`. O SDK 57 exige
+**Node 20.19.4 ou mais novo**. No Windows: `winget upgrade OpenJS.NodeJS.LTS` (e feche o terminal
+antes de tentar de novo). Confira com `node -v`.
+
+**Ele pede login da Expo.** Não precisa de conta: escolha **"Proceed anonymously"** com as setas e
+Enter. Se você escolher *Log in* e apertar Enter num campo vazio, o Expo quebra com
+`AssertionError` — nesse caso é só encerrar com `Ctrl+C` e subir de novo.
 
 **Bundle travado ou comportamento estranho** depois de mexer em dependências: limpe o cache com
 `npx expo start -c`.
