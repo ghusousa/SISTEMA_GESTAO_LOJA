@@ -9,6 +9,7 @@ NÃO use em produção: cria usuários com senha conhecida.
 """
 
 import asyncio
+import os
 import random
 import subprocess
 import sys
@@ -22,10 +23,18 @@ import httpx
 # Rodando como script, o Python coloca scripts/ no path — e não a raiz da API, onde `app` vive.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-BASE = "http://127.0.0.1:8000/api/v1"
-TZ_LOJA = ZoneInfo("America/Sao_Paulo")
+BASE = os.environ.get("SEED_API_URL", "http://127.0.0.1:8000").rstrip("/") + "/api/v1"
+TZ_LOJA = ZoneInfo(os.environ.get("TIMEZONE_LOJA", "America/Sao_Paulo"))
 
-ADMIN = {"nome": "Dona Maria", "email": "dona@loja.com", "senha": "senha12345"}
+# O admin é configurável porque numa instalação de verdade a conta do dono já existe com o
+# e-mail e a senha que a pessoa escolheu — e o `create-admin` abaixo, encontrando o e-mail
+# ocupado, não troca a senha. Sem estas variáveis, o seed logava com a senha de exemplo e
+# levava 401 em toda instalação que não fosse a de demonstração.
+ADMIN = {
+    "nome": os.environ.get("SEED_ADMIN_NOME", "Dona Maria"),
+    "email": os.environ.get("SEED_ADMIN_EMAIL", "dona@loja.com"),
+    "senha": os.environ.get("SEED_ADMIN_SENHA", "senha12345"),
+}
 VENDEDORA = {
     "nome": "Ana Vendedora",
     "email": "ana@loja.com",
@@ -115,6 +124,15 @@ def main() -> int:
         entrar = c.post(
             "/auth/login", json={"email": ADMIN["email"], "senha": ADMIN["senha"]}
         )
+        if entrar.status_code == 401:
+            print(
+                f"Não consegui entrar como {ADMIN['email']}.\n"
+                "Se a conta de administrador desta instalação é outra, informe-a:\n"
+                "  SEED_ADMIN_EMAIL=voce@sualoja.com SEED_ADMIN_SENHA='sua-senha' "
+                "python scripts/seed_demo.py",
+                file=sys.stderr,
+            )
+            return 1
         entrar.raise_for_status()
         admin = {"Authorization": f"Bearer {entrar.json()['access_token']}"}
 

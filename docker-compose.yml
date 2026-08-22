@@ -1,0 +1,78 @@
+# A loja inteira em três containers. O arquivo .env ao lado é escrito pelo instalador.
+#
+#   ./instalar.sh          instala e sobe
+#   docker compose ps      ver o que está no ar
+#   docker compose logs -f ver o que está acontecendo
+#   docker compose down    desligar (os dados ficam)
+
+name: loja
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: loja
+      POSTGRES_PASSWORD: ${SENHA_BANCO:?rode ./instalar.sh para gerar o .env}
+      POSTGRES_DB: loja
+    volumes:
+      - dados-do-banco:/var/lib/postgresql/data
+    healthcheck:
+      # A API só sobe depois que isto passa — senão a migration bate na porta fechada.
+      test: ["CMD-SHELL", "pg_isready -U loja -d loja"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: loja-api:local
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://loja:${SENHA_BANCO}@db:5432/loja
+      JWT_SECRET: ${JWT_SECRET:?rode ./instalar.sh para gerar o .env}
+      AMBIENTE: ${AMBIENTE:-producao}
+      DEBUG: "false"
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      TIMEZONE_LOJA: ${TIMEZONE_LOJA:-America/Sao_Paulo}
+      MEDIA_DIR: /srv/media
+    volumes:
+      - fotos-de-produto:/srv/media
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:8000/health')
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "${PORTA_HTTP:-80}:80"
+      - "${PORTA_HTTPS:-443}:443"
+    environment:
+      ENDERECO: ${ENDERECO_PROXY:-:80}
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Guardam o certificado: sem isso o Let's Encrypt seria pedido de novo a cada
+      # reinício, e ele tem limite de emissões por semana.
+      - certificados:/data
+      - config-do-proxy:/config
+
+volumes:
+  dados-do-banco:
+  fotos-de-produto:
+  certificados:
+  config-do-proxy:

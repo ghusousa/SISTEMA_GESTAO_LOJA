@@ -4,6 +4,11 @@ Como colocar a API no ar num VPS Ubuntu e o app na mão da equipe.
 
 ---
 
+> **O caminho curto é o instalador.** Num servidor com Docker, `./instalar.sh` sobe banco, API,
+> sistema web e HTTPS automático em um comando — veja [Instalação](../README.md#instalação). Este
+> capítulo é a instalação **manual**, sem Docker: útil quando o servidor já tem um PostgreSQL
+> compartilhado, quando a hospedagem não permite Docker, ou para entender o que o instalador faz.
+
 ## Parte 1 — API em VPS Ubuntu
 
 Serve qualquer VPS pequeno (1 vCPU e 2 GB dão conta de uma loja). O caminho abaixo assume Ubuntu

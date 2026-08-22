@@ -24,7 +24,13 @@ contratos, ADRs). Mudou algo? Atualize o doc no mesmo commit.**
 .venv/bin/python -m app.cli create-admin --nome "Dona" --email x@y.com --senha ...
 .venv/bin/python scripts/e2e.py                           # cenário de um dia de loja (API no ar)
 
-# Web: nada a instalar. Com a API no ar, abra http://localhost:8000/app/
+# Stack completa em Docker (raiz do repo)
+./instalar.sh                                             # instala e sobe tudo
+docker compose logs -f api                                # acompanhar
+docker compose exec api python -m app.cli create-admin ...  # novo admin
+./desinstalar.sh --manter-dados                           # desligar preservando o banco
+
+# Web: nada a instalar. Com a API no ar, abra http://localhost:8000/app/ (ou / no Docker)
 
 # Mobile (dentro de mobile/)
 npm start            # Expo

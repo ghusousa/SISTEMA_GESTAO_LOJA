@@ -31,356 +31,230 @@ números na tela.
 
 ## Instalação
 
-O sistema tem três partes, e só a primeira é obrigatória:
+**Um comando.** O instalador pergunta o endereço, os dados do dono e a senha do banco, sobe tudo
+em Docker e termina com o sistema **já rodando**.
 
-| Parte | Precisa de | Obrigatória? |
-|---|---|---|
-| **API + banco** | Python 3.11+ e PostgreSQL 16 | **Sim** — é onde ficam os dados e as regras |
-| **Sistema web** | nada, a API já entrega | vem junto |
-| **App do celular** | Node 20+ | só se for usar o celular |
+### O único pré-requisito: Docker
 
-Instalando a API, o sistema web já funciona — dá para operar a loja inteira sem instalar mais nada.
+| | |
+|---|---|
+| **Ubuntu / Linux** | `curl -fsSL https://get.docker.com \| sudo sh`<br>depois `sudo usermod -aG docker $USER` e saia/entre na sessão |
+| **Windows / Mac** | [Docker Desktop](https://www.docker.com/products/docker-desktop) — instale e espere o ícone ficar verde |
 
-> **Para colocar num servidor de verdade** (domínio, HTTPS, backup automático, iniciar sozinho),
-> o guia é o [docs/DEPLOY.md](docs/DEPLOY.md). O que está aqui é para instalar na máquina da loja
-> ou na sua, para usar ou para desenvolver.
+Python, PostgreSQL e Node **não** precisam ser instalados: tudo roda dentro dos containers.
 
----
+### Instalar
 
-### Ubuntu
-
-Escrito para o **24.04 LTS**, que já traz as versões certas. No 22.04 há dois ajustes, marcados
-abaixo — ele vem com Python 3.10 e PostgreSQL 14, e o sistema precisa de 3.11+ e 16.
-
-**1. Programas de base**
-
-```bash
-sudo apt update
-sudo apt install -y python3 python3-venv python3-pip postgresql git
-```
-
-<details>
-<summary><strong>No Ubuntu 22.04</strong>, use estes comandos no lugar do de cima</summary>
-
-```bash
-# Python 3.11 (o 22.04 traz 3.10, e o projeto exige 3.11+)
-sudo add-apt-repository -y ppa:deadsnakes/ppa
-sudo apt update && sudo apt install -y python3.11 python3.11-venv git
-
-# PostgreSQL 16 pelo repositório oficial (o 22.04 traz o 14).
-# A chave vem primeiro, e a linha do repositório aponta para ela com signed-by —
-# sem isso o apt recusa o repositório por não saber quem o assinou.
-curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
-    | sudo gpg --dearmor -o /usr/share/keyrings/pgdg.gpg
-sudo sh -c 'echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] \
-    https://apt.postgresql.org/pub/repos/apt jammy-pgdg main" \
-    > /etc/apt/sources.list.d/pgdg.list'
-sudo apt update && sudo apt install -y postgresql-16
-```
-
-Depois, troque `python3` por `python3.11` no passo 3.
-</details>
-
-**2. Banco de dados**
-
-```bash
-sudo systemctl enable --now postgresql
-
-# Senha do usuário administrador do Postgres e os dois bancos.
-sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
-sudo -u postgres createdb loja
-sudo -u postgres createdb loja_test        # só para rodar os testes
-```
-
-Troque `'postgres'` por uma senha sua se a máquina for compartilhada — e use a mesma no passo 3.
-
-**3. O sistema**
+**Ubuntu / Linux / Mac**
 
 ```bash
 git clone https://github.com/ghusousa/SISTEMA_GESTAO_LOJA.git
-cd SISTEMA_GESTAO_LOJA/api
-
-python3 -m venv .venv                      # cria o ambiente isolado do Python
-.venv/bin/pip install -e ".[dev]"
-
-cp .env.example .env
+cd SISTEMA_GESTAO_LOJA
+./instalar.sh
 ```
 
-Abra o `.env` e ajuste duas linhas:
-
-```ini
-DATABASE_URL=postgresql+asyncpg://postgres:SUA_SENHA@localhost:5432/loja
-JWT_SECRET=cole-aqui-a-chave-gerada-abaixo
-```
-
-A chave sai deste comando (é ela que assina os logins — não use a de exemplo):
-
-```bash
-.venv/bin/python -c "import secrets; print(secrets.token_urlsafe(48))"
-```
-
-**4. Criar o schema e o primeiro administrador**
-
-```bash
-.venv/bin/alembic upgrade head
-
-.venv/bin/python -m app.cli create-admin \
-    --nome "Dona Maria" --email dona@loja.com --senha "uma-senha-boa"
-```
-
-**5. Ligar**
-
-```bash
-.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
-```
-
-Abra **<http://localhost:8000/app/>** e entre com o e-mail e a senha do passo 4.
-Para parar, `Ctrl+C` na janela do terminal.
-
----
-
-### Windows 10 / 11
-
-**1. Programas de base**
-
-Baixe e instale, nesta ordem:
-
-1. **Python 3.12** — <https://www.python.org/downloads/windows/>
-   Na primeira tela do instalador, **marque "Add python.exe to PATH"**. Sem isso, nada do resto
-   funciona no terminal, e corrigir depois dá mais trabalho do que marcar agora.
-2. **PostgreSQL 16** — <https://www.postgresql.org/download/windows/>
-   O instalador pede uma senha para o usuário `postgres`. **Anote**: ela vai no `.env` daqui a
-   pouco. Pode deixar a porta 5432 e desmarcar o Stack Builder no fim.
-3. **Git** — <https://git-scm.com/download/win> (tudo padrão serve).
-
-**2. Banco de dados**
-
-Abra o **PowerShell** e crie os dois bancos (ele pede a senha do passo 1.2 em cada linha):
+**Windows** (PowerShell)
 
 ```powershell
-& "$env:ProgramFiles\PostgreSQL\16\bin\createdb.exe" -U postgres loja
-& "$env:ProgramFiles\PostgreSQL\16\bin\createdb.exe" -U postgres loja_test
-```
-
-> Se aparecer *"não foi possível conectar"*, o serviço não subiu: abra **Serviços**
-> (`services.msc`), procure `postgresql-x64-16` e clique em Iniciar.
-
-**3. O sistema**
-
-```powershell
-cd $HOME
 git clone https://github.com/ghusousa/SISTEMA_GESTAO_LOJA.git
-cd SISTEMA_GESTAO_LOJA\api
-
-py -m venv .venv
-.venv\Scripts\pip.exe install -e ".[dev]"
-
-Copy-Item .env.example .env
-notepad .env
+cd SISTEMA_GESTAO_LOJA
+.\instalar.ps1
 ```
 
-No Bloco de Notas que abrir, ajuste duas linhas e salve:
+### O que ele pergunta
 
-```ini
-DATABASE_URL=postgresql+asyncpg://postgres:SUA_SENHA@localhost:5432/loja
-JWT_SECRET=cole-aqui-a-chave-gerada-abaixo
+```
+1. Endereço do sistema
+  Domínio (DNS) [localhost]: loja.minhaloja.com.br
+
+2. Dono da loja
+  Nome [Dona da Loja]: Dona Maria
+  E-mail (é com ele que você entra): dona@minhaloja.com.br
+  Senha do dono (mínimo 8 caracteres): ********
+  repita a senha: ********
+
+3. Banco de dados
+  Gerar uma senha forte automaticamente? [S/n]: S
+
+4. Fuso horário
+  Fuso [America/Sao_Paulo]:
 ```
 
-A chave sai deste comando:
+| Pergunta | Para que serve |
+|---|---|
+| **Domínio (DNS)** | O endereço da loja. Com um domínio de verdade o **HTTPS é emitido e renovado sozinho**. `localhost` usa só nesta máquina, sem HTTPS. |
+| **Nome / E-mail / Senha do dono** | A conta de administrador — a que vê custo, lucro, despesas e relatórios. É com esse e-mail que você entra. |
+| **Senha do banco** | Fica só entre os containers; ninguém digita no dia a dia. Deixe gerar. |
+| **Fuso horário** | Define o que é "hoje" no caixa e nos relatórios. |
+
+No fim ele imprime o endereço para abrir. **O sistema já está no ar** — não falta nenhum passo.
+
+```
+Pronto — o sistema está rodando
+
+  Endereço:  https://loja.minhaloja.com.br/app/
+  Modo:      domínio loja.minhaloja.com.br, com HTTPS automático
+  Entrar:    dona@minhaloja.com.br
+```
+
+### Com domínio: HTTPS sem trabalho
+
+Informando um domínio, o Caddy pede o certificado ao Let's Encrypt e o renova sozinho. Para isso
+funcionar, duas coisas precisam estar prontas **antes** de rodar o instalador:
+
+1. O **DNS do domínio aponta para o IP deste servidor** (registro `A`).
+2. As **portas 80 e 443 estão abertas** — é por elas que o Let's Encrypt confere que o domínio é
+   mesmo seu.
+
+Acompanhe a emissão com `docker compose logs -f proxy`. Sem domínio, o instalador usa HTTP puro e
+ajusta o resto sozinho — inclusive o cookie de sessão, que em HTTP não pode ser marcado `Secure`
+(seria descartado pelo navegador e ninguém conseguiria continuar logado).
+
+### Sem perguntas (automação)
+
+```bash
+./instalar.sh --dominio loja.minhaloja.com.br --nome "Dona Maria" \
+    --email dona@minhaloja.com.br --senha "uma-senha-boa" --sim
+```
 
 ```powershell
-.venv\Scripts\python.exe -c "import secrets; print(secrets.token_urlsafe(48))"
+.\instalar.ps1 -Dominio loja.minhaloja.com.br -Nome "Dona Maria" `
+    -Email dona@minhaloja.com.br -Senha "uma-senha-boa" -Sim
 ```
 
-> Os comandos chamam `.venv\Scripts\...` direto, sem `Activate`. É de propósito: ativar o
-> ambiente no PowerShell esbarra na política de execução do Windows e trava o roteiro logo no
-> começo. Chamando o executável direto, funciona sem mexer em política nenhuma.
+Outras opções: `--senha-banco`, `--fuso`, `--porta-http`, `--porta-https`, `--forcar`
+(refaz o `.env` do zero). Rodar o instalador de novo é seguro: sem `--forcar`, ele reaproveita a
+configuração e só religa o que estiver parado.
 
-**4. Criar o schema e o primeiro administrador**
+### O dia a dia
 
-```powershell
-.venv\Scripts\alembic.exe upgrade head
-
-.venv\Scripts\python.exe -m app.cli create-admin `
-    --nome "Dona Maria" --email dona@loja.com --senha "uma-senha-boa"
+```bash
+docker compose ps            # está no ar?
+docker compose logs -f api   # o que está acontecendo
+docker compose restart       # reiniciar
+docker compose down          # desligar (os dados ficam guardados)
+./instalar.sh                # religar
 ```
 
-**5. Ligar**
+O sistema sobe sozinho quando a máquina liga: os containers têm `restart: unless-stopped`. No
+Windows, isso depende do Docker Desktop estar marcado para iniciar com o sistema.
 
-```powershell
-.venv\Scripts\uvicorn.exe app.main:app --host 0.0.0.0 --port 8000
+### Atualizar
+
+```bash
+git pull
+./instalar.sh                # reconstrói a imagem; as migrations rodam sozinhas ao subir
 ```
 
-Abra **<http://localhost:8000/app/>** e entre. Para parar, `Ctrl+C` na janela do PowerShell.
+Faça um backup antes (comando na seção de desinstalação) quando a atualização trouxer migration.
 
-**6. Ligar sozinho quando o computador do balcão iniciar** *(opcional)*
+### Dados de demonstração
 
-Para a equipe não depender de alguém abrir o PowerShell toda manhã, crie o arquivo
-`api\iniciar-loja.bat`:
+Para ver o sistema cheio antes de cadastrar o seu, informando a conta de administrador que você
+criou na instalação:
 
-```bat
-@echo off
-cd /d "%USERPROFILE%\SISTEMA_GESTAO_LOJA\api"
-.venv\Scripts\uvicorn.exe app.main:app --host 0.0.0.0 --port 8000
+```bash
+docker compose exec -e SEED_ADMIN_EMAIL=dona@minhaloja.com.br -e SEED_ADMIN_SENHA='sua-senha' \
+    api python scripts/seed_demo.py
 ```
 
-Depois, no **Agendador de Tarefas** → *Criar Tarefa Básica* → disparo **"Ao fazer logon"** →
-ação *Iniciar um programa* → aponte para esse `.bat`. Deixe também um atalho do navegador para
-`http://localhost:8000/app/` na área de trabalho.
+Cria 10 produtos com grade, ~100 vendas espalhadas por 25 dias, despesas e uma vendedora de teste
+(`ana@loja.com` / `senha12345`). **Não rode no banco da loja de verdade** — é só para conhecer o
+sistema, e a vendedora de teste tem senha pública.
 
----
+### Usar de outro computador ou do celular
 
-### Depois de instalar (nos dois sistemas)
-
-**Conferir se subiu.** `http://localhost:8000/health` tem que responder `{"status":"ok",...}`.
-A documentação da API fica em `http://localhost:8000/docs`.
-
-**Usar de outro computador ou do celular na mesma rede.** O `--host 0.0.0.0` já aceita conexão da
-rede local; falta descobrir o IP da máquina (`ip a` no Ubuntu, `ipconfig` no Windows) e abrir
-`http://SEU_IP:8000/app/` no outro aparelho.
-
-No **Windows**, o Firewall bloqueia isso por padrão. Libere a porta uma vez, no PowerShell **como
-administrador**:
+Todos na mesma rede: descubra o IP da máquina (`ip a` no Linux, `ipconfig` no Windows) e abra
+`http://SEU_IP/app/`. No Windows, libere a porta uma vez, no PowerShell **como administrador**:
 
 ```powershell
 New-NetFirewallRule -DisplayName "Sistema da Loja" -Direction Inbound `
-    -LocalPort 8000 -Protocol TCP -Action Allow -Profile Private
+    -LocalPort 80 -Protocol TCP -Action Allow -Profile Private
 ```
 
 > `-Profile Private` de propósito: libera na rede da loja, não em Wi-Fi público.
 
-**Atualizar para uma versão nova.**
+Para o **app do celular**, aponte o `EXPO_PUBLIC_API_URL` para esse mesmo endereço — instruções em
+[docs/DEPLOY.md](docs/DEPLOY.md).
 
-```bash
-git pull                                   # na pasta do projeto
-cd api
-.venv/bin/pip install -e ".[dev]"          # Windows: .venv\Scripts\pip.exe
-.venv/bin/alembic upgrade head             # Windows: .venv\Scripts\alembic.exe
-```
+### Rede que inspeciona HTTPS
 
-Faça um backup antes (o comando está na seção de desinstalação) sempre que a atualização trouxer
-migration.
+Em algumas empresas o build quebra com `certificate verify failed`. Não é erro do projeto: o `pip`
+dentro do container não conhece o certificado que a rede usa. Coloque-o em
+`docker/certificados/` e rode `./instalar.sh --forcar`. Detalhes em
+[docker/certificados/LEIA-ME.md](docker/certificados/LEIA-ME.md).
 
-**Dados de demonstração**, para ver o sistema cheio antes de cadastrar o seu:
+### Desenvolvimento sem Docker
 
-```bash
-cd api && .venv/bin/python scripts/seed_demo.py
-```
-
-Cria produtos, vendas e despesas fictícias, e dois usuários de senha conhecida. **Não rode no banco
-da loja de verdade** — é só para conhecer o sistema.
-
----
-
-### App do celular *(opcional)*
-
-```bash
-cd mobile
-npm install
-npm start                                  # abra no Expo Go, ou npm run android
-```
-
-Em desenvolvimento o app descobre sozinho o IP da máquina que roda o Metro e fala com
-`http://<ip>:8000`. Para apontar para outro servidor:
-
-```bash
-EXPO_PUBLIC_API_URL=https://api.sualoja.com.br npm start
-```
-
-O celular e o computador precisam estar na mesma rede — `localhost`, para o celular, é ele mesmo.
-Gerar o aplicativo instalável (APK/loja) está em [docs/DEPLOY.md](docs/DEPLOY.md).
-
----
-
-### Só quer desenvolver? Use Docker para o banco
-
-Evita instalar PostgreSQL na máquina. Substitui o passo 2 dos dois roteiros:
+Para mexer no código com recarga automática, dá para rodar a API direto na máquina — precisa de
+Python 3.11+ e um PostgreSQL 16. O `api/docker-compose.yml` sobe só o banco de desenvolvimento,
+já com o usuário e a senha que o `api/.env.example` espera:
 
 ```bash
 cd api
-docker compose up -d          # Postgres 16 em localhost:5432, com o banco de teste junto
+docker compose up -d                       # só o Postgres, na porta 5432
+python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+cp .env.example .env                       # ajuste DATABASE_URL e JWT_SECRET
+.venv/bin/alembic upgrade head
+.venv/bin/python -m app.cli create-admin --nome "Dona" --email d@l.com --senha "senha1234"
+.venv/bin/uvicorn app.main:app --reload
 ```
 
-O `.env.example` já vem apontado para ele (`postgres:postgres`). Siga do passo 3 em diante.
+O sistema web fica em <http://localhost:8000/app/> e a documentação da API em `/docs`.
+O app do celular: `cd mobile && npm install && npm start`.
 
 ## Desinstalar
 
-> **Antes de qualquer coisa, salve os dados.** Apagar o banco leva junto o histórico de vendas, o
-> estoque e as despesas — não tem desfazer, e ninguém percebe que precisava do backup antes de
-> precisar dele.
->
-> **Ubuntu:**
-> ```bash
-> pg_dump -U postgres -Fc loja > ~/loja-backup-$(date +%F).dump
-> ```
-> **Windows (PowerShell):**
-> ```powershell
-> & "$env:ProgramFiles\PostgreSQL\16\bin\pg_dump.exe" -U postgres -Fc loja `
->     -f "$HOME\loja-backup-$(Get-Date -Format yyyy-MM-dd).dump"
-> ```
-> Guarde esse arquivo fora da máquina. Para voltar atrás um dia:
-> `pg_restore -U postgres -d loja --clean arquivo.dump`.
-
-### Ubuntu
-
 ```bash
-# 1. Parar o sistema (Ctrl+C na janela do uvicorn; se virou serviço:)
-sudo systemctl disable --now loja-api 2>/dev/null
-sudo rm -f /etc/systemd/system/loja-api.service && sudo systemctl daemon-reload
-
-# 2. Apagar os bancos
-sudo -u postgres dropdb --if-exists loja
-sudo -u postgres dropdb --if-exists loja_test
-
-# 3. Apagar o sistema (o ambiente Python está dentro, sai junto)
-rm -rf ~/SISTEMA_GESTAO_LOJA
+./desinstalar.sh          # Linux/Mac
+```
+```powershell
+.\desinstalar.ps1         # Windows
 ```
 
-Isso já tira o sistema do ar. Os dois passos abaixo são **opcionais** — só faça se o PostgreSQL e o
-Node tiverem entrado na máquina por causa deste projeto:
+**Ele faz backup do banco antes de apagar qualquer coisa** e só continua depois que você digitar
+`APAGAR`. O arquivo `.dump` fica na pasta do projeto — guarde fora da máquina.
+
+| Opção | O que muda |
+|---|---|
+| *(nenhuma)* | Backup, confirmação, e apaga tudo: containers, banco, fotos e `.env` |
+| `--manter-dados` | Só desliga e remove os containers. Os dados ficam; `./instalar.sh` traz tudo de volta |
+| `--sem-backup` | Pula o backup (use com consciência) |
+| `--apagar-imagens` | Remove também a imagem construída |
+| `--sim` | Não pergunta nada (automação) |
+
+No Windows são as mesmas, com traço único: `-ManterDados`, `-SemBackup`, `-ApagarImagens`, `-Sim`.
+
+### Restaurar um backup
+
+Instale de novo e mande o arquivo para dentro do banco:
 
 ```bash
-# PostgreSQL. O purge apaga os arquivos de TODOS os bancos da máquina, não só os da loja.
-sudo apt purge -y postgresql postgresql-* && sudo apt autoremove -y
-sudo rm -rf /var/lib/postgresql /etc/postgresql
-
-# Node, se instalou por causa do app
-sudo apt purge -y nodejs && sudo apt autoremove -y
+./instalar.sh
+docker compose exec -T db pg_restore -U loja -d loja --clean < loja-backup-2026-08-22-1438.dump
+docker compose restart api
 ```
-
-Se houve deploy de produção, o [docs/DEPLOY.md](docs/DEPLOY.md) lista o que mais existe fora dessa
-pasta: bloco do Nginx em `/etc/nginx/sites-available/loja`, certificado do certbot, `/opt/loja` e a
-linha do backup no `crontab`.
-
-### Windows
 
 ```powershell
-# 1. Parar o sistema (Ctrl+C na janela do uvicorn)
-#    Se criou a tarefa de iniciar sozinho, remova também:
-Unregister-ScheduledTask -TaskName "Sistema da Loja" -Confirm:$false
-
-# 2. Apagar os bancos
-& "$env:ProgramFiles\PostgreSQL\16\bin\dropdb.exe" -U postgres loja
-& "$env:ProgramFiles\PostgreSQL\16\bin\dropdb.exe" -U postgres loja_test
-
-# 3. Apagar o sistema
-Remove-Item -Recurse -Force "$HOME\SISTEMA_GESTAO_LOJA"
-
-# 4. Tirar a regra de firewall, se criou
-Remove-NetFirewallRule -DisplayName "Sistema da Loja"
+.\instalar.ps1
+cmd /c "docker compose exec -T db pg_restore -U loja -d loja --clean < loja-backup-2026-08-22-1438.dump"
+docker compose restart api
 ```
 
-Para tirar também os programas de base (**opcional**, e só se entraram por causa deste projeto):
-**Configurações → Aplicativos → Aplicativos instalados**, e desinstale *PostgreSQL 16*, *Python* e
-*Node.js*. O desinstalador do PostgreSQL costuma **deixar a pasta de dados para trás** — confira
-`C:\Program Files\PostgreSQL` e apague à mão se sobrou, depois de conferir que o backup está
-guardado.
+### Tirar o Docker também
+
+Só se ele entrou na máquina por causa deste projeto:
+
+```bash
+sudo apt purge -y docker-ce docker-ce-cli containerd.io && sudo apt autoremove -y
+```
+
+No Windows: **Configurações → Aplicativos → Aplicativos instalados → Docker Desktop**.
 
 ### Só o app do celular
 
-Desinstale como qualquer aplicativo, pelo próprio aparelho. Se estava usando pelo Expo Go, basta
-fechar — nada fica instalado. Os dados ficam todos no servidor, então tirar o app de um celular não
-apaga venda nenhuma.
+Desinstale pelo próprio aparelho. Os dados ficam todos no servidor, então tirar o app de um
+celular não apaga venda nenhuma.
 
 ## Testes
 

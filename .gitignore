@@ -32,3 +32,9 @@ Thumbs.db
 
 # Bundle de verificação local do Expo
 mobile/.expo-export/
+
+# Certificado de rede corporativa: local, nunca versionado
+docker/certificados/*.crt
+
+# Backups gerados pelo desinstalador
+loja-backup-*.dump
