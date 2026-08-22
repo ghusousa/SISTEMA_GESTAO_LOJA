@@ -62,8 +62,16 @@ estoque, concorrência do último item, idempotência por `client_uuid`.
 
 ## Armadilhas já pagas (não repita)
 
+- **Dinheiro digitado**: `paraCentavos` precisa distinguir `"2.500,00"` (milhar) de `"149.90"`
+  (decimal da API). O último separador manda. Já custou um aluguel virar R$ 2,50.
 - **Fuso**: "hoje" é o dia no fuso da loja, nunca `date.today()` do servidor. Às 23h de São Paulo
   o UTC já virou e a consulta devolve um caixa vazio.
+- **Estado que muda de status**: cancelar venda troca o status com `UPDATE ... WHERE status =
+  'CONCLUIDA'` antes de estornar. Checar em memória deixa dois cliques estornarem duas vezes.
+- **Carrinho e cache são globais**: logout limpa os dois, senão o próximo usuário herda a venda
+  do anterior.
+- **Mutação que muda relatório**: invalide as chaves `relatorio-*` também, ou a aba Financeiro
+  mostra o resultado de antes.
 - **`response_model` por papel**: rota cuja resposta muda com o papel usa `response_model=None`,
   senão o modelo da classe base apaga o campo extra do admin.
 - **Relacionamento ORM**: filtre no loader (`selectinload(X.y.and_(...))`), nunca reatribuindo a

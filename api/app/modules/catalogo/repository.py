@@ -27,7 +27,7 @@ class CatalogoRepository:
         if q:
             stmt = stmt.where(func.lower(Category.name).like(f"%{q.strip().lower()}%"))
         total = await self.session.scalar(select(func.count()).select_from(stmt.subquery()))
-        stmt = stmt.order_by(Category.name).offset(p.offset).limit(p.limit)
+        stmt = stmt.order_by(Category.name, Category.id).offset(p.offset).limit(p.limit)
         return list((await self.session.execute(stmt)).scalars().all()), int(total or 0)
 
     async def categoria_tem_produtos(self, categoria_id: int) -> bool:
@@ -72,7 +72,8 @@ class CatalogoRepository:
             )
             stmt = stmt.where(or_(func.lower(Product.name).like(termo), Product.id.in_(sub)))
         total = await self.session.scalar(select(func.count()).select_from(stmt.subquery()))
-        stmt = stmt.order_by(Product.name).offset(p.offset).limit(p.limit)
+        # Product.id como desempate: nome não é único e o OFFSET repetiria registros.
+        stmt = stmt.order_by(Product.name, Product.id).offset(p.offset).limit(p.limit)
         produtos = list((await self.session.execute(stmt)).unique().scalars().all())
         return produtos, int(total or 0)
 

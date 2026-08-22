@@ -44,7 +44,25 @@ export const chaves = {
   usuarios: ['usuarios'] as const,
 };
 
-/** Depois de vender, o que estava na tela mudou: saldo, lista de vendas e caixa do dia. */
+/** Tudo que depende de faturamento, custo ou resultado. */
+const CHAVES_RELATORIO = [
+  ['relatorio-resumo'],
+  ['relatorio-vendas-dia'],
+  ['relatorio-mais-vendidos'],
+  ['relatorio-despesas'],
+] as const;
+
+function invalidarRelatorios(): void {
+  for (const chave of CHAVES_RELATORIO) {
+    queryClient.invalidateQueries({ queryKey: chave });
+  }
+}
+
+/**
+ * Depois de vender (ou cancelar), o que estava na tela mudou: saldo, lista de vendas,
+ * caixa do dia e os relatórios. Sem invalidar os relatórios, o admin registra três vendas,
+ * volta para a aba Financeiro e continua vendo o resultado de antes.
+ */
 export function invalidarAposVenda(): void {
   queryClient.invalidateQueries({ queryKey: chaves.saldos });
   queryClient.invalidateQueries({ queryKey: chaves.vendas });
@@ -52,6 +70,7 @@ export function invalidarAposVenda(): void {
   queryClient.invalidateQueries({ queryKey: chaves.movimentacoes });
   queryClient.invalidateQueries({ queryKey: ['caixa-dia'] });
   queryClient.invalidateQueries({ queryKey: chaves.estoqueBaixo });
+  invalidarRelatorios();
 }
 
 export function invalidarAposMovimentoEstoque(): void {
@@ -59,4 +78,10 @@ export function invalidarAposMovimentoEstoque(): void {
   queryClient.invalidateQueries({ queryKey: chaves.produtos });
   queryClient.invalidateQueries({ queryKey: chaves.movimentacoes });
   queryClient.invalidateQueries({ queryKey: chaves.estoqueBaixo });
+}
+
+/** Despesa entra no resultado do mês: a lista sozinha não basta. */
+export function invalidarAposDespesa(): void {
+  queryClient.invalidateQueries({ queryKey: chaves.despesas });
+  invalidarRelatorios();
 }

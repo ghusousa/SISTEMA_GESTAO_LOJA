@@ -65,6 +65,23 @@ const estadoInicial = () => ({
   recebidoEmDinheiro: 0,
 });
 
+/**
+ * O que precisa ser reavaliado sempre que os itens mudam.
+ *
+ * O desconto é o perigoso: aplicar R$ 150 num carrinho de R$ 200 e depois tirar o vestido
+ * de R$ 150 deixaria um desconto maior que o subtotal, e a venda fecharia em R$ 0,00 com o
+ * botão "Cobrar" habilitado. O desconto acompanha o carrinho para baixo.
+ */
+function aoMudarItens(itens: ItemCarrinho[], descontoAtual: Centavos) {
+  const subtotal = itens.reduce((total, i) => total + i.precoUnitario * i.quantidade, 0);
+  return {
+    desconto: itens.length === 0 ? 0 : Math.min(descontoAtual, subtotal),
+    // Mexer nos itens invalida a divisão de pagamento montada antes.
+    pagamentos: [] as PagamentoCarrinho[],
+    recebidoEmDinheiro: 0,
+  };
+}
+
 export const useCartStore = create<CartState>((set, get) => ({
   ...estadoInicial(),
 
@@ -77,10 +94,14 @@ export const useCartStore = create<CartState>((set, get) => ({
       return { ok: false, motivo: 'sem_saldo', disponivel: peca.saldo };
     }
 
-    set((estado) => ({
-      itens: existente
+    set((estado) => {
+      const itens = existente
         ? estado.itens.map((i) =>
-            i.varianteId === peca.variante_id ? { ...i, quantidade: desejada } : i,
+            i.varianteId === peca.variante_id
+              ? // O saldo vem do lookup mais recente: se outra venda mexeu no estoque,
+                // o carrinho passa a respeitar o número novo.
+                { ...i, quantidade: desejada, saldoDisponivel: peca.saldo }
+              : i,
           )
         : [
             ...estado.itens,
@@ -94,11 +115,9 @@ export const useCartStore = create<CartState>((set, get) => ({
               quantidade: 1,
               saldoDisponivel: peca.saldo,
             },
-          ],
-      // Mexer nos itens invalida a divisão de pagamento montada antes.
-      pagamentos: [],
-      recebidoEmDinheiro: 0,
-    }));
+          ];
+      return { itens, ...aoMudarItens(itens, estado.desconto) };
+    });
     return { ok: true, quantidade: desejada };
   },
 
@@ -107,23 +126,21 @@ export const useCartStore = create<CartState>((set, get) => ({
       get().remover(varianteId);
       return;
     }
-    set((estado) => ({
-      itens: estado.itens.map((i) =>
+    set((estado) => {
+      const itens = estado.itens.map((i) =>
         i.varianteId === varianteId
           ? { ...i, quantidade: Math.min(quantidade, i.saldoDisponivel) }
           : i,
-      ),
-      pagamentos: [],
-      recebidoEmDinheiro: 0,
-    }));
+      );
+      return { itens, ...aoMudarItens(itens, estado.desconto) };
+    });
   },
 
   remover(varianteId) {
-    set((estado) => ({
-      itens: estado.itens.filter((i) => i.varianteId !== varianteId),
-      pagamentos: [],
-      recebidoEmDinheiro: 0,
-    }));
+    set((estado) => {
+      const itens = estado.itens.filter((i) => i.varianteId !== varianteId);
+      return { itens, ...aoMudarItens(itens, estado.desconto) };
+    });
   },
 
   definirDesconto(valor) {

@@ -35,12 +35,14 @@ export default function EntradaEstoque() {
   const [itens, setItens] = useState<ItemBipado[]>([]);
   const [fornecedor, setFornecedor] = useState('');
   const [aviso, setAviso] = useState<string | null>(null);
-  const [clientUuid] = useState(() => gerarUuid());
+  const [clientUuid, setClientUuid] = useState(() => gerarUuid());
+  const [consultando, setConsultando] = useState(false);
   const buscando = useRef(false);
 
   const aoLer = useCallback(async (codigo: string) => {
     if (buscando.current) return;
     buscando.current = true;
+    setConsultando(true);
     setAviso(null);
     try {
       const peca = await catalogo.porCodigoBarras(codigo);
@@ -73,6 +75,7 @@ export default function EntradaEstoque() {
       );
     } finally {
       buscando.current = false;
+      setConsultando(false);
     }
   }, []);
 
@@ -85,6 +88,12 @@ export default function EntradaEstoque() {
       }),
     onSuccess: (entrada) => {
       invalidarAposMovimentoEstoque();
+      // Limpa e troca o UUID ANTES do alerta: no Android o alerta pode ser fechado pelo
+      // botão voltar sem rodar o onPress, e a próxima entrada reusaria a chave de
+      // idempotência — o servidor devolveria a entrada antiga e as peças novas sumiriam.
+      setItens([]);
+      setFornecedor('');
+      setClientUuid(gerarUuid());
       Alert.alert(
         'Entrada registrada',
         `${entrada.total_pecas} peça(s) somadas ao estoque.`,
@@ -102,7 +111,8 @@ export default function EntradaEstoque() {
         <Scanner
           aoLer={(codigo) => void aoLer(codigo)}
           modo="continuo"
-          dica="Bipe cada peça que chegou"
+          ocupado={consultando}
+          dica={consultando ? 'Consultando…' : 'Bipe cada peça que chegou'}
         />
       </View>
 

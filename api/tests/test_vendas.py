@@ -353,6 +353,7 @@ async def test_vendedor_nao_cancela_venda_de_outro(
     auth_vendedor: dict[str, str],
     loja: dict,
 ) -> None:
+    """404, não 403: dizer "não é sua" confirmaria a existência da venda alheia."""
     venda_id = (
         await client.post(
             "/vendas",
@@ -368,6 +369,76 @@ async def test_vendedor_nao_cancela_venda_de_outro(
         f"/vendas/{venda_id}/cancelamento",
         headers=auth_vendedor,
         json={"motivo": "não foi minha"},
+    )
+    assert resp.status_code == 404
+    assert resp.json()["code"] == "NAO_ENCONTRADO"
+
+
+async def test_dois_cancelamentos_simultaneos_estornam_uma_vez_so(
+    client: AsyncClient, auth_admin: dict[str, str], loja: dict
+) -> None:
+    """Toque duplo em "cancelar" não pode devolver a peça duas vezes ao estoque."""
+    venda_id = (
+        await client.post(
+            "/vendas",
+            headers=auth_admin,
+            json={
+                "client_uuid": str(uuid.uuid4()),
+                "itens": [{"variante_id": loja["camiseta"], "quantidade": 3}],
+                "pagamentos": [{"forma": "PIX", "valor": "149.70"}],
+            },
+        )
+    ).json()["id"]
+    assert await _saldo(client, auth_admin, loja["camiseta"]) == 7
+
+    async def cancelar() -> int:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test/api/v1"
+        ) as c:
+            resp = await c.post(
+                f"/vendas/{venda_id}/cancelamento",
+                headers=auth_admin,
+                json={"motivo": "cliente desistiu"},
+            )
+            return resp.status_code
+
+    resultados = await asyncio.gather(cancelar(), cancelar())
+    assert sorted(resultados) == [200, 409]
+    assert await _saldo(client, auth_admin, loja["camiseta"]) == 10
+
+    movs = (
+        await client.get(
+            "/estoque/movimentacoes", headers=auth_admin, params={"tipo": "ESTORNO"}
+        )
+    ).json()
+    assert movs["total"] == 1, "o estorno não pode acontecer duas vezes"
+
+
+async def test_replay_de_venda_alheia_e_recusado(
+    client: AsyncClient,
+    auth_admin: dict[str, str],
+    auth_vendedor: dict[str, str],
+    loja: dict,
+) -> None:
+    """O atalho de idempotência não pode virar porta de leitura de venda de outro."""
+    client_uuid = str(uuid.uuid4())
+    await client.post(
+        "/vendas",
+        headers=auth_admin,
+        json={
+            "client_uuid": client_uuid,
+            "itens": [{"variante_id": loja["camiseta"], "quantidade": 1}],
+            "pagamentos": [{"forma": "PIX", "valor": "49.90"}],
+        },
+    )
+    resp = await client.post(
+        "/vendas",
+        headers=auth_vendedor,
+        json={
+            "client_uuid": client_uuid,
+            "itens": [{"variante_id": loja["camiseta"], "quantidade": 1}],
+            "pagamentos": [{"forma": "PIX", "valor": "49.90"}],
+        },
     )
     assert resp.status_code == 403
 

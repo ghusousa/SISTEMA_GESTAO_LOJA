@@ -1,10 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { mensagemDoErro } from '@/api/client';
 import { catalogo } from '@/api/endpoints';
-import { Botao, Carregando, Cartao, ErroEstado, Etiqueta } from '@/components/ui';
+import { Carregando, Cartao, ErroEstado, Etiqueta } from '@/components/ui';
 import { formatar, paraCentavos } from '@/lib/money';
 import { chaves } from '@/lib/queryClient';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
@@ -53,7 +53,16 @@ export default function DetalheProduto() {
       {produto.variantes.map((v) => {
         const baixo = v.saldo <= v.estoque_minimo;
         return (
-          <View key={v.id} style={s.variante}>
+          <Pressable
+            key={v.id}
+            style={s.variante}
+            onPress={() =>
+              router.push({
+                pathname: '/estoque/movimentacoes',
+                params: { varianteId: String(v.id), titulo: `${produto.nome} ${v.tamanho}` },
+              })
+            }
+          >
             <View style={s.varianteTopo}>
               <Text style={s.varianteNome}>
                 {v.tamanho} · {v.cor}
@@ -80,21 +89,12 @@ export default function DetalheProduto() {
                 />
               )}
             </View>
-          </View>
+          </Pressable>
         );
       })}
 
       <View style={s.acoes}>
-        <Botao
-          titulo="Ver movimentações"
-          variante="secundario"
-          onPress={() =>
-            router.push({
-              pathname: '/estoque/movimentacoes',
-              params: { produto: produto.nome },
-            })
-          }
-        />
+        <Text style={s.dica}>Toque em uma peça para ver o extrato dela.</Text>
       </View>
     </ScrollView>
   );
@@ -131,4 +131,5 @@ const s = StyleSheet.create({
   varianteRodape: { flexDirection: 'row', gap: espaco.xs, marginTop: espaco.md, flexWrap: 'wrap' },
 
   acoes: { marginTop: espaco.lg, gap: espaco.sm },
+  dica: { fontSize: fonte.pequena, color: cores.textoFraco, textAlign: 'center' },
 });

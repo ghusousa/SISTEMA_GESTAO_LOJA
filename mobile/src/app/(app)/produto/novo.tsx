@@ -29,6 +29,7 @@ import { Scanner } from '@/components/Scanner';
 import { Botao, Campo, Carregando, Etiqueta } from '@/components/ui';
 import { formatarSemSimbolo, paraCentavos, paraDecimalString } from '@/lib/money';
 import { chaves, invalidarAposMovimentoEstoque, queryClient } from '@/lib/queryClient';
+import { useAuthStore } from '@/stores/authStore';
 import { ALVO_TOQUE, cores, espaco, fonte, raio } from '@/lib/tema';
 
 const TAMANHOS_RAPIDOS = ['PP', 'P', 'M', 'G', 'GG', 'XG', 'U'];
@@ -45,6 +46,9 @@ export default function NovoProduto() {
   const router = useRouter();
   const params = useLocalSearchParams<{ codigo?: string; retorno?: string }>();
   const veioDoPdv = params.retorno === 'pdv';
+  // A SPEC diz que o vendedor não vê preço de custo. Ele cadastra a peça; o custo é
+  // preenchido depois pela dona na edição.
+  const ehAdmin = useAuthStore((e) => e.usuario?.papel === 'ADMIN');
 
   const [nome, setNome] = useState('');
   const [categoriaId, setCategoriaId] = useState<number | null>(null);
@@ -202,30 +206,41 @@ export default function NovoProduto() {
           </View>
         )}
 
-        <View style={s.duasColunas}>
-          <View style={s.coluna}>
-            <Campo
-              rotulo="Custo (R$)"
-              value={precoCusto}
-              onChangeText={setPrecoCusto}
-              keyboardType="decimal-pad"
-              placeholder="22,50"
-              ajuda="Quanto você pagou"
-            />
+        {ehAdmin ? (
+          <View style={s.duasColunas}>
+            <View style={s.coluna}>
+              <Campo
+                rotulo="Custo (R$)"
+                value={precoCusto}
+                onChangeText={setPrecoCusto}
+                keyboardType="decimal-pad"
+                placeholder="22,50"
+                ajuda="Quanto você pagou"
+              />
+            </View>
+            <View style={s.coluna}>
+              <Campo
+                rotulo="Venda (R$)"
+                value={precoVenda}
+                onChangeText={setPrecoVenda}
+                keyboardType="decimal-pad"
+                placeholder="59,90"
+                ajuda="Preço de etiqueta"
+              />
+            </View>
           </View>
-          <View style={s.coluna}>
-            <Campo
-              rotulo="Venda (R$)"
-              value={precoVenda}
-              onChangeText={setPrecoVenda}
-              keyboardType="decimal-pad"
-              placeholder="59,90"
-              ajuda="Preço de etiqueta"
-            />
-          </View>
-        </View>
+        ) : (
+          <Campo
+            rotulo="Preço de venda (R$)"
+            value={precoVenda}
+            onChangeText={setPrecoVenda}
+            keyboardType="decimal-pad"
+            placeholder="59,90"
+            ajuda="Preço de etiqueta"
+          />
+        )}
 
-        {paraCentavos(precoVenda) > 0 && paraCentavos(precoCusto) > 0 && (
+        {ehAdmin && paraCentavos(precoVenda) > 0 && paraCentavos(precoCusto) > 0 && (
           <Text style={s.margem}>
             Margem por peça: R${' '}
             {formatarSemSimbolo(paraCentavos(precoVenda) - paraCentavos(precoCusto))}

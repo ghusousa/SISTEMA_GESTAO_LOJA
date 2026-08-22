@@ -73,8 +73,11 @@ export default function DetalheVenda() {
         {
           text: 'Cancelar venda',
           style: 'destructive',
-          onPress: (motivo?: string) =>
-            cancelar.mutate(motivo?.trim() || 'Cancelada no aplicativo'),
+          // A API exige ao menos 3 caracteres: "ok" viraria 422 e a venda não cancelaria.
+          onPress: (motivo?: string) => {
+            const texto = (motivo ?? '').trim();
+            cancelar.mutate(texto.length >= 3 ? texto : 'Cancelada no aplicativo');
+          },
         },
       ],
       'plain-text',

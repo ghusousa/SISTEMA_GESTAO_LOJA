@@ -21,21 +21,36 @@ const TIPOS: BarcodeType[] = ['ean13', 'ean8', 'code128', 'upc_a', 'upc_e'];
 const ESPERA_MESMO_CODIGO = 1500;
 const ESPERA_QUALQUER = 400;
 
+export interface ScannerRef {
+  /** Libera uma nova leitura no modo 'unico' (ex.: o código bipado não existia). */
+  reativar: () => void;
+}
+
 interface Props {
   aoLer: (codigo: string) => void;
   /** 'continuo' mantém a leitura ativa (bipar vários); 'unico' para após o primeiro código. */
   modo?: 'unico' | 'continuo';
   ativo?: boolean;
+  /**
+   * A tela ainda está consultando o bipe anterior. Sem isso, com rede lenta o operador bipa
+   * a segunda peça, ouve o "sucesso" e ela é descartada — no inventário, isso vira peça
+   * sumindo do estoque.
+   */
+  ocupado?: boolean;
   rodape?: React.ReactNode;
   dica?: string;
+  /** Recebe o controle para reativar a leitura depois de um erro. */
+  controle?: React.MutableRefObject<ScannerRef | null>;
 }
 
 export function Scanner({
   aoLer,
   modo = 'continuo',
   ativo = true,
+  ocupado = false,
   rodape,
   dica = 'Aponte para o código de barras da peça',
+  controle,
 }: Props) {
   const [permissao, pedirPermissao] = useCameraPermissions();
   const [lanterna, setLanterna] = useState(false);
@@ -45,10 +60,32 @@ export function Scanner({
   const instanteUltimoCodigo = useRef(0);
   const instanteQualquer = useRef(0);
   const pausado = useRef(false);
+  // Em ref, não em dep do callback: o valor muda a cada consulta e recriar o handler
+  // faria a câmera reconfigurar no meio da leitura.
+  const ocupadoRef = useRef(ocupado);
+  ocupadoRef.current = ocupado;
+
+  if (controle) {
+    controle.current = {
+      reativar: () => {
+        pausado.current = false;
+        ultimoCodigo.current = null;
+        instanteUltimoCodigo.current = 0;
+        instanteQualquer.current = 0;
+        setUltimoLido(null);
+      },
+    };
+  }
 
   const tratarLeitura = useCallback(
     ({ data }: { data: string }) => {
       if (!ativo || pausado.current) return;
+
+      if (ocupadoRef.current) {
+        // Avisa em vez de engolir: o operador precisa saber que precisa bipar de novo.
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+        return;
+      }
 
       const agora = Date.now();
       if (agora - instanteQualquer.current < ESPERA_QUALQUER) return;
@@ -123,13 +160,6 @@ export function Scanner({
       </View>
     </View>
   );
-}
-
-/** Libera o scanner em modo 'unico' para uma nova leitura (ex.: após fechar um modal). */
-export function useControleScanner() {
-  const [chave, setChave] = useState(0);
-  // Remontar o componente é o jeito mais simples e confiável de zerar as travas de tempo.
-  return { chave, reativar: () => setChave((k) => k + 1) };
 }
 
 const s = StyleSheet.create({

@@ -10,24 +10,52 @@
 
 export type Centavos = number;
 
-/** "149.90" | "149.9" | 149.9 -> 14990. Aceita vírgula porque o usuário digita vírgula. */
+/**
+ * Converte para centavos o que vem da API e o que o usuário digita.
+ *
+ * Precisa aguentar os dois mundos: a API manda `"149.90"` (ponto decimal) e a pessoa digita
+ * `"2.500,00"` (ponto de milhar, vírgula decimal). Tratar o ponto sempre como decimal
+ * transformaria um aluguel de R$ 2.500 em R$ 2,50 — e o campo de despesa sugere exatamente
+ * esse formato.
+ *
+ * A regra: o ÚLTIMO separador manda. Se sobrarem 1 ou 2 dígitos depois dele, ele é o decimal;
+ * se sobrarem 3, era separador de milhar (`"1.000"` é mil, não um e pouco). Todos os
+ * separadores anteriores são de milhar.
+ */
 export function paraCentavos(valor: string | number | null | undefined): Centavos {
   if (valor === null || valor === undefined || valor === '') return 0;
 
   if (typeof valor === 'number') {
     // Vem de um campo numérico: arredonda meio-para-cima no último centavo.
-    return Math.round(valor * 100);
+    return Number.isFinite(valor) ? Math.round(valor * 100) : 0;
   }
 
-  const limpo = valor.trim().replace(/\s/g, '').replace(',', '.');
+  const limpo = valor.trim().replace(/[\s R$]/g, '');
   const negativo = limpo.startsWith('-');
-  const semSinal = negativo ? limpo.slice(1) : limpo;
+  const semSinal = (negativo ? limpo.slice(1) : limpo).replace(/[^\d.,]/g, '');
+  if (semSinal === '') return 0;
 
-  const [inteiros = '0', decimais = ''] = semSinal.split('.');
-  // Trabalha com os dígitos, não com float: "149.90" nunca vira 149.89999999.
-  const centavosDecimais = (decimais + '00').slice(0, 2);
-  const total = Number(inteiros || '0') * 100 + Number(centavosDecimais || '0');
+  const ultimoSeparador = Math.max(semSinal.lastIndexOf('.'), semSinal.lastIndexOf(','));
+  const digitosAposSeparador =
+    ultimoSeparador === -1 ? 0 : semSinal.length - ultimoSeparador - 1;
 
+  let inteiros: string;
+  let decimais: string;
+
+  if (ultimoSeparador !== -1 && digitosAposSeparador > 0 && digitosAposSeparador <= 2) {
+    inteiros = semSinal.slice(0, ultimoSeparador);
+    decimais = semSinal.slice(ultimoSeparador + 1);
+  } else {
+    // Nenhum separador, ou o último era de milhar: o valor inteiro é a parte de reais.
+    inteiros = semSinal;
+    decimais = '';
+  }
+
+  // Só dígitos daqui para frente: nada de float, então "149.90" nunca vira 149.89999999.
+  const reais = inteiros.replace(/\D/g, '') || '0';
+  const centavos = (decimais.replace(/\D/g, '') + '00').slice(0, 2);
+
+  const total = Number(reais) * 100 + Number(centavos);
   if (!Number.isFinite(total)) return 0;
   return negativo ? -total : total;
 }
@@ -94,4 +122,14 @@ export function dividir(total: Centavos, partes: number): Centavos[] {
 
 export function somar(valores: Centavos[]): Centavos {
   return valores.reduce((total, valor) => total + valor, 0);
+}
+
+/** "42.35" -> "42,35%". A API manda percentual como string decimal. */
+export function formatarPercentual(valor: string | number): string {
+  const numero = typeof valor === 'number' ? valor : Number(String(valor).replace(',', '.'));
+  if (!Number.isFinite(numero)) return '0%';
+  return `${numero.toLocaleString('pt-BR', {
+    minimumFractionDigits: numero % 1 === 0 ? 0 : 1,
+    maximumFractionDigits: 1,
+  })}%`;
 }

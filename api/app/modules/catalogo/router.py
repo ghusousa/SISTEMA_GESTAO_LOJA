@@ -2,7 +2,8 @@ import uuid
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Query, UploadFile, status
+from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
 from app.core.deps import AdminUser, CurrentUser, SessionDep
@@ -174,7 +175,6 @@ async def adicionar_variante(
 async def enviar_foto(
     session: SessionDep,
     usuario: CurrentUser,
-    request: Request,
     produto_id: int,
     arquivo: Annotated[UploadFile, File(alias="arquivo")],
 ) -> ProdutoOut:
@@ -186,19 +186,45 @@ async def enviar_foto(
         raise Validacao(
             "Formato de imagem não aceito.", {"aceitos": sorted(EXTENSOES_FOTO)}
         )
-    conteudo = await arquivo.read()
-    if len(conteudo) > settings.max_upload_bytes:
-        raise Validacao(
-            "Imagem muito grande.",
-            {"limite_mb": round(settings.max_upload_bytes / 1024 / 1024, 1)},
-        )
+
+    # Lê em blocos e aborta ao passar do limite: `await arquivo.read()` traria o arquivo
+    # inteiro para a memória antes de qualquer checagem, e um envio de vários GB derrubaria
+    # o servidor da loja no meio do expediente.
+    partes: list[bytes] = []
+    lidos = 0
+    while bloco := await arquivo.read(64 * 1024):
+        lidos += len(bloco)
+        if lidos > settings.max_upload_bytes:
+            raise Validacao(
+                "Imagem muito grande.",
+                {"limite_mb": round(settings.max_upload_bytes / 1024 / 1024, 1)},
+            )
+        partes.append(bloco)
+    conteudo = b"".join(partes)
+
+    if not _parece_imagem(conteudo):
+        raise Validacao("O arquivo enviado não é uma imagem.")
 
     destino = Path(settings.media_dir) / "produtos"
     destino.mkdir(parents=True, exist_ok=True)
     # Nome gerado pelo servidor: o nome do arquivo do celular não entra no caminho.
     nome = f"{produto_id}-{uuid.uuid4().hex}{extensao}"
-    (destino / nome).write_bytes(conteudo)
+    # Gravação é I/O bloqueante: fora da thread do event loop, senão a foto trava o PDV.
+    await run_in_threadpool((destino / nome).write_bytes, conteudo)
 
-    base = str(request.base_url).rstrip("/")
-    await service.definir_foto(produto_id, f"{base}/media/produtos/{nome}")
+    # Caminho relativo, nunca derivado do header Host: uma requisição com
+    # `Host: atacante.com` gravaria essa URL no banco e todo mundo passaria a buscar a
+    # imagem no servidor do atacante.
+    await service.definir_foto(produto_id, f"/media/produtos/{nome}")
     return await service.obter_produto(produto_id, usuario)
+
+
+# Assinaturas de arquivo: a extensão do nome é escolhida por quem envia e não prova nada.
+_ASSINATURAS = (b"\xff\xd8\xff", b"\x89PNG\r\n\x1a\n", b"RIFF")
+
+
+def _parece_imagem(conteudo: bytes) -> bool:
+    if any(conteudo.startswith(assinatura) for assinatura in _ASSINATURAS):
+        # WebP é RIFF com "WEBP" no oitavo byte; os demais já bastam pelo prefixo.
+        return not conteudo.startswith(b"RIFF") or conteudo[8:12] == b"WEBP"
+    return False

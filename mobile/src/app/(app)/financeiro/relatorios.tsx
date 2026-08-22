@@ -13,7 +13,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { mensagemDoErro } from '@/api/client';
 import { relatorios } from '@/api/endpoints';
 import { Carregando, Cartao, ErroEstado, Etiqueta } from '@/components/ui';
-import { formatar, paraCentavos } from '@/lib/money';
+import { formatar, formatarPercentual, paraCentavos } from '@/lib/money';
 import { chaves } from '@/lib/queryClient';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
 
@@ -158,7 +158,7 @@ export default function Relatorios() {
               <View style={s.barraFundo}>
                 <View style={[s.barraProgresso, { width: `${Number(c.percentual)}%` }]} />
               </View>
-              <Text style={s.categoriaPct}>{c.percentual}% das despesas</Text>
+              <Text style={s.categoriaPct}>{formatarPercentual(c.percentual)} das despesas</Text>
             </View>
           ))
         )}

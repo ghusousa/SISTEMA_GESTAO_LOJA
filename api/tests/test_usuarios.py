@@ -130,3 +130,39 @@ async def test_listagem_pagina_e_filtra(
     assert corpo["total"] == 1
     assert corpo["page"] == 1
     assert corpo["items"][0]["email"] == vendedor.email
+
+
+async def test_trocar_senha_derruba_as_sessoes_abertas(
+    client: AsyncClient, auth_vendedor: dict[str, str], vendedor: User
+) -> None:
+    """Quem troca a senha quer cortar quem estava dentro — o refresh vazado morre junto."""
+    sessao_antiga = (
+        await client.post("/auth/login", json={"email": vendedor.email, "senha": "senha1234"})
+    ).json()
+
+    resp = await client.patch(
+        "/usuarios/me/senha",
+        headers=auth_vendedor,
+        json={"senha_atual": "senha1234", "nova_senha": "novasenha123"},
+    )
+    assert resp.status_code == 204
+
+    renovar = await client.post(
+        "/auth/refresh", json={"refresh_token": sessao_antiga["refresh_token"]}
+    )
+    assert renovar.status_code == 401
+
+
+async def test_desativar_usuario_derruba_a_sessao_dele(
+    client: AsyncClient, auth_admin: dict[str, str], vendedor: User
+) -> None:
+    sessao = (
+        await client.post("/auth/login", json={"email": vendedor.email, "senha": "senha1234"})
+    ).json()
+
+    await client.patch(f"/usuarios/{vendedor.id}", headers=auth_admin, json={"ativo": False})
+
+    renovar = await client.post(
+        "/auth/refresh", json={"refresh_token": sessao["refresh_token"]}
+    )
+    assert renovar.status_code == 401

@@ -288,3 +288,43 @@ async def test_competencia_em_formato_invalido_e_recusada(
     )
     assert resp.status_code == 422
     assert resp.json()["code"] == "VALIDACAO"
+
+
+async def test_replicar_nao_duplica_conta_ja_lancada_a_mao(
+    client: AsyncClient, auth_admin: dict[str, str], categorias: dict
+) -> None:
+    """O aluguel de agosto digitado à mão não pode virar dois ao clicar em "lançar fixas"."""
+    await client.post(
+        "/despesas",
+        headers=auth_admin,
+        json={
+            "categoria_id": categorias["Aluguel"],
+            "descricao": "Aluguel da loja",
+            "valor": "2500.00",
+            "data": "2026-07-05",
+            "recorrente": True,
+        },
+    )
+    # A dona lançou o de agosto na mão, sem passar pela replicação.
+    await client.post(
+        "/despesas",
+        headers=auth_admin,
+        json={
+            "categoria_id": categorias["Aluguel"],
+            "descricao": "Aluguel da loja",
+            "valor": "2500.00",
+            "data": "2026-08-05",
+            "recorrente": True,
+        },
+    )
+
+    resp = await client.post(
+        "/despesas/replicar-recorrentes", headers=auth_admin, params={"competencia": "2026-08"}
+    )
+    assert resp.json()["criadas"] == 0
+    assert resp.json()["ja_existentes"] == 1
+
+    agosto = await client.get(
+        "/despesas", headers=auth_admin, params={"inicio": "2026-08-01", "fim": "2026-08-31"}
+    )
+    assert agosto.json()["total"] == 1, "o aluguel de agosto não pode aparecer duas vezes"

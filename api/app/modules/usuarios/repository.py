@@ -37,7 +37,7 @@ class UsuarioRepository:
         total = await self.session.scalar(
             select(func.count()).select_from(stmt.subquery())
         )
-        stmt = stmt.order_by(User.name).offset(p.offset).limit(p.limit)
+        stmt = stmt.order_by(User.name, User.id).offset(p.offset).limit(p.limit)
         items = list((await self.session.execute(stmt)).scalars().all())
         return items, int(total or 0)
 

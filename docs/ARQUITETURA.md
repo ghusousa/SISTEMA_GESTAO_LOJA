@@ -213,7 +213,19 @@ histórico permanece auditável; relatórios filtram por status.
 
 **ADR-8 — Fuso da loja em um lugar só.**
 `settings.tz_loja` (`America/Sao_Paulo`) é usado pelos relatórios e pelo índice funcional de data. O
-banco guarda UTC; o "dia" do comércio é definido pelo fuso da loja.
+banco guarda UTC; o "dia" do comércio é definido pelo fuso da loja. O cliente precisa perguntar pelo
+mesmo dia: às 23h de São Paulo o UTC já virou, e consultar o caixa pela data UTC devolve vazio.
+
+**ADR-9 — Cancelamento serializado pelo próprio status.**
+`UPDATE sales SET status='CANCELADA' WHERE id=:id AND status='CONCLUIDA'` acontece **antes** dos
+estornos, e o serviço só continua se a instrução afetou uma linha. Checar o status em memória
+deixaria dois cliques (ou um retry) passarem juntos: o `UPDATE` de saldo é atômico, mas *soma* — a
+peça voltaria duas vezes ao estoque sem nenhum erro aparecer.
+
+**ADR-10 — Configuração insegura derruba o boot.**
+Fora de `dev`/`test`, o app recusa subir com `JWT_SECRET` de exemplo ou curto, `CORS_ORIGINS='*'`
+ou `DEBUG=true`. Um deploy sem `JWT_SECRET` aceitaria tokens forjados com o segredo que está no
+repositório — administrador sem senha. Falhar no boot é a única forma de isso não passar batido.
 
 ---
 

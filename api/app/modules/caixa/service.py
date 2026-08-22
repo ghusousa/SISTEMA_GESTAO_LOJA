@@ -2,6 +2,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -109,6 +110,20 @@ class CaixaService:
         if len(formas) != len(set(formas)):
             raise Validacao("A mesma forma de pagamento foi contada duas vezes.")
 
+        # Forma com dinheiro esperado precisa ser conferida: gravar "contado zero" para uma
+        # forma que ninguém contou inventaria uma diferença enorme e mentiria sobre o dia.
+        esperado_previa, _, _ = await self._esperado_do_dia(dados.data)
+        nao_conferidas = [
+            forma
+            for forma, valor in esperado_previa.items()
+            if valor > ZERO and forma not in set(formas)
+        ]
+        if nao_conferidas:
+            raise Validacao(
+                "Há formas de pagamento com valor esperado que não foram conferidas.",
+                {"formas": sorted(nao_conferidas)},
+            )
+
         esperado, _, _ = await self._esperado_do_dia(dados.data)
         contados = {c.forma: c.valor_contado for c in dados.contagens}
 
@@ -116,7 +131,20 @@ class CaixaService:
         if fechamento is None:
             fechamento = CashClosing(closing_date=dados.data, user_id=usuario.id)
             self.session.add(fechamento)
-            await self.session.flush()
+            try:
+                await self.session.flush()
+            except IntegrityError:
+                # Dois dispositivos fechando o mesmo dia ao mesmo tempo: a UNIQUE de
+                # closing_date segura, e a requisição perdedora vira uma atualização.
+                await self.session.rollback()
+                fechamento = await self._fechamento_do_dia(dados.data)
+                if fechamento is None:
+                    raise
+                fechamento.user_id = usuario.id
+                fechamento.closed_at = datetime.now(UTC)
+                for linha in list(fechamento.lines):
+                    await self.session.delete(linha)
+                await self.session.flush()
         else:
             fechamento.user_id = usuario.id
             fechamento.closed_at = datetime.now(UTC)

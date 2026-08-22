@@ -32,6 +32,31 @@ test('aceita vírgula, que é o que o usuário digita', () => {
   assert.equal(paraCentavos('1 234,56'), 123456);
 });
 
+test('separador de milhar não vira decimal', () => {
+  // O placeholder do campo de despesa é literalmente "2.500,00": tratar o ponto como
+  // decimal transformaria um aluguel de R$ 2.500 em R$ 2,50.
+  assert.equal(paraCentavos('2.500,00'), 250000);
+  assert.equal(paraCentavos('1.299,90'), 129990);
+  assert.equal(paraCentavos('1.234.567,89'), 123456789);
+  assert.equal(paraCentavos('2.500'), 250000); // três dígitos após o ponto: é milhar
+  assert.equal(paraCentavos('1.000'), 100000);
+});
+
+test('ainda entende o ponto decimal que a API manda', () => {
+  assert.equal(paraCentavos('149.90'), 14990);
+  assert.equal(paraCentavos('149.9'), 14990);
+  assert.equal(paraCentavos('0.05'), 5);
+  assert.equal(paraCentavos('1000.00'), 100000);
+});
+
+test('ignora símbolo de moeda e lixo colado no número', () => {
+  assert.equal(paraCentavos('R$ 149,90'), 14990);
+  assert.equal(paraCentavos('  59,90  '), 5990);
+  assert.equal(paraCentavos('abc'), 0);
+  assert.equal(paraCentavos(','), 0);
+  assert.equal(paraCentavos('.'), 0);
+});
+
 test('não perde centavo em valores que quebram em float', () => {
   // 0.1 + 0.2 em float dá 0.30000000000000004; em centavos, 30.
   assert.equal(paraCentavos('0.10') + paraCentavos('0.20'), 30);

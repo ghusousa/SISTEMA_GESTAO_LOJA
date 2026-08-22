@@ -164,17 +164,18 @@ class DespesaService:
         """
         referencia = _competencia_para_data(competencia)
         modelos = await self.repo.recorrentes_ate(referencia)
-        ja_replicados = await self.repo.replicas_existentes(referencia)
+        ja_lancadas = await self.repo.lancamentos_da_competencia(referencia)
 
         criadas: list[Expense] = []
         ja_existentes = 0
         for modelo in modelos:
+            chave = (modelo.category_id, modelo.description.strip().lower())
+            if chave in ja_lancadas:
+                ja_existentes += 1
+                continue
             # A origem da réplica é sempre a despesa-raiz, não a réplica anterior:
             # assim a UNIQUE cobre a cadeia inteira e o mês nunca duplica.
             origem_id = modelo.recurring_source_id or modelo.id
-            if origem_id in ja_replicados:
-                ja_existentes += 1
-                continue
             nova = Expense(
                 category_id=modelo.category_id,
                 description=modelo.description,
@@ -186,13 +187,17 @@ class DespesaService:
             )
             self.session.add(nova)
             criadas.append(nova)
-            ja_replicados.add(origem_id)
+            ja_lancadas.add(chave)
 
         try:
             await self.session.commit()
-        except IntegrityError:
-            # Duas replicações simultâneas do mesmo mês: a UNIQUE segura, e nada é criado.
+        except IntegrityError as exc:
             await self.session.rollback()
+            # Só a corrida das duas replicações simultâneas é "já estava lá". Qualquer outra
+            # violação (categoria excluída no meio, valor inválido) é erro de verdade e não
+            # pode virar um "tudo certo" que esconde despesa faltando no mês.
+            if "recurring_source_id" not in str(exc.orig):
+                raise
             return ReplicacaoOut(
                 competencia=competencia,
                 criadas=0,

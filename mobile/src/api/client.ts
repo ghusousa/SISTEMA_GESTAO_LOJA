@@ -110,3 +110,13 @@ export function codigoDoErro(erro: unknown): string | null {
 export function detalheDoErro(erro: unknown): Record<string, unknown> | null {
   return axios.isAxiosError<ErroApi>(erro) ? (erro.response?.data?.detail ?? null) : null;
 }
+
+/**
+ * A API grava a foto como caminho relativo ("/media/produtos/x.jpg") de propósito: montar a
+ * URL a partir do header Host deixaria um atacante gravar o próprio domínio no banco.
+ * Quem exibe a imagem completa o endereço aqui.
+ */
+export function urlDaFoto(caminho: string | null | undefined): string | null {
+  if (!caminho) return null;
+  return caminho.startsWith('http') ? caminho : `${BASE_URL}${caminho}`;
+}

@@ -32,11 +32,13 @@ export default function Inventario() {
   const router = useRouter();
   const [contagens, setContagens] = useState<Contagem[]>([]);
   const [aviso, setAviso] = useState<string | null>(null);
+  const [consultando, setConsultando] = useState(false);
   const buscando = useRef(false);
 
   const aoLer = useCallback(async (codigo: string) => {
     if (buscando.current) return;
     buscando.current = true;
+    setConsultando(true);
     setAviso(null);
     try {
       const peca = await catalogo.porCodigoBarras(codigo);
@@ -69,6 +71,7 @@ export default function Inventario() {
       );
     } finally {
       buscando.current = false;
+      setConsultando(false);
     }
   }, []);
 
@@ -102,7 +105,8 @@ export default function Inventario() {
         <Scanner
           aoLer={(codigo) => void aoLer(codigo)}
           modo="continuo"
-          dica="Bipe cada peça encontrada na loja"
+          ocupado={consultando}
+          dica={consultando ? 'Consultando…' : 'Bipe cada peça encontrada na loja'}
         />
       </View>
 

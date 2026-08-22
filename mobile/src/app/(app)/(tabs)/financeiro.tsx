@@ -12,7 +12,7 @@ import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'r
 import { mensagemDoErro } from '@/api/client';
 import { relatorios } from '@/api/endpoints';
 import { Carregando, Cartao, ErroEstado } from '@/components/ui';
-import { formatar, paraCentavos } from '@/lib/money';
+import { formatar, formatarPercentual, paraCentavos } from '@/lib/money';
 import { chaves } from '@/lib/queryClient';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
 
@@ -85,7 +85,7 @@ export default function Financeiro() {
           <Indicador rotulo="Vendas" valor={String(r.quantidade_vendas)} />
           <Indicador rotulo="Peças" valor={String(r.quantidade_pecas)} />
           <Indicador rotulo="Ticket médio" valor={formatar(paraCentavos(r.ticket_medio))} />
-          <Indicador rotulo="Margem" valor={`${r.margem_bruta_pct}%`} />
+          <Indicador rotulo="Margem" valor={formatarPercentual(r.margem_bruta_pct)} />
         </View>
       </Cartao>
 

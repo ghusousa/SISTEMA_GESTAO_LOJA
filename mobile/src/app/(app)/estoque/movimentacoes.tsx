@@ -6,6 +6,7 @@ import { FlashList } from '@shopify/flash-list';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
@@ -34,12 +35,15 @@ const CORES_TIPO: Record<TipoMovimento, { fundo: string; texto: string }> = {
 };
 
 export default function Movimentacoes() {
+  const params = useLocalSearchParams<{ varianteId?: string; titulo?: string }>();
+  const varianteId = params.varianteId ? Number(params.varianteId) : undefined;
   const [tipo, setTipo] = useState<TipoMovimento | undefined>();
 
   const consulta = useInfiniteQuery({
-    queryKey: [...chaves.movimentacoes, tipo ?? 'todos'],
+    queryKey: [...chaves.movimentacoes, tipo ?? 'todos', varianteId ?? 'todas'],
     initialPageParam: 1,
-    queryFn: ({ pageParam }) => estoque.movimentacoes({ tipo, page: pageParam, size: 25 }),
+    queryFn: ({ pageParam }) =>
+      estoque.movimentacoes({ tipo, variante_id: varianteId, page: pageParam, size: 25 }),
     getNextPageParam: (ultima) =>
       ultima.page * ultima.size < ultima.total ? ultima.page + 1 : undefined,
   });
@@ -48,6 +52,7 @@ export default function Movimentacoes() {
 
   return (
     <View style={s.tela}>
+      {!!params.titulo && <Text style={s.filtroPeca}>Extrato de {params.titulo}</Text>}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -138,6 +143,13 @@ function LinhaMovimento({ movimento }: { movimento: Movimento }) {
 const s = StyleSheet.create({
   tela: { flex: 1, backgroundColor: cores.fundo },
 
+  filtroPeca: {
+    fontSize: fonte.base,
+    fontWeight: '700',
+    color: cores.texto,
+    paddingHorizontal: espaco.lg,
+    paddingTop: espaco.md,
+  },
   filtros: { padding: espaco.md, gap: espaco.sm },
   filtro: {
     paddingHorizontal: espaco.lg,

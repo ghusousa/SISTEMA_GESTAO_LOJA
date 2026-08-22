@@ -45,6 +45,11 @@ class VendaService:
         """
         ja_registrada = await self.repo.por_client_uuid(dados.client_uuid)
         if ja_registrada is not None:
+            # O replay devolve a venda existente, mas com o mesmo escopo do GET: quem
+            # descobrisse o client_uuid de uma venda alheia leria por aqui o que
+            # `GET /vendas/{id}` recusaria.
+            if usuario.role != Papel.ADMIN and ja_registrada.seller_id != usuario.id:
+                raise SemPermissao("Esta venda pertence a outro vendedor.")
             return await self._montar_venda(ja_registrada, usuario)
 
         variantes = await self.repo.variantes_para_venda([i.variante_id for i in dados.itens])
@@ -144,12 +149,25 @@ class VendaService:
             raise OperacaoInvalida("Esta venda já está cancelada.")
 
         if usuario.role != Papel.ADMIN:
+            # Mesma resposta de venda inexistente: dizer "não é sua" confirmaria a
+            # existência da venda alheia e deixaria mapear o movimento da loja.
             if venda.seller_id != usuario.id:
-                raise SemPermissao("Você só pode cancelar as suas próprias vendas.")
+                raise NaoEncontrado("Venda não encontrada.")
             if self._dia_da_loja(venda.sold_at) != self._dia_da_loja(datetime.now(UTC)):
                 raise SemPermissao(
                     "Vendas de dias anteriores só podem ser canceladas pelo administrador."
                 )
+
+        # A troca de status vem ANTES dos estornos e só acontece se a venda ainda estiver
+        # concluída. Sem isso, dois cancelamentos simultâneos (toque duplo, retry após
+        # timeout) passariam os dois pela checagem em memória e devolveriam o estoque duas
+        # vezes — o UPDATE de saldo é atômico, mas soma, então o erro não apareceria.
+        cancelou = await self.repo.marcar_cancelada(
+            venda_id, cancelada_por=usuario.id, motivo=motivo
+        )
+        if not cancelou:
+            await self.session.rollback()
+            raise OperacaoInvalida("Esta venda já está cancelada.")
 
         quantidades = {item.variant_id: item.quantity for item in venda.items}
         for variante_id in movimentos.ordenar_para_evitar_deadlock(list(quantidades)):
@@ -163,10 +181,6 @@ class VendaService:
                 observacao=f"Cancelamento da venda #{venda.id}: {motivo}",
             )
 
-        venda.status = StatusVenda.CANCELADA
-        venda.cancelled_at = datetime.now(UTC)
-        venda.cancelled_by_id = usuario.id
-        venda.cancel_reason = motivo
         await self.session.commit()
 
         atualizada = await self.repo.por_id(venda_id)
@@ -215,7 +229,7 @@ class VendaService:
         return Pagina.montar(items, total, p)
 
     async def _montar_venda(self, venda: Sale, usuario: User) -> VendaOut:
-        variantes = await self.repo.variantes_para_venda([i.variant_id for i in venda.items])
+        variantes = await self.repo.variantes_historicas([i.variant_id for i in venda.items])
         vendedor = await self.repo.usuario(venda.seller_id)
         admin = usuario.role == Papel.ADMIN
 

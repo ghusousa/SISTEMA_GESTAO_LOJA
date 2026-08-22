@@ -5,13 +5,13 @@
 
 import { useMutation } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Alert, Modal, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { codigoDoErro, mensagemDoErro } from '@/api/client';
 import { catalogo, estoque } from '@/api/endpoints';
 import type { VarianteLookup } from '@/api/tipos';
-import { Scanner } from '@/components/Scanner';
+import { Scanner, type ScannerRef } from '@/components/Scanner';
 import { Botao, Campo, Cartao } from '@/components/ui';
 import { invalidarAposMovimentoEstoque } from '@/lib/queryClient';
 import { cores, espaco, fonte } from '@/lib/tema';
@@ -23,6 +23,9 @@ export default function AjusteEstoque() {
   const [motivo, setMotivo] = useState('');
   const [scanner, setScanner] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
+  // Sem isto, o scanner em modo único ficaria pausado para sempre após um código
+  // desconhecido: a câmera segue ligada e nenhuma outra etiqueta é lida.
+  const controle = useRef<ScannerRef | null>(null);
 
   async function buscar(codigo: string) {
     try {
@@ -33,9 +36,10 @@ export default function AjusteEstoque() {
     } catch (e) {
       setErro(
         codigoDoErro(e) === 'NAO_ENCONTRADO'
-          ? `Código ${codigo} não cadastrado.`
+          ? `Código ${codigo} não cadastrado. Bipe outra peça.`
           : mensagemDoErro(e),
       );
+      controle.current?.reativar();
     }
   }
 
@@ -70,6 +74,7 @@ export default function AjusteEstoque() {
       <Modal visible animationType="none">
         <Scanner
           modo="unico"
+          controle={controle}
           dica="Bipe a peça que precisa de ajuste"
           aoLer={(codigo) => void buscar(codigo)}
           rodape={

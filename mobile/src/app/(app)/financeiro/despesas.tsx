@@ -9,7 +9,7 @@ import { mensagemDoErro } from '@/api/client';
 import { despesas } from '@/api/endpoints';
 import { Botao, Carregando, ErroEstado, Etiqueta, Vazio } from '@/components/ui';
 import { formatar, paraCentavos } from '@/lib/money';
-import { chaves, queryClient } from '@/lib/queryClient';
+import { chaves, invalidarAposDespesa, queryClient } from '@/lib/queryClient';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
 
 export default function Despesas() {
@@ -27,7 +27,7 @@ export default function Despesas() {
   const replicar = useMutation({
     mutationFn: () => despesas.replicarRecorrentes(competencia),
     onSuccess: (resultado) => {
-      void queryClient.invalidateQueries({ queryKey: chaves.despesas });
+      invalidarAposDespesa();
       Alert.alert(
         'Contas fixas do mês',
         resultado.criadas === 0
@@ -40,7 +40,7 @@ export default function Despesas() {
 
   const excluir = useMutation({
     mutationFn: (id: number) => despesas.excluir(id),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: chaves.despesas }),
+    onSuccess: () => invalidarAposDespesa(),
     onError: (e) => Alert.alert('Não deu para excluir', mensagemDoErro(e)),
   });
 

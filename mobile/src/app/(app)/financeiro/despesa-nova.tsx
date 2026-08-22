@@ -18,7 +18,7 @@ import { mensagemDoErro } from '@/api/client';
 import { despesas } from '@/api/endpoints';
 import { Botao, Campo, Carregando } from '@/components/ui';
 import { paraCentavos, paraDecimalString } from '@/lib/money';
-import { chaves, queryClient } from '@/lib/queryClient';
+import { chaves, invalidarAposDespesa, queryClient } from '@/lib/queryClient';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
 
 export default function NovaDespesa() {
@@ -58,7 +58,7 @@ export default function NovaDespesa() {
       });
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: chaves.despesas });
+      invalidarAposDespesa();
       router.back();
     },
     onError: (e) => Alert.alert('Não deu para lançar', mensagemDoErro(e)),

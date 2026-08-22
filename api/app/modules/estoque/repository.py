@@ -70,7 +70,9 @@ class EstoqueRepository:
                 func.coalesce(StockBalance.quantity, 0) <= ProductVariant.min_stock
             )
         total = await self.session.scalar(select(func.count()).select_from(stmt.subquery()))
-        stmt = stmt.order_by(Product.name, ProductVariant.size, ProductVariant.color)
+        stmt = stmt.order_by(
+            Product.name, ProductVariant.size, ProductVariant.color, ProductVariant.id
+        )
         stmt = stmt.offset(p.offset).limit(p.limit)
         return list((await self.session.execute(stmt)).all()), int(total or 0)
 

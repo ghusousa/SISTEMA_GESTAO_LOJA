@@ -103,6 +103,7 @@ export default function Pdv() {
         <Scanner
           aoLer={(codigo) => void aoLerCodigo(codigo)}
           modo="continuo"
+          ocupado={buscando}
           dica={buscando ? 'Consultando…' : 'Bipe a etiqueta da peça'}
         />
       </View>

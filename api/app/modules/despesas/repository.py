@@ -29,7 +29,7 @@ class DespesaRepository:
     ) -> tuple[list[ExpenseCategory], int]:
         stmt = select(ExpenseCategory).where(ExpenseCategory.deleted_at.is_(None))
         total = await self.session.scalar(select(func.count()).select_from(stmt.subquery()))
-        stmt = stmt.order_by(ExpenseCategory.name).offset(p.offset).limit(p.limit)
+        stmt = stmt.order_by(ExpenseCategory.name, ExpenseCategory.id).offset(p.offset).limit(p.limit)
         return list((await self.session.execute(stmt)).scalars().all()), int(total or 0)
 
     async def categoria_tem_despesas(self, categoria_id: int) -> bool:
@@ -102,11 +102,16 @@ class DespesaRepository:
                 modelos.append(despesa)
         return modelos
 
-    async def replicas_existentes(self, competencia: date) -> set[int]:
-        """IDs de origem que já foram replicados nesta competência."""
-        stmt = select(Expense.recurring_source_id).where(
-            Expense.competencia == competencia,
-            Expense.recurring_source_id.is_not(None),
-            Expense.deleted_at.is_(None),
+    async def lancamentos_da_competencia(self, competencia: date) -> set[tuple[int, str]]:
+        """O que já está lançado no mês, por (categoria, descrição).
+
+        A chave não é o `recurring_source_id` porque o aluguel do mês pode ter sido digitado
+        à mão — sem origem — e aí "Lançar fixas" acharia que faltava e criaria o segundo.
+        """
+        stmt = select(Expense.category_id, Expense.description).where(
+            Expense.competencia == competencia, Expense.deleted_at.is_(None)
         )
-        return {row for row in (await self.session.execute(stmt)).scalars().all()}
+        return {
+            (categoria_id, descricao.strip().lower())
+            for categoria_id, descricao in (await self.session.execute(stmt)).all()
+        }

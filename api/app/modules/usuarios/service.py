@@ -1,5 +1,10 @@
+from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+
+# Importa o MODELO de refresh token, não o service de auth: auth.service já depende de
+# usuarios.service, e usar o service aqui fecharia um ciclo de import.
+from app.modules.auth.models import RefreshToken
 
 from app.core.exceptions import (
     CredenciaisInvalidas,
@@ -76,6 +81,9 @@ class UsuarioService:
             user.role = dados.papel
         if dados.ativo is not None:
             user.is_active = dados.ativo
+            if dados.ativo is False:
+                # Desativar corta o acesso agora, sem esperar o access token expirar.
+                await self._derrubar_sessoes(user.id)
         await self.session.commit()
         await self.session.refresh(user)
         return user
@@ -83,6 +91,7 @@ class UsuarioService:
     async def redefinir_senha(self, user_id: int, nova_senha: str) -> None:
         user = await self.obter(user_id)
         user.password_hash = hash_senha(nova_senha)
+        await self._derrubar_sessoes(user_id)
         await self.session.commit()
 
     async def trocar_propria_senha(self, user: User, senha_atual: str, nova_senha: str) -> None:
@@ -91,4 +100,18 @@ class UsuarioService:
         if senha_atual == nova_senha:
             raise Validacao("A nova senha deve ser diferente da atual.")
         user.password_hash = hash_senha(nova_senha)
+        await self._derrubar_sessoes(user.id)
         await self.session.commit()
+
+    async def _derrubar_sessoes(self, user_id: int) -> None:
+        """Trocar a senha encerra as sessões abertas.
+
+        Quem trocou a senha quer justamente cortar o acesso de quem estava dentro — um
+        refresh token vazado (celular roubado, funcionário desligado) continuaria válido por
+        semanas se as sessões não caíssem junto.
+        """
+        await self.session.execute(
+            update(RefreshToken)
+            .where(RefreshToken.user_id == user_id, RefreshToken.revoked.is_(False))
+            .values(revoked=True)
+        )

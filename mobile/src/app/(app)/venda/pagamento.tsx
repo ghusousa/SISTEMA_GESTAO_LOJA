@@ -15,7 +15,13 @@ import { vendas } from '@/api/endpoints';
 import type { FormaPagamento } from '@/api/tipos';
 import { TecladoNumerico } from '@/components/TecladoNumerico';
 import { Botao } from '@/components/ui';
-import { formatar, paraDecimalString, percentual, type Centavos } from '@/lib/money';
+import {
+  formatar,
+  paraCentavos,
+  paraDecimalString,
+  percentual,
+  type Centavos,
+} from '@/lib/money';
 import { invalidarAposVenda } from '@/lib/queryClient';
 import { ALVO_TOQUE, cores, espaco, fonte, raio } from '@/lib/tema';
 import { useCartStore } from '@/stores/cartStore';
@@ -49,7 +55,10 @@ export default function Pagamento() {
   const total = Math.max(0, subtotal - descontoAtual);
   const jaPago = pagos.reduce((soma, p) => soma + p.valor, 0);
   const restante = total - jaPago;
-  const troco = Math.max(0, recebidoDinheiro - total);
+  // Troco é o que sobrou DO DINHEIRO, não da venda: numa venda de R$ 100 paga com R$ 40 no
+  // PIX e uma nota de R$ 100, o troco é R$ 40 — comparar a nota com o total daria zero.
+  const dinheiroAplicado = pagos.find((p) => p.forma === 'DINHEIRO')?.valor ?? 0;
+  const troco = Math.max(0, recebidoDinheiro - dinheiroAplicado);
 
   function aplicarDesconto() {
     definirDesconto(descontoDigitado);
@@ -63,11 +72,20 @@ export default function Pagamento() {
     const valor = valorDigitado > 0 ? Math.min(valorDigitado, restante) : restante;
     if (valor <= 0) return;
 
-    void Haptics.selectionAsync();
-    if (forma === 'DINHEIRO' && valorDigitado > restante) {
-      // Digitou mais que o devido em dinheiro: a diferença é troco, não pagamento a mais.
-      setRecebidoDinheiro(valorDigitado);
+    if (forma === 'DINHEIRO') {
+      // Recebeu mais do que devia: a diferença é troco, não pagamento a mais.
+      setRecebidoDinheiro((atual) => atual + Math.max(valorDigitado, valor));
+    } else if (valorDigitado > restante) {
+      // Em cartão ou PIX não existe troco: aceitar em silêncio esconderia um erro de
+      // digitação (R$ 120,00 numa venda de R$ 100,00 vira R$ 100,00 sem aviso).
+      Alert.alert(
+        'Valor maior que o devido',
+        `Faltam ${formatar(restante)}. Em ${forma.toLowerCase()} não há troco — ajuste o valor ou receba a diferença em dinheiro.`,
+      );
+      return;
     }
+
+    void Haptics.selectionAsync();
     setPagos((atuais) => {
       const existente = atuais.find((p) => p.forma === forma);
       return existente
@@ -83,7 +101,7 @@ export default function Pagamento() {
   }
 
   async function confirmar() {
-    if (restante !== 0) return;
+    if (restante !== 0 || total === 0) return;
     setEnviando(true);
     try {
       const venda = await vendas.registrar({
@@ -102,11 +120,14 @@ export default function Pagamento() {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
 
       if (codigoDoErro(erro) === 'PAGAMENTO_DIVERGENTE') {
-        // O preço mudou no servidor entre o bipe e a cobrança. O total certo vem no erro.
-        const detalhe = detalheDoErro(erro);
+        // O preço mudou no servidor entre o bipe e a cobrança. O total certo vem no erro,
+        // como string decimal da API — vira R$ antes de aparecer para o vendedor.
+        const totalCorreto = detalheDoErro(erro)?.total_da_venda;
         Alert.alert(
           'O preço mudou',
-          `O total correto agora é ${detalhe?.total_da_venda ?? '—'}. Refaça a cobrança.`,
+          totalCorreto
+            ? `O total correto agora é ${formatar(paraCentavos(String(totalCorreto)))}. Refaça a cobrança.`
+            : 'Confira o carrinho e refaça a cobrança.',
         );
       } else if (codigoDoErro(erro) === 'ESTOQUE_INSUFICIENTE') {
         Alert.alert(
@@ -244,10 +265,14 @@ export default function Pagamento() {
           }}
         />
         <Botao
-          titulo={restante === 0 ? 'Confirmar venda' : 'Falta receber'}
+          titulo={
+            total === 0 ? 'Desconto zera a venda' : restante === 0 ? 'Confirmar venda' : 'Falta receber'
+          }
           variante="acao"
           estilo={s.metade}
-          desabilitado={restante !== 0}
+          // Total zero não tem como ser pago: a API exige ao menos um pagamento, e um
+          // desconto de 100% precisa ser corrigido, não enviado.
+          desabilitado={restante !== 0 || total === 0}
           carregando={enviando}
           onPress={() => void confirmar()}
         />

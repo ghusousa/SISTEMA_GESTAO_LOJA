@@ -132,7 +132,14 @@ async def test_refechar_o_mesmo_dia_atualiza_em_vez_de_duplicar(
     primeiro = await client.post(
         "/caixa/fechamentos",
         headers=auth_admin,
-        json={"data": hoje, "contagens": [{"forma": "DINHEIRO", "valor_contado": "80.00"}]},
+        json={
+            "data": hoje,
+            "contagens": [
+                {"forma": "DINHEIRO", "valor_contado": "80.00"},
+                {"forma": "PIX", "valor_contado": "100.00"},
+                {"forma": "DEBITO", "valor_contado": "100.00"},
+            ],
+        },
     )
     segundo = await client.post(
         "/caixa/fechamentos",
@@ -161,7 +168,14 @@ async def test_dia_aponta_o_fechamento_existente(
         await client.post(
             "/caixa/fechamentos",
             headers=auth_admin,
-            json={"data": hoje, "contagens": [{"forma": "PIX", "valor_contado": "100.00"}]},
+            json={
+                "data": hoje,
+                "contagens": [
+                    {"forma": "PIX", "valor_contado": "100.00"},
+                    {"forma": "DINHEIRO", "valor_contado": "90.00"},
+                    {"forma": "DEBITO", "valor_contado": "100.00"},
+                ],
+            },
         )
     ).json()["id"]
 
@@ -197,3 +211,20 @@ async def test_vendedor_nao_acessa_o_caixa(
         },
     )
     assert resp.status_code == 403
+
+
+async def test_fechar_sem_conferir_uma_forma_com_valor_e_recusado(
+    client: AsyncClient, auth_admin: dict[str, str], vendas_do_dia: dict
+) -> None:
+    """Deixar o PIX de fora não pode virar "contado zero": inventaria um rombo."""
+    resp = await client.post(
+        "/caixa/fechamentos",
+        headers=auth_admin,
+        json={
+            "data": _hoje_loja().isoformat(),
+            "contagens": [{"forma": "DINHEIRO", "valor_contado": "90.00"}],
+        },
+    )
+    assert resp.status_code == 422
+    assert resp.json()["code"] == "VALIDACAO"
+    assert "PIX" in resp.json()["detail"]["formas"]

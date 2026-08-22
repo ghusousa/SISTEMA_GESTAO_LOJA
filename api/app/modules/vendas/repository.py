@@ -1,14 +1,14 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.pagination import Paginacao
 from app.modules.catalogo.models import Product, ProductVariant
 from app.modules.usuarios.models import User
-from app.modules.vendas.models import Sale, SaleItem, SalePayment
+from app.modules.vendas.models import Sale, SaleItem, SalePayment, StatusVenda
 
 
 class VendaRepository:
@@ -24,6 +24,26 @@ class VendaRepository:
         )
         return (await self.session.execute(stmt)).unique().scalar_one_or_none()
 
+    async def marcar_cancelada(
+        self, venda_id: int, *, cancelada_por: int, motivo: str
+    ) -> bool:
+        """Troca CONCLUIDA por CANCELADA em uma instrução, e diz se foi ela quem trocou.
+
+        O `WHERE status = 'CONCLUIDA'` é o que serializa dois cancelamentos simultâneos:
+        o segundo atualiza zero linhas e o chamador sabe que não pode estornar de novo.
+        """
+        resultado = await self.session.execute(
+            update(Sale)
+            .where(Sale.id == venda_id, Sale.status == StatusVenda.CONCLUIDA)
+            .values(
+                status=StatusVenda.CANCELADA,
+                cancelled_at=datetime.now(UTC),
+                cancelled_by_id=cancelada_por,
+                cancel_reason=motivo,
+            )
+        )
+        return (resultado.rowcount or 0) == 1
+
     async def por_client_uuid(self, client_uuid: uuid.UUID) -> Sale | None:
         stmt = (
             select(Sale)
@@ -33,7 +53,7 @@ class VendaRepository:
         return (await self.session.execute(stmt)).unique().scalar_one_or_none()
 
     async def variantes_para_venda(self, ids: list[int]) -> dict[int, tuple]:
-        """Peça + produto, com preço e custo atuais — o que vai ser congelado na venda."""
+        """Peça + produto ATIVOS, com preço e custo atuais — o que será congelado na venda."""
         if not ids:
             return {}
         stmt = (
@@ -43,8 +63,21 @@ class VendaRepository:
         )
         return {v.id: (v, p) for v, p in (await self.session.execute(stmt)).all()}
 
-    async def nomes_de_variantes(self, ids: list[int]) -> dict[int, tuple]:
-        return await self.variantes_para_venda(ids)
+    async def variantes_historicas(self, ids: list[int]) -> dict[int, tuple]:
+        """Peça + produto SEM filtrar exclusão, para renderizar vendas antigas.
+
+        Produto excluído é soft delete justamente para continuar explicando o passado; usar
+        o filtro de ativos aqui faria um recibo de julho virar "(peça removida)" só porque a
+        peça saiu do catálogo em agosto.
+        """
+        if not ids:
+            return {}
+        stmt = (
+            select(ProductVariant, Product)
+            .join(Product, Product.id == ProductVariant.product_id)
+            .where(ProductVariant.id.in_(ids))
+        )
+        return {v.id: (v, p) for v, p in (await self.session.execute(stmt)).all()}
 
     async def usuario(self, user_id: int) -> User | None:
         return await self.session.get(User, user_id)

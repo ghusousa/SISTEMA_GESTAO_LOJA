@@ -6,6 +6,8 @@
 import { create } from 'zustand';
 
 import { auth } from '@/api/endpoints';
+import { queryClient } from '@/lib/queryClient';
+import { useCartStore } from '@/stores/cartStore';
 import {
   lerRefreshToken,
   lerUsuarioSalvo,
@@ -22,6 +24,18 @@ interface AuthState {
   restaurar: () => Promise<void>;
   encerrarPorTokenInvalido: () => void;
   ehAdmin: () => boolean;
+}
+
+/**
+ * O que morre junto com a sessão.
+ *
+ * O carrinho é global e sobreviveria à troca de usuário: a vendedora sai no meio de uma
+ * venda, o colega entra e encontra as peças dela no PDV — com os preços daquele momento e
+ * o client_uuid da sessão anterior. O cache do React Query some pelo mesmo motivo.
+ */
+function limparEstadoDaSessao(): void {
+  useCartStore.getState().limpar();
+  queryClient.clear();
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -42,6 +56,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       await auth.logout(refresh).catch(() => undefined);
     }
     await limparSessao();
+    limparEstadoDaSessao();
     set({ usuario: null, carregando: false });
   },
 
@@ -63,6 +78,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   encerrarPorTokenInvalido() {
+    limparEstadoDaSessao();
     set({ usuario: null, carregando: false });
   },
 
