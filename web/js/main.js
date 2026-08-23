@@ -7,7 +7,7 @@
 
 import { restaurarSessao, sair, definirTratadorDeSessaoPerdida } from './api.js';
 import { iniciarRoteador, rota, ir, caminhoAtual } from './router.js';
-import { limparCarrinho, sessao } from './store.js';
+import { limparTudoDaSessao, sessao } from './store.js';
 import { PODE, pode, titulo } from './permissoes.js';
 import { conectarTempoReal, desconectarTempoReal } from './tempo-real.js';
 import { html, confirmar, cru, aviso } from './ui.js';
@@ -26,6 +26,9 @@ rota('/produtos/novo', () => import('./views/produto-novo.js'));
 // 'etiquetas' como se fosse um id.
 rota('/produtos/:id/etiquetas', () => import('./views/etiquetas.js'));
 rota('/produtos/:id', () => import('./views/produto-detalhe.js'));
+// Sem produto no caminho: a folha do que ACABOU de entrar, que mistura produtos e usa a
+// quantidade que chegou em vez do saldo.
+rota('/etiquetas', () => import('./views/etiquetas.js'));
 rota('/categorias', () => import('./views/categorias.js'), { pode: PODE.EDITAR_CATALOGO });
 
 rota('/estoque', () => import('./views/estoque.js'));
@@ -175,8 +178,10 @@ function areaDeConteudo(caminho, usuario) {
           confirmarTexto: 'Sair',
         });
         if (!confirmou) return;
-        // O carrinho é de quem estava vendendo: não pode sobrar para o próximo turno.
-        limparCarrinho();
+        // Carrinho e conferência são de quem estava trabalhando: não podem sobrar para o
+        // próximo turno — a venda e a sacola do turno anterior entrariam no nome de outra
+        // pessoa.
+        limparTudoDaSessao();
         desconectarTempoReal();
         await sair();
         ir('/entrar', true);

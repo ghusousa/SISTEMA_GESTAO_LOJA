@@ -331,6 +331,26 @@ queda (`test_cliente_que_cai_nao_vira_erro_no_log` guarda isso) e o `docker-comp
 fixa `max-size: 10m` × `max-file: 3` em todo serviço.
 
 
+**ADR-17 — Achar a peça pelo nome é do fluxo, não conveniência.**
+A busca de peças só olhava código de barras, o que bastava para o bipe e falhava no resto. O
+furo aparece na reposição: quando o código é INTERNO, a etiqueta nasce aqui dentro, e a
+mercadoria que chega do fornecedor vem sem nada colado. Exigir bipada obrigava a imprimir e
+colar antes de conferir — peça por peça, para registrar o que já se sabia que chegou. Ou seja,
+o caminho existia só para o caso que a loja quase não tem. Agora `GET /variantes?q=` procura
+por nome do produto, cor ou código, com o exato à frente, e devolve saldo e nome do produto na
+mesma resposta — o que a tela precisa para decidir sem uma segunda ida ao servidor.
+Acento sai dos dois lados por `translate()` no Postgres, e não pela extensão `unaccent`:
+extensão pede `CREATE EXTENSION`, mais uma migration e mais um privilégio para faltar num
+servidor novo, enquanto para o alfabeto do português a tabela resolve igual. Quem procura
+escreve "calca jeans", e a peça não pode sumir por causa de uma cedilha — some ela, a pessoa
+cadastra a mesma peça de novo, e aí são dois saldos para uma arara só.
+Na tela é **um campo, não dois**: o leitor USB digita em rajada e fecha com Enter, o dedo
+digita devagar e com letras, e dá para distinguir sem perguntar. Com a lista aberta o leitor
+ignora o Enter (`ignorarQuando`), senão "camiseta" viraria uma bipada de código inexistente.
+A conferência da entrada passou a morar no store, ao lado do carrinho, pelo mesmo motivo dele:
+travar na peça não cadastrada no meio da sacola é rotina, e perder trinta bipadas para ir
+cadastrar ensina a não cadastrar. Quem vai cadastrar volta com a peça nova já conferida.
+
 ## 4. Contratos de API
 
 Prefixo `/api/v1`. Auth: `Authorization: Bearer <access_token>`.
@@ -373,7 +393,7 @@ Desativar = `PATCH {ativo:false}`. Bootstrap do primeiro admin: `python -m app.c
 | PUT | `/produtos/{id}/foto` | A/V | multipart, salva em `media/produtos/` |
 | POST | `/produtos/{id}/variantes` | A/V | adiciona variante a produto existente |
 | PATCH/DELETE | `/variantes/{id}` | A | |
-| GET | `/variantes` | A/V | `?produto_id=&q=&somente_com_saldo=` |
+| GET | `/variantes` | A/V | `?produto_id=&q=` · `q` acha por **nome do produto, cor ou código** (sem acento, código exato primeiro); a resposta traz `produto` e `saldo` |
 | **GET** | **`/variantes/codigo-barras/{codigo}`** | A/V | lookup do PDV: produto + variante + preço + saldo. 404 → app oferece cadastro rápido |
 | POST | `/variantes/gerar-codigo-interno` | A/V | `{codigo}` EAN-13 interno, ainda não usado |
 

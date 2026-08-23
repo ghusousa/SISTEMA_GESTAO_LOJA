@@ -98,7 +98,9 @@ async def listar_variantes(
     usuario: CurrentUser,
     p: Annotated[Paginacao, Depends(paginacao)],
     produto_id: int | None = None,
-    q: Annotated[str | None, Query(description="Busca por código de barras")] = None,
+    q: Annotated[
+        str | None, Query(description="Busca por nome do produto, cor ou código de barras")
+    ] = None,
 ) -> Pagina[VarianteOut]:
     return await CatalogoService(session).listar_variantes(p, produto_id, q, usuario)
 

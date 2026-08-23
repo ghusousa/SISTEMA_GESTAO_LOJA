@@ -6,13 +6,19 @@
  * barras, não só o número. Peça sem EAN-13 válido fica de fora com aviso, porque desenhar
  * uma barra que nenhum leitor lê seria pior do que não desenhar.
  *
- * A quantidade padrão é o SALDO de cada peça: quem acabou de cadastrar 5 blusas P quer 5
- * etiquetas P, e não uma. Dá para mudar antes de imprimir.
+ * Duas portas de entrada, e a diferença está na QUANTIDADE:
+ *
+ * - `#/produtos/:id/etiquetas` — a grade de um produto, começando com o saldo de cada peça
+ *   (quem acabou de cadastrar 5 blusas P quer 5 etiquetas P, não uma);
+ * - `#/etiquetas` logo depois de uma entrada — só o que ACABOU de chegar, na quantidade que
+ *   chegou. Aqui o saldo seria a conta errada: ele soma o que já estava na arara etiquetado,
+ *   e a pessoa colaria etiqueta em peça que já tem.
  */
 
 import { api } from '../api.js';
 import { svgEan13, ean13Valido } from '../codigo-barras.js';
 import { formatar, paraCentavos } from '../dinheiro.js';
+import { conferencia } from '../store.js';
 import { avisarErro, cru, html, plural } from '../ui.js';
 
 /** 0,35 mm de módulo: acima do mínimo do padrão (0,33) para aguentar jato de tinta. */
@@ -23,32 +29,62 @@ const MAX_POR_PECA = 50;
 export async function render(raiz, params) {
   raiz.innerHTML = '<div class="carregando">Carregando…</div>';
 
-  let produto;
-  try {
-    produto = await api.get(`/produtos/${params.id}`);
-  } catch (erro) {
-    avisarErro(erro);
-    raiz.innerHTML =
-      '<div class="vazio"><p class="vazio__titulo">Produto não encontrado</p></div>';
-    return;
+  const daEntrada = !params.id;
+  /** @type {{id:number, produto:string, tamanho:string, cor:string, codigo_barras:string, preco_venda:string, quantas:number}[]} */
+  let pecas = [];
+  let titulo = 'Etiquetas para imprimir';
+  let voltar = null;
+
+  if (daEntrada) {
+    // A entrada acabou de gravar e deixou aqui o que chegou. Recarregar a página perde a
+    // lista — e tudo bem: a folha se imprime na hora, e o caminho por produto continua.
+    pecas = (conferencia.get().etiquetas || []).map((i) => ({
+      id: i.variante_id,
+      produto: i.produto,
+      tamanho: i.tamanho,
+      cor: i.cor,
+      codigo_barras: i.codigo_barras,
+      preco_venda: i.preco_venda,
+      quantas: Math.min(i.quantidade, MAX_POR_PECA),
+    }));
+    titulo = 'Etiquetas da mercadoria que chegou';
+    voltar = { href: '#/estoque/entrada', texto: 'Entrada' };
+  } else {
+    let produto;
+    try {
+      produto = await api.get(`/produtos/${params.id}`);
+    } catch (erro) {
+      avisarErro(erro);
+      raiz.innerHTML =
+        '<div class="vazio"><p class="vazio__titulo">Produto não encontrado</p></div>';
+      return;
+    }
+    pecas = produto.variantes.map((v) => ({
+      id: v.id,
+      produto: produto.nome,
+      tamanho: v.tamanho,
+      cor: v.cor,
+      codigo_barras: v.codigo_barras,
+      preco_venda: v.preco_venda,
+      // Peça zerada entra com 1, para quem está etiquetando o que ainda vai dar entrada.
+      quantas: Math.min(Math.max(v.saldo, 1), MAX_POR_PECA),
+    }));
+    voltar = { href: `#/produtos/${produto.id}`, texto: produto.nome };
   }
 
-  const comCodigo = produto.variantes.filter((v) => ean13Valido(v.codigo_barras));
-  const semCodigo = produto.variantes.filter((v) => !ean13Valido(v.codigo_barras));
-
-  // Começa com uma etiqueta por unidade em estoque; peça zerada entra com 1, para quem
-  // está etiquetando mercadoria que ainda vai dar entrada.
-  const quantidades = new Map(comCodigo.map((v) => [v.id, Math.min(Math.max(v.saldo, 1), MAX_POR_PECA)]));
+  const comCodigo = pecas.filter((v) => ean13Valido(v.codigo_barras));
+  const semCodigo = pecas.filter((v) => !ean13Valido(v.codigo_barras));
+  const quantidades = new Map(comCodigo.map((v) => [v.id, v.quantas]));
 
   raiz.innerHTML = html`
     <div class="pagina">
       <div class="folha-topo">
         <div class="pagina__topo">
           <div>
-            <a class="botao botao--fantasma botao--pequeno" href="#/produtos/${produto.id}">
-              ← ${produto.nome}
+            <a class="botao botao--fantasma botao--pequeno" href="${voltar.href}">
+              ← ${voltar.texto}
             </a>
-            <h1>Etiquetas para imprimir</h1>
+            <h1>${titulo}</h1>
             <p class="texto-suave">
               Confira as quantidades e mande imprimir. Cada folha A4 leva 36 etiquetas de
               50 × 30 mm.
@@ -79,7 +115,7 @@ export async function render(raiz, params) {
                     ${comCodigo.map(
                       (v) => html`
                         <label class="campo">
-                          <span>${v.tamanho} · ${v.cor} <span class="campo__dica">${plural(v.saldo, 'em estoque', 'em estoque')}</span></span>
+                          <span>${v.produto} ${v.tamanho} · ${v.cor}</span>
                           <input
                             type="number"
                             min="0"
@@ -100,7 +136,7 @@ export async function render(raiz, params) {
             `)
           : cru(
               '<div class="vazio"><p class="vazio__titulo">Nada para imprimir</p>' +
-                '<p class="texto-suave">Nenhuma peça deste produto tem código de barras EAN-13.</p></div>',
+                '<p class="texto-suave">Nenhuma destas peças tem código de barras no padrão EAN-13.</p></div>',
             )}
       </div>
 
@@ -119,7 +155,7 @@ export async function render(raiz, params) {
     });
     return html`
       <div class="etiqueta-peca">
-        <span class="etiqueta-peca__nome">${produto.nome}</span>
+        <span class="etiqueta-peca__nome">${variante.produto}</span>
         <span class="etiqueta-peca__linha">
           <span>${variante.tamanho} · ${variante.cor}</span>
           <span class="etiqueta-peca__preco">${formatar(paraCentavos(variante.preco_venda))}</span>

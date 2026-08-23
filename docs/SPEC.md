@@ -56,15 +56,19 @@ A loja consegue operar 100% sem celular.
 
 ## Casos de uso principais
 
-1. **Vender (PDV)** — bipar a etiqueta → a peça entra no carrinho com preço → repetir → aplicar
-   desconto se houver → cobrar (dinheiro/PIX/débito/crédito, podendo dividir entre formas) →
-   confirmar. O estoque baixa na mesma transação. Se o código não existir, o app oferece cadastro
-   rápido. Se não houver saldo, a venda é recusada.
+1. **Vender (PDV)** — bipar a etiqueta (ou achar a peça pelo nome, quando a etiqueta rasgou) → a
+   peça entra no carrinho com preço → repetir → aplicar desconto se houver → cobrar
+   (dinheiro/PIX/débito/crédito, podendo dividir entre formas) → confirmar. O estoque baixa na
+   mesma transação. Se o código não existir, o app oferece cadastro rápido. Se não houver saldo,
+   a venda é recusada.
 2. **Cadastrar peça nova** — dados do produto + grade de variantes (gerar P/M/G/GG de uma vez);
    para cada uma: bipar o EAN da etiqueta ou pedir um código interno ao sistema, informar custo,
-   preço e estoque inicial.
-3. **Repor estoque** — modo bipagem contínua: bipa cada peça que chegou, o app soma, ao final envia
-   uma entrada única (com fornecedor e observação).
+   preço e estoque inicial. **É por aqui que a peça inédita entra no estoque**, pelo campo de
+   estoque inicial — não pela tela de entrada, que pressupõe peça já cadastrada.
+3. **Repor estoque** — dizer o que chegou, bipando (peça já etiquetada) ou pelo nome (o normal:
+   mercadoria do fornecedor chega sem a nossa etiqueta, porque o código interno nasceu aqui). O
+   sistema soma, e ao final envia uma entrada única com fornecedor e observação. Fechada a
+   entrada, oferece a folha de etiquetas do que acabou de chegar — na quantidade que chegou.
 4. **Conferir estoque (inventário)** — contar fisicamente e lançar as contagens; o sistema gera as
    movimentações de acerto e mostra as diferenças.
 5. **Lançar despesas** — valor, categoria, data, se é recorrente. Despesas recorrentes podem ser

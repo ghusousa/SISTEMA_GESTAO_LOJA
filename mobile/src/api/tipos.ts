@@ -51,6 +51,8 @@ export interface Categoria {
 export interface Variante {
   id: number;
   produto_id: number;
+  /** Nome do produto. Sem ele, uma busca por nome devolveria tamanhos sem dizer de quê. */
+  produto: string;
   tamanho: string;
   cor: string;
   codigo_barras: string;

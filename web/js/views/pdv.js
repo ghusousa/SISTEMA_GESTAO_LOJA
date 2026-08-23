@@ -10,6 +10,7 @@
  */
 
 import { api, ErroApi } from '../api.js';
+import { ligarBuscaDePeca } from '../busca-peca.js';
 import { criarLeitor, manterFoco } from '../leitor.js';
 import { ir } from '../router.js';
 import {
@@ -40,16 +41,17 @@ const LAYOUT = html`
     <div>
       <div class="pdv__leitura">
         <div class="pdv__campo">
-          <label class="so-leitor" for="leitura">Código de barras</label>
+          <label class="so-leitor" for="leitura">Código de barras ou nome da peça</label>
           <input
             id="leitura"
             data-leitor
             type="text"
             autocomplete="off"
-            placeholder="Bipe a etiqueta ou digite o código e tecle Enter"
+            placeholder="Bipe a etiqueta ou digite o nome da peça"
           />
           <span class="pdv__pisca">Leitor pronto</span>
         </div>
+        <div class="busca-peca" data-busca hidden></div>
       </div>
       <div class="pdv__itens" data-itens></div>
     </div>
@@ -81,7 +83,7 @@ const LAYOUT = html`
 
       <div class="pdv__atalhos">
         <span><kbd>F2</kbd> cobrar · <kbd>F4</kbd> desconto · <kbd>Esc</kbd> limpar</span>
-        <span>O leitor USB funciona sem clicar em nada.</span>
+        <span>O leitor USB funciona sem clicar em nada. Etiqueta rasgada? Digite o nome.</span>
       </div>
     </aside>
   </div>
@@ -97,7 +99,9 @@ export function render(raiz) {
 
   /* ----------------------------------------------------------------- carrinho */
 
-  function adicionar(peca) {
+  /** Aceita a resposta do bipe (`variante_id`) e a da busca por nome (`id`). */
+  function adicionar(bruta) {
+    const peca = { ...bruta, variante_id: bruta.variante_id ?? bruta.id };
     const itens = [...carrinho.get().itens];
     const indice = itens.findIndex((i) => i.variante_id === peca.variante_id);
     const jaNoCarrinho = indice >= 0 ? itens[indice].quantidade : 0;
@@ -354,7 +358,15 @@ export function render(raiz) {
   raiz.querySelector('[data-limpar]').addEventListener('click', limpar);
   raiz.querySelector('[data-desconto]').addEventListener('click', pedirDesconto);
 
-  const leitor = criarLeitor({ aoLer: lerCodigo });
+  // Etiqueta rasgada, peça que voltou da prova sem tag, cliente na fila: no balcão também
+  // existe o dia em que não há o que bipar. O mesmo campo aceita o nome.
+  const busca = ligarBuscaDePeca({
+    campo,
+    painel: raiz.querySelector('[data-busca]'),
+    aoEscolher: adicionar,
+    mostrarPreco: true,
+  });
+  const leitor = criarLeitor({ aoLer: lerCodigo, ignorarQuando: busca.aberta });
   leitor.ligar();
   const pararFoco = manterFoco(campo);
   const desinscrever = carrinho.inscrever(pintar);
@@ -363,6 +375,7 @@ export function render(raiz) {
 
   return () => {
     leitor.desligar();
+    busca.desligar();
     pararFoco();
     desinscrever();
     document.removeEventListener('keydown', atalhos);

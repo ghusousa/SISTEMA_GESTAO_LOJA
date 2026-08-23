@@ -140,6 +140,14 @@ export const catalogo = {
   async excluirVariante(id: number) {
     await api.delete(`/variantes/${id}`);
   },
+  /**
+   * Peças pelo NOME (ou pelo código). Existe para a mercadoria que chega sem a nossa
+   * etiqueta colada — ver `components/BuscarPeca.tsx`.
+   */
+  async buscarVariantes(q: string) {
+    const { data } = await api.get<Pagina<Variante>>('/variantes', { params: { q, size: 20 } });
+    return data;
+  },
   async porCodigoBarras(codigo: string) {
     const { data } = await api.get<VarianteLookup>(
       `/variantes/codigo-barras/${encodeURIComponent(codigo)}`,

@@ -80,6 +80,9 @@ npm run bundle       # expo export: pega erro de import que o tsc não vê
 - Toda listagem pagina no servidor; filtros vão para a query da URL (`trocarConsulta`), para o F5 não perder.
 - Refresh token **só** em cookie httpOnly; access token só em memória. Nunca `localStorage`.
 - Leitor USB é teclado (`js/leitor.js`): rajada de dígitos + Enter. Campo do PDV marcado `data-leitor`.
+- **Um campo, duas entradas**: o mesmo `data-leitor` aceita bipe E nome. Letras abrem a lista
+  (`js/busca-peca.js`, espelho de `mobile/src/components/BuscarPeca.tsx`); com ela aberta o
+  leitor ignora o Enter (`ignorarQuando`), senão "camiseta" viraria uma bipada.
 
 ## Convenções do mobile
 
@@ -103,8 +106,12 @@ estoque, concorrência do último item, idempotência por `client_uuid`.
   o UTC já virou e a consulta devolve um caixa vazio.
 - **Estado que muda de status**: cancelar venda troca o status com `UPDATE ... WHERE status =
   'CONCLUIDA'` antes de estornar. Checar em memória deixa dois cliques estornarem duas vezes.
-- **Carrinho e cache são globais**: logout limpa os dois, senão o próximo usuário herda a venda
-  do anterior.
+- **Carrinho, conferência e cache são globais**: logout limpa tudo (`limparTudoDaSessao`),
+  senão o próximo usuário herda a venda e a sacola do anterior.
+- **Peça nova não entra pela Entrada**: ela nasce no cadastro, que já tem estoque inicial. A
+  Entrada é da segunda vez em diante — e aí a mercadoria chega SEM a nossa etiqueta, porque o
+  código interno nasceu aqui. Por isso a busca por nome não é conveniência: sem ela a reposição
+  não tem como ser registrada. `GET /variantes?q=` acha por nome, cor ou código, sem acento.
 - **Mutação que muda relatório**: invalide as chaves `relatorio-*` também, ou a aba Financeiro
   mostra o resultado de antes.
 - **`response_model` por papel**: rota cuja resposta muda com o papel usa `response_model=None`,

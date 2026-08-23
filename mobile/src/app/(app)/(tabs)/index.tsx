@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { codigoDoErro, mensagemDoErro } from '@/api/client';
 import { catalogo } from '@/api/endpoints';
+import { BuscarPeca } from '@/components/BuscarPeca';
 import { CodigoManual } from '@/components/CodigoManual';
 import { Scanner, type ScannerRef } from '@/components/Scanner';
 import { Botao } from '@/components/ui';
@@ -201,6 +202,38 @@ export default function Pdv() {
           <View style={s.carrinhoAcoes}>
             {/* Etiqueta rasgada ou desbotada é rotina: sem esta saída a peça não vende. */}
             <CodigoManual aoConfirmar={(codigo) => void aoLerCodigo(codigo, 'digitado')} />
+            {/* Etiqueta rasgada, peça que voltou do provador sem tag: no balcão também
+                existe o dia em que não há o que bipar. */}
+            <BuscarPeca
+              rotulo="Buscar"
+              mostrarPreco
+              aoEscolher={(peca) => {
+                // A busca devolve `Variante`; o carrinho fala `VarianteLookup`. Categoria e
+                // foto não entram na conta da venda, e a lista não as traz.
+                const resultado = adicionar(
+                  {
+                    variante_id: peca.id,
+                    produto_id: peca.produto_id,
+                    produto: peca.produto,
+                    categoria: '',
+                    tamanho: peca.tamanho,
+                    cor: peca.cor,
+                    codigo_barras: peca.codigo_barras,
+                    preco_venda: peca.preco_venda,
+                    saldo: peca.saldo,
+                    foto_url: null,
+                  },
+                  paraCentavos(peca.preco_venda),
+                );
+                if (!resultado.ok) {
+                  setAviso(
+                    resultado.disponivel === 0
+                      ? `${peca.produto} ${peca.tamanho} está sem estoque.`
+                      : `Só há ${resultado.disponivel} de ${peca.produto} ${peca.tamanho} em estoque.`,
+                  );
+                }
+              }}
+            />
             {itens.length > 0 && (
               <Pressable onPress={confirmarLimpeza} hitSlop={12}>
                 <Text style={s.limpar}>Limpar</Text>

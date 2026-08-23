@@ -11,6 +11,7 @@ import { PODE, pode } from '../permissoes.js';
 import { TIPOS_ACEITOS, enviarFoto } from '../foto.js';
 import { paraDecimalString } from '../dinheiro.js';
 import { ir } from '../router.js';
+import { conferencia } from '../store.js';
 import { aviso, avisarErro, cru, html, ligarCampoDinheiro, modal } from '../ui.js';
 
 const TAMANHOS_RAPIDOS = ['PP', 'P', 'M', 'G', 'GG', 'XG'];
@@ -298,6 +299,40 @@ export async function render(raiz, _params, consulta) {
 
   raiz.querySelector('[data-salvar]').addEventListener('click', salvar);
 
+  /**
+   * Quem veio da entrada de mercadoria volta para lá com a peça JÁ conferida.
+   *
+   * O caminho existe porque bipar uma etiqueta desconhecida no meio da sacola é rotina:
+   * mandar a pessoa cadastrar e depois se virar para achar a peça de novo é o tipo de
+   * volta que faz a conferência ser abandonada pela metade.
+   */
+  function voltarParaEntrada(produto) {
+    const nova =
+      produto.variantes.find((v) => v.codigo_barras === codigoInicial) || produto.variantes[0];
+    if (nova) {
+      const itens = conferencia.get().itens;
+      const jaEsta = itens.some((i) => i.variante_id === nova.id);
+      if (!jaEsta) {
+        conferencia.set({
+          itens: [
+            ...itens,
+            {
+              variante_id: nova.id,
+              produto: produto.nome,
+              tamanho: nova.tamanho,
+              cor: nova.cor,
+              codigo_barras: nova.codigo_barras,
+              preco_venda: nova.preco_venda,
+              quantidade: 1,
+              custo: 0,
+            },
+          ],
+        });
+      }
+    }
+    ir('/estoque/entrada');
+  }
+
   async function salvar(evento) {
     const botao = evento.currentTarget;
     const nome = raiz.querySelector('[data-nome]').value.trim();
@@ -341,6 +376,10 @@ export async function render(raiz, _params, consulta) {
         }
       }
       aviso(`"${produto.nome}" cadastrado com ${produto.variantes.length} peças.`);
+      if (consulta.voltar === 'entrada') {
+        voltarParaEntrada(produto);
+        return;
+      }
       ir(`/produtos/${produto.id}`);
     } catch (erro) {
       avisarErro(erro);

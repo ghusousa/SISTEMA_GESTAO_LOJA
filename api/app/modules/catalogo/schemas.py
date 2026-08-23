@@ -68,6 +68,9 @@ class VarianteOut(BaseModel):
 
     id: int
     produto_id: int = Field(validation_alias="product_id")
+    #: Nome do produto. Vem preenchido pelo service: sem ele a busca por nome devolveria
+    #: uma lista de tamanhos e cores sem dizer de QUE peça.
+    produto: str = ""
     tamanho: str = Field(validation_alias="size")
     cor: str = Field(validation_alias="color")
     codigo_barras: str = Field(validation_alias="barcode")

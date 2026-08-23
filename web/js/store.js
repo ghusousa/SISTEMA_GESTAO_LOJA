@@ -72,3 +72,22 @@ export function descontoEfetivo() {
 export function limparCarrinho() {
   carrinho.set({ itens: [], desconto: 0, clientUuid: null });
 }
+
+/**
+ * Conferência da entrada de mercadoria, pelo mesmo motivo do carrinho.
+ *
+ * Bipar trinta peças e descobrir que a de número trinta e uma ainda não está cadastrada é
+ * rotina, não exceção. Antes, ir cadastrar significava perder as trinta e recomeçar a
+ * sacola inteira — o que na prática ensina a não cadastrar. Itens são
+ * `{ variante_id, produto, tamanho, cor, codigo_barras, quantidade, custo }`.
+ */
+export const conferencia = criarStore({ itens: [], fornecedor: '', observacao: '', clientUuid: null });
+
+export function limparConferencia() {
+  conferencia.set({ itens: [], fornecedor: '', observacao: '', clientUuid: null });
+}
+
+export function limparTudoDaSessao() {
+  limparCarrinho();
+  limparConferencia();
+}

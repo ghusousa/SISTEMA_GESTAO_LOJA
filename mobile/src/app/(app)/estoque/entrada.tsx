@@ -15,6 +15,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 
 import { codigoDoErro, mensagemDoErro } from '@/api/client';
 import { catalogo, estoque } from '@/api/endpoints';
+import { BuscarPeca } from '@/components/BuscarPeca';
 import { CodigoManual } from '@/components/CodigoManual';
 import { Scanner } from '@/components/Scanner';
 import { Botao, Campo } from '@/components/ui';
@@ -40,6 +41,22 @@ export default function EntradaEstoque() {
   const [consultando, setConsultando] = useState(false);
   const buscando = useRef(false);
 
+  /** Soma uma peça à conferência, venha ela do bipe ou da busca pelo nome. */
+  const somar = useCallback(
+    (peca: { varianteId: number; produto: string; tamanho: string; cor: string; codigo: string }) => {
+      setItens((atuais) => {
+        const existente = atuais.find((i) => i.varianteId === peca.varianteId);
+        if (existente) {
+          return atuais.map((i) =>
+            i.varianteId === peca.varianteId ? { ...i, quantidade: i.quantidade + 1 } : i,
+          );
+        }
+        return [{ ...peca, quantidade: 1 }, ...atuais];
+      });
+    },
+    [],
+  );
+
   const aoLer = useCallback(async (codigo: string) => {
     if (buscando.current) return;
     buscando.current = true;
@@ -48,37 +65,25 @@ export default function EntradaEstoque() {
     try {
       const peca = await catalogo.porCodigoBarras(codigo);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      setItens((atuais) => {
-        const existente = atuais.find((i) => i.varianteId === peca.variante_id);
-        if (existente) {
-          return atuais.map((i) =>
-            i.varianteId === peca.variante_id ? { ...i, quantidade: i.quantidade + 1 } : i,
-          );
-        }
-        return [
-          {
-            varianteId: peca.variante_id,
-            produto: peca.produto,
-            tamanho: peca.tamanho,
-            cor: peca.cor,
-            codigo: peca.codigo_barras,
-            quantidade: 1,
-          },
-          ...atuais,
-        ];
+      somar({
+        varianteId: peca.variante_id,
+        produto: peca.produto,
+        tamanho: peca.tamanho,
+        cor: peca.cor,
+        codigo: peca.codigo_barras,
       });
     } catch (erro) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       setAviso(
         codigoDoErro(erro) === 'NAO_ENCONTRADO'
-          ? `Código ${codigo} não está cadastrado. Cadastre a peça antes de dar entrada.`
+          ? `Código ${codigo} não está cadastrado. Se a peça é nova, cadastre-a em Produtos — o estoque inicial entra junto.`
           : mensagemDoErro(erro),
       );
     } finally {
       buscando.current = false;
       setConsultando(false);
     }
-  }, []);
+  }, [somar]);
 
   const salvar = useMutation({
     mutationFn: () =>
@@ -113,12 +118,25 @@ export default function EntradaEstoque() {
           aoLer={(codigo) => void aoLer(codigo)}
           modo="continuo"
           ocupado={consultando}
-          dica={consultando ? 'Consultando…' : 'Bipe cada peça que chegou'}
+          dica={consultando ? 'Consultando…' : 'Bipe a etiqueta — ou busque pelo nome'}
         />
       </View>
 
+      {/* Bipar serve para a peça JÁ etiquetada. Mercadoria que chega do fornecedor vem sem
+          a nossa etiqueta — nesse caso o caminho é o nome. */}
       <View style={s.barraCodigo}>
         <CodigoManual aoConfirmar={(codigo) => void aoLer(codigo)} />
+        <BuscarPeca
+          aoEscolher={(peca) =>
+            somar({
+              varianteId: peca.id,
+              produto: peca.produto,
+              tamanho: peca.tamanho,
+              cor: peca.cor,
+              codigo: peca.codigo_barras,
+            })
+          }
+        />
       </View>
 
       {!!aviso && (
@@ -139,7 +157,7 @@ export default function EntradaEstoque() {
         {itens.length === 0 ? (
           <View style={s.vazio}>
             <MaterialCommunityIcons name="tray-arrow-down" size={36} color={cores.textoFraco} />
-            <Text style={s.vazioTexto}>Nenhuma peça bipada ainda</Text>
+            <Text style={s.vazioTexto}>Nenhuma peça conferida ainda</Text>
           </View>
         ) : (
           itens.map((item) => (
@@ -212,6 +230,8 @@ const s = StyleSheet.create({
   cameraArea: { height: '34%', backgroundColor: '#000' },
 
   barraCodigo: {
+    flexDirection: 'row',
+    gap: espaco.sm,
     paddingHorizontal: espaco.lg,
     paddingTop: espaco.sm,
     alignItems: 'flex-start',

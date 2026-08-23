@@ -32,8 +32,11 @@ function ehCampoDeTexto(elemento) {
  * @param {number} repeticaoMs janela em que o mesmo código não dispara duas vezes.
  *   O leitor solta rajada dupla quando a etiqueta passa devagar; sem isso a peça entrava
  *   duas vezes no carrinho e ninguém percebia.
+ * @param {() => boolean} [ignorarQuando] o Enter é de outra pessoa agora.
+ *   O mesmo campo aceita bipe E nome digitado: com a lista de resultados aberta, o Enter
+ *   escolhe da lista, e sem isto ele viraria uma bipada de "camiseta" — que não existe.
  */
-export function criarLeitor({ aoLer, repeticaoMs = 1200 }) {
+export function criarLeitor({ aoLer, repeticaoMs = 1200, ignorarQuando = null }) {
   let buffer = '';
   let ultimoCaractere = 0;
   let ultimoCodigo = '';
@@ -55,6 +58,7 @@ export function criarLeitor({ aoLer, repeticaoMs = 1200 }) {
     if (!ligado) return;
     // Modal aberto quer dizer que a pessoa está resolvendo outra coisa: bipada não atropela.
     if (document.querySelector('.modal-fundo')) return;
+    if (ignorarQuando?.()) return;
 
     const alvo = evento.target;
     const noCampoDoLeitor = alvo?.dataset?.leitor !== undefined;

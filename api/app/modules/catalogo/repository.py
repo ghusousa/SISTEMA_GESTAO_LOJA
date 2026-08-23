@@ -1,10 +1,33 @@
-from sqlalchemy import Select, delete, func, or_, select
+from sqlalchemy import Select, case, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.pagination import Paginacao
 from app.modules.catalogo.models import Category, Product, ProductVariant
 from app.modules.estoque.models import StockBalance
+
+
+#: Acentos que o teclado da loja produz e o dedo apressado não digita. Quem procura a
+#: peça escreve "calca jeans", não "calça jeans" — e sem isto a busca não acha nada, o que
+#: na prática significa cadastrar a mesma peça duas vezes.
+#:
+#: `translate()` do Postgres em vez da extensão `unaccent`: a extensão precisa de
+#: `CREATE EXTENSION` (mais uma migration, mais um privilégio, mais uma coisa para faltar
+#: num servidor novo), e para o alfabeto do português esta tabela resolve igual.
+_COM_ACENTO = "áàâãäéèêëíìîïóòôõöúùûüçñ"
+_SEM_ACENTO = "aaaaaeeeeiiiiooooouuuucn"
+assert len(_COM_ACENTO) == len(_SEM_ACENTO)
+
+
+def _achatar(coluna):
+    """Minúsculas e sem acento, do lado do banco."""
+    return func.translate(func.lower(coluna), _COM_ACENTO, _SEM_ACENTO)
+
+
+def achatar_termo(termo: str) -> str:
+    """O mesmo achatamento do lado de cá, para os dois lados baterem."""
+    tabela = str.maketrans(_COM_ACENTO, _SEM_ACENTO)
+    return termo.strip().lower().translate(tabela)
 
 
 class CatalogoRepository:
@@ -99,13 +122,41 @@ class CatalogoRepository:
     async def listar_variantes(
         self, p: Paginacao, produto_id: int | None, q: str | None
     ) -> tuple[list[ProductVariant], int]:
-        stmt = select(ProductVariant).where(ProductVariant.deleted_at.is_(None))
+        """Peças, com busca por NOME ou por código.
+
+        Procurar só por código servia para o bipe e para mais nada. Na entrada de
+        mercadoria a peça que chega ainda não tem a nossa etiqueta colada — o código foi
+        gerado aqui — então não existe o que bipar, e sem busca por nome a tela não tinha
+        como registrar a reposição.
+        """
+        stmt = (
+            select(ProductVariant)
+            # `selectinload` e não lazy: quem lê a lista precisa do NOME do produto, e no
+            # async um relacionamento preguiçoso estoura em MissingGreenlet.
+            .options(selectinload(ProductVariant.product))
+            .join(Product, Product.id == ProductVariant.product_id)
+            .where(ProductVariant.deleted_at.is_(None), Product.deleted_at.is_(None))
+        )
         if produto_id:
             stmt = stmt.where(ProductVariant.product_id == produto_id)
+
+        ordem = [Product.name, ProductVariant.size, ProductVariant.id]
         if q:
-            stmt = stmt.where(ProductVariant.barcode.like(f"%{q.strip()}%"))
+            termo = q.strip()
+            achatado = f"%{achatar_termo(termo)}%"
+            stmt = stmt.where(
+                or_(
+                    ProductVariant.barcode.like(f"%{termo}%"),
+                    _achatar(Product.name).like(achatado),
+                    _achatar(ProductVariant.color).like(achatado),
+                )
+            )
+            # Código exato primeiro: quem digitou os 13 dígitos inteiros quer AQUELA peça
+            # no topo, não a que vem antes no alfabeto.
+            ordem = [case((ProductVariant.barcode == termo, 0), else_=1), *ordem]
+
         total = await self.session.scalar(select(func.count()).select_from(stmt.subquery()))
-        stmt = stmt.order_by(ProductVariant.id).offset(p.offset).limit(p.limit)
+        stmt = stmt.order_by(*ordem).offset(p.offset).limit(p.limit)
         return list((await self.session.execute(stmt)).scalars().all()), int(total or 0)
 
     async def proxima_sequencia_interna(self) -> int:

@@ -253,3 +253,79 @@ async def test_busca_produto_por_codigo_de_barras(
         "/produtos", headers=auth_admin, params={"q": "7891234567895"}
     )
     assert resp.json()["total"] == 1
+
+
+# ------------------------------------------------- achar a peça sem bipar
+
+
+async def _peca(client, auth_admin, categoria_id: int, nome: str, cor: str, codigo: str) -> int:
+    resposta = await client.post(
+        "/produtos",
+        headers=auth_admin,
+        json={
+            "categoria_id": categoria_id,
+            "nome": nome,
+            "variantes": [
+                {
+                    "tamanho": "M",
+                    "cor": cor,
+                    "codigo_barras": codigo,
+                    "preco_custo": "20.00",
+                    "preco_venda": "59.90",
+                    "estoque_inicial": 2,
+                }
+            ],
+        },
+    )
+    assert resposta.status_code == 201, resposta.text
+    return resposta.json()["variantes"][0]["id"]
+
+
+async def test_busca_peca_pelo_nome_do_produto(client, auth_admin) -> None:
+    """A peça que chega do fornecedor não tem a NOSSA etiqueta colada.
+
+    O código interno nasceu aqui dentro, então na entrada de mercadoria não existe o que
+    bipar. Sem achar pelo nome, a reposição não tinha como ser registrada.
+    """
+    categoria = (
+        await client.post("/categorias", headers=auth_admin, json={"nome": "Camisas"})
+    ).json()
+    await _peca(client, auth_admin, categoria["id"], "Camiseta Lisa", "Preta", "7891000000017")
+
+    achou = await client.get("/variantes", headers=auth_admin, params={"q": "camiseta"})
+    assert achou.status_code == 200
+    assert [i["produto"] for i in achou.json()["items"]] == ["Camiseta Lisa"]
+    assert achou.json()["items"][0]["saldo"] == 2, "a busca precisa dizer quanto tem"
+
+
+async def test_busca_ignora_acento_e_caixa(client, auth_admin) -> None:
+    """Ninguém digita "calça" com cedilha às pressas — e a peça não pode sumir por isso."""
+    categoria = (
+        await client.post("/categorias", headers=auth_admin, json={"nome": "Baixo"})
+    ).json()
+    await _peca(client, auth_admin, categoria["id"], "Calça Jeans", "Índigo", "7891000000024")
+
+    for termo in ("calca", "CALÇA", "Calca Jeans", "indigo"):
+        achou = await client.get("/variantes", headers=auth_admin, params={"q": termo})
+        assert achou.status_code == 200, termo
+        assert achou.json()["total"] == 1, f"'{termo}' não achou a peça"
+
+
+async def test_codigo_exato_vem_primeiro(client, auth_admin) -> None:
+    """Quem digitou os treze dígitos quer AQUELA peça no topo, não a primeira do alfabeto."""
+    categoria = (
+        await client.post("/categorias", headers=auth_admin, json={"nome": "Mistura"})
+    ).json()
+    await _peca(client, auth_admin, categoria["id"], "Aaa Primeira", "Branca", "7891000000031")
+    alvo = await _peca(client, auth_admin, categoria["id"], "Zzz Ultima", "Preta", "7891000000048")
+
+    achou = await client.get("/variantes", headers=auth_admin, params={"q": "7891000000048"})
+    assert achou.json()["items"][0]["id"] == alvo
+
+
+async def test_busca_por_nome_nao_vaza_custo_para_vendedora(client, auth_vendedor) -> None:
+    """A busca é caminho novo para os mesmos dados: o filtro por papel vale aqui também."""
+    achou = await client.get("/variantes", headers=auth_vendedor, params={"q": "a"})
+    assert achou.status_code == 200
+    for item in achou.json()["items"]:
+        assert "preco_custo" not in item

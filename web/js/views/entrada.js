@@ -1,46 +1,49 @@
 /**
- * Entrada de mercadoria: bipar-somar.
+ * Entrada de mercadoria: o que chegou vira saldo.
  *
- * Chega a sacola do fornecedor e a pessoa bipa peça por peça, inclusive repetido — bipar
- * duas vezes o mesmo código soma 2, não abre duas linhas. Só no fim, com a conferência
- * pronta, tudo vira uma entrada só na API.
+ * **Dois jeitos de dizer o que chegou, no mesmo campo.** Bipar serve para a peça que já
+ * tem a nossa etiqueta colada. Mas quando o código é interno — gerado aqui dentro — a
+ * mercadoria que chega do fornecedor NÃO tem etiqueta nenhuma, e exigir bipada obrigaria
+ * a imprimir e colar antes de conferir, peça por peça, para registrar o que já se sabe.
+ * Por isso o mesmo campo aceita o nome: digitou letras, aparece a lista; bipou, entra
+ * direto. Ver `js/busca-peca.js`.
+ *
+ * **A conferência mora no store.** Bipar trinta peças e travar na trinta-e-uma, que ainda
+ * não está cadastrada, é rotina. Antes isso custava as trinta — e o que se aprende com
+ * isso é a não cadastrar. Agora ir cadastrar e voltar não perde nada.
+ *
+ * Peça que nunca existiu não entra por aqui: ela nasce em Produtos → Cadastrar, que já
+ * tem coluna de estoque inicial. Esta tela é da segunda vez em diante.
  */
 
 import { api, ErroApi } from '../api.js';
+import { ligarBuscaDePeca } from '../busca-peca.js';
 import { formatar, paraDecimalString, somar } from '../dinheiro.js';
 import { criarLeitor, manterFoco } from '../leitor.js';
 import { ir } from '../router.js';
-import { novoClientUuid } from '../store.js';
+import { conferencia, limparConferencia, novoClientUuid } from '../store.js';
 import { PODE, pode } from '../permissoes.js';
-import {
-  aviso,
-  avisarErro,
-  confirmar,
-  cru,
-  grade,
-  html,
-  ligarCampoDinheiro,
-  numero,
-  plural,
-} from '../ui.js';
+import { MAX_POR_PECA, pintarConferencia } from '../tabela-conferencia.js';
+import { aviso, avisarErro, confirmar, cru, html, ligarCampoDinheiro, plural } from '../ui.js';
 
 export function render(raiz) {
   const veDinheiro = pode(PODE.VER_DINHEIRO);
-  /** @type {{variante_id:number, produto:string, tamanho:string, cor:string, codigo_barras:string, quantidade:number, custo:number}[]} */
-  let itens = [];
-  let clientUuid = null;
   let enviando = false;
+
+  const itens = () => conferencia.get().itens;
+  const definir = (lista) => conferencia.set({ itens: lista });
 
   raiz.innerHTML = html`
     <div class="pagina pagina--larga pdv">
       <div>
         <div class="pdv__leitura">
           <div class="pdv__campo">
-            <label class="so-leitor" for="leitura-entrada">Código de barras</label>
+            <label class="so-leitor" for="leitura-entrada">Código de barras ou nome da peça</label>
             <input id="leitura-entrada" data-leitor type="text" autocomplete="off"
-              placeholder="Bipe cada peça que chegou — repetir soma" />
+              placeholder="Bipe a etiqueta ou digite o nome da peça" />
             <span class="pdv__pisca">Leitor pronto</span>
           </div>
+          <div class="busca-peca" data-busca hidden></div>
         </div>
         <div class="pdv__itens" data-itens></div>
       </div>
@@ -71,170 +74,137 @@ export function render(raiz) {
 
         <div class="pdv__atalhos">
           <span>Nada é gravado até você registrar a entrada.</span>
+          <span>Peça que nunca foi cadastrada nasce em <strong>Produtos → Cadastrar</strong>, já com estoque inicial.</span>
         </div>
       </aside>
     </div>
   `;
 
   const campo = raiz.querySelector('[data-leitor]');
+  const painelBusca = raiz.querySelector('[data-busca]');
   const areaItens = raiz.querySelector('[data-itens]');
   const botaoSalvar = raiz.querySelector('[data-salvar]');
   const botaoLimpar = raiz.querySelector('[data-limpar]');
+  const campoFornecedor = raiz.querySelector('[data-fornecedor]');
+  const campoObservacao = raiz.querySelector('[data-observacao]');
+
+  campoFornecedor.value = conferencia.get().fornecedor || '';
+  campoObservacao.value = conferencia.get().observacao || '';
+  campoFornecedor.addEventListener('input', () =>
+    conferencia.set({ fornecedor: campoFornecedor.value }),
+  );
+  campoObservacao.addEventListener('input', () =>
+    conferencia.set({ observacao: campoObservacao.value }),
+  );
+
+  /* ------------------------------------------------------------- somar peça */
+
+  /** Aceita tanto a resposta do bipe (`variante_id`) quanto a da busca (`id`). */
+  function somarPeca(peca, quantidade = 1) {
+    const varianteId = peca.variante_id ?? peca.id;
+    const existente = itens().find((i) => i.variante_id === varianteId);
+    if (existente) {
+      definir(
+        itens().map((i) =>
+          i.variante_id === varianteId
+            ? { ...i, quantidade: Math.min(i.quantidade + quantidade, MAX_POR_PECA) }
+            : i,
+        ),
+      );
+    } else {
+      definir([
+        ...itens(),
+        {
+          variante_id: varianteId,
+          produto: peca.produto,
+          tamanho: peca.tamanho,
+          cor: peca.cor,
+          codigo_barras: peca.codigo_barras,
+          preco_venda: peca.preco_venda,
+          quantidade,
+          custo: 0,
+        },
+      ]);
+    }
+    pintar();
+  }
 
   async function lerCodigo(codigo) {
     try {
-      const peca = await api.get(`/variantes/codigo-barras/${encodeURIComponent(codigo)}`);
-      const existente = itens.find((i) => i.variante_id === peca.variante_id);
-      if (existente) {
-        existente.quantidade += 1;
-      } else {
-        itens = [
-          ...itens,
-          {
-            variante_id: peca.variante_id,
-            produto: peca.produto,
-            tamanho: peca.tamanho,
-            cor: peca.cor,
-            codigo_barras: peca.codigo_barras,
-            quantidade: 1,
-            custo: 0,
-          },
-        ];
-      }
-      pintar();
+      somarPeca(await api.get(`/variantes/codigo-barras/${encodeURIComponent(codigo)}`));
     } catch (erro) {
-      if (erro instanceof ErroApi && erro.status === 404) {
-        const cadastrar = await confirmar({
-          titulo: 'Código não cadastrado',
-          mensagem: `Nenhuma peça com o código ${codigo}. Quer cadastrar agora? A conferência atual será perdida.`,
-          confirmarTexto: 'Cadastrar peça',
-        });
-        if (cadastrar) ir(`/produtos/novo?codigo=${encodeURIComponent(codigo)}`);
-      } else {
+      if (!(erro instanceof ErroApi) || erro.status !== 404) {
         avisarErro(erro);
+        return;
       }
+      const cadastrar = await confirmar({
+        titulo: 'Peça ainda não cadastrada',
+        mensagem: `Nada com o código ${codigo}. Quer cadastrar agora? A conferência atual fica guardada.`,
+        confirmarTexto: 'Cadastrar peça',
+      });
+      if (cadastrar) ir(`/produtos/novo?codigo=${encodeURIComponent(codigo)}&voltar=entrada`);
+      else campo.focus();
     }
   }
 
+  /* ---------------------------------------------------------------- desenhar */
+
   function pintar() {
-    const pecas = somar(itens.map((i) => i.quantidade));
-
-    areaItens.innerHTML = itens.length
-      ? html`
-          <table>
-            <thead>
-              <tr>
-                <th>Peça</th>
-                ${veDinheiro ? cru('<th class="direita">Custo unitário</th>') : ''}
-                <th class="centro">Quantidade</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              ${itens.map(
-                (item) => html`
-                  <tr>
-                    <td>
-                      <span class="celula-principal">${item.produto}</span>
-                      <span class="celula-secundaria">${grade(item.tamanho, item.cor)} · ${item.codigo_barras}</span>
-                    </td>
-                    ${veDinheiro
-                      ? cru(html`
-                          <td class="direita">
-                            <input data-custo-de="${item.variante_id}" style="width:110px;text-align:right"
-                              aria-label="Custo de ${item.produto}" />
-                          </td>
-                        `)
-                      : ''}
-                    <td class="centro">
-                      <span class="qtd">
-                        <button data-menos="${item.variante_id}" aria-label="Tirar uma">−</button>
-                        <span>${numero(item.quantidade)}</span>
-                        <button data-mais="${item.variante_id}" aria-label="Somar uma">+</button>
-                      </span>
-                    </td>
-                    <td class="direita">
-                      <button class="botao-icone botao-icone--perigo" data-tirar="${item.variante_id}"
-                        aria-label="Tirar ${item.produto} da conferência">✕</button>
-                    </td>
-                  </tr>
-                `,
-              )}
-            </tbody>
-          </table>
-        `
-      : html`
-          <div class="vazio" style="border:0;box-shadow:none">
-            <p class="vazio__titulo">Bipe a mercadoria que chegou</p>
-            <p class="texto-suave">
-              Passe cada peça no leitor. Bipar o mesmo código de novo soma mais uma unidade.
-            </p>
-          </div>
-        `;
-
-    areaItens.querySelectorAll('[data-menos]').forEach((b) =>
-      b.addEventListener('click', () => mudar(Number(b.dataset.menos), -1)),
-    );
-    areaItens.querySelectorAll('[data-mais]').forEach((b) =>
-      b.addEventListener('click', () => mudar(Number(b.dataset.mais), +1)),
-    );
-    areaItens.querySelectorAll('[data-tirar]').forEach((b) =>
-      b.addEventListener('click', () => {
-        itens = itens.filter((i) => i.variante_id !== Number(b.dataset.tirar));
+    const lista = itens();
+    const total = pintarConferencia({
+      area: areaItens,
+      itens: lista,
+      veDinheiro,
+      aoMudar: (novos) => {
+        definir(novos);
         pintar();
-      }),
-    );
-    itens.forEach((item) => {
-      const entrada = areaItens.querySelector(`[data-custo-de="${item.variante_id}"]`);
-      if (entrada) ligarCampoDinheiro(entrada, item.custo, (valor) => {
-        item.custo = valor;
-        atualizarResumo();
-      });
+      },
+      ligarCusto: (campo, item) =>
+        ligarCampoDinheiro(campo, item.custo, (valor) => {
+          item.custo = valor;
+          atualizarResumo();
+        }),
     });
-
-    raiz.querySelector('[data-contagem]').textContent = numero(pecas);
-    botaoSalvar.disabled = enviando || itens.length === 0;
-    botaoLimpar.disabled = itens.length === 0;
+    raiz.querySelector('[data-contagem]').textContent = total;
+    botaoSalvar.disabled = enviando || lista.length === 0;
+    botaoLimpar.disabled = lista.length === 0;
     atualizarResumo();
   }
 
   function atualizarResumo() {
     const alvo = raiz.querySelector('[data-custo]');
-    if (alvo) alvo.textContent = formatar(somar(itens.map((i) => i.custo * i.quantidade)));
+    if (alvo) alvo.textContent = formatar(somar(itens().map((i) => i.custo * i.quantidade)));
   }
 
-  function mudar(varianteId, delta) {
-    itens = itens
-      .map((i) => (i.variante_id === varianteId ? { ...i, quantidade: i.quantidade + delta } : i))
-      .filter((i) => i.quantidade > 0);
-    pintar();
-  }
+  /* ----------------------------------------------------------------- gravar */
 
   async function salvar() {
-    if (enviando || !itens.length) return;
+    if (enviando || !itens().length) return;
     enviando = true;
     botaoSalvar.disabled = true;
     botaoSalvar.innerHTML = cru('<span class="giro" aria-hidden="true"></span> Registrando…');
+    const registrados = itens();
     try {
       // Nasce aqui e sobrevive a uma repetição: se a resposta se perder, reenviar não dobra
       // o estoque da loja.
-      clientUuid ||= novoClientUuid();
+      const clientUuid = conferencia.get().clientUuid || novoClientUuid();
+      conferencia.set({ clientUuid });
       const entrada = await api.post('/estoque/entradas', {
         client_uuid: clientUuid,
-        fornecedor: raiz.querySelector('[data-fornecedor]').value.trim() || null,
-        observacao: raiz.querySelector('[data-observacao]').value.trim() || null,
-        itens: itens.map((i) => ({
+        fornecedor: campoFornecedor.value.trim() || null,
+        observacao: campoObservacao.value.trim() || null,
+        itens: registrados.map((i) => ({
           variante_id: i.variante_id,
           quantidade: i.quantidade,
           custo_unitario: i.custo > 0 ? paraDecimalString(i.custo) : null,
         })),
       });
-      aviso(`Entrada registrada: ${plural(entrada.total_pecas, 'peça entrou', 'peças entraram')} no estoque.`);
-      itens = [];
-      clientUuid = null;
+      limparConferencia();
+      campoFornecedor.value = '';
+      campoObservacao.value = '';
       leitor.esquecerUltimo();
-      raiz.querySelector('[data-fornecedor]').value = '';
-      raiz.querySelector('[data-observacao]').value = '';
+      pintar();
+      await ofereceEtiquetas(entrada, registrados);
       campo.focus();
     } catch (erro) {
       avisarErro(erro);
@@ -245,34 +215,65 @@ export function render(raiz) {
     }
   }
 
+  /**
+   * Mercadoria que entra é mercadoria que precisa de etiqueta — e a quantidade certa é a
+   * que ACABOU de chegar, não o saldo (que já inclui o que estava na arara).
+   */
+  async function ofereceEtiquetas(entrada, registrados) {
+    const total = plural(entrada.total_pecas, 'peça entrou', 'peças entraram');
+    const imprimir = await confirmar({
+      titulo: 'Entrada registrada',
+      mensagem: `${total} no estoque. Imprimir as etiquetas destas peças agora?`,
+      confirmarTexto: 'Imprimir etiquetas',
+    });
+    if (!imprimir) {
+      aviso(`Entrada registrada: ${total} no estoque.`);
+      return;
+    }
+    conferencia.set({ etiquetas: registrados });
+    ir('/etiquetas');
+  }
+
   botaoSalvar.addEventListener('click', salvar);
   botaoLimpar.addEventListener('click', async () => {
-    if (!itens.length) return;
+    if (!itens().length) return;
     const certeza = await confirmar({
       titulo: 'Limpar conferência',
-      mensagem: 'Tudo que foi bipado sai da lista. Nada foi gravado ainda.',
+      mensagem: 'Tudo que foi conferido sai da lista. Nada foi gravado ainda.',
       confirmarTexto: 'Limpar',
       perigo: true,
     });
     if (!certeza) return;
-    itens = [];
-    clientUuid = null;
+    limparConferencia();
+    campoFornecedor.value = '';
+    campoObservacao.value = '';
     leitor.esquecerUltimo();
     pintar();
     campo.focus();
+  });
+
+  const busca = ligarBuscaDePeca({
+    campo,
+    painel: painelBusca,
+    aoEscolher: (peca) => somarPeca(peca),
   });
 
   // Janela curta, ao contrário do PDV: bipar dez vezes a mesma etiqueta são dez peças na
   // sacola, e travar 1,2s por código atrapalharia a conferência. Os 250ms só descartam a
   // rajada dupla que o próprio leitor solta quando a etiqueta passa devagar — trocar de peça
   // na mão demora bem mais que isso.
-  const leitor = criarLeitor({ aoLer: lerCodigo, repeticaoMs: 250 });
+  const leitor = criarLeitor({
+    aoLer: lerCodigo,
+    repeticaoMs: 250,
+    ignorarQuando: busca.aberta,
+  });
   leitor.ligar();
   const pararFoco = manterFoco(campo);
   pintar();
 
   return () => {
     leitor.desligar();
+    busca.desligar();
     pararFoco();
   };
 }

@@ -321,6 +321,7 @@ class CatalogoService:
         for v in variantes:
             item = schema.model_validate(v)
             item.saldo = saldos.get(v.id, 0)
+            item.produto = v.product.name
             items.append(item)
         return Pagina.montar(items, total, p)
 
