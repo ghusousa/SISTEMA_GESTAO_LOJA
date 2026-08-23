@@ -94,7 +94,17 @@ async def admin(session: AsyncSession) -> User:
 
 @pytest.fixture
 async def vendedor(session: AsyncSession) -> User:
-    return await _criar_usuario(session, "João Vendedor", "joao@loja.com", Papel.VENDEDOR)
+    return await _criar_usuario(session, "Ana Vendedora", "ana@loja.com", Papel.VENDEDOR)
+
+
+@pytest.fixture
+async def gerente(session: AsyncSession) -> User:
+    return await _criar_usuario(session, "Carla Gerente", "carla@loja.com", Papel.GERENTE)
+
+
+@pytest.fixture
+async def supervisora(session: AsyncSession) -> User:
+    return await _criar_usuario(session, "Bia Supervisora", "bia@loja.com", Papel.SUPERVISORA)
 
 
 async def _login(client: AsyncClient, email: str) -> dict[str, str]:
@@ -111,6 +121,16 @@ async def auth_admin(client: AsyncClient, admin: User) -> dict[str, str]:
 @pytest.fixture
 async def auth_vendedor(client: AsyncClient, vendedor: User) -> dict[str, str]:
     return await _login(client, vendedor.email)
+
+
+@pytest.fixture
+async def auth_gerente(client: AsyncClient, gerente: User) -> dict[str, str]:
+    return await _login(client, gerente.email)
+
+
+@pytest.fixture
+async def auth_supervisora(client: AsyncClient, supervisora: User) -> dict[str, str]:
+    return await _login(client, supervisora.email)
 
 
 @pytest.fixture(autouse=True)

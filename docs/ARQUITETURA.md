@@ -44,7 +44,8 @@ Convenções: PK `BIGINT GENERATED ALWAYS AS IDENTITY`; dinheiro `NUMERIC(14,2)`
 ### 2.1 Autenticação
 
 ```sql
-users(id, name, email UNIQUE, password_hash, role CHECK(role IN ('ADMIN','VENDEDOR')),
+users(id, name, email UNIQUE, password_hash,
+      role CHECK(role IN ('ADMIN','GERENTE','SUPERVISORA','VENDEDOR')),
       is_active BOOL DEFAULT TRUE, created_at, updated_at)
 
 refresh_tokens(jti UUID PK, user_id FK→users, family_id UUID NOT NULL,
@@ -277,6 +278,24 @@ schema no 54 não o aceita — e passou para o plugin `expo-build-properties`; e
 **≥ 20.19.4**, exigência do Metro e do React Native 0.81. Para subir de SDK no futuro, o preço a
 pagar é trocar o Expo Go por um *development build*.
 
+**ADR-15 — Capacidades numa tabela só, nunca `if papel == X` espalhado.**
+Com dois papéis dava para escrever `if user.role != ADMIN` em cada rota. Com quatro isso
+vira campo minado: um `!=` esquecido e a vendedora lê a margem da peça. Então o código
+pergunta pela CAPACIDADE — `pode(user.role, Pode.VER_DINHEIRO)` — e a única tabela que
+liga cargo a capacidade mora em `app/core/permissoes.py`. Mudar o que um cargo faz é uma
+linha ali, e nenhuma rota precisa ser revisada. As rotas declaram o crachá que exigem na
+porta (`ExigeDinheiro`, `ExigeCancelarVenda`), o que também documenta a API sozinho.
+Consequências: `tests/test_permissoes.py` é a tabela virada em teste, papel por porta, e
+inclui a trava contra escalada (um gerente com GERIR_USUARIOS conseguiria se promover a
+dono com um PATCH no próprio id — `usuarios/service.py::_barrar_escalada` fecha isso, e o
+CLI de instalação cria o primeiro dono passando um ator fundador em vez de afrouxar a
+regra). `web/js/permissoes.js` e `mobile/src/lib/permissoes.ts` são espelhos: existem só
+para a tela não oferecer o que daria 403, e uma divergência custa um botão a mais ou a
+menos, nunca um dado vazado — o dado nem sai da API. Os valores gravados continuam
+`ADMIN` e `VENDEDOR` por compatibilidade com quem já instalou; o nome que a loja vê sai
+de `TITULO`.
+
+
 ## 4. Contratos de API
 
 Prefixo `/api/v1`. Auth: `Authorization: Bearer <access_token>`.
@@ -287,7 +306,7 @@ Erros: `{"code": "...", "message": "...", "detail": {...}}`.
 |---|---|---|
 | `CREDENCIAIS_INVALIDAS` | 401 | login errado |
 | `TOKEN_INVALIDO` | 401 | access/refresh inválido, expirado ou revogado |
-| `SEM_PERMISSAO` | 403 | papel insuficiente |
+| `SEM_PERMISSAO` | 403 | capacidade que o cargo não tem |
 | `NAO_ENCONTRADO` | 404 | recurso inexistente |
 | `DUPLICADO` | 409 | e-mail, código de barras, categoria repetidos |
 | `ESTOQUE_INSUFICIENTE` | 409 | venda/ajuste deixaria o saldo negativo |
@@ -313,7 +332,7 @@ Desativar = `PATCH {ativo:false}`. Bootstrap do primeiro admin: `python -m app.c
 |---|---|---|---|
 | GET/POST | `/categorias` | A/V · A | |
 | PATCH/DELETE | `/categorias/{id}` | A | delete é soft; bloqueado se houver produto ativo |
-| GET | `/produtos` | A/V | `?q=&categoria_id=`; resposta sem custo para VENDEDOR |
+| GET | `/produtos` | todos | `?q=&categoria_id=`; custo só para quem tem VER_DINHEIRO |
 | POST | `/produtos` | A/V | produto + `variantes[]` (com `estoque_inicial?` → gera ENTRADA na mesma transação) |
 | GET/PATCH/DELETE | `/produtos/{id}` | A/V · A · A | detalhe traz variantes com saldo |
 | PUT | `/produtos/{id}/foto` | A/V | multipart, salva em `media/produtos/` |
@@ -336,24 +355,24 @@ Desativar = `PATCH {ativo:false}`. Bootstrap do primeiro admin: `python -m app.c
 | método | rota | papel | notas |
 |---|---|---|---|
 | POST | `/vendas` | A/V | `{client_uuid, desconto?, observacao?, itens:[{variante_id, quantidade}], pagamentos:[{forma, valor}]}` → venda completa. Atômico. Replay → 200 |
-| GET | `/vendas` | A/V | `?inicio=&fim=&status=&vendedor_id=`; VENDEDOR só vê as próprias (forçado no service) |
+| GET | `/vendas` | todos | `?inicio=&fim=&status=&vendedor_id=`; sem VER_VENDAS_DE_TODOS, o service força as próprias |
 | GET | `/vendas/{id}` | A/V | idem escopo |
-| POST | `/vendas/{id}/cancelamento` | A/V | `{motivo}`; VENDEDOR só a própria venda do dia corrente |
+| POST | `/vendas/{id}/cancelamento` | CANCELAR_VENDA | `{motivo}`; dono e gerente — quem vende não desfaz |
 
 Troco não trafega: é calculado no app a partir do valor recebido em dinheiro.
 
-### 4.6 `despesas` (ADMIN)
+### 4.6 `despesas` (LANCAR_DESPESA: dono e gerente)
 `GET/POST /despesas/categorias`, `PATCH/DELETE /despesas/categorias/{id}`,
 `GET/POST /despesas`, `GET/PATCH/DELETE /despesas/{id}`,
 `POST /despesas/replicar-recorrentes?competencia=YYYY-MM` (idempotente; devolve `{criadas, ignoradas}`).
 
-### 4.7 `caixa` (ADMIN)
+### 4.7 `caixa` (FECHAR_CAIXA: dono, gerente e supervisora)
 `GET /caixa/dia?data=YYYY-MM-DD` → esperado por forma de pagamento (vendas concluídas do dia no fuso
 da loja) + fechamento existente, se houver.
 `POST /caixa/fechamentos` `{data, contagens:[{forma, valor_contado}], observacao?}` → upsert do dia.
 `GET /caixa/fechamentos?inicio=&fim=`.
 
-### 4.8 `relatorios` (ADMIN)
+### 4.8 `relatorios` (VER_DINHEIRO: dono e gerente)
 Todos com `?inicio=&fim=` (≤ 366 dias), exceto `estoque-baixo` (sem período — é fotografia do agora).
 
 - `/relatorios/resumo` → faturamento, CMV, lucro bruto, despesas, resultado, nº de vendas, ticket médio
@@ -367,8 +386,9 @@ Todos com `?inicio=&fim=` (≤ 366 dias), exceto `estoque-baixo` (sem período �
 ## 5. App mobile
 
 `src/app/` (expo-router): `(auth)/login` e `(app)/` com abas — **PDV** (inicial), **Produtos**,
-**Estoque**, **Mais**; ADMIN ganha **Despesas**, **Relatórios**, **Caixa**, **Usuários** (guarda por
-papel no `_layout`).
+**Estoque**, **Mais**; a aba **Financeiro** abre para quem fecha o caixa (dono, gerente e
+supervisora) e mostra dentro só o que cada capacidade permite — a supervisora encontra o
+caixa do dia, sem o resumo do mês. Guarda por capacidade no `_layout`.
 
 - `api/client.ts`: axios, `baseURL` de `EXPO_PUBLIC_API_URL`, interceptor 401 → refresh sob mutex →
   refaz a requisição → falhou: limpa SecureStore e volta ao login.

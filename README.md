@@ -26,9 +26,20 @@ fecha o caixa. Mesma API, mesmas regras, mesmos papéis.
 | **Trabalhar sem celular** | O sistema web faz tudo pelo computador: o leitor USB de balcão digita o código como se fosse teclado, e o PDV entende. `F2` cobra, `F4` desconta, `Esc` limpa. |
 | **Vender pelo celular** | Cada vendedor entra com o próprio login no app e usa a câmera como leitor: bipa a etiqueta, vê o preço e fecha a venda andando pela loja. Um mesmo instalador serve para todos os aparelhos. |
 
-**Dois papéis.** O **administrador** vê tudo. O **vendedor** cadastra, consulta estoque e vende, mas
-nunca recebe preço de custo, lucro ou despesas — a filtragem acontece no servidor, não escondendo
-números na tela.
+**Quatro cargos**, cada um somando ao anterior:
+
+| Cargo | Faz | Não alcança |
+|---|---|---|
+| **Vendedora** | Vende, bipa, consulta preço, cadastra peça, dá entrada | Custo, lucro, despesas, estorno, ajuste de estoque |
+| **Supervisora** | Tudo acima, mais ajuste, inventário, editar catálogo, fechar o caixa e ver as vendas da equipe | Custo, lucro, despesas, estorno, logins |
+| **Gerente** | Tudo acima, mais custo, lucro, despesas, relatórios, estorno e os logins da equipe | A conta do dono |
+| **Dono** | Tudo | — |
+
+Três regras que valem a pena saber: **quem vende não desfaz** (estorno é do dono e do gerente,
+inclusive da venda própria), **quem confere o caixa não vê a margem** (a supervisora fecha o dia
+sem saber o lucro) e **gerir logins não é virar dono** (o gerente não cria, promove nem edita um
+dono). A filtragem acontece no servidor: o número que a pessoa não pode ver não sai da API, em vez
+de ficar escondido na tela.
 
 ## Instalação
 

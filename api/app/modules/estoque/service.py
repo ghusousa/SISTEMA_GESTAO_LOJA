@@ -21,7 +21,8 @@ from app.modules.estoque.schemas import (
     SaldoAdminOut,
     SaldoOut,
 )
-from app.modules.usuarios.models import Papel, User
+from app.core.permissoes import Pode, pode
+from app.modules.usuarios.models import User
 
 
 class EstoqueService:
@@ -179,7 +180,7 @@ class EstoqueService:
         usuario: User,
     ) -> Pagina[SaldoOut]:
         linhas, total = await self.repo.listar_saldos(p, q, categoria_id, somente_baixo)
-        admin = usuario.role == Papel.ADMIN
+        admin = pode(usuario.role, Pode.VER_DINHEIRO)
         items: list[SaldoOut] = []
         for variante, produto, categoria, quantidade in linhas:
             saldo = int(quantidade or 0)

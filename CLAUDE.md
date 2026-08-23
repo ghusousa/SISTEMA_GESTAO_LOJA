@@ -51,8 +51,11 @@ npm run bundle       # expo export: pega erro de import que o tsc não vê
 - Dinheiro: `Numeric(14,2)` / `Decimal`. **Nunca float.** No fio trafega como string ("149.90").
 - Datas em UTC (`TIMESTAMPTZ`); agrupamento por dia usa `settings.tz_loja` (America/Sao_Paulo).
 - Soft delete = `deleted_at` + UNIQUE parcial `WHERE deleted_at IS NULL`; a API expõe `ativo`.
-- Papéis: `ADMIN` vê tudo; `VENDEDOR` **nunca** recebe custo/lucro/despesas — isso é garantido
-  por schemas de resposta distintos no servidor, não por esconder no app.
+- Papéis: dono (`ADMIN`) > gerente > supervisora > vendedora (`VENDEDOR`). O código **nunca**
+  compara cargo: pergunta capacidade (`pode(user.role, Pode.VER_DINHEIRO)`), e a tabela única
+  é `app/core/permissoes.py` (ADR-15). Rotas exigem o crachá (`ExigeDinheiro`, `ExigeCaixa`…).
+  Custo/lucro/despesa saem por schemas de resposta distintos no servidor, não por esconder na
+  tela. `web/js/permissoes.js` e `mobile/src/lib/permissoes.ts` são espelhos — mudou um, mude os três.
 - Saldo de estoque: só muda junto com uma linha em `stock_movements`, na mesma transação
   (`UPDATE stock_balances SET quantity = quantity + :delta ... RETURNING`). `CHECK quantity >= 0`
   é a rede de segurança. Escrita multi-variante sempre ordenada por `variant_id`.

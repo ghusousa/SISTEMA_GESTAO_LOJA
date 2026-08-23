@@ -1,5 +1,9 @@
 /**
- * Hub financeiro (admin): a resposta rápida de "como foi o mês" e a porta para o detalhe.
+ * Hub financeiro: a resposta rápida de "como foi o mês" e a porta para o detalhe.
+ *
+ * A tela é a mesma para dois públicos diferentes. Quem vê dinheiro (dono e gerente) abre
+ * no resumo do mês. A supervisora entra pelo mesmo lugar e encontra só o caixa do dia —
+ * ela confere o dinheiro que passou pela loja, sem saber o lucro que ficou nele.
  */
 
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -14,30 +18,40 @@ import { relatorios } from '@/api/endpoints';
 import { Carregando, Cartao, ErroEstado } from '@/components/ui';
 import { formatar, formatarPercentual, paraCentavos } from '@/lib/money';
 import { chaves } from '@/lib/queryClient';
+import { PODE, pode } from '@/lib/permissoes';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
+import { useAuthStore } from '@/stores/authStore';
 
 const ATALHOS = [
-  { rotulo: 'Despesas', icone: 'receipt', rota: '/financeiro/despesas' },
-  { rotulo: 'Relatórios', icone: 'chart-line', rota: '/financeiro/relatorios' },
-  { rotulo: 'Caixa', icone: 'cash-register', rota: '/financeiro/caixa' },
+  { rotulo: 'Despesas', icone: 'receipt', rota: '/financeiro/despesas', pode: PODE.LANCAR_DESPESA },
+  { rotulo: 'Relatórios', icone: 'chart-line', rota: '/financeiro/relatorios', pode: PODE.VER_DINHEIRO },
+  { rotulo: 'Caixa', icone: 'cash-register', rota: '/financeiro/caixa', pode: PODE.FECHAR_CAIXA },
 ] as const;
 
 export default function Financeiro() {
   const router = useRouter();
+  const papel = useAuthStore((e) => e.usuario?.papel);
+  const veDinheiro = pode(papel, PODE.VER_DINHEIRO);
+  const atalhos = ATALHOS.filter((a) => pode(papel, a.pode));
   const hoje = new Date();
   const inicio = format(startOfMonth(hoje), 'yyyy-MM-dd');
   const fim = format(endOfMonth(hoje), 'yyyy-MM-dd');
 
+  // `enabled` é o que impede o 403: sem ele a supervisora abriria a aba e dispararia duas
+  // consultas de relatório que a API recusa, pintando a tela de erro por nada.
   const resumo = useQuery({
     queryKey: chaves.relatorioResumo(inicio, fim),
     queryFn: () => relatorios.resumo(inicio, fim),
+    enabled: veDinheiro,
   });
 
   const estoqueBaixo = useQuery({
     queryKey: chaves.estoqueBaixo,
     queryFn: () => relatorios.estoqueBaixo(),
+    enabled: veDinheiro,
   });
 
+  if (!veDinheiro) return <SoCaixa atalhos={atalhos} aoAbrir={(rota) => router.push(rota as never)} />;
   if (resumo.isPending) return <Carregando />;
   if (resumo.isError) {
     return (
@@ -101,13 +115,47 @@ export default function Financeiro() {
       )}
 
       <View style={s.atalhos}>
-        {ATALHOS.map((atalho) => (
+        {atalhos.map((atalho) => (
           <Pressable
             key={atalho.rota}
             style={s.atalho}
             onPress={() => router.push(atalho.rota as never)}
           >
             <MaterialCommunityIcons name={atalho.icone} size={26} color={cores.primaria} />
+            <Text style={s.atalhoTexto}>{atalho.rotulo}</Text>
+          </Pressable>
+        ))}
+      </View>
+    </ScrollView>
+  );
+}
+
+/** O que a supervisora vê ao abrir Financeiro: o caixa, e só. */
+function SoCaixa({
+  atalhos,
+  aoAbrir,
+}: {
+  atalhos: readonly { rotulo: string; icone: string; rota: string }[];
+  aoAbrir: (rota: string) => void;
+}) {
+  return (
+    <ScrollView contentContainerStyle={s.conteudo}>
+      <Cartao>
+        <Text style={s.soCaixaTitulo}>Caixa do dia</Text>
+        <Text style={s.soCaixaTexto}>
+          Confira o que passou pela loja hoje e registre o fechamento. Custo, lucro e
+          despesas ficam com o dono e o gerente.
+        </Text>
+      </Cartao>
+
+      <View style={s.atalhos}>
+        {atalhos.map((atalho) => (
+          <Pressable key={atalho.rota} style={s.atalho} onPress={() => aoAbrir(atalho.rota)}>
+            <MaterialCommunityIcons
+              name={atalho.icone as never}
+              size={26}
+              color={cores.primaria}
+            />
             <Text style={s.atalhoTexto}>{atalho.rotulo}</Text>
           </Pressable>
         ))}
@@ -154,6 +202,13 @@ function Indicador({ rotulo, valor }: { rotulo: string; valor: string }) {
 }
 
 const s = StyleSheet.create({
+  soCaixaTitulo: { fontSize: fonte.grande, fontWeight: '800', color: cores.texto },
+  soCaixaTexto: {
+    fontSize: fonte.base,
+    color: cores.textoSuave,
+    marginTop: espaco.xs,
+    lineHeight: 21,
+  },
   conteudo: { padding: espaco.lg, paddingBottom: espaco.xxl },
   periodo: {
     fontSize: fonte.pequena,

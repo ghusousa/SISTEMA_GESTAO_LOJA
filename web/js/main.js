@@ -8,6 +8,7 @@
 import { restaurarSessao, sair, definirTratadorDeSessaoPerdida } from './api.js';
 import { iniciarRoteador, rota, ir, caminhoAtual } from './router.js';
 import { limparCarrinho } from './store.js';
+import { PODE, pode, titulo } from './permissoes.js';
 import { html, confirmar, cru, aviso } from './ui.js';
 
 /* ------------------------------------------------------------------------- telas */
@@ -21,18 +22,18 @@ rota('/vendas/:id', () => import('./views/venda-detalhe.js'));
 rota('/produtos', () => import('./views/produtos.js'));
 rota('/produtos/novo', () => import('./views/produto-novo.js'));
 rota('/produtos/:id', () => import('./views/produto-detalhe.js'));
-rota('/categorias', () => import('./views/categorias.js'), { papel: 'ADMIN' });
+rota('/categorias', () => import('./views/categorias.js'), { pode: PODE.EDITAR_CATALOGO });
 
 rota('/estoque', () => import('./views/estoque.js'));
 rota('/estoque/entrada', () => import('./views/entrada.js'));
-rota('/estoque/inventario', () => import('./views/inventario.js'), { papel: 'ADMIN' });
+rota('/estoque/inventario', () => import('./views/inventario.js'), { pode: PODE.CORRIGIR_ESTOQUE });
 rota('/estoque/extrato', () => import('./views/extrato.js'));
 
-rota('/caixa', () => import('./views/caixa.js'), { papel: 'ADMIN' });
-rota('/despesas', () => import('./views/despesas.js'), { papel: 'ADMIN' });
-rota('/relatorios', () => import('./views/relatorios.js'), { papel: 'ADMIN' });
+rota('/caixa', () => import('./views/caixa.js'), { pode: PODE.FECHAR_CAIXA });
+rota('/despesas', () => import('./views/despesas.js'), { pode: PODE.LANCAR_DESPESA });
+rota('/relatorios', () => import('./views/relatorios.js'), { pode: PODE.VER_DINHEIRO });
 
-rota('/usuarios', () => import('./views/usuarios.js'), { papel: 'ADMIN' });
+rota('/usuarios', () => import('./views/usuarios.js'), { pode: PODE.GERIR_USUARIOS });
 rota('/conta', () => import('./views/conta.js'));
 
 /* ------------------------------------------------------------------------ menu */
@@ -49,7 +50,7 @@ const MENU = [
     grupo: 'Catálogo',
     itens: [
       { href: '/produtos', icone: '👕', texto: 'Produtos' },
-      { href: '/categorias', icone: '🏷️', texto: 'Categorias', admin: true },
+      { href: '/categorias', icone: '🏷️', texto: 'Categorias', pode: PODE.EDITAR_CATALOGO },
     ],
   },
   {
@@ -57,23 +58,22 @@ const MENU = [
     itens: [
       { href: '/estoque', icone: '📦', texto: 'Saldos' },
       { href: '/estoque/entrada', icone: '📥', texto: 'Entrada' },
-      { href: '/estoque/inventario', icone: '📋', texto: 'Inventário', admin: true },
+      { href: '/estoque/inventario', icone: '📋', texto: 'Inventário', pode: PODE.CORRIGIR_ESTOQUE },
       { href: '/estoque/extrato', icone: '📜', texto: 'Extrato' },
     ],
   },
   {
     grupo: 'Financeiro',
-    admin: true,
     itens: [
-      { href: '/caixa', icone: '💰', texto: 'Caixa do dia', admin: true },
-      { href: '/despesas', icone: '💸', texto: 'Despesas', admin: true },
-      { href: '/relatorios', icone: '📊', texto: 'Relatórios', admin: true },
+      { href: '/caixa', icone: '💰', texto: 'Caixa do dia', pode: PODE.FECHAR_CAIXA },
+      { href: '/despesas', icone: '💸', texto: 'Despesas', pode: PODE.LANCAR_DESPESA },
+      { href: '/relatorios', icone: '📊', texto: 'Relatórios', pode: PODE.VER_DINHEIRO },
     ],
   },
   {
     grupo: 'Sistema',
     itens: [
-      { href: '/usuarios', icone: '👥', texto: 'Usuários', admin: true },
+      { href: '/usuarios', icone: '👥', texto: 'Usuários', pode: PODE.GERIR_USUARIOS },
       { href: '/conta', icone: '⚙️', texto: 'Minha conta' },
     ],
   },
@@ -87,11 +87,11 @@ const iniciais = (nome) =>
     .map((p) => p[0].toUpperCase())
     .join('');
 
-function menuHtml(usuario) {
-  const admin = usuario.papel === 'ADMIN';
-  return MENU.filter((g) => !g.admin || admin)
-    .map((g) => {
-      const itens = g.itens.filter((i) => !i.admin || admin);
+function menuHtml() {
+  // Grupo sem nenhum item permitido simplesmente não é desenhado — nada de título de
+  // seção pairando sozinho sobre o vazio.
+  return MENU.map((g) => {
+      const itens = g.itens.filter((i) => !i.pode || pode(i.pode));
       if (!itens.length) return '';
       return html`
         <div class="lateral__grupo">${g.grupo}</div>
@@ -119,12 +119,12 @@ function molduraHtml(usuario) {
             <span>Estoque · PDV · Caixa</span>
           </span>
         </div>
-        <div class="lateral__menu">${cru(menuHtml(usuario))}</div>
+        <div class="lateral__menu">${cru(menuHtml())}</div>
         <div class="lateral__rodape">
           <span class="lateral__avatar" aria-hidden="true">${iniciais(usuario.nome)}</span>
           <span class="lateral__quem">
             <strong title="${usuario.email}">${usuario.nome}</strong>
-            <span>${usuario.papel === 'ADMIN' ? 'Dona da loja' : 'Vendedor(a)'}</span>
+            <span>${titulo(usuario.papel)}</span>
           </span>
           <button class="lateral__sair" data-sair title="Sair do sistema" aria-label="Sair do sistema">⏻</button>
         </div>

@@ -3,7 +3,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.core.deps import AdminUser, SessionDep
+from app.core.deps import ExigeDespesa, SessionDep
 from app.core.pagination import Pagina, Paginacao, paginacao
 from app.modules.despesas.schemas import (
     CategoriaDespesaIn,
@@ -25,7 +25,7 @@ router = APIRouter(prefix="/despesas", tags=["despesas"])
     "/categorias", response_model=Pagina[CategoriaDespesaOut], summary="Categorias de despesa"
 )
 async def listar_categorias(
-    session: SessionDep, _: AdminUser, p: Annotated[Paginacao, Depends(paginacao)]
+    session: SessionDep, _: ExigeDespesa, p: Annotated[Paginacao, Depends(paginacao)]
 ) -> Pagina[CategoriaDespesaOut]:
     return await DespesaService(session).listar_categorias(p)
 
@@ -37,7 +37,7 @@ async def listar_categorias(
     summary="Cria categoria de despesa",
 )
 async def criar_categoria(
-    session: SessionDep, _: AdminUser, dados: CategoriaDespesaIn
+    session: SessionDep, _: ExigeDespesa, dados: CategoriaDespesaIn
 ) -> CategoriaDespesaOut:
     return CategoriaDespesaOut.model_validate(
         await DespesaService(session).criar_categoria(dados)
@@ -50,7 +50,7 @@ async def criar_categoria(
     summary="Renomeia categoria de despesa",
 )
 async def atualizar_categoria(
-    session: SessionDep, _: AdminUser, categoria_id: int, dados: CategoriaDespesaIn
+    session: SessionDep, _: ExigeDespesa, categoria_id: int, dados: CategoriaDespesaIn
 ) -> CategoriaDespesaOut:
     return CategoriaDespesaOut.model_validate(
         await DespesaService(session).atualizar_categoria(categoria_id, dados)
@@ -62,7 +62,7 @@ async def atualizar_categoria(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Exclui categoria de despesa vazia",
 )
-async def excluir_categoria(session: SessionDep, _: AdminUser, categoria_id: int) -> None:
+async def excluir_categoria(session: SessionDep, _: ExigeDespesa, categoria_id: int) -> None:
     await DespesaService(session).excluir_categoria(categoria_id)
 
 
@@ -74,7 +74,7 @@ async def excluir_categoria(session: SessionDep, _: AdminUser, categoria_id: int
 )
 async def replicar_recorrentes(
     session: SessionDep,
-    _: AdminUser,
+    _: ExigeDespesa,
     competencia: Annotated[str, Query(description="AAAA-MM", examples=["2026-08"])],
 ) -> ReplicacaoOut:
     return await DespesaService(session).replicar_recorrentes(validar_competencia(competencia))
@@ -84,7 +84,7 @@ async def replicar_recorrentes(
 @router.get("", response_model=Pagina[DespesaOut], summary="Lista despesas")
 async def listar(
     session: SessionDep,
-    _: AdminUser,
+    _: ExigeDespesa,
     p: Annotated[Paginacao, Depends(paginacao)],
     inicio: date | None = None,
     fim: date | None = None,
@@ -97,18 +97,18 @@ async def listar(
 @router.post(
     "", response_model=DespesaOut, status_code=status.HTTP_201_CREATED, summary="Lança despesa"
 )
-async def criar(session: SessionDep, _: AdminUser, dados: DespesaIn) -> DespesaOut:
+async def criar(session: SessionDep, _: ExigeDespesa, dados: DespesaIn) -> DespesaOut:
     return await DespesaService(session).criar(dados)
 
 
 @router.get("/{despesa_id}", response_model=DespesaOut, summary="Detalhe da despesa")
-async def obter(session: SessionDep, _: AdminUser, despesa_id: int) -> DespesaOut:
+async def obter(session: SessionDep, _: ExigeDespesa, despesa_id: int) -> DespesaOut:
     return await DespesaService(session).obter(despesa_id)
 
 
 @router.patch("/{despesa_id}", response_model=DespesaOut, summary="Atualiza despesa")
 async def atualizar(
-    session: SessionDep, _: AdminUser, despesa_id: int, dados: DespesaUpdate
+    session: SessionDep, _: ExigeDespesa, despesa_id: int, dados: DespesaUpdate
 ) -> DespesaOut:
     return await DespesaService(session).atualizar(despesa_id, dados)
 
@@ -116,5 +116,5 @@ async def atualizar(
 @router.delete(
     "/{despesa_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Exclui despesa"
 )
-async def excluir(session: SessionDep, _: AdminUser, despesa_id: int) -> None:
+async def excluir(session: SessionDep, _: ExigeDespesa, despesa_id: int) -> None:
     await DespesaService(session).excluir(despesa_id)

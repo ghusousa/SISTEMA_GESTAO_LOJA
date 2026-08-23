@@ -15,7 +15,8 @@ from app.core.exceptions import (
 from app.core.pagination import Pagina, Paginacao
 from app.modules.estoque import movimentos
 from app.modules.estoque.models import TipoMovimento
-from app.modules.usuarios.models import Papel, User
+from app.core.permissoes import Pode, pode
+from app.modules.usuarios.models import User
 from app.modules.vendas.models import Sale, SaleItem, SalePayment, StatusVenda
 from app.modules.vendas.repository import VendaRepository
 from app.modules.vendas.schemas import (
@@ -48,7 +49,7 @@ class VendaService:
             # O replay devolve a venda existente, mas com o mesmo escopo do GET: quem
             # descobrisse o client_uuid de uma venda alheia leria por aqui o que
             # `GET /vendas/{id}` recusaria.
-            if usuario.role != Papel.ADMIN and ja_registrada.seller_id != usuario.id:
+            if not pode(usuario.role, Pode.VER_VENDAS_DE_TODOS) and ja_registrada.seller_id != usuario.id:
                 raise SemPermissao("Esta venda pertence a outro vendedor.")
             return await self._montar_venda(ja_registrada, usuario)
 
@@ -148,15 +149,12 @@ class VendaService:
         if venda.status == StatusVenda.CANCELADA:
             raise OperacaoInvalida("Esta venda já está cancelada.")
 
-        if usuario.role != Papel.ADMIN:
-            # Mesma resposta de venda inexistente: dizer "não é sua" confirmaria a
-            # existência da venda alheia e deixaria mapear o movimento da loja.
-            if venda.seller_id != usuario.id:
-                raise NaoEncontrado("Venda não encontrada.")
-            if self._dia_da_loja(venda.sold_at) != self._dia_da_loja(datetime.now(UTC)):
-                raise SemPermissao(
-                    "Vendas de dias anteriores só podem ser canceladas pelo administrador."
-                )
+        # Estornar é de dono e gerente. Quem vende não desfaz a própria venda: é o
+        # controle clássico contra desvio, e foi decisão explícita da loja. A rota já
+        # barra na porta (`ExigeCancelarVenda`); aqui é a segunda tranca, para o caso de
+        # alguém chamar o service por outro caminho.
+        if not pode(usuario.role, Pode.CANCELAR_VENDA):
+            raise SemPermissao("Cancelar venda é do dono ou do gerente.")
 
         # A troca de status vem ANTES dos estornos e só acontece se a venda ainda estiver
         # concluída. Sem isso, dois cancelamentos simultâneos (toque duplo, retry após
@@ -197,7 +195,7 @@ class VendaService:
         venda = await self.repo.por_id(venda_id)
         if venda is None:
             raise NaoEncontrado("Venda não encontrada.")
-        if usuario.role != Papel.ADMIN and venda.seller_id != usuario.id:
+        if not pode(usuario.role, Pode.VER_VENDAS_DE_TODOS) and venda.seller_id != usuario.id:
             raise NaoEncontrado("Venda não encontrada.")
         return await self._montar_venda(venda, usuario)
 
@@ -210,8 +208,8 @@ class VendaService:
         vendedor_id: int | None,
         usuario: User,
     ) -> Pagina[VendaResumoOut]:
-        if usuario.role != Papel.ADMIN:
-            vendedor_id = usuario.id  # vendedor só enxerga as próprias vendas
+        if not pode(usuario.role, Pode.VER_VENDAS_DE_TODOS):
+            vendedor_id = usuario.id  # vendedora só enxerga as próprias vendas
         linhas, total = await self.repo.listar(p, inicio, fim, status, vendedor_id)
         resumos = await self.repo.resumo_de_vendas([venda.id for venda, _ in linhas])
         items = [
@@ -231,7 +229,7 @@ class VendaService:
     async def _montar_venda(self, venda: Sale, usuario: User) -> VendaOut:
         variantes = await self.repo.variantes_historicas([i.variant_id for i in venda.items])
         vendedor = await self.repo.usuario(venda.seller_id)
-        admin = usuario.role == Papel.ADMIN
+        admin = pode(usuario.role, Pode.VER_DINHEIRO)
 
         itens: list[ItemVendaOut] = []
         for item in venda.items:

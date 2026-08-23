@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
-from app.core.deps import AdminUser, CurrentUser, SessionDep
+from app.core.deps import CurrentUser, ExigeEditarCatalogo, SessionDep
 from app.core.exceptions import Validacao
 from app.core.pagination import Pagina, Paginacao, paginacao
 from app.modules.catalogo.schemas import (
@@ -50,13 +50,13 @@ async def listar_categorias(
     status_code=status.HTTP_201_CREATED,
     summary="Cria categoria",
 )
-async def criar_categoria(session: SessionDep, _: AdminUser, dados: CategoriaIn) -> CategoriaOut:
+async def criar_categoria(session: SessionDep, _: ExigeEditarCatalogo, dados: CategoriaIn) -> CategoriaOut:
     return CategoriaOut.model_validate(await CatalogoService(session).criar_categoria(dados))
 
 
 @router.patch("/categorias/{categoria_id}", response_model=CategoriaOut, summary="Renomeia categoria")
 async def atualizar_categoria(
-    session: SessionDep, _: AdminUser, categoria_id: int, dados: CategoriaIn
+    session: SessionDep, _: ExigeEditarCatalogo, categoria_id: int, dados: CategoriaIn
 ) -> CategoriaOut:
     return CategoriaOut.model_validate(
         await CatalogoService(session).atualizar_categoria(categoria_id, dados)
@@ -68,7 +68,7 @@ async def atualizar_categoria(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Exclui categoria vazia",
 )
-async def excluir_categoria(session: SessionDep, _: AdminUser, categoria_id: int) -> None:
+async def excluir_categoria(session: SessionDep, _: ExigeEditarCatalogo, categoria_id: int) -> None:
     await CatalogoService(session).excluir_categoria(categoria_id)
 
 
@@ -105,7 +105,7 @@ async def listar_variantes(
 
 @router.patch("/variantes/{variante_id}", response_model=None, summary="Atualiza peça")
 async def atualizar_variante(
-    session: SessionDep, usuario: AdminUser, variante_id: int, dados: VarianteUpdate
+    session: SessionDep, usuario: ExigeEditarCatalogo, variante_id: int, dados: VarianteUpdate
 ) -> VarianteOut:
     variante = await CatalogoService(session).atualizar_variante(variante_id, dados)
     return VarianteAdminOut.model_validate(variante)
@@ -114,7 +114,7 @@ async def atualizar_variante(
 @router.delete(
     "/variantes/{variante_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Exclui peça"
 )
-async def excluir_variante(session: SessionDep, _: AdminUser, variante_id: int) -> None:
+async def excluir_variante(session: SessionDep, _: ExigeEditarCatalogo, variante_id: int) -> None:
     await CatalogoService(session).excluir_variante(variante_id)
 
 
@@ -147,7 +147,7 @@ async def obter_produto(session: SessionDep, usuario: CurrentUser, produto_id: i
 
 @router.patch("/produtos/{produto_id}", response_model=None, summary="Atualiza produto")
 async def atualizar_produto(
-    session: SessionDep, usuario: AdminUser, produto_id: int, dados: ProdutoUpdate
+    session: SessionDep, usuario: ExigeEditarCatalogo, produto_id: int, dados: ProdutoUpdate
 ) -> ProdutoOut:
     return await CatalogoService(session).atualizar_produto(produto_id, dados, usuario)
 
@@ -155,7 +155,7 @@ async def atualizar_produto(
 @router.delete(
     "/produtos/{produto_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Exclui produto"
 )
-async def excluir_produto(session: SessionDep, _: AdminUser, produto_id: int) -> None:
+async def excluir_produto(session: SessionDep, _: ExigeEditarCatalogo, produto_id: int) -> None:
     await CatalogoService(session).excluir_produto(produto_id)
 
 

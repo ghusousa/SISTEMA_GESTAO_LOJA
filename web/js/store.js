@@ -29,7 +29,8 @@ function criarStore(inicial) {
 /** Quem está logado. `carregando` cobre o instante entre abrir a página e renovar a sessão. */
 export const sessao = criarStore({ usuario: null, carregando: true });
 
-export const ehAdmin = () => sessao.get().usuario?.papel === 'ADMIN';
+// Quem pode o quê mora em `permissoes.js`. Aqui ficou só quem está logado: perguntar
+// pelo cargo levava a checagens espalhadas que não sobreviveram a quatro papéis.
 
 /**
  * Carrinho do PDV. Itens são `{ variante_id, produto, tamanho, cor, codigo_barras,

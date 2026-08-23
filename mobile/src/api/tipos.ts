@@ -6,7 +6,7 @@
  * conta com essas strings.
  */
 
-export type Papel = 'ADMIN' | 'VENDEDOR';
+export type Papel = 'ADMIN' | 'GERENTE' | 'SUPERVISORA' | 'VENDEDOR';
 export type FormaPagamento = 'DINHEIRO' | 'PIX' | 'DEBITO' | 'CREDITO';
 export type StatusVenda = 'CONCLUIDA' | 'CANCELADA';
 export type TipoMovimento = 'ENTRADA' | 'AJUSTE' | 'INVENTARIO' | 'VENDA' | 'ESTORNO';

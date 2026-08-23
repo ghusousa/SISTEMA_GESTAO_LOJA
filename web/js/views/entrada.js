@@ -10,7 +10,8 @@ import { api, ErroApi } from '../api.js';
 import { formatar, paraDecimalString, somar } from '../dinheiro.js';
 import { criarLeitor, manterFoco } from '../leitor.js';
 import { ir } from '../router.js';
-import { ehAdmin, novoClientUuid } from '../store.js';
+import { novoClientUuid } from '../store.js';
+import { PODE, pode } from '../permissoes.js';
 import {
   aviso,
   avisarErro,
@@ -24,7 +25,7 @@ import {
 } from '../ui.js';
 
 export function render(raiz) {
-  const admin = ehAdmin();
+  const veDinheiro = pode(PODE.VER_DINHEIRO);
   /** @type {{variante_id:number, produto:string, tamanho:string, cor:string, codigo_barras:string, quantidade:number, custo:number}[]} */
   let itens = [];
   let clientUuid = null;
@@ -59,7 +60,7 @@ export function render(raiz) {
           <span class="texto-suave">Peças</span>
           <strong data-contagem>0</strong>
         </div>
-        ${admin ? cru('<div class="pdv__linha"><span class="texto-suave">Custo total</span><span class="dinheiro" data-custo>R$ 0,00</span></div>') : ''}
+        ${veDinheiro ? cru('<div class="pdv__linha"><span class="texto-suave">Custo total</span><span class="dinheiro" data-custo>R$ 0,00</span></div>') : ''}
 
         <button class="botao botao--acao botao--largo botao--grande" data-salvar style="margin-top:14px" disabled>
           Registrar entrada
@@ -124,7 +125,7 @@ export function render(raiz) {
             <thead>
               <tr>
                 <th>Peça</th>
-                ${admin ? cru('<th class="direita">Custo unitário</th>') : ''}
+                ${veDinheiro ? cru('<th class="direita">Custo unitário</th>') : ''}
                 <th class="centro">Quantidade</th>
                 <th></th>
               </tr>
@@ -137,7 +138,7 @@ export function render(raiz) {
                       <span class="celula-principal">${item.produto}</span>
                       <span class="celula-secundaria">${grade(item.tamanho, item.cor)} · ${item.codigo_barras}</span>
                     </td>
-                    ${admin
+                    ${veDinheiro
                       ? cru(html`
                           <td class="direita">
                             <input data-custo-de="${item.variante_id}" style="width:110px;text-align:right"

@@ -12,7 +12,7 @@ import sys
 
 from app.core.db import SessionLocal
 from app.core.exceptions import AppError
-from app.modules.usuarios.models import Papel
+from app.modules.usuarios.models import Papel, User
 from app.modules.usuarios.schemas import UsuarioCreate
 from app.modules.usuarios.service import UsuarioService
 
@@ -28,8 +28,14 @@ async def _create_admin(nome: str, email: str, senha: str) -> int:
             print(f"Já existe um usuário com o e-mail {email} (papel {existente.role}).")
             return 1
         try:
+            # O CLI é a porta de fora do sistema: roda no servidor, com acesso ao
+            # banco, e é dele que sai o primeiro dono — quando ainda não existe ninguém
+            # para ser o "ator". Por isso ele cria o próprio ator de mentira, com papel
+            # de dono, em vez de afrouxar a regra em `_barrar_escalada`.
+            fundador = User(name=nome, email=email, role=Papel.ADMIN)
             user = await service.criar(
-                UsuarioCreate(nome=nome, email=email, senha=senha, papel=Papel.ADMIN)
+                UsuarioCreate(nome=nome, email=email, senha=senha, papel=Papel.ADMIN),
+                fundador,
             )
         except AppError as exc:
             print(f"Erro: {exc.message}")

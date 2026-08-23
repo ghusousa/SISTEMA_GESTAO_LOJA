@@ -24,7 +24,8 @@ from app.modules.catalogo.schemas import (
 )
 from app.modules.estoque import movimentos
 from app.modules.estoque.models import TipoMovimento
-from app.modules.usuarios.models import Papel, User
+from app.core.permissoes import Pode, pode
+from app.modules.usuarios.models import User
 
 
 class CatalogoService:
@@ -97,7 +98,7 @@ class CatalogoService:
     def _montar_produto_out(
         self, produto: Product, saldos: dict[int, int], usuario: User
     ) -> ProdutoOut:
-        admin = usuario.role == Papel.ADMIN
+        admin = pode(usuario.role, Pode.VER_DINHEIRO)
         schema_variante = VarianteAdminOut if admin else VarianteOut
         variantes = []
         for v in produto.variants:
@@ -310,7 +311,7 @@ class CatalogoService:
     ) -> Pagina[VarianteOut]:
         variantes, total = await self.repo.listar_variantes(p, produto_id, q)
         saldos = await movimentos.saldos_de(self.session, [v.id for v in variantes])
-        schema = VarianteAdminOut if usuario.role == Papel.ADMIN else VarianteOut
+        schema = VarianteAdminOut if pode(usuario.role, Pode.VER_DINHEIRO) else VarianteOut
         items = []
         for v in variantes:
             item = schema.model_validate(v)

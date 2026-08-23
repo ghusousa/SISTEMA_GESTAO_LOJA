@@ -4,6 +4,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 
 import { baseAtual } from '@/api/client';
 import { Cartao, Etiqueta } from '@/components/ui';
+import { PODE, pode, titulo, type Capacidade } from '@/lib/permissoes';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
 import { useAuthStore } from '@/stores/authStore';
 import { useServidorStore } from '@/stores/servidorStore';
@@ -13,12 +14,13 @@ interface Opcao {
   descricao: string;
   icone: keyof typeof MaterialCommunityIcons.glyphMap;
   rota: string;
-  soAdmin?: boolean;
+  /** Capacidade exigida; sem ela, a opção não aparece. */
+  pode?: Capacidade;
 }
 
 const OPCOES: Opcao[] = [
   {
-    rotulo: 'Minhas vendas',
+    rotulo: 'Vendas',
     descricao: 'Histórico e cancelamentos',
     icone: 'receipt-text-outline',
     rota: '/mais/vendas',
@@ -28,14 +30,14 @@ const OPCOES: Opcao[] = [
     descricao: 'Organizar o catálogo',
     icone: 'shape-outline',
     rota: '/mais/categorias',
-    soAdmin: true,
+    pode: PODE.EDITAR_CATALOGO,
   },
   {
     rotulo: 'Usuários',
     descricao: 'Quem pode entrar no sistema',
     icone: 'account-group-outline',
     rota: '/mais/usuarios',
-    soAdmin: true,
+    pode: PODE.GERIR_USUARIOS,
   },
   {
     rotulo: 'Trocar minha senha',
@@ -50,7 +52,7 @@ export default function Mais() {
   const usuario = useAuthStore((e) => e.usuario);
   const sair = useAuthStore((e) => e.sair);
   const esquecerServidor = useServidorStore((e) => e.esquecer);
-  const ehAdmin = usuario?.papel === 'ADMIN';
+  const ehDono = usuario?.papel === 'ADMIN';
 
   return (
     <ScrollView contentContainerStyle={s.conteudo}>
@@ -65,16 +67,16 @@ export default function Mais() {
             <Text style={s.nome}>{usuario?.nome}</Text>
             <Text style={s.email}>{usuario?.email}</Text>
             <Etiqueta
-              texto={ehAdmin ? 'administrador' : 'vendedor'}
-              cor={ehAdmin ? cores.primariaFraca : cores.superficieAlt}
-              corTexto={ehAdmin ? cores.primaria : cores.textoSuave}
+              texto={titulo(usuario?.papel).toLowerCase()}
+              cor={ehDono ? cores.primariaFraca : cores.superficieAlt}
+              corTexto={ehDono ? cores.primaria : cores.textoSuave}
               estilo={s.papel}
             />
           </View>
         </View>
       </Cartao>
 
-      {OPCOES.filter((o) => !o.soAdmin || ehAdmin).map((opcao) => (
+      {OPCOES.filter((o) => !o.pode || pode(usuario?.papel, o.pode)).map((opcao) => (
         <Pressable
           key={opcao.rota}
           style={s.opcao}

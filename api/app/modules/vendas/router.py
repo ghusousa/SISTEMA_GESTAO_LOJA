@@ -3,7 +3,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.core.deps import CurrentUser, SessionDep
+from app.core.deps import CurrentUser, ExigeCancelarVenda, SessionDep
 from app.core.pagination import Pagina, Paginacao, paginacao
 from app.modules.vendas.models import StatusVenda
 from app.modules.vendas.schemas import CancelamentoIn, VendaIn, VendaOut, VendaResumoOut
@@ -12,7 +12,9 @@ from app.modules.vendas.service import VendaService
 router = APIRouter(prefix="/vendas", tags=["vendas"])
 
 
-# response_model=None: o ADMIN recebe custo e lucro da venda; o VENDEDOR, não.
+# response_model=None: quem vê dinheiro (dono e gerente) recebe custo e lucro da
+# venda; os demais, não. Com response_model, o modelo da classe base apagaria os
+# campos extras justamente de quem tem direito a eles.
 @router.post(
     "",
     response_model=None,
@@ -51,6 +53,6 @@ async def obter(session: SessionDep, usuario: CurrentUser, venda_id: int) -> Ven
     summary="Cancela a venda e devolve as peças ao estoque",
 )
 async def cancelar(
-    session: SessionDep, usuario: CurrentUser, venda_id: int, dados: CancelamentoIn
+    session: SessionDep, usuario: ExigeCancelarVenda, venda_id: int, dados: CancelamentoIn
 ) -> VendaOut:
     return await VendaService(session).cancelar(venda_id, dados.motivo, usuario)

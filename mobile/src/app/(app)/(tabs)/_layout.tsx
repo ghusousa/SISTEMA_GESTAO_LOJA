@@ -2,6 +2,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
 import type { ColorValue } from 'react-native';
 
+import { PODE, pode } from '@/lib/permissoes';
 import { cores, fonte } from '@/lib/tema';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -14,7 +15,10 @@ function icone(nome: Icone) {
 }
 
 export default function TabsLayout() {
-  const ehAdmin = useAuthStore((e) => e.usuario?.papel === 'ADMIN');
+  // A aba abre para quem fecha o caixa — o degrau mais baixo que precisa dela. Dentro,
+  // o resumo do mês e os atalhos de despesa e relatório continuam pedindo VER_DINHEIRO,
+  // então a supervisora entra e encontra só o caixa do dia.
+  const temFinanceiro = useAuthStore((e) => pode(e.usuario?.papel, PODE.FECHAR_CAIXA));
 
   return (
     <Tabs
@@ -42,7 +46,7 @@ export default function TabsLayout() {
         options={{ title: 'Estoque', tabBarIcon: icone('package-variant-closed') }}
       />
       {/* Dinheiro do negócio é assunto de dono: para o vendedor a aba nem existe. */}
-      <Tabs.Protected guard={ehAdmin}>
+      <Tabs.Protected guard={temFinanceiro}>
         <Tabs.Screen
           name="financeiro"
           options={{ title: 'Financeiro', tabBarIcon: icone('cash-multiple') }}

@@ -8,13 +8,29 @@ despesas e enxergar quanto sobrou no fim do mês.
 
 ## Quem usa
 
-| Papel | O que faz | O que NÃO vê |
-|---|---|---|
-| **ADMIN** (dono) | Tudo: cadastros, vendas, entradas, ajustes, inventário, despesas, relatórios, fechamento de caixa, gestão de usuários | — |
-| **VENDEDOR** (funcionário) | Cadastra produtos, consulta estoque, registra entradas, vende, cancela a própria venda do dia | Preço de custo, lucro/margem, despesas, relatórios, usuários |
+Quatro cargos, do balcão para cima. Cada degrau soma ao de baixo — ninguém tem um poder que
+o superior não tenha.
 
-A restrição do vendedor é aplicada **no servidor** (schemas de resposta distintos + checagem de papel
-no service). O app e o sistema web apenas ocultam as abas.
+| Cargo | Além do degrau anterior | O que NÃO alcança |
+|---|---|---|
+| **Vendedora** (`VENDEDOR`) | Vende no PDV, bipa e consulta preço, cadastra peça nova, dá entrada de mercadoria | Custo, lucro, despesas, relatórios, estorno, ajuste de estoque, inventário, vendas das colegas |
+| **Supervisora** (`SUPERVISORA`) | Ajusta estoque, faz inventário, edita e exclui produtos e categorias, confere e fecha o caixa do dia, vê as vendas de toda a equipe | Custo, lucro, despesas, relatórios, estorno, logins da equipe |
+| **Gerente** (`GERENTE`) | Vê custo, lucro e margem; lança despesas; abre relatórios; cancela venda concluída; administra os logins da equipe | A conta do dono: não cria, não promove, não edita, não redefine a senha dele |
+| **Dono** (`ADMIN`) | Tudo, inclusive criar e promover outro dono | — |
+
+**Três decisões que a loja tomou e que o sistema faz valer:**
+
+- **Quem vende não desfaz.** Estornar é do dono e do gerente. A vendedora que errar no caixa
+  chama alguém — é o controle clássico contra desvio, e vale inclusive para a venda dela.
+- **Quem confere o caixa não vê a margem.** A supervisora fecha o dia e sabe quanto entrou,
+  mas não sabe quanto sobrou.
+- **Gerir logins não é virar dono.** O gerente contrata, promove até supervisora e desliga;
+  a conta do dono é intocável para ele, senão a permissão de administrar a equipe seria, na
+  prática, a permissão de se promover.
+
+Quem recusa é **sempre o servidor** — schemas de resposta distintos por capacidade e uma
+tabela única em `app/core/permissoes.py`. O app e o sistema web só escondem o que daria 403,
+para não oferecer um botão que não funciona.
 
 **Onde se usa.** O mesmo sistema em duas telas, com as mesmas regras e os mesmos papéis:
 o **app** (Android/iOS) para andar pela loja bipando com a câmera, e o **sistema web** no

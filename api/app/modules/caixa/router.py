@@ -4,7 +4,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, status
 
 from app.core.config import settings
-from app.core.deps import AdminUser, SessionDep
+from app.core.deps import ExigeCaixa, SessionDep
 from app.core.pagination import Pagina, Paginacao, paginacao
 from app.modules.caixa.schemas import DiaCaixaOut, FechamentoIn, FechamentoOut
 from app.modules.caixa.service import CaixaService
@@ -15,7 +15,7 @@ router = APIRouter(prefix="/caixa", tags=["caixa"])
 @router.get("/dia", response_model=DiaCaixaOut, summary="O que o sistema espera no caixa do dia")
 async def dia(
     session: SessionDep,
-    _: AdminUser,
+    _: ExigeCaixa,
     data: Annotated[date | None, Query(description="Padrão: hoje no fuso da loja")] = None,
 ) -> DiaCaixaOut:
     dia_pedido = data or datetime.now(UTC).astimezone(settings.tz_loja).date()
@@ -29,7 +29,7 @@ async def dia(
     summary="Registra a conferência do caixa (refechar o mesmo dia atualiza)",
 )
 async def fechar(
-    session: SessionDep, usuario: AdminUser, dados: FechamentoIn
+    session: SessionDep, usuario: ExigeCaixa, dados: FechamentoIn
 ) -> FechamentoOut:
     return await CaixaService(session).fechar(dados, usuario)
 
@@ -39,7 +39,7 @@ async def fechar(
 )
 async def listar(
     session: SessionDep,
-    _: AdminUser,
+    _: ExigeCaixa,
     p: Annotated[Paginacao, Depends(paginacao)],
     inicio: date | None = None,
     fim: date | None = None,

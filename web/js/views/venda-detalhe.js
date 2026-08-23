@@ -8,7 +8,7 @@
 import { api } from '../api.js';
 import { formatar, paraCentavos } from '../dinheiro.js';
 import { recarregarRota } from '../router.js';
-import { ehAdmin } from '../store.js';
+import { PODE, pode } from '../permissoes.js';
 import {
   FORMAS,
   aviso,
@@ -27,7 +27,7 @@ import {
 
 export async function render(raiz, { id }) {
   raiz.innerHTML = `<div class="pagina">${carregando()}</div>`;
-  const admin = ehAdmin();
+  const veDinheiro = pode(PODE.VER_DINHEIRO);
 
   let venda;
   try {
@@ -41,7 +41,7 @@ export async function render(raiz, { id }) {
   const subtotal = paraCentavos(venda.subtotal);
   const desconto = paraCentavos(venda.desconto);
   const total = paraCentavos(venda.total);
-  const custo = admin ? venda.itens.reduce((t, i) => t + paraCentavos(i.custo_unitario ?? 0) * i.quantidade, 0) : 0;
+  const custo = veDinheiro ? venda.itens.reduce((t, i) => t + paraCentavos(i.custo_unitario ?? 0) * i.quantidade, 0) : 0;
   const lucro = total - custo;
 
   raiz.innerHTML = html`
@@ -76,7 +76,7 @@ export async function render(raiz, { id }) {
           <div class="indicador__valor dinheiro">${formatar(total)}</div>
           <div class="indicador__nota">${venda.pagamentos.map((p) => FORMAS[p.forma] || p.forma).join(' + ')}</div>
         </div>
-        ${admin
+        ${veDinheiro
           ? cru(html`
               <div class="indicador">
                 <div class="indicador__rotulo">Custo das peças</div>
@@ -100,7 +100,7 @@ export async function render(raiz, { id }) {
             <tr>
               <th>Peça</th>
               <th class="direita">Preço</th>
-              ${admin ? cru('<th class="direita">Custo</th>') : ''}
+              ${veDinheiro ? cru('<th class="direita">Custo</th>') : ''}
               <th class="centro">Qtd</th>
               <th class="direita">Total</th>
             </tr>
@@ -114,7 +114,7 @@ export async function render(raiz, { id }) {
                     <span class="celula-secundaria">${grade(i.tamanho, i.cor)} · ${i.codigo_barras}</span>
                   </td>
                   <td class="direita dinheiro">${formatar(paraCentavos(i.preco_unitario))}</td>
-                  ${admin
+                  ${veDinheiro
                     ? cru(html`<td class="direita dinheiro texto-suave">${formatar(paraCentavos(i.custo_unitario ?? 0))}</td>`)
                     : ''}
                   <td class="centro dinheiro">${numero(i.quantidade)}</td>
@@ -125,19 +125,19 @@ export async function render(raiz, { id }) {
           </tbody>
           <tfoot>
             <tr>
-              <td colspan="${cru(admin ? 3 : 2)}" class="direita">Subtotal</td>
+              <td colspan="${cru(veDinheiro ? 3 : 2)}" class="direita">Subtotal</td>
               <td colspan="2" class="direita dinheiro">${formatar(subtotal)}</td>
             </tr>
             ${desconto > 0
               ? cru(html`
                   <tr>
-                    <td colspan="${cru(admin ? 3 : 2)}" class="direita">Desconto</td>
+                    <td colspan="${cru(veDinheiro ? 3 : 2)}" class="direita">Desconto</td>
                     <td colspan="2" class="direita dinheiro negativo">− ${formatar(desconto)}</td>
                   </tr>
                 `)
               : ''}
             <tr>
-              <td colspan="${cru(admin ? 3 : 2)}" class="direita">Total</td>
+              <td colspan="${cru(veDinheiro ? 3 : 2)}" class="direita">Total</td>
               <td colspan="2" class="direita dinheiro">${formatar(total)}</td>
             </tr>
           </tfoot>

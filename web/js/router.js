@@ -9,6 +9,7 @@
  * o código dos relatórios.
  */
 
+import { papelPode } from './permissoes.js';
 import { sessao } from './store.js';
 
 const rotas = [];
@@ -19,9 +20,10 @@ let renderizacaoAtual = 0;
 /**
  * @param {string} padrao caminho com parâmetros nomeados: "/produtos/:id".
  * @param {() => Promise<{render: Function}>} carregar import dinâmico da view.
- * @param {'ADMIN'|undefined} papel restringe a rota (a API também barra — isto é conveniência).
+ * @param {string|undefined} pode capacidade exigida (ver `permissoes.js`). A API também
+ *   barra — isto aqui é conveniência, para a pessoa não bater numa tela que daria 403.
  */
-export function rota(padrao, carregar, { papel } = {}) {
+export function rota(padrao, carregar, { pode: capacidade } = {}) {
   const nomes = [];
   const regex = new RegExp(
     '^' +
@@ -31,7 +33,7 @@ export function rota(padrao, carregar, { papel } = {}) {
       }) +
       '$',
   );
-  rotas.push({ regex, nomes, carregar, papel, padrao });
+  rotas.push({ regex, nomes, carregar, capacidade, padrao });
 }
 
 export function caminhoAtual() {
@@ -101,10 +103,10 @@ async function aplicar() {
   }
 
   const { r, m } = encontrada;
-  if (r.papel && usuario?.papel !== r.papel) {
+  if (r.capacidade && !papelPode(usuario?.papel, r.capacidade)) {
     raiz.innerHTML =
       '<div class="vazio"><p class="vazio__titulo">Área restrita</p>' +
-      '<p class="texto-suave">Esta tela é do dono da loja. Fale com quem administra o sistema.</p></div>';
+      '<p class="texto-suave">Seu acesso não alcança esta tela. Fale com quem administra o sistema.</p></div>';
     return;
   }
 

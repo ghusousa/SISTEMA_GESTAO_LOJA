@@ -1,8 +1,9 @@
 /**
  * Usuários da loja.
  *
- * Quem manda no que cada papel enxerga é o servidor. Esta tela só administra quem existe:
- * o VENDEDOR nunca vê custo, lucro nem despesas, mesmo que abra a URL na mão.
+ * Quem manda no que cada papel enxerga é o servidor (`app/core/permissoes.py`). Esta tela
+ * só administra quem existe: a vendedora não vê custo nem despesa mesmo abrindo a URL na
+ * mão, e o gerente não consegue criar nem editar um dono — a API recusa com 403.
  */
 
 import { api } from '../api.js';
@@ -24,8 +25,22 @@ import {
   paginacao,
   vazio,
 } from '../ui.js';
+import { PAPEIS, titulo } from '../permissoes.js';
 
 const TAMANHO = 25;
+
+const DESCRICAO = {
+  ADMIN: 'vê e faz tudo',
+  GERENTE: 'tudo do chão de loja, mais dinheiro, despesas, estorno e equipe',
+  SUPERVISORA: 'estoque, catálogo, caixa e as vendas da equipe — sem custo nem despesa',
+  VENDEDOR: 'vende, consulta preço, cadastra peça e dá entrada',
+};
+
+// Um gerente administra a equipe, mas não cria nem promove dono: seria virar dono. O
+// servidor recusa de qualquer jeito; aqui a opção nem aparece, para não oferecer um 403.
+const papeisQuePossoDar = PAPEIS.filter(
+  (p) => p !== 'ADMIN' || sessao.get().usuario?.papel === 'ADMIN',
+);
 
 export async function render(raiz, _params, consulta) {
   const filtros = {
@@ -58,8 +73,9 @@ export async function render(raiz, _params, consulta) {
           <span>Papel</span>
           <select data-papel>
             <option value="">Todos</option>
-            <option value="ADMIN" ${cru(filtros.papel === 'ADMIN' ? 'selected' : '')}>Dono</option>
-            <option value="VENDEDOR" ${cru(filtros.papel === 'VENDEDOR' ? 'selected' : '')}>Vendedor</option>
+            ${PAPEIS.map(
+              (p) => html`<option value="${p}" ${cru(filtros.papel === p ? 'selected' : '')}>${titulo(p)}</option>`,
+            )}
           </select>
         </label>
         <label class="campo">
@@ -119,7 +135,7 @@ export async function render(raiz, _params, consulta) {
                     ${u.id === eu ? cru(html`<span class="celula-secundaria">é você</span>`) : ''}
                   </td>
                   <td class="texto-suave">${u.email}</td>
-                  <td>${u.papel === 'ADMIN' ? etiqueta('Dono', 'info') : etiqueta('Vendedor')}</td>
+                  <td>${cru(etiqueta(titulo(u.papel), u.papel === 'ADMIN' ? 'info' : 'neutro'))}</td>
                   <td>${u.ativo ? etiqueta('Ativo', 'ok') : etiqueta('Desativado', 'perigo')}</td>
                   <td class="texto-suave">${formatarData(u.criado_em)}</td>
                   <td class="direita">
@@ -167,8 +183,9 @@ export async function render(raiz, _params, consulta) {
         <label class="campo">
           <span>Papel</span>
           <select data-papel>
-            <option value="VENDEDOR">Vendedor — vende e consulta, sem custo nem despesas</option>
-            <option value="ADMIN">Dono — vê e faz tudo</option>
+            ${PAPEIS.filter((p) => papeisQuePossoDar.includes(p)).map(
+              (p) => html`<option value="${p}">${titulo(p)} — ${DESCRICAO[p]}</option>`,
+            )}
           </select>
         </label>
         <div class="modal__acoes">
@@ -215,8 +232,9 @@ export async function render(raiz, _params, consulta) {
         <label class="campo">
           <span>Papel</span>
           <select data-papel ${cru(eu ? 'disabled' : '')}>
-            <option value="VENDEDOR" ${cru(usuario.papel === 'VENDEDOR' ? 'selected' : '')}>Vendedor</option>
-            <option value="ADMIN" ${cru(usuario.papel === 'ADMIN' ? 'selected' : '')}>Dono</option>
+            ${PAPEIS.filter((p) => papeisQuePossoDar.includes(p) || p === usuario.papel).map(
+              (p) => html`<option value="${p}" ${cru(usuario.papel === p ? 'selected' : '')}>${titulo(p)}</option>`,
+            )}
           </select>
           ${eu ? cru('<span class="campo__dica">você não pode mudar o próprio papel</span>') : ''}
         </label>

@@ -15,6 +15,7 @@ import {
   salvarSessao,
 } from '@/api/sessao';
 import type { Usuario } from '@/api/tipos';
+import { pode, type Capacidade } from '@/lib/permissoes';
 
 interface AuthState {
   usuario: Usuario | null;
@@ -23,7 +24,8 @@ interface AuthState {
   sair: () => Promise<void>;
   restaurar: () => Promise<void>;
   encerrarPorTokenInvalido: () => void;
-  ehAdmin: () => boolean;
+  /** Pergunta por capacidade, nunca por cargo — ver `lib/permissoes.ts`. */
+  podeFazer: (capacidade: Capacidade) => boolean;
 }
 
 /**
@@ -84,7 +86,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({ usuario: null, carregando: false });
   },
 
-  ehAdmin() {
-    return get().usuario?.papel === 'ADMIN';
+  podeFazer(capacidade) {
+    return pode(get().usuario?.papel, capacidade);
   },
 }));

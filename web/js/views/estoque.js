@@ -3,7 +3,7 @@
 import { api } from '../api.js';
 import { formatar, paraCentavos, somar } from '../dinheiro.js';
 import { ir, trocarConsulta } from '../router.js';
-import { ehAdmin } from '../store.js';
+import { PODE, pode } from '../permissoes.js';
 import {
   carregando,
   comAtraso,
@@ -22,7 +22,7 @@ import { ajustarEstoque } from './ajuste.js';
 const TAMANHO = 25;
 
 export async function render(raiz, _params, consulta) {
-  const admin = ehAdmin();
+  const veDinheiro = pode(PODE.VER_DINHEIRO);
   const filtros = {
     q: consulta.q || '',
     categoria_id: consulta.categoria_id || '',
@@ -92,7 +92,7 @@ export async function render(raiz, _params, consulta) {
 
   function desenhar(pagina) {
     const pecas = somar(pagina.items.map((i) => i.saldo));
-    const emCusto = admin ? somar(pagina.items.map((i) => paraCentavos(i.valor_em_custo))) : 0;
+    const emCusto = veDinheiro ? somar(pagina.items.map((i) => paraCentavos(i.valor_em_custo))) : 0;
     const repor = pagina.items.filter((i) => i.estoque_baixo).length;
 
     areaResumo.innerHTML = html`
@@ -102,7 +102,7 @@ export async function render(raiz, _params, consulta) {
           <div class="indicador__valor">${numero(pecas)}</div>
           <div class="indicador__nota">de ${numero(pagina.total)} itens de grade no filtro</div>
         </div>
-        ${admin
+        ${veDinheiro
           ? cru(html`
               <div class="indicador">
                 <div class="indicador__rotulo">Valor em custo</div>
@@ -137,10 +137,10 @@ export async function render(raiz, _params, consulta) {
               <th>Peça</th>
               <th>Código</th>
               <th class="direita">Preço</th>
-              ${admin ? cru('<th class="direita">Custo parado</th>') : ''}
+              ${veDinheiro ? cru('<th class="direita">Custo parado</th>') : ''}
               <th class="direita">Mínimo</th>
               <th class="direita">Saldo</th>
-              ${admin ? cru('<th class="direita">Ajustar</th>') : ''}
+              ${veDinheiro ? cru('<th class="direita">Ajustar</th>') : ''}
             </tr>
           </thead>
           <tbody>
@@ -176,7 +176,7 @@ export async function render(raiz, _params, consulta) {
         </td>
         <td class="dinheiro texto-suave">${item.codigo_barras}</td>
         <td class="direita dinheiro">${formatar(paraCentavos(item.preco_venda))}</td>
-        ${admin
+        ${veDinheiro
           ? cru(html`<td class="direita dinheiro texto-suave">${formatar(paraCentavos(item.valor_em_custo))}</td>`)
           : ''}
         <td class="direita dinheiro texto-suave">${numero(item.estoque_minimo)}</td>
@@ -187,7 +187,7 @@ export async function render(raiz, _params, consulta) {
               ? etiqueta(`${numero(item.saldo)} · repor`, 'alerta')
               : cru(html`<strong class="dinheiro">${numero(item.saldo)}</strong>`)}
         </td>
-        ${admin
+        ${veDinheiro
           ? cru(html`
               <td class="direita">
                 <button class="botao-icone" data-ajustar="${item.variante_id}" title="Ajustar saldo"

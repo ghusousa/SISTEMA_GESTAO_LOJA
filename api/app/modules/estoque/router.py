@@ -3,7 +3,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.core.deps import AdminUser, CurrentUser, SessionDep
+from app.core.deps import CurrentUser, ExigeCorrigirEstoque, SessionDep
 from app.core.pagination import Pagina, Paginacao, paginacao
 from app.modules.estoque.models import TipoMovimento
 from app.modules.estoque.schemas import (
@@ -38,7 +38,7 @@ async def registrar_entrada(
     status_code=status.HTTP_201_CREATED,
     summary="Ajusta o saldo de uma peça (admin, com motivo)",
 )
-async def ajustar(session: SessionDep, usuario: AdminUser, dados: AjusteIn) -> MovimentoOut:
+async def ajustar(session: SessionDep, usuario: ExigeCorrigirEstoque, dados: AjusteIn) -> MovimentoOut:
     return await EstoqueService(session).ajustar(dados, usuario)
 
 
@@ -49,7 +49,7 @@ async def ajustar(session: SessionDep, usuario: AdminUser, dados: AjusteIn) -> M
     summary="Lança uma contagem física e acerta as diferenças (admin)",
 )
 async def inventariar(
-    session: SessionDep, usuario: AdminUser, dados: InventarioIn
+    session: SessionDep, usuario: ExigeCorrigirEstoque, dados: InventarioIn
 ) -> InventarioOut:
     return await EstoqueService(session).inventariar(dados, usuario)
 

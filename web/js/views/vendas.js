@@ -8,7 +8,7 @@
 import { api } from '../api.js';
 import { formatar, paraCentavos, somar } from '../dinheiro.js';
 import { ir, trocarConsulta } from '../router.js';
-import { ehAdmin } from '../store.js';
+import { PODE, pode } from '../permissoes.js';
 import {
   FORMAS,
   carregando,
@@ -29,7 +29,11 @@ import {
 const TAMANHO = 25;
 
 export async function render(raiz, _params, consulta) {
-  const admin = ehAdmin();
+  const veTodas = pode(PODE.VER_VENDAS_DE_TODOS);
+  // O seletor de vendedor é alimentado por GET /usuarios, que exige GERIR_USUARIOS.
+  // A supervisora enxerga de quem é cada venda na lista, mas não ganha o filtro:
+  // mostrá-lo renderia um 403 e um <select> vazio.
+  const filtraPorVendedor = pode(PODE.GERIR_USUARIOS);
   const filtros = {
     inicio: consulta.inicio || diasAtrasISO(7),
     fim: consulta.fim || hojeISO(),
@@ -44,7 +48,7 @@ export async function render(raiz, _params, consulta) {
         <div>
           <h1>Vendas</h1>
           <p class="texto-suave">
-            ${admin ? 'Todas as vendas da loja.' : 'As vendas que você registrou.'}
+            ${veTodas ? 'Todas as vendas da loja.' : 'As vendas que você registrou.'}
           </p>
         </div>
         <div class="pagina__acoes">
@@ -69,7 +73,7 @@ export async function render(raiz, _params, consulta) {
             <option value="CANCELADA" ${cru(filtros.status === 'CANCELADA' ? 'selected' : '')}>Canceladas</option>
           </select>
         </label>
-        ${admin
+        ${filtraPorVendedor
           ? cru(html`
               <label class="campo">
                 <span>Vendedor</span>
@@ -88,7 +92,7 @@ export async function render(raiz, _params, consulta) {
   const areaResumo = raiz.querySelector('[data-resumo]');
   const seletorVendedor = raiz.querySelector('[data-vendedor]');
 
-  if (admin) {
+  if (filtraPorVendedor) {
     api
       .get('/usuarios', { size: 100 })
       .then(({ items }) => {
@@ -142,7 +146,7 @@ export async function render(raiz, _params, consulta) {
             <tr>
               <th>Venda</th>
               <th>Quando</th>
-              ${admin ? cru('<th>Vendedor</th>') : ''}
+              ${veTodas ? cru('<th>Vendedor</th>') : ''}
               <th>Peças</th>
               <th>Pagamento</th>
               <th class="direita">Total</th>
@@ -157,7 +161,7 @@ export async function render(raiz, _params, consulta) {
                     ${v.status === 'CANCELADA' ? cru(html`<span class="celula-secundaria">${etiqueta('Cancelada', 'perigo')}</span>`) : ''}
                   </td>
                   <td class="texto-suave" style="white-space:nowrap">${dataHora(v.vendida_em)}</td>
-                  ${admin ? cru(html`<td class="texto-suave">${v.vendedor}</td>`) : ''}
+                  ${veTodas ? cru(html`<td class="texto-suave">${v.vendedor}</td>`) : ''}
                   <td class="texto-suave">${plural(v.quantidade_pecas, 'peça', 'peças')}</td>
                   <td class="texto-suave">${v.formas_pagamento.map((f) => FORMAS[f] || f).join(' + ')}</td>
                   <td class="direita dinheiro celula-principal ${cru(v.status === 'CANCELADA' ? 'texto-fraco' : '')}">

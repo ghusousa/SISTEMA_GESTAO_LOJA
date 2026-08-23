@@ -30,6 +30,7 @@ import { Botao, Campo, Carregando, Etiqueta } from '@/components/ui';
 import { formatarSemSimbolo, paraCentavos, paraDecimalString } from '@/lib/money';
 import { chaves, invalidarAposMovimentoEstoque, queryClient } from '@/lib/queryClient';
 import { useAuthStore } from '@/stores/authStore';
+import { PODE, pode } from '@/lib/permissoes';
 import { ALVO_TOQUE, cores, espaco, fonte, raio } from '@/lib/tema';
 
 const TAMANHOS_RAPIDOS = ['PP', 'P', 'M', 'G', 'GG', 'XG', 'U'];
@@ -48,7 +49,7 @@ export default function NovoProduto() {
   const veioDoPdv = params.retorno === 'pdv';
   // A SPEC diz que o vendedor não vê preço de custo. Ele cadastra a peça; o custo é
   // preenchido depois pela dona na edição.
-  const ehAdmin = useAuthStore((e) => e.usuario?.papel === 'ADMIN');
+  const veDinheiro = useAuthStore((e) => pode(e.usuario?.papel, PODE.VER_DINHEIRO));
 
   const [nome, setNome] = useState('');
   const [categoriaId, setCategoriaId] = useState<number | null>(null);
@@ -206,7 +207,7 @@ export default function NovoProduto() {
           </View>
         )}
 
-        {ehAdmin ? (
+        {veDinheiro ? (
           <View style={s.duasColunas}>
             <View style={s.coluna}>
               <Campo
@@ -240,7 +241,7 @@ export default function NovoProduto() {
           />
         )}
 
-        {ehAdmin && paraCentavos(precoVenda) > 0 && paraCentavos(precoCusto) > 0 && (
+        {veDinheiro && paraCentavos(precoVenda) > 0 && paraCentavos(precoCusto) > 0 && (
           <Text style={s.margem}>
             Margem por peça: R${' '}
             {formatarSemSimbolo(paraCentavos(precoVenda) - paraCentavos(precoCusto))}

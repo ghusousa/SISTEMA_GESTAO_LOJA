@@ -3,7 +3,7 @@
 import { api } from '../api.js';
 import { formatar, paraCentavos } from '../dinheiro.js';
 import { ir, trocarConsulta } from '../router.js';
-import { ehAdmin } from '../store.js';
+import { PODE, pode } from '../permissoes.js';
 import {
   carregando,
   comAtraso,
@@ -135,7 +135,7 @@ export async function render(raiz, _params, consulta) {
       <tr class="clicavel" data-abrir="${produto.id}" tabindex="0">
         <td>
           <span class="celula-principal">${produto.nome}</span>
-          ${ehAdmin() && produto.variantes[0]?.preco_custo
+          ${pode(PODE.VER_DINHEIRO) && produto.variantes[0]?.preco_custo
             ? cru(html`<span class="celula-secundaria">custo ${formatar(paraCentavos(produto.variantes[0].preco_custo))}</span>`)
             : ''}
         </td>

@@ -14,6 +14,7 @@ import type { FormaPagamento } from '@/api/tipos';
 import { Botao, Carregando, Cartao, ErroEstado, Etiqueta, Linha, Separador } from '@/components/ui';
 import { formatar, paraCentavos } from '@/lib/money';
 import { chaves, invalidarAposVenda } from '@/lib/queryClient';
+import { PODE, pode } from '@/lib/permissoes';
 import { cores, espaco, fonte } from '@/lib/tema';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -58,11 +59,9 @@ export default function DetalheVenda() {
 
   const venda = consulta.data;
   const cancelada = venda.status === 'CANCELADA';
-  const ehDeHoje =
-    format(new Date(venda.vendida_em), 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd');
-  // A API permite ao vendedor cancelar a venda própria do dia; o admin cancela qualquer uma.
-  const podeCancelar =
-    !cancelada && (usuario?.papel === 'ADMIN' || (venda.vendedor_id === usuario?.id && ehDeHoje));
+  // Estornar é de dono e gerente — quem vende não desfaz a própria venda. A API recusa de
+  // qualquer forma; esconder o botão evita oferecer uma ação que daria 403.
+  const podeCancelar = !cancelada && pode(usuario?.papel, PODE.CANCELAR_VENDA);
 
   function pedirMotivo() {
     Alert.prompt?.(
@@ -156,7 +155,7 @@ export default function DetalheVenda() {
         ))}
       </Cartao>
 
-      {/* Custo e lucro só existem na resposta quando quem consulta é ADMIN. */}
+      {/* Custo e lucro só existem na resposta para quem vê dinheiro. */}
       {venda.lucro_bruto !== undefined && (
         <Cartao>
           <Text style={s.secao}>Resultado da venda</Text>

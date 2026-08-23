@@ -11,21 +11,22 @@ import type { Saldo } from '@/api/tipos';
 import { Carregando, ErroEstado, Etiqueta, Vazio } from '@/components/ui';
 import { formatar, paraCentavos } from '@/lib/money';
 import { chaves } from '@/lib/queryClient';
+import { PODE, pode, type Capacidade } from '@/lib/permissoes';
 import { ALVO_TOQUE, cores, espaco, fonte, raio } from '@/lib/tema';
 import { useAuthStore } from '@/stores/authStore';
 
-type Atalho = { rotulo: string; icone: keyof typeof MaterialCommunityIcons.glyphMap; rota: string; soAdmin?: boolean };
+type Atalho = { rotulo: string; icone: keyof typeof MaterialCommunityIcons.glyphMap; rota: string; pode?: Capacidade };
 
 const ATALHOS: Atalho[] = [
   { rotulo: 'Entrada', icone: 'tray-arrow-down', rota: '/estoque/entrada' },
   { rotulo: 'Extrato', icone: 'format-list-bulleted', rota: '/estoque/movimentacoes' },
-  { rotulo: 'Ajuste', icone: 'tune', rota: '/estoque/ajuste', soAdmin: true },
-  { rotulo: 'Inventário', icone: 'clipboard-list-outline', rota: '/estoque/inventario', soAdmin: true },
+  { rotulo: 'Ajuste', icone: 'tune', rota: '/estoque/ajuste', pode: PODE.CORRIGIR_ESTOQUE },
+  { rotulo: 'Inventário', icone: 'clipboard-list-outline', rota: '/estoque/inventario', pode: PODE.CORRIGIR_ESTOQUE },
 ];
 
 export default function Estoque() {
   const router = useRouter();
-  const ehAdmin = useAuthStore((e) => e.usuario?.papel === 'ADMIN');
+  const corrigeEstoque = useAuthStore((e) => pode(e.usuario?.papel, PODE.CORRIGIR_ESTOQUE));
   const [busca, setBusca] = useState('');
   const [soBaixo, setSoBaixo] = useState(false);
 
@@ -48,7 +49,7 @@ export default function Estoque() {
   return (
     <View style={s.tela}>
       <View style={s.atalhos}>
-        {ATALHOS.filter((a) => !a.soAdmin || ehAdmin).map((atalho) => (
+        {ATALHOS.filter((a) => !a.pode || corrigeEstoque).map((atalho) => (
           <Pressable
             key={atalho.rota}
             style={s.atalho}

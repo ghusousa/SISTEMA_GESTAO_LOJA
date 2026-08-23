@@ -1,6 +1,6 @@
-"""Dependências compartilhadas: usuário autenticado e exigência de papel."""
+"""Dependências compartilhadas: usuário autenticado e exigência de permissão."""
 
-from typing import Annotated
+from typing import Annotated, Callable
 
 from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -8,8 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_session
 from app.core.exceptions import SemPermissao, TokenInvalido
+from app.core.permissoes import Pode, pode
 from app.core.security import decodificar_token
-from app.modules.usuarios.models import Papel, User
+from app.modules.usuarios.models import User
 
 bearer = HTTPBearer(auto_error=False)
 
@@ -32,10 +33,26 @@ async def get_current_user(
 CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
-async def get_admin_user(user: CurrentUser) -> User:
-    if user.role != Papel.ADMIN:
-        raise SemPermissao()
-    return user
+def exige(capacidade: Pode) -> Callable[[User], User]:
+    """Dependência que barra quem não tem a capacidade pedida.
+
+    A rota declara o que precisa (`ExigeDinheiro`), não quem pode. Assim mudar o que um
+    cargo faz é uma linha em `core/permissoes.py`, e nenhuma rota precisa ser revisada.
+    """
+
+    async def verificar(user: CurrentUser) -> User:
+        if not pode(user.role, capacidade):
+            raise SemPermissao()
+        return user
+
+    return verificar
 
 
-AdminUser = Annotated[User, Depends(get_admin_user)]
+# Atalhos prontos: cada um é o "crachá" que a rota exige na porta.
+ExigeDinheiro = Annotated[User, Depends(exige(Pode.VER_DINHEIRO))]
+ExigeDespesa = Annotated[User, Depends(exige(Pode.LANCAR_DESPESA))]
+ExigeCancelarVenda = Annotated[User, Depends(exige(Pode.CANCELAR_VENDA))]
+ExigeCorrigirEstoque = Annotated[User, Depends(exige(Pode.CORRIGIR_ESTOQUE))]
+ExigeEditarCatalogo = Annotated[User, Depends(exige(Pode.EDITAR_CATALOGO))]
+ExigeCaixa = Annotated[User, Depends(exige(Pode.FECHAR_CAIXA))]
+ExigeUsuarios = Annotated[User, Depends(exige(Pode.GERIR_USUARIOS))]

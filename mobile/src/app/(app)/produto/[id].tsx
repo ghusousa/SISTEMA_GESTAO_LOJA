@@ -7,13 +7,14 @@ import { catalogo } from '@/api/endpoints';
 import { Carregando, Cartao, ErroEstado, Etiqueta } from '@/components/ui';
 import { formatar, paraCentavos } from '@/lib/money';
 import { chaves } from '@/lib/queryClient';
+import { PODE, pode } from '@/lib/permissoes';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
 import { useAuthStore } from '@/stores/authStore';
 
 export default function DetalheProduto() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const ehAdmin = useAuthStore((e) => e.usuario?.papel === 'ADMIN');
+  const veDinheiro = useAuthStore((e) => pode(e.usuario?.papel, PODE.VER_DINHEIRO));
   const produtoId = Number(id);
 
   const consulta = useQuery({
@@ -80,8 +81,8 @@ export default function DetalheProduto() {
                 corTexto={baixo ? '#7A5A00' : cores.textoSuave}
               />
               <Etiqueta texto={`mínimo ${v.estoque_minimo}`} cor={cores.superficieAlt} corTexto={cores.textoSuave} />
-              {/* preco_custo só chega para ADMIN — o servidor nem envia para o vendedor. */}
-              {ehAdmin && v.preco_custo && (
+              {/* preco_custo só chega para quem vê dinheiro — a API nem envia para os demais. */}
+              {veDinheiro && v.preco_custo && (
                 <Etiqueta
                   texto={`custo ${formatar(paraCentavos(v.preco_custo))}`}
                   cor={cores.primariaFraca}

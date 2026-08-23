@@ -7,6 +7,7 @@ import { mensagemDoErro } from '@/api/client';
 import { usuarios } from '@/api/endpoints';
 import { Carregando, ErroEstado, Etiqueta } from '@/components/ui';
 import { chaves, queryClient } from '@/lib/queryClient';
+import { titulo } from '@/lib/permissoes';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -59,7 +60,7 @@ export default function Usuarios() {
                 <Text style={s.email}>{usuario.email}</Text>
                 <View style={s.etiquetas}>
                   <Etiqueta
-                    texto={usuario.papel === 'ADMIN' ? 'administrador' : 'vendedor'}
+                    texto={titulo(usuario.papel).toLowerCase()}
                     cor={usuario.papel === 'ADMIN' ? cores.primariaFraca : cores.superficieAlt}
                     corTexto={usuario.papel === 'ADMIN' ? cores.primaria : cores.textoSuave}
                   />

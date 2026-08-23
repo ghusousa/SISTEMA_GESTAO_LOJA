@@ -9,7 +9,7 @@
 import { api } from '../api.js';
 import { formatar, paraCentavos, paraDecimalString } from '../dinheiro.js';
 import { ir } from '../router.js';
-import { ehAdmin } from '../store.js';
+import { PODE, pode } from '../permissoes.js';
 import {
   aviso,
   avisarErro,
@@ -29,7 +29,7 @@ import { ajustarEstoque } from './ajuste.js';
 
 export async function render(raiz, { id }) {
   raiz.innerHTML = `<div class="pagina">${carregando()}</div>`;
-  const admin = ehAdmin();
+  const veDinheiro = pode(PODE.VER_DINHEIRO);
 
   async function carregar() {
     try {
@@ -55,7 +55,7 @@ export async function render(raiz, { id }) {
             </p>
           </div>
           <div class="pagina__acoes">
-            ${admin ? cru('<button class="botao botao--neutro" data-editar>Editar produto</button>') : ''}
+            ${veDinheiro ? cru('<button class="botao botao--neutro" data-editar>Editar produto</button>') : ''}
             <button class="botao" data-nova-peca>Adicionar peça</button>
           </div>
         </div>
@@ -74,7 +74,7 @@ export async function render(raiz, { id }) {
                 <th>Peça</th>
                 <th>Código de barras</th>
                 <th class="direita">Preço de venda</th>
-                ${admin ? cru('<th class="direita">Custo</th><th class="direita">Margem</th>') : ''}
+                ${veDinheiro ? cru('<th class="direita">Custo</th><th class="direita">Margem</th>') : ''}
                 <th class="direita">Estoque</th>
                 <th class="direita">Ações</th>
               </tr>
@@ -113,8 +113,8 @@ export async function render(raiz, { id }) {
 
   function linha(v, produto) {
     const venda = paraCentavos(v.preco_venda);
-    const custo = admin ? paraCentavos(v.preco_custo) : 0;
-    const margem = admin && venda > 0 ? Math.round(((venda - custo) / venda) * 100) : null;
+    const custo = veDinheiro ? paraCentavos(v.preco_custo) : 0;
+    const margem = veDinheiro && venda > 0 ? Math.round(((venda - custo) / venda) * 100) : null;
 
     return html`
       <tr>
@@ -124,7 +124,7 @@ export async function render(raiz, { id }) {
           <span class="celula-secundaria">${v.tipo_codigo === 'INTERNO' ? 'código interno' : 'etiqueta do fornecedor'}</span>
         </td>
         <td class="direita dinheiro celula-principal">${formatar(venda)}</td>
-        ${admin
+        ${veDinheiro
           ? cru(html`
               <td class="direita dinheiro texto-suave">${formatar(custo)}</td>
               <td class="direita dinheiro ${cru(margem !== null && margem < 30 ? 'negativo' : '')}">
@@ -141,7 +141,7 @@ export async function render(raiz, { id }) {
         </td>
         <td class="direita">
           <button class="botao-icone" data-editar-peca="${v.id}" title="Editar preços e código" aria-label="Editar ${grade(v.tamanho, v.cor)}">✏️</button>
-          ${admin
+          ${veDinheiro
             ? cru(html`
                 <button class="botao-icone" data-ajustar="${v.id}" title="Ajustar estoque" aria-label="Ajustar estoque de ${grade(v.tamanho, v.cor)}">⚖️</button>
                 <button class="botao-icone botao-icone--perigo" data-excluir-peca="${v.id}" title="Excluir peça" aria-label="Excluir ${grade(v.tamanho, v.cor)}">🗑️</button>
@@ -178,7 +178,7 @@ export async function render(raiz, { id }) {
             <span>Preço de venda</span>
             <input data-venda inputmode="numeric" />
           </label>
-          ${admin
+          ${veDinheiro
             ? cru(html`
                 <label class="campo">
                   <span>Preço de custo</span>
@@ -202,7 +202,7 @@ export async function render(raiz, { id }) {
         const campoCusto = corpo.querySelector('[data-custo]');
 
         const mostrarMargem = () => {
-          if (!admin || !campoCusto) return;
+          if (!veDinheiro || !campoCusto) return;
           const venda = dinheiroVenda.valor();
           const custo = dinheiroCusto.valor();
           if (!venda) {
@@ -222,7 +222,7 @@ export async function render(raiz, { id }) {
         };
 
         const dinheiroVenda = ligarCampoDinheiro(corpo.querySelector('[data-venda]'), paraCentavos(v.preco_venda), mostrarMargem);
-        const dinheiroCusto = admin
+        const dinheiroCusto = veDinheiro
           ? ligarCampoDinheiro(campoCusto, paraCentavos(v.preco_custo), mostrarMargem)
           : { valor: () => 0 };
         mostrarMargem();
@@ -243,7 +243,7 @@ export async function render(raiz, { id }) {
             preco_venda: paraDecimalString(venda),
             estoque_minimo: Number(corpo.querySelector('[data-minimo]').value) || 0,
           };
-          if (admin) corpoEnvio.preco_custo = paraDecimalString(dinheiroCusto.valor());
+          if (veDinheiro) corpoEnvio.preco_custo = paraDecimalString(dinheiroCusto.valor());
 
           try {
             await api.patch(`/variantes/${v.id}`, corpoEnvio);

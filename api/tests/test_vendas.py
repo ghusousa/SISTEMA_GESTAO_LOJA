@@ -347,14 +347,19 @@ async def test_venda_cancelada_nao_pode_ser_cancelada_de_novo(
     assert await _saldo(client, auth_admin, loja["camiseta"]) == 10
 
 
-async def test_vendedor_nao_cancela_venda_de_outro(
+async def test_vendedor_nao_cancela_venda_nenhuma(
     client: AsyncClient,
     auth_admin: dict[str, str],
     auth_vendedor: dict[str, str],
     loja: dict,
 ) -> None:
-    """404, não 403: dizer "não é sua" confirmaria a existência da venda alheia."""
-    venda_id = (
+    """Estorno é do dono e do gerente — nem a própria venda a vendedora desfaz.
+
+    Antes ela cancelava a própria venda do dia, e a de outra pessoa vinha como 404 para
+    não confirmar que existia. Agora a porta fecha antes da busca: a resposta é 403 e é a
+    mesma para venda própria, alheia ou inexistente, então não sobra o que deduzir.
+    """
+    venda_alheia = (
         await client.post(
             "/vendas",
             headers=auth_admin,
@@ -365,13 +370,25 @@ async def test_vendedor_nao_cancela_venda_de_outro(
             },
         )
     ).json()["id"]
-    resp = await client.post(
-        f"/vendas/{venda_id}/cancelamento",
-        headers=auth_vendedor,
-        json={"motivo": "não foi minha"},
-    )
-    assert resp.status_code == 404
-    assert resp.json()["code"] == "NAO_ENCONTRADO"
+    venda_propria = (
+        await client.post(
+            "/vendas",
+            headers=auth_vendedor,
+            json={
+                "client_uuid": str(uuid.uuid4()),
+                "itens": [{"variante_id": loja["camiseta"], "quantidade": 1}],
+                "pagamentos": [{"forma": "PIX", "valor": "49.90"}],
+            },
+        )
+    ).json()["id"]
+
+    for venda_id in (venda_alheia, venda_propria, 999_999):
+        resp = await client.post(
+            f"/vendas/{venda_id}/cancelamento",
+            headers=auth_vendedor,
+            json={"motivo": "cliente desistiu"},
+        )
+        assert resp.status_code == 403, f"venda {venda_id}: {resp.status_code}"
 
 
 async def test_dois_cancelamentos_simultaneos_estornam_uma_vez_so(
@@ -485,7 +502,7 @@ async def test_vendedor_lista_apenas_as_proprias_vendas(
     assert (await client.get("/vendas", headers=auth_admin)).json()["total"] == 2
     minhas = (await client.get("/vendas", headers=auth_vendedor)).json()
     assert minhas["total"] == 1
-    assert minhas["items"][0]["vendedor"] == "João Vendedor"
+    assert minhas["items"][0]["vendedor"] == "Ana Vendedora"
 
 
 async def test_vendedor_nao_abre_venda_de_outro_pelo_id(

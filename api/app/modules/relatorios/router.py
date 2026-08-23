@@ -3,7 +3,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query
 
-from app.core.deps import AdminUser, SessionDep
+from app.core.deps import ExigeDinheiro, SessionDep
 from app.modules.relatorios.schemas import (
     DespesaCategoriaOut,
     DiaVendaOut,
@@ -25,7 +25,7 @@ Fim = Annotated[date, Query(description="Último dia do período (inclusive)")]
     response_model=ResumoOut,
     summary="Faturamento, CMV, lucro bruto, despesas e resultado do período",
 )
-async def resumo(session: SessionDep, _: AdminUser, inicio: Inicio, fim: Fim) -> ResumoOut:
+async def resumo(session: SessionDep, _: ExigeDinheiro, inicio: Inicio, fim: Fim) -> ResumoOut:
     return await RelatorioService(session).resumo(inicio, fim)
 
 
@@ -35,7 +35,7 @@ async def resumo(session: SessionDep, _: AdminUser, inicio: Inicio, fim: Fim) ->
     summary="Curva diária de vendas (dias sem venda vêm zerados)",
 )
 async def vendas_por_dia(
-    session: SessionDep, _: AdminUser, inicio: Inicio, fim: Fim
+    session: SessionDep, _: ExigeDinheiro, inicio: Inicio, fim: Fim
 ) -> list[DiaVendaOut]:
     return await RelatorioService(session).vendas_por_dia(inicio, fim)
 
@@ -45,7 +45,7 @@ async def vendas_por_dia(
 )
 async def mais_vendidos(
     session: SessionDep,
-    _: AdminUser,
+    _: ExigeDinheiro,
     inicio: Inicio,
     fim: Fim,
     limite: Annotated[int, Query(ge=1, le=100)] = 10,
@@ -59,7 +59,7 @@ async def mais_vendidos(
     summary="Para onde o dinheiro foi no período",
 )
 async def despesas_por_categoria(
-    session: SessionDep, _: AdminUser, inicio: Inicio, fim: Fim
+    session: SessionDep, _: ExigeDinheiro, inicio: Inicio, fim: Fim
 ) -> list[DespesaCategoriaOut]:
     return await RelatorioService(session).despesas_por_categoria(inicio, fim)
 
@@ -69,5 +69,5 @@ async def despesas_por_categoria(
     response_model=list[EstoqueBaixoOut],
     summary="Peças no estoque mínimo ou abaixo (sem período: é o agora)",
 )
-async def estoque_baixo(session: SessionDep, _: AdminUser) -> list[EstoqueBaixoOut]:
+async def estoque_baixo(session: SessionDep, _: ExigeDinheiro) -> list[EstoqueBaixoOut]:
     return await RelatorioService(session).estoque_baixo()

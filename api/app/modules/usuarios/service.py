@@ -11,6 +11,7 @@ from app.core.exceptions import (
     Duplicado,
     NaoEncontrado,
     OperacaoInvalida,
+    SemPermissao,
     Validacao,
 )
 from app.core.pagination import Pagina, Paginacao
@@ -47,7 +48,25 @@ class UsuarioService:
         items, total = await self.repo.listar(p, q=q, papel=papel, ativo=ativo)
         return Pagina.montar([UsuarioOut.model_validate(u) for u in items], total, p)
 
-    async def criar(self, dados: UsuarioCreate) -> User:
+    @staticmethod
+    def _barrar_escalada(ator: User, papel_alvo: Papel | None, alvo: User | None = None) -> None:
+        """Só o dono mexe em dono. Sem isto, GERIR_USUARIOS viraria "virar dono".
+
+        Um gerente tem a permissão de administrar a equipe, e a permissão sozinha não
+        distingue "criar uma vendedora" de "promover a si mesmo a dono". Bastava um PATCH
+        no próprio id com papel=ADMIN para o gerente passar a enxergar custo, lucro e
+        despesas — exatamente o que a loja decidiu que ele não veria. A trava é aqui, no
+        domínio, e não na tela.
+        """
+        if ator.role == Papel.ADMIN:
+            return
+        if papel_alvo == Papel.ADMIN:
+            raise SemPermissao("Só o dono pode criar ou promover outro dono.")
+        if alvo is not None and alvo.role == Papel.ADMIN:
+            raise SemPermissao("A conta do dono só é alterada pelo próprio dono.")
+
+    async def criar(self, dados: UsuarioCreate, ator: User) -> User:
+        self._barrar_escalada(ator, dados.papel)
         if await self.repo.por_email(dados.email) is not None:
             raise Duplicado("Já existe um usuário com esse e-mail.")
         user = User(
@@ -66,17 +85,18 @@ class UsuarioService:
         await self.session.refresh(user)
         return user
 
-    async def atualizar(self, user_id: int, dados: UsuarioUpdate) -> User:
+    async def atualizar(self, user_id: int, dados: UsuarioUpdate, ator: User) -> User:
         user = await self.obter(user_id)
+        self._barrar_escalada(ator, dados.papel, alvo=user)
         if dados.nome is not None:
             user.name = dados.nome.strip()
-        # A loja não pode ficar sem administrador ativo — nem por rebaixamento, nem por desativação.
-        vai_perder_admin = (dados.papel is not None and dados.papel != Papel.ADMIN) or (
+        # A loja não pode ficar sem dono ativo — nem por rebaixamento, nem por desativação.
+        vai_perder_dono = (dados.papel is not None and dados.papel != Papel.ADMIN) or (
             dados.ativo is False
         )
-        if user.role == Papel.ADMIN and user.is_active and vai_perder_admin:
+        if user.role == Papel.ADMIN and user.is_active and vai_perder_dono:
             if await self.repo.contar_admins_ativos(excluindo_id=user.id) == 0:
-                raise OperacaoInvalida("A loja precisa de pelo menos um administrador ativo.")
+                raise OperacaoInvalida("A loja precisa de pelo menos um dono ativo.")
         if dados.papel is not None:
             user.role = dados.papel
         if dados.ativo is not None:
@@ -88,8 +108,10 @@ class UsuarioService:
         await self.session.refresh(user)
         return user
 
-    async def redefinir_senha(self, user_id: int, nova_senha: str) -> None:
+    async def redefinir_senha(self, user_id: int, nova_senha: str, ator: User) -> None:
         user = await self.obter(user_id)
+        # Redefinir a senha do dono daria a chave da casa: é entrar como ele.
+        self._barrar_escalada(ator, None, alvo=user)
         user.password_hash = hash_senha(nova_senha)
         await self._derrubar_sessoes(user_id)
         await self.session.commit()

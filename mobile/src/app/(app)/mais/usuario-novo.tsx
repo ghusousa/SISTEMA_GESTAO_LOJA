@@ -17,20 +17,13 @@ import { usuarios } from '@/api/endpoints';
 import type { Papel } from '@/api/tipos';
 import { Botao, Campo } from '@/components/ui';
 import { chaves, queryClient } from '@/lib/queryClient';
+import { DESCRICAO, titulo } from '@/lib/permissoes';
+import { useAuthStore } from '@/stores/authStore';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
 
-const PAPEIS: { papel: Papel; rotulo: string; descricao: string }[] = [
-  {
-    papel: 'VENDEDOR',
-    rotulo: 'Vendedor',
-    descricao: 'Vende, cadastra peças e consulta estoque. Não vê custo, lucro nem despesas.',
-  },
-  {
-    papel: 'ADMIN',
-    rotulo: 'Administrador',
-    descricao: 'Vê tudo: resultado, despesas, relatórios e gestão de usuários.',
-  },
-];
+// Do mais baixo para o mais alto: a lista lida de cima para baixo é a escada da loja, e a
+// escolha mais comum (vendedora) fica no primeiro toque.
+const ESCADA: Papel[] = ['VENDEDOR', 'SUPERVISORA', 'GERENTE', 'ADMIN'];
 
 export default function NovoUsuario() {
   const router = useRouter();
@@ -38,6 +31,10 @@ export default function NovoUsuario() {
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
   const [papel, setPapel] = useState<Papel>('VENDEDOR');
+  const souDono = useAuthStore((e) => e.usuario?.papel === 'ADMIN');
+  // Um gerente administra a equipe, mas não cria dono: seria virar dono. O servidor
+  // recusa com 403 de qualquer jeito; aqui a opção nem aparece.
+  const opcoes = ESCADA.filter((p) => p !== 'ADMIN' || souDono);
   const [erro, setErro] = useState<string | null>(null);
 
   const criar = useMutation({
@@ -83,18 +80,18 @@ export default function NovoUsuario() {
         />
 
         <Text style={s.rotulo}>Papel</Text>
-        {PAPEIS.map((opcao) => (
+        {opcoes.map((opcao) => (
           <Pressable
-            key={opcao.papel}
-            style={[s.papel, papel === opcao.papel && s.papelAtivo]}
-            onPress={() => setPapel(opcao.papel)}
+            key={opcao}
+            style={[s.papel, papel === opcao && s.papelAtivo]}
+            onPress={() => setPapel(opcao)}
           >
             <View style={s.radio}>
-              {papel === opcao.papel && <View style={s.radioMarcado} />}
+              {papel === opcao && <View style={s.radioMarcado} />}
             </View>
             <View style={s.papelTexto}>
-              <Text style={s.papelRotulo}>{opcao.rotulo}</Text>
-              <Text style={s.papelDescricao}>{opcao.descricao}</Text>
+              <Text style={s.papelRotulo}>{titulo(opcao)}</Text>
+              <Text style={s.papelDescricao}>{DESCRICAO[opcao]}</Text>
             </View>
           </Pressable>
         ))}
