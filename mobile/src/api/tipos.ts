@@ -13,7 +13,14 @@ export type FormaPagamento = 'DINHEIRO' | 'PIX' | 'DEBITO' | 'CREDITO' | 'VALE' 
  * da API: o vale foi pago na venda anterior, o fiado ainda nem foi pago. */
 export const FORMAS_DE_GAVETA = ['DINHEIRO', 'PIX', 'DEBITO', 'CREDITO'] as const;
 export type StatusVenda = 'CONCLUIDA' | 'CANCELADA';
-export type TipoMovimento = 'ENTRADA' | 'AJUSTE' | 'INVENTARIO' | 'VENDA' | 'ESTORNO';
+export type TipoMovimento =
+  | 'ENTRADA'
+  | 'AJUSTE'
+  | 'INVENTARIO'
+  | 'VENDA'
+  | 'ESTORNO'
+  /** Peça devolvida pela cliente com a venda continuando de pé (≠ ESTORNO, que é a venda inteira). */
+  | 'DEVOLUCAO';
 export type TipoCodigo = 'EAN' | 'INTERNO';
 
 export interface Pagina<T> {

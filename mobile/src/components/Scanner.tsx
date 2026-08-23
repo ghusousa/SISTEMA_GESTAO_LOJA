@@ -147,6 +147,11 @@ export function Scanner({
           "Digitar código" para buscar a peça pelo número da etiqueta.
         </Text>
         <Botao titulo="Permitir câmera" onPress={() => void pedirPermissao()} />
+        {/* O rodapé vem junto — é ele que traz o "Digitar código" que o texto acima
+            promete, e o "Voltar". Sem isto, a tela de ajuste (que É o scanner, dentro de
+            um Modal sem cabeçalho) virava beco sem saída para quem negasse a câmera: nem
+            digitava o código, nem saía. */}
+        <View style={s.avisoRodape}>{rodape}</View>
       </View>
     );
   }
@@ -231,6 +236,7 @@ const s = StyleSheet.create({
     gap: espaco.md,
     backgroundColor: cores.fundo,
   },
+  avisoRodape: { alignSelf: 'stretch', gap: espaco.sm, marginTop: espaco.sm },
   avisoTitulo: { fontSize: fonte.media, fontWeight: '700', color: cores.texto },
   avisoTexto: { fontSize: fonte.base, color: cores.textoSuave, textAlign: 'center' },
 });

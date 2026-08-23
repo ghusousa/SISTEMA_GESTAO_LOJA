@@ -410,6 +410,96 @@ async def test_dono_promove_a_dono(client: AsyncClient, auth_admin: dict[str, st
     assert resp.json()["papel"] == "ADMIN"
 
 
+async def test_editar_peca_nao_devolve_custo_para_quem_nao_ve_dinheiro(
+    client: AsyncClient, auth_supervisora: dict[str, str], auth_admin: dict[str, str]
+) -> None:
+    """A supervisora edita o catálogo E não vê dinheiro — as duas coisas ao mesmo tempo.
+
+    A rota de edição respondia sempre com o schema de admin, e o custo voltava para ela na
+    resposta do próprio PATCH. Era a única porta por onde o número escapava: toda rota de
+    leitura já escolhia o schema pela capacidade.
+    """
+    categoria = (
+        await client.post("/categorias", headers=auth_admin, json={"nome": "Cat Custo"})
+    ).json()
+    produto = (
+        await client.post(
+            "/produtos",
+            headers=auth_admin,
+            json={
+                "categoria_id": categoria["id"],
+                "nome": "Peca Do Custo",
+                "variantes": [
+                    {
+                        "tamanho": "U",
+                        "cor": "Unica",
+                        "preco_custo": "40.00",
+                        "preco_venda": "99.90",
+                        "estoque_inicial": 3,
+                    }
+                ],
+            },
+        )
+    ).json()
+    variante_id = produto["variantes"][0]["id"]
+
+    resposta = await client.patch(
+        f"/variantes/{variante_id}", headers=auth_supervisora, json={"estoque_minimo": 2}
+    )
+    assert resposta.status_code == 200, resposta.text
+    assert "preco_custo" not in resposta.json(), resposta.text
+
+    # E o custo não pode ser MEXIDO por ela, mesmo mandando o campo.
+    await client.patch(
+        f"/variantes/{variante_id}", headers=auth_supervisora, json={"preco_custo": "1.00"}
+    )
+    depois = (
+        await client.get(f"/produtos/{produto['id']}", headers=auth_admin)
+    ).json()["variantes"][0]
+    assert Decimal(depois["preco_custo"]) == Decimal("40.00"), "a supervisora mexeu no custo"
+
+
+async def test_vendedora_cadastra_peca_mas_nao_grava_custo(
+    client: AsyncClient, auth_vendedor: dict[str, str], auth_admin: dict[str, str]
+) -> None:
+    """Cadastrar é o trabalho dela; o custo é número de dono.
+
+    Ela não recebe o custo em resposta nenhuma, então não teria como conferir o que
+    digitou — e o erro só apareceria no lucro do mês. A dona preenche depois, na edição.
+    """
+    categoria = (
+        await client.post("/categorias", headers=auth_admin, json={"nome": "Cat Vendedora"})
+    ).json()
+    resposta = await client.post(
+        "/produtos",
+        headers=auth_vendedor,
+        json={
+            "categoria_id": categoria["id"],
+            "nome": "Peca Da Vendedora",
+            "variantes": [
+                {
+                    "tamanho": "M",
+                    "cor": "Azul",
+                    "preco_custo": "77.77",
+                    "preco_venda": "199.90",
+                    "estoque_inicial": 2,
+                }
+            ],
+        },
+    )
+    assert resposta.status_code == 201, resposta.text
+    assert "preco_custo" not in resposta.json()["variantes"][0]
+
+    visto_pela_dona = (
+        await client.get(f"/produtos/{resposta.json()['id']}", headers=auth_admin)
+    ).json()["variantes"][0]
+    assert Decimal(visto_pela_dona["preco_custo"]) == Decimal("0.00"), (
+        "o custo digitado pela vendedora foi gravado"
+    )
+    # Mas a peça entrou no estoque: o cadastro dela vale.
+    assert visto_pela_dona["saldo"] == 2
+
+
 async def test_supervisora_nao_gerencia_usuarios(
     client: AsyncClient, auth_supervisora: dict[str, str]
 ) -> None:

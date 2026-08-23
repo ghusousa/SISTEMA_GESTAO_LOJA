@@ -35,6 +35,9 @@ def _tipo_do_codigo(codigo: str | None) -> str:
     return TipoCodigo.EAN
 
 
+#: Custo de quem não pode informá-lo. A dona preenche depois.
+ZERO_DINHEIRO = Decimal("0.00")
+
 class CatalogoService:
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -140,6 +143,18 @@ class CatalogoService:
         saldos = await movimentos.saldos_de(self.session, [v.id for v in produto.variants])
         return self._montar_produto_out(produto, saldos, usuario)
 
+    @staticmethod
+    def _custo_permitido(valor: Decimal, usuario: User) -> Decimal:
+        """Custo só é gravado por quem vê dinheiro. Dos outros, entra zero.
+
+        A vendedora cadastra a peça — é o trabalho dela, e a mercadoria precisa entrar no
+        estoque na hora. Mas o custo é número de dono: ela não o recebe de volta em resposta
+        nenhuma, então não teria como conferir o que digitou, e um erro só apareceria no
+        lucro do mês. A dona preenche depois, na edição. As duas telas já não pedem o campo;
+        isto aqui é a tranca, para o caso de a requisição vir por outro caminho.
+        """
+        return valor if pode(usuario.role, Pode.VER_DINHEIRO) else ZERO_DINHEIRO
+
     async def criar_produto(self, dados: ProdutoIn, usuario: User) -> ProdutoOut:
         """Cria produto + grade + estoque inicial em uma transação só.
 
@@ -165,7 +180,7 @@ class CatalogoService:
                 color=entrada.cor,
                 barcode=codigo,
                 barcode_type=_tipo_do_codigo(entrada.codigo_barras),
-                cost_price=entrada.preco_custo,
+                cost_price=self._custo_permitido(entrada.preco_custo, usuario),
                 sale_price=entrada.preco_venda,
                 min_stock=entrada.estoque_minimo,
             )
@@ -255,7 +270,7 @@ class CatalogoService:
             color=dados.cor,
             barcode=codigo,
             barcode_type=_tipo_do_codigo(dados.codigo_barras),
-            cost_price=dados.preco_custo,
+            cost_price=self._custo_permitido(dados.preco_custo, usuario),
             sale_price=dados.preco_venda,
             min_stock=dados.estoque_minimo,
         )
@@ -279,7 +294,7 @@ class CatalogoService:
         return await self.obter_produto(produto_id, usuario)
 
     async def atualizar_variante(
-        self, variante_id: int, dados: VarianteUpdate
+        self, variante_id: int, dados: VarianteUpdate, usuario: User
     ) -> ProductVariant:
         variante = await self.obter_variante(variante_id)
         if dados.codigo_barras is not None and dados.codigo_barras != variante.barcode:
@@ -287,15 +302,19 @@ class CatalogoService:
                 raise Duplicado("Código de barras já cadastrado em outra peça.")
             variante.barcode = dados.codigo_barras.strip()
             variante.barcode_type = _tipo_do_codigo(variante.barcode)
+        # Custo fora da lista de propósito: quem edita o catálogo não é necessariamente
+        # quem vê dinheiro (a supervisora edita e não vê), e deixá-lo passar aqui daria a
+        # ela o poder de mexer na margem da loja sem nunca poder conferir o número.
         for campo, valor in (
             ("size", dados.tamanho),
             ("color", dados.cor),
-            ("cost_price", dados.preco_custo),
             ("sale_price", dados.preco_venda),
             ("min_stock", dados.estoque_minimo),
         ):
             if valor is not None:
                 setattr(variante, campo, valor)
+        if dados.preco_custo is not None and pode(usuario.role, Pode.VER_DINHEIRO):
+            variante.cost_price = dados.preco_custo
         try:
             await self.session.commit()
         except IntegrityError as exc:

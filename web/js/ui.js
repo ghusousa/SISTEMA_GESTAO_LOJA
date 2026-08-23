@@ -352,4 +352,7 @@ export const TIPOS_MOVIMENTO = {
   INVENTARIO: 'Inventário',
   VENDA: 'Venda',
   ESTORNO: 'Estorno',
+  //: Peça que a cliente trouxe de volta, com a venda continuando de pé — diferente do
+  //: ESTORNO, que é a venda inteira desfeita.
+  DEVOLUCAO: 'Devolução',
 };

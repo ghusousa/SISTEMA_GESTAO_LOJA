@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
+from app.core.permissoes import Pode, pode
 from app.core.deps import CurrentUser, ExigeEditarCatalogo, SessionDep
 from app.core.exceptions import Validacao
 from app.core.pagination import Pagina, Paginacao, paginacao
@@ -109,8 +110,12 @@ async def listar_variantes(
 async def atualizar_variante(
     session: SessionDep, usuario: ExigeEditarCatalogo, variante_id: int, dados: VarianteUpdate
 ) -> VarianteOut:
-    variante = await CatalogoService(session).atualizar_variante(variante_id, dados)
-    return VarianteAdminOut.model_validate(variante)
+    variante = await CatalogoService(session).atualizar_variante(variante_id, dados, usuario)
+    # O schema é escolhido pela capacidade, como em toda rota de leitura. Fixar o de admin
+    # aqui devolvia o custo para a SUPERVISORA — que edita o catálogo (EDITAR_CATALOGO) e
+    # não vê dinheiro (VER_DINHEIRO). Era a única porta por onde o número escapava.
+    schema = VarianteAdminOut if pode(usuario.role, Pode.VER_DINHEIRO) else VarianteOut
+    return schema.model_validate(variante)
 
 
 @router.delete(

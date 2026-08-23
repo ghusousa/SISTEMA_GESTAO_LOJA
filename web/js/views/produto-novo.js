@@ -17,6 +17,12 @@ import { aviso, avisarErro, cru, html, ligarCampoDinheiro, modal } from '../ui.j
 const TAMANHOS_RAPIDOS = ['PP', 'P', 'M', 'G', 'GG', 'XG'];
 
 export async function render(raiz, _params, consulta) {
+  // A vendedora cadastra a peça; o custo é preenchido depois pela dona, na edição — é o
+  // que a SPEC diz e o que o app já fazia. Sem isto, o web pedia a ela um número que ela
+  // não pode conferir depois (a API não devolve custo para quem não vê dinheiro), e um
+  // erro de digitação só apareceria no lucro do mês.
+  const veDinheiro = pode(PODE.VER_DINHEIRO);
+
   const codigoInicial = consulta.codigo || '';
 
   raiz.innerHTML = html`
@@ -89,10 +95,14 @@ export async function render(raiz, _params, consulta) {
               <span>Preço de venda</span>
               <input data-padrao-venda inputmode="numeric" />
             </label>
-            <label class="campo">
-              <span>Preço de custo</span>
-              <input data-padrao-custo inputmode="numeric" />
-            </label>
+            ${veDinheiro
+              ? cru(html`
+                  <label class="campo">
+                    <span>Preço de custo</span>
+                    <input data-padrao-custo inputmode="numeric" />
+                  </label>
+                `)
+              : ''}
             <label class="campo">
               <span>Estoque mínimo</span>
               <input data-padrao-minimo type="number" min="0" step="1" value="2" />
@@ -119,7 +129,7 @@ export async function render(raiz, _params, consulta) {
                 <th>Cor</th>
                 <th>Código de barras</th>
                 <th class="direita">Venda</th>
-                <th class="direita">Custo</th>
+                ${veDinheiro ? cru('<th class="direita">Custo</th>') : ''}
                 <th class="direita">Entrada</th>
                 <th class="direita">Mínimo</th>
                 <th></th>
@@ -147,7 +157,12 @@ export async function render(raiz, _params, consulta) {
   const seletorCategoria = raiz.querySelector('[data-categoria]');
 
   const padraoVenda = ligarCampoDinheiro(raiz.querySelector('[data-padrao-venda]'), 0);
-  const padraoCusto = ligarCampoDinheiro(raiz.querySelector('[data-padrao-custo]'), 0);
+  const campoPadraoCusto = raiz.querySelector('[data-padrao-custo]');
+  //: Sem a coluna, o custo é zero e a dona preenche depois. `valor()` mantém a mesma cara
+  //: para o resto do arquivo não precisar saber quem está logado.
+  const padraoCusto = campoPadraoCusto
+    ? ligarCampoDinheiro(campoPadraoCusto, 0)
+    : { valor: () => 0, definir: () => {} };
   const padraoMinimo = raiz.querySelector('[data-padrao-minimo]');
 
   /** Cada linha guarda os próprios campos de dinheiro para ler na hora de salvar. */
@@ -208,7 +223,9 @@ export async function render(raiz, _params, consulta) {
         </span>
       </td>
       <td><input data-v inputmode="numeric" style="width:96px;text-align:right" /></td>
-      <td><input data-cu inputmode="numeric" style="width:96px;text-align:right" /></td>
+      ${veDinheiro
+        ? cru('<td><input data-cu inputmode="numeric" style="width:96px;text-align:right" /></td>')
+        : ''}
       <td><input data-e type="number" min="0" step="1" value="0" style="width:80px;text-align:right" /></td>
       <td><input data-m type="number" min="0" step="1" style="width:80px;text-align:right" /></td>
       <td class="direita">
@@ -220,7 +237,12 @@ export async function render(raiz, _params, consulta) {
     const registro = {
       tr,
       venda: ligarCampoDinheiro(tr.querySelector('[data-v]'), padraoVenda.valor()),
-      custo: ligarCampoDinheiro(tr.querySelector('[data-cu]'), padraoCusto.valor()),
+      custo: (() => {
+        const campo = tr.querySelector('[data-cu]');
+        return campo
+          ? ligarCampoDinheiro(campo, padraoCusto.valor())
+          : { valor: () => 0, definir: () => {} };
+      })(),
     };
     tr.querySelector('[data-m]').value = padraoMinimo.value || '0';
     linhas.push(registro);

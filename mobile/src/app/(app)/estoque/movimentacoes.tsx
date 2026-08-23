@@ -24,15 +24,20 @@ const FILTROS: { rotulo: string; tipo?: TipoMovimento }[] = [
   { rotulo: 'Ajustes', tipo: 'AJUSTE' },
   { rotulo: 'Inventário', tipo: 'INVENTARIO' },
   { rotulo: 'Estornos', tipo: 'ESTORNO' },
+  { rotulo: 'Devoluções', tipo: 'DEVOLUCAO' },
 ];
 
 const CORES_TIPO: Record<TipoMovimento, { fundo: string; texto: string }> = {
   ENTRADA: { fundo: cores.sucessoFraco, texto: cores.acaoEscura },
   ESTORNO: { fundo: cores.sucessoFraco, texto: cores.acaoEscura },
+  DEVOLUCAO: { fundo: cores.sucessoFraco, texto: cores.acaoEscura },
   VENDA: { fundo: cores.primariaFraca, texto: cores.primaria },
   AJUSTE: { fundo: cores.alertaFraco, texto: '#7A5A00' },
   INVENTARIO: { fundo: cores.superficieAlt, texto: cores.textoSuave },
 };
+
+/** Cor de um tipo que o app ainda não conhece — cinza, mas VISÍVEL. */
+const COR_DESCONHECIDA = { fundo: cores.superficieAlt, texto: cores.textoSuave };
 
 export default function Movimentacoes() {
   const params = useLocalSearchParams<{ varianteId?: string; titulo?: string }>();
@@ -105,7 +110,10 @@ export default function Movimentacoes() {
 }
 
 function LinhaMovimento({ movimento }: { movimento: Movimento }) {
-  const cor = CORES_TIPO[movimento.tipo];
+  // O `??` não é paranoia: quando a API ganhou o movimento DEVOLUCAO, este mapa não tinha
+  // a chave, `cor` veio `undefined`, e o `cor.fundo` derrubou a TELA INTEIRA em branco —
+  // por uma etiqueta colorida. Tipo novo agora aparece em cinza, e o extrato continua de pé.
+  const cor = CORES_TIPO[movimento.tipo] ?? COR_DESCONHECIDA;
   const entrada = movimento.quantidade > 0;
 
   return (

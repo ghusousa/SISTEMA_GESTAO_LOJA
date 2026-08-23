@@ -61,7 +61,9 @@ export async function render(raiz, { id }) {
           ${!cancelada && pode(PODE.DEVOLVER_VENDA)
             ? cru(html`<a class="botao" href="#/vendas/devolucao?venda=${venda.id}">Devolver peça</a>`)
             : ''}
-          ${cancelada ? '' : cru('<button class="botao botao--perigo" data-cancelar>Cancelar venda</button>')}
+          ${!cancelada && pode(PODE.CANCELAR_VENDA)
+            ? cru('<button class="botao botao--perigo" data-cancelar>Cancelar venda</button>')
+            : ''}
         </div>
       </div>
 

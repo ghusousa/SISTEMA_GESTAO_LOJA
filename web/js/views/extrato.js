@@ -29,6 +29,7 @@ const TAMANHO = 30;
 const TOM = {
   ENTRADA: 'ok',
   ESTORNO: 'info',
+  DEVOLUCAO: 'info',
   VENDA: 'neutro',
   AJUSTE: 'alerta',
   INVENTARIO: 'alerta',

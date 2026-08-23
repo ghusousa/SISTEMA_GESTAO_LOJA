@@ -83,6 +83,13 @@ DESPESAS = [
 
 FORMAS = ["DINHEIRO", "PIX", "DEBITO", "CREDITO"]
 
+#: Fregueses da caderneta. O limite é o combinado com a dona — avisa, não bloqueia (ADR-20).
+CLIENTES = [
+    ("Marizete Alves", "11987654321", "300.00"),
+    ("Cleide Ramos", "11976543210", "500.00"),
+    ("Sônia Barbosa", "11965432109", None),
+]
+
 
 def hoje_loja() -> datetime:
     return datetime.now(UTC).astimezone(TZ_LOJA)
@@ -303,6 +310,194 @@ def main() -> int:
                 "itens": [{"variante_id": v["id"], "quantidade": 6} for v in reposicao],
             },
         )
+
+        # ------------------------------------------ a compra do recibo
+        # As vendas sorteadas acima são de uma peça só, e recibo de uma linha não mostra
+        # nada. Esta é a compra que a demonstração usa para o recibo: três peças, desconto
+        # no total e pagamento dividido — o que o balcão faz num sábado.
+        sacola = random.sample(variantes, 3)
+        subtotal = sum(float(v["preco"]) for v in sacola)
+        desconto = 20.00
+        total = round(subtotal - desconto, 2)
+        metade = round(total / 2, 2)
+        recibo = c.post(
+            "/vendas",
+            headers=admin,
+            json={
+                "client_uuid": str(uuid.uuid4()),
+                "desconto": f"{desconto:.2f}",
+                "itens": [{"variante_id": v["id"], "quantidade": 1} for v in sacola],
+                "pagamentos": [
+                    {"forma": "DINHEIRO", "valor": f"{metade:.2f}"},
+                    {"forma": "PIX", "valor": f"{total - metade:.2f}"},
+                ],
+            },
+        )
+        if recibo.status_code == 201:
+            print(f"venda do recibo: #{recibo.json()['id']} — 3 peças, desconto e pagamento dividido")
+
+        # ------------------------------------------------- crediário (fiado)
+        clientes = []
+        for nome, telefone, limite in CLIENTES:
+            resp = c.post(
+                "/clientes",
+                headers=admin,
+                json={"nome": nome, "telefone": telefone, "limite": limite},
+            )
+            if resp.status_code == 201:
+                clientes.append(resp.json())
+        if clientes:
+            # Marizete leva no fiado duas vezes e passa do limite combinado: é o caso que
+            # faz a etiqueta de aviso aparecer na tela, sem travar venda nenhuma.
+            for _ in range(2):
+                peca = random.choice(variantes)
+                valor = f"{float(peca['preco']):.2f}"
+                c.post(
+                    "/vendas",
+                    headers=admin,
+                    json={
+                        "client_uuid": str(uuid.uuid4()),
+                        "cliente_id": clientes[0]["id"],
+                        "itens": [{"variante_id": peca["id"], "quantidade": 1}],
+                        "pagamentos": [{"forma": "FIADO", "valor": valor}],
+                    },
+                )
+
+            # Cleide levou metade no fiado e já veio pagar uma parte: o extrato mostra as
+            # três linhas (levou, pagou, deve) em vez de só a dívida.
+            peca = random.choice(variantes)
+            preco = float(peca["preco"])
+            metade = round(preco / 2, 2)
+            venda_cleide = c.post(
+                "/vendas",
+                headers=admin,
+                json={
+                    "client_uuid": str(uuid.uuid4()),
+                    "cliente_id": clientes[1]["id"],
+                    "itens": [{"variante_id": peca["id"], "quantidade": 1}],
+                    "pagamentos": [
+                        {"forma": "DINHEIRO", "valor": f"{metade:.2f}"},
+                        {"forma": "FIADO", "valor": f"{preco - metade:.2f}"},
+                    ],
+                },
+            )
+            if venda_cleide.status_code == 201:
+                c.post(
+                    f"/clientes/{clientes[1]['id']}/pagamentos",
+                    headers=admin,
+                    json={
+                        "forma": "PIX",
+                        "valor": f"{round((preco - metade) / 2, 2):.2f}",
+                        "client_uuid": str(uuid.uuid4()),
+                    },
+                )
+            print(f"crediário: {len(clientes)} clientes, com fiado e pagamento parcial")
+
+        # ------------------------------------------------------- devolução
+        # Duas devoluções, os dois desfechos que existem:
+        #
+        #   1. venda à vista → o dinheiro volta pela forma em que entrou;
+        #   2. fiado JÁ PAGO → a dívida não existe mais, então sai vale (ADR-21).
+        recentes = c.get("/vendas", headers=admin, params={"size": 20}).json()["items"]
+        a_vista = next(
+            (
+                v
+                for v in recentes
+                if v["status"] == "CONCLUIDA" and "FIADO" not in v["formas_pagamento"]
+            ),
+            None,
+        )
+        if a_vista:
+            detalhe = c.get(f"/vendas/{a_vista['id']}", headers=admin).json()
+            c.post(
+                f"/vendas/{a_vista['id']}/devolucoes",
+                headers=admin,
+                json={
+                    "client_uuid": str(uuid.uuid4()),
+                    "motivo": "não serviu",
+                    "itens": [
+                        {
+                            "item_id": detalhe["itens"][0]["id"],
+                            "quantidade": 1,
+                            "voltar_ao_estoque": True,
+                        }
+                    ],
+                },
+            )
+            print("devolução: uma peça de volta na arara, dinheiro pela forma que entrou")
+
+        if clientes:
+            # O caminho do vale, do começo: Sônia leva no fiado, paga tudo, e só depois
+            # volta com a peça. Sem dívida para abater, o valor sai em vale — o papel com
+            # código que a próxima compra dela consome (ADR-21).
+            peca = random.choice(variantes)
+            valor = f"{float(peca['preco']):.2f}"
+            venda_sonia = c.post(
+                "/vendas",
+                headers=admin,
+                json={
+                    "client_uuid": str(uuid.uuid4()),
+                    "cliente_id": clientes[2]["id"],
+                    "itens": [{"variante_id": peca["id"], "quantidade": 1}],
+                    "pagamentos": [{"forma": "FIADO", "valor": valor}],
+                },
+            )
+            if venda_sonia.status_code == 201:
+                venda_sonia = venda_sonia.json()
+                c.post(
+                    f"/clientes/{clientes[2]['id']}/pagamentos",
+                    headers=admin,
+                    json={
+                        "forma": "DINHEIRO",
+                        "valor": valor,
+                        "client_uuid": str(uuid.uuid4()),
+                    },
+                )
+                devolvida = c.post(
+                    f"/vendas/{venda_sonia['id']}/devolucoes",
+                    headers=admin,
+                    json={
+                        "client_uuid": str(uuid.uuid4()),
+                        "motivo": "presente repetido",
+                        "itens": [
+                            {"item_id": venda_sonia["itens"][0]["id"], "quantidade": 1}
+                        ],
+                    },
+                )
+                if devolvida.status_code == 201:
+                    vale = next(
+                        (
+                            p["codigo_vale"]
+                            for p in devolvida.json()["pagamentos"]
+                            if p.get("codigo_vale")
+                        ),
+                        None,
+                    )
+                    if vale:
+                        print(f"vale de troca em aberto: {vale}")
+
+        # --------------------------------------------- caixa de ontem fechado
+        # Com uma diferença de verdade (R$ 3,50 a menos), porque é assim que o dia fecha na
+        # vida real — e a tela existe justamente para a diferença aparecer.
+        ontem = (hoje_loja() - timedelta(days=1)).date()
+        dia = c.get("/caixa/dia", headers=admin, params={"data": ontem.isoformat()}).json()
+        contagens = []
+        for indice, linha in enumerate(dia.get("linhas", [])):
+            esperado = float(linha["esperado"])
+            contado = esperado - 3.50 if indice == 0 and esperado > 3.50 else esperado
+            contagens.append({"forma": linha["forma"], "valor_contado": f"{contado:.2f}"})
+        if contagens:
+            fechou = c.post(
+                "/caixa/fechamentos",
+                headers=admin,
+                json={
+                    "data": ontem.isoformat(),
+                    "contagens": contagens,
+                    "observacao": "conferido com a Ana no fim do dia",
+                },
+            )
+            if fechou.status_code in (200, 201):
+                print("caixa de ontem fechado, com diferença")
 
         resumo = c.get(
             "/relatorios/resumo",
