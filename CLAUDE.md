@@ -21,6 +21,7 @@ contratos, ADRs). Mudou algo? Atualize o doc no mesmo commit.**
 # Atualizar o servidor com o que está no GitHub (raiz do repo)
 ./atualizar.sh                                            # backup, pull, build, migra e confere
 ./diagnostico.sh                                          # só lê: por que parou (memória, disco, contêineres, logs)
+./atualizar.sh --automatico                               # passa a se atualizar sozinho (timer do systemd)
 
 # API (dentro de api/)
 .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0    # servidor

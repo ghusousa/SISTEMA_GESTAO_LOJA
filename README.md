@@ -210,6 +210,32 @@ tocar em nada.
 | `--sem-backup` | pula a cópia do banco, se você acabou de fazer uma |
 | `--forcar` | atualiza descartando alterações feitas direto no servidor |
 
+### Atualizar sozinho, sem comando nenhum
+
+```bash
+./atualizar.sh --automatico        # confere de 10 em 10 minutos
+./atualizar.sh --automatico 30     # ou no intervalo que preferir
+./atualizar.sh --sem-automatico    # desliga
+```
+
+A partir daí o servidor se atualiza sozinho: quando aparece versão nova, ele faz o backup,
+reconstrói, migra e confere — e volta atrás sozinho se algo der errado, igual ao comando
+manual. A loja fica fora do ar cerca de um minuto, só quando existe novidade de verdade.
+
+Para ver o que aconteceu em cada conferida: `journalctl -u loja-atualizar -n 40`. O
+`./diagnostico.sh` também diz se está ligada e se a última tentativa falhou.
+
+**Repositório privado** — o servidor precisa de uma credencial gravada, senão o git para
+pedindo senha e não há quem responda:
+
+```bash
+git remote set-url origin https://x-access-token:SEU_TOKEN@github.com/USUARIO/REPO.git
+```
+
+O token se cria em github.com/settings/tokens, com acesso de **leitura** ao repositório —
+o servidor nunca precisa escrever. O `--automatico` confere isso antes de agendar e avisa
+se faltar.
+
 **Windows** — se você clonou com git: `git pull` e depois `instalar.bat`. Se baixou o ZIP, baixe o
 novo, extraia por cima **preservando o arquivo `.env`** (é ele que guarda as senhas desta
 instalação) e rode `instalar.bat`. Os dados ficam nos volumes do Docker, não na pasta, então
