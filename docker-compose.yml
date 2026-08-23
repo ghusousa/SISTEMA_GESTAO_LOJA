@@ -53,8 +53,14 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
       TIMEZONE_LOJA: ${TIMEZONE_LOJA:-America/Sao_Paulo}
       MEDIA_DIR: /srv/media
+      ESTADO_DIR: /srv/estado
     volumes:
       - fotos-de-produto:/srv/media
+      # Só de leitura, e da PASTA do repositório e não de um volume: quem escreve aqui é o
+      # ./atualizar.sh, rodando na máquina, que é quem tem a credencial do GitHub. A API
+      # apenas lê — assim ela mostra na tela se há versão nova sem nunca precisar de um
+      # token do código-fonte dentro do contêiner.
+      - ./docker/estado:/srv/estado:ro
     healthcheck:
       test:
         - CMD

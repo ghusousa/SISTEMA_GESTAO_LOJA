@@ -469,6 +469,21 @@ passo "isto demora alguns minutos na primeira vez"
 # falhar queremos ler o motivo para traduzir a mensagem do Docker em algo acionável.
 registro_up="$(mktemp)"
 set +e
+# O que a tela do sistema mostra em "versão". Instalação nova é, por definição, a mais
+# nova que existe — e sem este arquivo a tela abriria dizendo "sem conferir com o GitHub"
+# num sistema recém-instalado, que é a pior hora para desconfiar.
+if git rev-parse --git-dir >/dev/null 2>&1; then
+    mkdir -p docker/estado
+    cat > docker/estado/versao.json <<FIM
+{
+  "commit": "$(git rev-parse --short HEAD 2>/dev/null)",
+  "data": "$(git log -1 --format=%cI 2>/dev/null)",
+  "conferido_em": "$(date -u +%Y-%m-%dT%H:%M:%S+00:00)",
+  "atualizada": true
+}
+FIM
+fi
+
 dk compose up -d --build 2>&1 | tee "$registro_up"
 codigo_up=${PIPESTATUS[0]}
 set -e

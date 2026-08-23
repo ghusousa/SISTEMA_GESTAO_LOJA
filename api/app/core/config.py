@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     timezone_loja: str = "America/Sao_Paulo"
 
     media_dir: str = "media"
+    #: Onde o ./atualizar.sh deixa o que sabe sobre a versão instalada. É o único
+    #: caminho por onde a API descobre se existe coisa nova — ela nunca fala com o
+    #: GitHub, para não precisar de credencial do repositório dentro do contêiner.
+    estado_dir: str = "estado"
     max_upload_bytes: int = 5 * 1024 * 1024
 
     @field_validator("cors_origins", mode="before")

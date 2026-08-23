@@ -52,6 +52,7 @@ def _montar_rotas() -> None:
     from app.modules.relatorios.router import router as relatorios_router
     from app.modules.tempo_real.router import router as tempo_real_router
     from app.modules.usuarios.router import router as usuarios_router
+    from app.modules.sistema.router import router as sistema_router
     from app.modules.vendas.router import router as vendas_router
 
     for r in (
@@ -64,6 +65,7 @@ def _montar_rotas() -> None:
         caixa_router,
         relatorios_router,
         tempo_real_router,
+        sistema_router,
     ):
         app.include_router(r, prefix="/api/v1")
 

@@ -45,3 +45,8 @@ loja-backup-*
 # Coletas do ./diagnostico.sh — ficam na pasta do servidor, nunca no repositório.
 # (Sem isto, o arquivo vira "alteração local" e o PRÓXIMO ./atualizar.sh se recusa a rodar.)
 diagnostico-*.txt
+
+# Estado escrito pelo ./atualizar.sh e lido pela API (que versão está instalada, se é a
+# mais nova). É de cada servidor, nunca do repositório — a pasta fica, o conteúdo não.
+docker/estado/*
+!docker/estado/.gitkeep

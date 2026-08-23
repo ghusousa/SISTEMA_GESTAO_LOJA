@@ -236,6 +236,12 @@ a {
   border-top: 1px solid rgba(255, 255, 255, 0.12);
   padding: 12px;
   display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lateral__quem-linha {
+  display: flex;
   align-items: center;
   gap: 10px;
 }
@@ -1488,4 +1494,55 @@ kbd {
 .busca-peca__saldo.is-zerado {
   color: var(--perigo);
   font-weight: 600;
+}
+
+/* ------------------------------------------------------ selo de versão
+   Fica entre o menu e o rodapé da barra: no caminho do olho de quem vai sair ou trocar
+   de tela, sem competir com nada. O hash sozinho não dizia nada a ninguém — o que
+   informa é a palavra ("em dia" / "desatualizada") e a cor. */
+
+.lateral__versao {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: var(--raio-sm);
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.lateral__versao > span:last-child {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.lateral__versao strong {
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 12px;
+}
+
+.lateral__versao span span {
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lateral__versao-ponto {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--acao);
+}
+
+.lateral__versao.is-atencao .lateral__versao-ponto {
+  background: var(--alerta);
+}
+
+.lateral__versao.is-atencao strong {
+  color: var(--alerta);
 }

@@ -5,7 +5,7 @@
  * assim o menu não pisca e, no PDV, o cursor não escapa do campo do leitor.
  */
 
-import { restaurarSessao, sair, definirTratadorDeSessaoPerdida } from './api.js';
+import { api, restaurarSessao, sair, definirTratadorDeSessaoPerdida } from './api.js';
 import { iniciarRoteador, rota, ir, caminhoAtual } from './router.js';
 import { limparTudoDaSessao, sessao } from './store.js';
 import { PODE, pode, titulo } from './permissoes.js';
@@ -128,17 +128,63 @@ function molduraHtml(usuario) {
         </div>
         <div class="lateral__menu">${cru(menuHtml())}</div>
         <div class="lateral__rodape">
-          <span class="lateral__avatar" aria-hidden="true">${iniciais(usuario.nome)}</span>
-          <span class="lateral__quem">
-            <strong title="${usuario.email}">${usuario.nome}</strong>
-            <span>${titulo(usuario.papel)}</span>
-          </span>
-          <button class="lateral__sair" data-sair title="Sair do sistema" aria-label="Sair do sistema">⏻</button>
+          <div class="lateral__quem-linha">
+            <span class="lateral__avatar" aria-hidden="true">${iniciais(usuario.nome)}</span>
+            <span class="lateral__quem">
+              <strong title="${usuario.email}">${usuario.nome}</strong>
+              <span>${titulo(usuario.papel)}</span>
+            </span>
+            <button class="lateral__sair" data-sair title="Sair do sistema" aria-label="Sair do sistema">⏻</button>
+          </div>
+          <div class="lateral__versao" data-versao hidden></div>
         </div>
       </nav>
       <main class="conteudo" id="conteudo"></main>
     </div>
   `;
+}
+
+/** "há 4 min", "há 3 dias" — o quanto dá para confiar no selo ao lado. */
+function desdeQuando(iso) {
+  if (!iso) return 'nunca conferido';
+  const minutos = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (minutos < 60) return `há ${minutos} min`;
+  const horas = Math.round(minutos / 60);
+  if (horas < 48) return `há ${horas} h`;
+  return `há ${Math.round(horas / 24)} dias`;
+}
+
+/**
+ * "Estou na versão mais nova?" — respondido na barra, sem ninguém precisar perguntar.
+ *
+ * Mostrar só o hash não ajudaria: `5c31d04` não é maior nem menor que o de ontem. Quem
+ * decide é o servidor (`GET /versao`), que sabe quando foi a última conferida com o GitHub
+ * e se ela achou coisa nova. Aqui só se pinta a resposta — verde quando está em dia,
+ * amarelo quando há versão esperando ou quando faz tempo demais que ninguém confere.
+ */
+async function pintarVersao(raizMoldura) {
+  const area = raizMoldura.querySelector('[data-versao]');
+  if (!area) return;
+  try {
+    const v = await api.get('/versao');
+    const emDia = v.atualizada === true && v.conferido_recente;
+    area.hidden = false;
+    area.className = `lateral__versao ${emDia ? 'is-ok' : 'is-atencao'}`;
+    area.title = v.resumo;
+    // A barra tem 236px: a frase inteira cortaria no meio ("Está na versão mai…"), que é
+    // pior do que não mostrar. O veredito cabe numa palavra, o detalhe vira o tempo desde
+    // a última conferida, e a frase inteira fica no title, para quem passar o mouse.
+    area.innerHTML = html`
+      <span class="lateral__versao-ponto" aria-hidden="true"></span>
+      <span>
+        <strong>${emDia ? 'Versão em dia' : 'Versão desatualizada'}</strong>
+        <span>${v.commit || 'sem versão'} · ${desdeQuando(v.conferido_em)}</span>
+      </span>
+    `;
+  } catch {
+    // Barra lateral não é lugar de dar erro: sem resposta, o selo simplesmente não aparece.
+    area.hidden = true;
+  }
 }
 
 /* --------------------------------------------------------------------- moldura */
@@ -171,6 +217,7 @@ function areaDeConteudo(caminho, usuario) {
     molduraAtual = desejada;
     if (usuario) {
       raiz.innerHTML = molduraHtml(usuario);
+      void pintarVersao(raiz);
       raiz.querySelector('[data-sair]').addEventListener('click', async () => {
         const confirmou = await confirmar({
           titulo: 'Sair do sistema',

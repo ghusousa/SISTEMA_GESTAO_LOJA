@@ -28,6 +28,7 @@ import type {
   Usuario,
   Variante,
   VarianteLookup,
+  Versao,
   Venda,
   VendaResumo,
 } from './tipos';
@@ -75,6 +76,14 @@ export const usuarios = {
 };
 
 // ------------------------------------------------------------------ catálogo
+export const sistema = {
+  /** Que versão está instalada no servidor, e se existe coisa nova esperando. */
+  async versao() {
+    const { data } = await api.get<Versao>('/versao');
+    return data;
+  },
+};
+
 export const catalogo = {
   async categorias(params: Paginado & { q?: string } = { size: 100 }) {
     const { data } = await api.get<Pagina<Categoria>>('/categorias', { params });

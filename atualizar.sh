@@ -71,6 +71,23 @@ dk() {
 
 command -v git >/dev/null 2>&1 || { erro "git não está instalado."; exit 1; }
 
+# O que a API vai mostrar na tela. Escrito aqui porque é aqui que existe a credencial do
+# GitHub: a API nunca conversa com o repositório — se conversasse, precisaria de um token
+# do código-fonte dentro do contêiner que só deveria saber vender roupa.
+ESTADO=docker/estado
+anotar_versao() {
+    local atualizada="$1"   # true = não havia nada novo na última conferida
+    mkdir -p "$ESTADO"
+    cat > "$ESTADO/versao.json" <<FIM
+{
+  "commit": "$(git rev-parse --short HEAD 2>/dev/null)",
+  "data": "$(git log -1 --format=%cI 2>/dev/null)",
+  "conferido_em": "$(date -u +%Y-%m-%dT%H:%M:%S+00:00)",
+  "atualizada": $atualizada
+}
+FIM
+}
+
 if docker info >/dev/null 2>&1; then
     PREFIXO_DOCKER=""
 elif command -v sudo >/dev/null 2>&1 && sudo -n docker info >/dev/null 2>&1; then
@@ -225,6 +242,9 @@ done
 DEPOIS="$(git rev-parse "origin/$RAMO")"
 
 if [ "$ANTES" = "$DEPOIS" ]; then
+    # Registrar a conferida mesmo sem novidade é o ponto: é isto que deixa a tela dizer
+    # "está em dia" com convicção, em vez de só mostrar um hash que ninguém sabe ler.
+    anotar_versao true
     ok "Já está na versão mais nova. Nada a fazer."
     exit 0
 fi
@@ -291,6 +311,9 @@ except Exception:
 voltar_atras() {
     erro "A atualização falhou. Voltando para a versão anterior."
     git reset --hard --quiet "$ANTES"
+    # Agora a instalada é a velha e existe uma nova parada no GitHub: a tela precisa dizer
+    # isso, senão ninguém descobre que a loja ficou para trás numa madrugada.
+    anotar_versao false
     dk compose up -d --build 2>&1 | tail -3
 
     # Esperar aqui também, e não só no caminho feliz: dizer "voltou" enquanto o
@@ -313,6 +336,7 @@ voltar_atras() {
 
 titulo "Baixando a versão nova"
 git reset --hard --quiet "$DEPOIS"
+anotar_versao true
 ok "código em $(git rev-parse --short HEAD)"
 
 titulo "Guardando o log de agora"

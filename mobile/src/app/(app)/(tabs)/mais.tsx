@@ -1,8 +1,10 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { baseAtual } from '@/api/client';
+import { sistema } from '@/api/endpoints';
 import { Cartao, Etiqueta } from '@/components/ui';
 import { PODE, pode, titulo, type Capacidade } from '@/lib/permissoes';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
@@ -47,6 +49,42 @@ const OPCOES: Opcao[] = [
   },
 ];
 
+/**
+ * "Estou na versão mais nova?" — a pergunta de quem cuida da loja, respondida sem sair
+ * daqui.
+ *
+ * Mostrar só o hash não resolveria: `5c31d04` não é maior nem menor que o de ontem. Quem
+ * sabe é o servidor, que guarda quando foi a última conferida com o GitHub e se ela achou
+ * coisa nova — a frase vem pronta de lá, a mesma que o web mostra.
+ */
+function SeloDeVersao() {
+  const versao = useQuery({
+    queryKey: ['versao'],
+    queryFn: sistema.versao,
+    // Versão não muda de minuto em minuto, e uma consulta a cada abertura da aba seria
+    // gasto de bateria e de rede da loja por nada.
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+
+  if (!versao.data) return null;
+  const emDia = versao.data.atualizada === true && versao.data.conferido_recente;
+
+  return (
+    <View style={s.versao}>
+      <View style={[s.versaoPonto, { backgroundColor: emDia ? cores.acao : cores.alerta }]} />
+      <View style={{ flex: 1 }}>
+        <Text style={[s.versaoTitulo, !emDia && { color: cores.alerta }]}>
+          {emDia ? 'Versão em dia' : 'Versão desatualizada'}
+        </Text>
+        <Text style={s.versaoDetalhe}>
+          {versao.data.commit ?? 'sem versão'} · {versao.data.resumo}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
 export default function Mais() {
   const router = useRouter();
   const usuario = useAuthStore((e) => e.usuario);
@@ -73,6 +111,8 @@ export default function Mais() {
             />
           </View>
         </View>
+
+        <SeloDeVersao />
       </Cartao>
 
       {OPCOES.filter((o) => !o.pode || pode(usuario?.papel, o.pode)).map((opcao) => (
@@ -137,6 +177,19 @@ export default function Mais() {
 }
 
 const s = StyleSheet.create({
+  versao: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: espaco.sm,
+    marginTop: espaco.lg,
+    paddingTop: espaco.md,
+    borderTopWidth: 1,
+    borderTopColor: cores.borda,
+  },
+  versaoPonto: { width: 9, height: 9, borderRadius: 5, marginTop: 5 },
+  versaoTitulo: { fontSize: fonte.base, fontWeight: '700', color: cores.texto },
+  versaoDetalhe: { fontSize: fonte.pequena, color: cores.textoSuave, marginTop: 2, lineHeight: 18 },
+
   conteudo: { padding: espaco.lg, paddingBottom: espaco.xxl },
 
   servidor: {

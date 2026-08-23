@@ -351,6 +351,21 @@ A conferência da entrada passou a morar no store, ao lado do carrinho, pelo mes
 travar na peça não cadastrada no meio da sacola é rotina, e perder trinta bipadas para ir
 cadastrar ensina a não cadastrar. Quem vai cadastrar volta com a peça nova já conferida.
 
+**ADR-18 — A versão instalada vem do atualizador, não de uma consulta ao GitHub.**
+"Estou na versão mais nova?" é pergunta de quem cuida da loja, e um hash na tela não
+responde: `5c31d04` não é maior nem menor que o de ontem. Responder de verdade exige
+comparar com o repositório — e a API poderia fazer isso, ao custo de ter um token do
+código-fonte dentro do contêiner que serve o balcão. Não vale: quem só precisa vender roupa
+não precisa de acesso ao fonte, e credencial guardada é credencial que vaza.
+Então quem compara é o `atualizar.sh`, que já tem a credencial e já conversa com o GitHub a
+cada conferida. Ele grava `docker/estado/versao.json` (commit, data, quando conferiu, se
+havia coisa nova), montado **somente leitura** no contêiner. `GET /versao` lê o arquivo e
+devolve a frase pronta — a mesma no web e no app, para as duas telas não divergirem sobre o
+que "atualizada" quer dizer.
+Duas datas, não uma: "atualizada" de três dias atrás não tranquiliza ninguém, porque o
+timer pode ter morrido ontem. Passadas 24h sem conferir, a tela diz isso em vez de repetir
+uma resposta velha com cara de nova.
+
 ## 4. Contratos de API
 
 Prefixo `/api/v1`. Auth: `Authorization: Bearer <access_token>`.
@@ -393,6 +408,7 @@ Desativar = `PATCH {ativo:false}`. Bootstrap do primeiro admin: `python -m app.c
 | PUT | `/produtos/{id}/foto` | A/V | multipart, salva em `media/produtos/` |
 | POST | `/produtos/{id}/variantes` | A/V | adiciona variante a produto existente |
 | PATCH/DELETE | `/variantes/{id}` | A | |
+| GET | `/versao` | A/V | commit instalado, quando foi conferido e se há versão nova; lê `docker/estado/versao.json` |
 | GET | `/variantes` | A/V | `?produto_id=&q=` · `q` acha por **nome do produto, cor ou código** (sem acento, código exato primeiro); a resposta traz `produto` e `saldo` |
 | **GET** | **`/variantes/codigo-barras/{codigo}`** | A/V | lookup do PDV: produto + variante + preço + saldo. 404 → app oferece cadastro rápido |
 | POST | `/variantes/gerar-codigo-interno` | A/V | `{codigo}` EAN-13 interno, ainda não usado |

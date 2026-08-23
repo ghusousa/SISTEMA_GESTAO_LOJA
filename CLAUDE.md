@@ -68,6 +68,10 @@ npm run bundle       # expo export: pega erro de import que o tsc não vê
   (`core/eventos.py`), não os services — mudou tabela, sai aviso. O que trafega é o
   ASSUNTO ("estoque"), nunca o dado: a tela refaz a consulta pela rota REST, e o filtro
   por papel continua inteiro. Token vai no primeiro quadro, nunca na URL.
+- Versão: `GET /versao` diz o commit instalado E se é o mais novo. Quem sabe disso é o
+  `atualizar.sh` (tem a credencial do GitHub), que grava `docker/estado/versao.json`; a API
+  só lê o arquivo montado. **A API nunca fala com o GitHub** — token do código-fonte não
+  entra no contêiner que serve a loja.
 - Mutações idempotentes por `client_uuid`: `POST /vendas` e `POST /estoque/entradas` (replay → 200
   com o registro existente).
 

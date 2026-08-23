@@ -306,3 +306,18 @@ export interface EstoqueBaixo {
   faltam: number;
   preco_custo: string;
 }
+
+/**
+ * A versão que está rodando no servidor, e se ela é a mais nova.
+ *
+ * `resumo` vem pronto do servidor de propósito: é a mesma frase no web e no app, e assim
+ * as duas telas não divergem sobre o que "atualizada" quer dizer.
+ */
+export interface Versao {
+  commit: string | null;
+  data: string | null;
+  conferido_em: string | null;
+  atualizada: boolean | null;
+  conferido_recente: boolean;
+  resumo: string;
+}
