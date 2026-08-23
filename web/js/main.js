@@ -21,6 +21,9 @@ rota('/vendas/:id', () => import('./views/venda-detalhe.js'));
 
 rota('/produtos', () => import('./views/produtos.js'));
 rota('/produtos/novo', () => import('./views/produto-novo.js'));
+// Antes de '/produtos/:id': o roteador casa a primeira rota que bate, e ':id' aceitaria
+// 'etiquetas' como se fosse um id.
+rota('/produtos/:id/etiquetas', () => import('./views/etiquetas.js'));
 rota('/produtos/:id', () => import('./views/produto-detalhe.js'));
 rota('/categorias', () => import('./views/categorias.js'), { pode: PODE.EDITAR_CATALOGO });
 

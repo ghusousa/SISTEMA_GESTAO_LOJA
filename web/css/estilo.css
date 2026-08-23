@@ -1280,3 +1280,130 @@ kbd {
     box-shadow: none;
   }
 }
+
+/* ------------------------------------------------------------------ etiquetas */
+
+/* Escolha da foto no cadastro e no detalhe do produto. */
+.foto-escolha {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+.foto-escolha__quadro {
+  width: 96px;
+  height: 96px;
+  flex: none;
+  border: 1px dashed var(--borda);
+  border-radius: 10px;
+  background: var(--superficie-alt);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  cursor: pointer;
+}
+.foto-escolha__vazio {
+  font-size: 12px;
+  color: var(--texto-fraco);
+}
+.foto-escolha__img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Miniatura na lista de produtos e no detalhe. */
+.foto-peca {
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--superficie-alt);
+  flex: none;
+}
+
+/* O código de barras dentro da tabela: pequeno, só para conferir a olho. */
+.barras-mini {
+  display: block;
+  margin-top: 3px;
+  height: 34px;
+}
+.barras-mini svg {
+  height: 100%;
+  width: auto;
+}
+
+/*
+ * A folha de etiquetas. As medidas são em milímetros de propósito: o que sai da
+ * impressora precisa bater com a etiqueta adesiva de verdade, e px não tem tamanho
+ * físico definido.
+ */
+.folha {
+  display: grid;
+  grid-template-columns: repeat(4, 50mm);
+  justify-content: center;
+  background: #fff;
+}
+.etiqueta-peca {
+  width: 50mm;
+  height: 30mm;
+  padding: 1.5mm 1mm;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.4mm;
+  overflow: hidden;
+  /* A borda pontilhada é guia de tesoura na tela; some na impressão para não sujar a
+     etiqueta adesiva, que já vem picotada. */
+  outline: 1px dashed var(--borda);
+}
+.etiqueta-peca__nome {
+  font-size: 7pt;
+  font-weight: 700;
+  color: #000;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.etiqueta-peca__linha {
+  font-size: 6.5pt;
+  color: #000;
+  display: flex;
+  gap: 2mm;
+  align-items: baseline;
+}
+.etiqueta-peca__preco {
+  font-weight: 800;
+}
+.etiqueta-peca__barras {
+  margin-top: 0.3mm;
+  line-height: 0;
+}
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 5mm;
+  }
+  body {
+    background: #fff;
+  }
+  .conteudo {
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+  .folha-topo,
+  .pagina__topo {
+    display: none !important;
+  }
+  .etiqueta-peca {
+    outline: none;
+  }
+  /* Etiqueta cortada ao meio entre duas páginas é etiqueta perdida. */
+  .etiqueta-peca {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}

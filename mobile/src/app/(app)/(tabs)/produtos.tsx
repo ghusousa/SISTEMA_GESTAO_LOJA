@@ -3,9 +3,9 @@ import { FlashList } from '@shopify/flash-list';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Image, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { mensagemDoErro } from '@/api/client';
+import { mensagemDoErro, urlDaFoto } from '@/api/client';
 import { catalogo } from '@/api/endpoints';
 import type { Produto } from '@/api/tipos';
 import { Botao, Carregando, ErroEstado, Etiqueta, Vazio } from '@/components/ui';
@@ -113,16 +113,32 @@ function CartaoProduto({ produto, aoAbrir }: { produto: Produto; aoAbrir: () => 
     ? Math.min(...produto.variantes.map((v) => paraCentavos(v.preco_venda)))
     : 0;
 
+  const foto = urlDaFoto(produto.foto_url);
+
   return (
     <Pressable style={s.cartao} onPress={aoAbrir}>
-      <View style={s.cartaoTopo}>
-        <Text style={s.cartaoNome} numberOfLines={1}>
-          {produto.nome}
-        </Text>
-        <Text style={s.cartaoPreco}>{formatar(menorPreco)}</Text>
-      </View>
+      <View style={s.cartaoCabecalho}>
+        {/* A miniatura é o motivo de existir a foto: achar a peça correndo o olho, quando
+            a etiqueta não está à mão. Sem foto, o lugar dela vira um ícone discreto em vez
+            de um buraco no cartão. */}
+        {foto ? (
+          <Image source={{ uri: foto }} style={s.miniatura} resizeMode="cover" />
+        ) : (
+          <View style={[s.miniatura, s.miniaturaVazia]}>
+            <MaterialCommunityIcons name="tshirt-crew-outline" size={22} color={cores.textoFraco} />
+          </View>
+        )}
 
-      <Text style={s.cartaoCategoria}>{produto.categoria}</Text>
+        <View style={s.cartaoTexto}>
+          <View style={s.cartaoTopo}>
+            <Text style={s.cartaoNome} numberOfLines={1}>
+              {produto.nome}
+            </Text>
+            <Text style={s.cartaoPreco}>{formatar(menorPreco)}</Text>
+          </View>
+          <Text style={s.cartaoCategoria}>{produto.categoria}</Text>
+        </View>
+      </View>
 
       <View style={s.cartaoRodape}>
         <View style={s.grade}>
@@ -147,6 +163,11 @@ function CartaoProduto({ produto, aoAbrir }: { produto: Produto; aoAbrir: () => 
 
 const s = StyleSheet.create({
   tela: { flex: 1, backgroundColor: cores.fundo },
+
+  cartaoCabecalho: { flexDirection: 'row', gap: espaco.sm, alignItems: 'center' },
+  cartaoTexto: { flex: 1 },
+  miniatura: { width: 48, height: 48, borderRadius: raio.sm, backgroundColor: cores.superficieAlt },
+  miniaturaVazia: { alignItems: 'center', justifyContent: 'center' },
 
   barraBusca: {
     flexDirection: 'row',

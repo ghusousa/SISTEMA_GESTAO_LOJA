@@ -31,6 +31,8 @@ import { formatarSemSimbolo, paraCentavos, paraDecimalString } from '@/lib/money
 import { chaves, invalidarAposMovimentoEstoque, queryClient } from '@/lib/queryClient';
 import { useAuthStore } from '@/stores/authStore';
 import { PODE, pode } from '@/lib/permissoes';
+import { SeletorDeFoto } from '@/components/SeletorDeFoto';
+import type { FotoEscolhida } from '@/lib/foto';
 import { ALVO_TOQUE, cores, espaco, fonte, raio } from '@/lib/tema';
 
 const TAMANHOS_RAPIDOS = ['PP', 'P', 'M', 'G', 'GG', 'XG', 'U'];
@@ -101,6 +103,11 @@ export default function NovoProduto() {
     );
   }
 
+  // A foto é escolhida antes de o produto existir, então fica guardada aqui e sobe depois
+  // que o POST devolve o id. Não dá para inverter: o upload é por produto.
+  const [foto, setFoto] = useState<FotoEscolhida | null>(null);
+  const [avisoFoto, setAvisoFoto] = useState<string | null>(null);
+
   const gerarCodigo = useMutation({
     mutationFn: () => catalogo.gerarCodigoInterno(),
   });
@@ -127,14 +134,27 @@ export default function NovoProduto() {
         estoque_minimo: Number(estoqueMinimo) || 0,
         estoque_inicial: Number(linha.estoque) || 0,
       }));
-      return catalogo.criarProduto({
+      const produto = await catalogo.criarProduto({
         categoria_id: categoriaId!,
         nome: nome.trim(),
         variantes,
       });
+
+      if (foto) {
+        // A peça já está cadastrada e vendável. Se a foto falhar (rede caindo, arquivo
+        // recusado), o cadastro continua de pé e a pessoa tenta a foto de novo pelo
+        // detalhe — desfazer o produto por causa de uma imagem seria bem pior.
+        try {
+          return await catalogo.enviarFoto(produto.id, foto);
+        } catch {
+          setAvisoFoto('A peça foi cadastrada, mas a foto não subiu. Tente pelo detalhe.');
+        }
+      }
+      return produto;
     },
     onSuccess: (produto) => {
       invalidarAposMovimentoEstoque();
+      if (avisoFoto) Alert.alert('Foto não enviada', avisoFoto);
       void queryClient.invalidateQueries({ queryKey: chaves.produtos });
       if (veioDoPdv) {
         // De volta ao PDV: o operador bipa a peça de novo, agora encontrada.
@@ -185,6 +205,8 @@ export default function NovoProduto() {
           placeholder="Camiseta Básica Gola V"
           autoCapitalize="words"
         />
+
+        <SeletorDeFoto uri={foto?.uri} aoEscolher={setFoto} />
 
         <Text style={s.rotulo}>Categoria</Text>
         {listaCategorias.length === 0 ? (

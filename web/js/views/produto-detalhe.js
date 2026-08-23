@@ -7,6 +7,8 @@
  */
 
 import { api } from '../api.js';
+import { svgEan13 } from '../codigo-barras.js';
+import { TIPOS_ACEITOS, enviarFoto } from '../foto.js';
 import { formatar, paraCentavos, paraDecimalString } from '../dinheiro.js';
 import { ir } from '../router.js';
 import { PODE, pode } from '../permissoes.js';
@@ -48,6 +50,22 @@ export async function render(raiz, { id }) {
         <div class="pagina__topo">
           <div>
             <a class="botao botao--fantasma botao--pequeno" href="#/produtos">← Produtos</a>
+            <div class="foto-escolha" style="margin:8px 0">
+              <div class="foto-escolha__quadro" data-foto-quadro title="Trocar a foto da peça">
+                ${produto.foto_url
+                  ? cru(html`<img class="foto-escolha__img" src="${produto.foto_url}" alt="Foto de ${produto.nome}" />`)
+                  : cru('<span class="foto-escolha__vazio">sem foto</span>')}
+              </div>
+              <div>
+                <input type="file" data-foto accept="${cru(TIPOS_ACEITOS)}" hidden />
+                <button class="botao botao--neutro botao--pequeno" data-foto-trocar type="button">
+                  ${produto.foto_url ? 'Trocar foto' : 'Adicionar foto'}
+                </button>
+                <p class="texto-fraco" style="margin:6px 0 0;font-size:13px">
+                  A imagem é reduzida antes de subir.
+                </p>
+              </div>
+            </div>
             <h1>${produto.nome}</h1>
             <p class="texto-suave">
               ${produto.categoria} · ${plural(produto.variantes.length, 'peça na grade', 'peças na grade')} ·
@@ -55,6 +73,7 @@ export async function render(raiz, { id }) {
             </p>
           </div>
           <div class="pagina__acoes">
+            <a class="botao botao--neutro" href="#/produtos/${produto.id}/etiquetas">Imprimir etiquetas</a>
             ${veDinheiro ? cru('<button class="botao botao--neutro" data-editar>Editar produto</button>') : ''}
             <button class="botao" data-nova-peca>Adicionar peça</button>
           </div>
@@ -87,7 +106,24 @@ export async function render(raiz, { id }) {
       </div>
     `;
 
-    raiz.querySelector('[data-nova-peca]').addEventListener('click', () => novaPeca(produto));
+    const campoFoto = raiz.querySelector('[data-foto]');
+  const abrirSeletor = () => campoFoto?.click();
+  raiz.querySelector('[data-foto-trocar]')?.addEventListener('click', abrirSeletor);
+  raiz.querySelector('[data-foto-quadro]')?.addEventListener('click', abrirSeletor);
+  campoFoto?.addEventListener('change', async () => {
+    const arquivo = campoFoto.files?.[0];
+    if (!arquivo) return;
+    campoFoto.value = '';
+    try {
+      await enviarFoto(api, produto.id, arquivo);
+      aviso('Foto atualizada.');
+      await carregar();
+    } catch (erro) {
+      avisarErro(erro);
+    }
+  });
+
+  raiz.querySelector('[data-nova-peca]').addEventListener('click', () => novaPeca(produto));
     raiz.querySelector('[data-editar]')?.addEventListener('click', () => editarProduto(produto));
 
     raiz.querySelectorAll('[data-editar-peca]').forEach((b) =>
@@ -122,6 +158,13 @@ export async function render(raiz, { id }) {
         <td>
           <span class="dinheiro">${v.codigo_barras}</span>
           <span class="celula-secundaria">${v.tipo_codigo === 'INTERNO' ? 'código interno' : 'etiqueta do fornecedor'}</span>
+          ${(() => {
+            // Ver a barra ao lado do número é o que permite conferir a olho que a
+            // etiqueta colada na peça é a mesma do sistema. Código fora do padrão
+            // EAN-13 (CODE-128 de fornecedor, por exemplo) não vira desenho.
+            const barras = svgEan13(v.codigo_barras, { modulo: 0.26, altura: 8, texto: false });
+            return barras ? cru(`<span class="barras-mini">${barras}</span>`) : '';
+          })()}
         </td>
         <td class="direita dinheiro celula-principal">${formatar(venda)}</td>
         ${veDinheiro

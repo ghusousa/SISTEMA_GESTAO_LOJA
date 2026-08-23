@@ -1,12 +1,14 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { mensagemDoErro } from '@/api/client';
+import { mensagemDoErro, urlDaFoto } from '@/api/client';
 import { catalogo } from '@/api/endpoints';
 import { Carregando, Cartao, ErroEstado, Etiqueta } from '@/components/ui';
 import { formatar, paraCentavos } from '@/lib/money';
-import { chaves } from '@/lib/queryClient';
+import { SeletorDeFoto } from '@/components/SeletorDeFoto';
+import type { FotoEscolhida } from '@/lib/foto';
+import { chaves, queryClient } from '@/lib/queryClient';
 import { PODE, pode } from '@/lib/permissoes';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
 import { useAuthStore } from '@/stores/authStore';
@@ -21,6 +23,17 @@ export default function DetalheProduto() {
     queryKey: chaves.produto(produtoId),
     queryFn: () => catalogo.produto(produtoId),
     enabled: Number.isFinite(produtoId),
+  });
+
+  const enviarFoto = useMutation({
+    mutationFn: (foto: FotoEscolhida) => catalogo.enviarFoto(produtoId, foto),
+    onSuccess: (produto) => {
+      // Escreve a resposta na chave em vez de só invalidar: a foto nova aparece no mesmo
+      // toque, sem o pisca-pisca de recarregar a tela inteira.
+      queryClient.setQueryData(chaves.produto(produtoId), produto);
+      void queryClient.invalidateQueries({ queryKey: chaves.produtos });
+    },
+    onError: (e) => Alert.alert('Não deu para enviar a foto', mensagemDoErro(e)),
   });
 
   if (consulta.isPending) return <Carregando />;
@@ -38,6 +51,15 @@ export default function DetalheProduto() {
   return (
     <ScrollView contentContainerStyle={s.conteudo}>
       <Cartao>
+        <SeletorDeFoto
+          uri={urlDaFoto(produto.foto_url)}
+          aoEscolher={async (foto) => {
+            // O erro já vira alerta no onError; aqui só se espera para o quadro ficar
+            // em espera enquanto sobe.
+            await enviarFoto.mutateAsync(foto).catch(() => undefined);
+          }}
+          enviando={enviarFoto.isPending}
+        />
         <Text style={s.nome}>{produto.nome}</Text>
         <Text style={s.categoria}>{produto.categoria}</Text>
         {!!produto.descricao && <Text style={s.descricao}>{produto.descricao}</Text>}

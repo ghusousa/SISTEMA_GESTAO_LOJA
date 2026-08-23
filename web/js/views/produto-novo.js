@@ -7,6 +7,7 @@
  */
 
 import { api } from '../api.js';
+import { TIPOS_ACEITOS, enviarFoto } from '../foto.js';
 import { paraDecimalString } from '../dinheiro.js';
 import { ir } from '../router.js';
 import { aviso, avisarErro, cru, html, ligarCampoDinheiro, modal } from '../ui.js';
@@ -45,6 +46,28 @@ export async function render(raiz, _params, consulta) {
             <span>Descrição <span class="campo__dica">opcional</span></span>
             <input data-descricao maxlength="2000" placeholder="Tecido, modelagem, observações" />
           </label>
+
+          <div class="campo">
+            <span>Foto <span class="campo__dica">opcional</span></span>
+            <div class="foto-escolha">
+              <div class="foto-escolha__quadro" data-foto-quadro>
+                <span class="foto-escolha__vazio" data-foto-vazio>sem foto</span>
+                <img class="foto-escolha__img" data-foto-previa alt="" hidden />
+              </div>
+              <div>
+                <input type="file" data-foto accept="${cru(TIPOS_ACEITOS)}" hidden />
+                <button class="botao botao--neutro botao--pequeno" data-foto-escolher type="button">
+                  Escolher imagem
+                </button>
+                <button class="botao botao--neutro botao--pequeno" data-foto-tirar type="button" hidden>
+                  Remover
+                </button>
+                <p class="texto-fraco" style="margin:6px 0 0;font-size:13px">
+                  A imagem é reduzida antes de subir. Ajuda a achar a peça na lista.
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -122,6 +145,36 @@ export async function render(raiz, _params, consulta) {
 
   /** Cada linha guarda os próprios campos de dinheiro para ler na hora de salvar. */
   const linhas = [];
+
+  // A foto espera o produto existir: o upload é por id, e o id só nasce no POST.
+  let fotoEscolhida = null;
+  const campoFoto = raiz.querySelector('[data-foto]');
+  const previaFoto = raiz.querySelector('[data-foto-previa]');
+  const vazioFoto = raiz.querySelector('[data-foto-vazio]');
+  const botaoRemoverFoto = raiz.querySelector('[data-foto-tirar]');
+  let urlPrevia = null;
+
+  function mostrarPrevia(arquivo) {
+    if (urlPrevia) URL.revokeObjectURL(urlPrevia);
+    urlPrevia = arquivo ? URL.createObjectURL(arquivo) : null;
+    previaFoto.hidden = !arquivo;
+    vazioFoto.hidden = !!arquivo;
+    botaoRemoverFoto.hidden = !arquivo;
+    if (urlPrevia) previaFoto.src = urlPrevia;
+  }
+
+  raiz.querySelector('[data-foto-escolher]').addEventListener('click', () => campoFoto.click());
+  raiz.querySelector('[data-foto-quadro]').addEventListener('click', () => campoFoto.click());
+  campoFoto.addEventListener('change', () => {
+    fotoEscolhida = campoFoto.files?.[0] ?? null;
+    mostrarPrevia(fotoEscolhida);
+  });
+  botaoRemoverFoto.addEventListener('click', (evento) => {
+    evento.stopPropagation();
+    fotoEscolhida = null;
+    campoFoto.value = '';
+    mostrarPrevia(null);
+  });
 
   async function carregarCategorias(selecionar) {
     try {
@@ -271,6 +324,16 @@ export async function render(raiz, _params, consulta) {
         descricao: raiz.querySelector('[data-descricao]').value.trim() || null,
         variantes,
       });
+      if (fotoEscolhida) {
+        // A peça já está cadastrada e vendável. Se a foto falhar, o cadastro fica de pé e
+        // a pessoa tenta de novo pelo detalhe — desfazer o produto por causa de uma
+        // imagem seria bem pior do que ficar sem ela.
+        try {
+          await enviarFoto(api, produto.id, fotoEscolhida);
+        } catch (erroFoto) {
+          aviso(`Peça cadastrada, mas a foto não subiu: ${erroFoto.message}`, 'alerta');
+        }
+      }
       aviso(`"${produto.nome}" cadastrado com ${produto.variantes.length} peças.`);
       ir(`/produtos/${produto.id}`);
     } catch (erro) {

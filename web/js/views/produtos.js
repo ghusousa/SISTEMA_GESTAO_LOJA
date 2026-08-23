@@ -134,10 +134,17 @@ export async function render(raiz, _params, consulta) {
     return html`
       <tr class="clicavel" data-abrir="${produto.id}" tabindex="0">
         <td>
-          <span class="celula-principal">${produto.nome}</span>
-          ${pode(PODE.VER_DINHEIRO) && produto.variantes[0]?.preco_custo
-            ? cru(html`<span class="celula-secundaria">custo ${formatar(paraCentavos(produto.variantes[0].preco_custo))}</span>`)
-            : ''}
+          <span style="display:flex;gap:10px;align-items:center">
+            ${produto.foto_url
+              ? cru(html`<img class="foto-peca" src="${produto.foto_url}" alt="" loading="lazy" />`)
+              : ''}
+            <span>
+              <span class="celula-principal">${produto.nome}</span>
+              ${pode(PODE.VER_DINHEIRO) && produto.variantes[0]?.preco_custo
+                ? cru(html`<span class="celula-secundaria">custo ${formatar(paraCentavos(produto.variantes[0].preco_custo))}</span>`)
+                : ''}
+            </span>
+          </span>
         </td>
         <td class="texto-suave">${produto.categoria}</td>
         <td class="texto-suave">${plural(produto.variantes.length, 'peça', 'peças')}</td>

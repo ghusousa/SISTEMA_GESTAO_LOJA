@@ -55,6 +55,23 @@ CATALOGO = [
     ("Saias", "Saia Midi Plissada", "139.90", "58.00", ["P", "M", "G"], "Preta"),
 ]
 
+
+def ean_de_fornecedor(produto: int, variante: int) -> str:
+    """EAN-13 de mentira, porém válido — com o dígito verificador certo.
+
+    Antes eram treze dígitos sorteados. Ninguém percebia, porque a API aceita qualquer
+    string como código de barras (loja de verdade também usa CODE-128). Só que um EAN-13
+    com verificador errado NÃO IMPRIME: a tela de etiquetas o recusa e leitor nenhum o lê,
+    e a demonstração passava a impressão de que a impressão estava quebrada.
+
+    Determinístico de propósito: a folha de etiquetas impressa continua valendo depois de
+    recriar a demonstração.
+    """
+    from app.modules.catalogo.barcode import digito_verificador_ean13
+
+    payload = f"789{produto:04d}{variante:05d}"
+    return payload + digito_verificador_ean13(payload)
+
 DESPESAS = [
     ("Aluguel", "Aluguel da loja", "2800.00", 5, True),
     ("Energia", "Conta de luz", "486.30", 12, True),
@@ -146,7 +163,7 @@ def main() -> int:
         # ---------------------------------------------------------- catálogo
         categorias: dict[str, int] = {}
         variantes: list[dict] = []
-        for cat, nome, venda, custo, tamanhos, cor in CATALOGO:
+        for ordem, (cat, nome, venda, custo, tamanhos, cor) in enumerate(CATALOGO):
             if cat not in categorias:
                 resp = c.post("/categorias", headers=admin, json={"nome": cat})
                 categorias[cat] = (
@@ -168,9 +185,7 @@ def main() -> int:
                         "tamanho": tamanho,
                         "cor": cor,
                         "codigo_barras": (
-                            f"789{random.randint(1000000000, 9999999999)}"
-                            if tem_etiqueta
-                            else None
+                            ean_de_fornecedor(ordem, indice) if tem_etiqueta else None
                         ),
                         "preco_custo": custo,
                         "preco_venda": venda,
