@@ -8,6 +8,7 @@
  */
 
 import { api } from '../api.js';
+import { loja } from '../loja.js';
 import { escolherCliente, pedirVale } from '../pagar-fiado-vale.js';
 import { PODE, pode } from '../permissoes.js';
 import { formatar, paraCentavos, paraDecimalString, somar } from '../dinheiro.js';
@@ -338,13 +339,27 @@ function imprimir(venda, troco) {
     )
     .join('');
 
+  // O papel que vai para a mão da cliente é onde o nome da loja mais importa: é por ele
+  // que ela volta para trocar. Contato só entra quando existe — linha em branco no recibo
+  // é pior do que recibo sem telefone.
+  const l = loja();
+  const cabecalhoDaLoja = [l.documento, l.endereco, l.telefone]
+    .filter(Boolean)
+    .map((linha) => `<div class="loja">${escapar(String(linha))}</div>`)
+    .join('');
+
   const janela = window.open('', '_blank', 'width=380,height=640');
   if (!janela) return;
   janela.document.write(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
-    <title>Recibo ${venda.id}</title>
+    <title>${escapar(l.nome)} — recibo ${venda.id}</title>
     <style>
-      body{font:12px system-ui,sans-serif;margin:14px;color:#000}
-      h1{font-size:15px;margin:0 0 2px}
+      /* Bobina térmica de 80mm é a impressora de balcão. Contemos a LARGURA do
+         conteúdo, sem fixar o tamanho da página: assim quem imprime em A4 (ou em PDF)
+         continua funcionando, e a térmica para de cortar a direita. */
+      body{font:12px system-ui,sans-serif;margin:0 auto;padding:5mm;max-width:80mm;color:#000}
+      h1{font-size:15px;margin:0;text-align:center}
+      .loja{text-align:center;color:#555;font-size:11px}
+      .cab{margin-top:10px}
       table{width:100%;border-collapse:collapse;margin:10px 0}
       td{padding:4px 0;border-bottom:1px dotted #bbb;vertical-align:top}
       small{color:#555}
@@ -353,8 +368,9 @@ function imprimir(venda, troco) {
          border-top:2px solid #000;margin-top:8px;padding-top:6px}
       .r{text-align:center;color:#555;margin-top:14px;font-size:11px}
     </style></head><body>
-    <h1>Comprovante de venda</h1>
-    <div class="l"><span>Venda nº ${venda.id}</span><span>${escapar(dataHora(venda.vendida_em))}</span></div>
+    <h1>${escapar(l.nome)}</h1>
+    ${cabecalhoDaLoja}
+    <div class="l cab"><span>Venda nº ${venda.id}</span><span>${escapar(dataHora(venda.vendida_em))}</span></div>
     <div class="l"><span>Atendimento</span><span>${escapar(venda.vendedor)}</span></div>
     <table>${linhas}</table>
     <div class="l"><span>Subtotal</span><span>${escapar(formatar(paraCentavos(venda.subtotal)))}</span></div>
