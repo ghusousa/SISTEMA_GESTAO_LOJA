@@ -59,6 +59,8 @@ _REGRAS: list[tuple[str, re.Pattern[str], str, str, str | None]] = [
     ("PATCH", re.compile(r"^/usuarios/(\d+)/senha$"), "SENHA_REDEFINIDA", "Redefiniu a senha do usuário #{id}", "usuario"),
     ("PATCH", re.compile(r"^/usuarios/me/senha$"), "SENHA_PROPRIA", "Trocou a própria senha", "usuario"),
     ("PATCH", re.compile(r"^/usuarios/(\d+)$"), "USUARIO_EDITADO", "Editou o usuário #{id} (papel ou acesso)", "usuario"),
+    # identidade da loja
+    ("PATCH", re.compile(r"^/configuracao$"), "LOJA_CONFIGURADA", "Mudou o nome ou o ramo da loja", "loja"),
     # sessão
     ("POST", re.compile(r"^/auth/logout$"), "LOGOUT", "Saiu do sistema", None),
 ]

@@ -43,6 +43,9 @@ class Pode(StrEnum):
     #: Não entra no GERENTE de propósito: a auditoria existe para o dono conferir a
     #: própria equipe, gerente incluído. Quem é auditado não controla o próprio registro.
     VER_AUDITORIA = "VER_AUDITORIA"
+    #: Mudar o nome e o ramo da loja. Só o dono: é a identidade do negócio, aparece no
+    #: recibo que vai para a mão do cliente, e não é decisão de quem toma conta do turno.
+    CONFIGURAR_LOJA = "CONFIGURAR_LOJA"
 
 
 VENDEDORA: frozenset[Pode] = frozenset()

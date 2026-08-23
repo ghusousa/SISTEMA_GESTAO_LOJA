@@ -21,11 +21,12 @@ import { Alert, Share, StyleSheet, Text, View, ScrollView } from 'react-native';
 
 import { mensagemDoErro } from '@/api/client';
 import { vendas } from '@/api/endpoints';
-import type { FormaPagamento, Venda } from '@/api/tipos';
+import type { ConfiguracaoLoja, FormaPagamento, Venda } from '@/api/tipos';
 import { Botao, Carregando, ErroEstado } from '@/components/ui';
 import { formatar, formatarSemSimbolo, paraCentavos } from '@/lib/money';
 import { chaves } from '@/lib/queryClient';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
+import { useLoja } from '@/hooks/useLoja';
 
 const ROTULO_FORMA: Record<FormaPagamento, string> = {
   DINHEIRO: 'Dinheiro',
@@ -39,10 +40,14 @@ const ROTULO_FORMA: Record<FormaPagamento, string> = {
 const RODAPE_TROCA = 'Troca em até 30 dias, com este recibo e a etiqueta na peça.';
 const RODAPE_FISCAL = 'Documento sem valor fiscal.';
 
+/** O bastante da loja para o papel: `reciboEmTexto` roda fora do React e não tem hook. */
+type DadosDaLoja = Pick<ConfiguracaoLoja, 'nome' | 'documento' | 'telefone' | 'endereco'>;
+
 /** O mesmo recibo em texto puro, do jeito que chega legível no WhatsApp. */
-export function reciboEmTexto(venda: Venda): string {
+export function reciboEmTexto(venda: Venda, loja?: DadosDaLoja): string {
   const linhas: string[] = [
-    '*Gestão da Loja*',
+    `*${loja?.nome ?? 'Minha Loja'}*`,
+    ...[loja?.documento, loja?.endereco, loja?.telefone].filter(Boolean).map(String),
     format(new Date(venda.vendida_em), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR }),
     `Venda #${venda.id} · ${venda.vendedor}`,
   ];
@@ -82,6 +87,7 @@ export function reciboEmTexto(venda: Venda): string {
 }
 
 export default function Recibo() {
+  const loja = useLoja();
   const { id } = useLocalSearchParams<{ id: string }>();
   const vendaId = Number(id);
 
@@ -106,7 +112,7 @@ export default function Recibo() {
 
   async function enviar() {
     try {
-      await Share.share({ message: reciboEmTexto(venda) });
+      await Share.share({ message: reciboEmTexto(venda, loja) });
     } catch (erro) {
       Alert.alert('Não deu para enviar', mensagemDoErro(erro));
     }
@@ -116,7 +122,12 @@ export default function Recibo() {
     <View style={s.tela}>
       <ScrollView contentContainerStyle={s.conteudo}>
         <View style={s.papel}>
-          <Text style={s.loja}>Gestão da Loja</Text>
+          <Text style={s.loja}>{loja.nome}</Text>
+          {[loja.documento, loja.endereco, loja.telefone].filter(Boolean).map((linha) => (
+            <Text key={String(linha)} style={s.cabecalho}>
+              {linha}
+            </Text>
+          ))}
           <Text style={s.cabecalho}>
             {format(new Date(venda.vendida_em), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
           </Text>

@@ -22,6 +22,7 @@ export const PODE = {
   FECHAR_CAIXA: 'FECHAR_CAIXA',
   GERIR_USUARIOS: 'GERIR_USUARIOS',
   VER_AUDITORIA: 'VER_AUDITORIA',
+  CONFIGURAR_LOJA: 'CONFIGURAR_LOJA',
 } as const;
 
 export type Capacidade = (typeof PODE)[keyof typeof PODE];

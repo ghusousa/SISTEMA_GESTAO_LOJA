@@ -15,8 +15,8 @@ o superior não tenha.
 |---|---|---|
 | **Vendedora** (`VENDEDOR`) | Vende no PDV, bipa e consulta preço, cadastra peça nova, dá entrada de mercadoria | Custo, lucro, despesas, relatórios, estorno, ajuste de estoque, inventário, vendas das colegas |
 | **Supervisora** (`SUPERVISORA`) | Ajusta estoque, faz inventário, edita e exclui produtos e categorias, confere e fecha o caixa do dia, vê as vendas de toda a equipe | Custo, lucro, despesas, relatórios, estorno, devolução, crediário, logins da equipe |
-| **Gerente** (`GERENTE`) | Vê custo, lucro e margem; lança despesas; abre relatórios; cancela venda concluída; recebe peça de volta (devolução) e cuida do crediário; administra os logins da equipe | A conta do dono (não cria, não promove, não edita, não redefine a senha dele) e o **diário de auditoria** — quem fez o quê no login não é dele |
-| **Dono** (`ADMIN`) | Tudo, inclusive criar e promover outro dono, e o **diário de auditoria**: tudo que cada login fez | — |
+| **Gerente** (`GERENTE`) | Vê custo, lucro e margem; lança despesas; abre relatórios; cancela venda concluída; recebe peça de volta (devolução) e cuida do crediário; administra os logins da equipe | A conta do dono (não cria, não promove, não edita, não redefine a senha dele), o **diário de auditoria** e o **nome da loja** — a identidade do negócio é do dono |
+| **Dono** (`ADMIN`) | Tudo, inclusive criar e promover outro dono, o **diário de auditoria** (tudo que cada login fez) e o **nome e ramo da loja** | — |
 
 **Quatro decisões que a loja tomou e que o sistema faz valer:**
 
@@ -63,6 +63,10 @@ A loja consegue operar 100% sem celular.
   com categoria e marcação de recorrente.
 - **Fechamento de caixa** — conferência diária: quanto o sistema esperava por forma de pagamento
   versus quanto foi contado.
+- **A loja** — o nome do negócio e o ramo dele. O nome sai na tela de entrada e no recibo do
+  cliente. O ramo (roupas, calçados, autopeças, informática, cosméticos, alimentos, construção)
+  troca **só as palavras** do sistema: onde uma loja de roupas lê "Tamanho / Cor", uma autopeças
+  lê "Aplicação / Posição". Perguntado na instalação, mudável depois pelo dono.
 - **Registro de auditoria** — uma linha para cada ação que alguém faz logado (vender, cancelar,
   dar entrada, editar cadastro, entrar no sistema, errar a senha). Guarda quem, o quê, quando e
   de onde, com o nome e o cargo **congelados** no momento — renomear a pessoa depois não reescreve
@@ -127,6 +131,10 @@ A loja consegue operar 100% sem celular.
 - O login trava depois de erros de senha demais (por e-mail e por endereço), e a trava responde
   igual exista o e-mail ou não — a tela de login não revela quem é cadastrado.
 - Só o dono lê a auditoria; para qualquer outro cargo a rota responde 403.
+- Trocar o ramo da loja não altera nenhum produto, preço, estoque ou venda: muda só o rótulo
+  que a tela dá às duas variações.
+- Só o dono muda o nome e o ramo da loja; o nome é legível sem login (a tela de entrada precisa
+  dele antes de existir sessão).
 
 ## Fora do escopo do v1
 
@@ -137,4 +145,4 @@ notificações push, parcelamento do crediário em datas fixas (hoje é dívida 
 qualquer valor), cobrança automática por mensagem.
 
 *Saíram de "fora do escopo" e hoje existem:* impressão de etiquetas, recibo da venda, cadastro de
-clientes, e trocas com vale.
+clientes, trocas com vale, e o sistema servir a outros ramos além de roupas.

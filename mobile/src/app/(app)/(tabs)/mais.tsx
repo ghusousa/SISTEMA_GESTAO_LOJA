@@ -63,6 +63,13 @@ const OPCOES: Opcao[] = [
     pode: PODE.VER_AUDITORIA,
   },
   {
+    rotulo: 'A loja',
+    descricao: 'Nome, ramo e o que sai no recibo',
+    icone: 'storefront-outline',
+    rota: '/mais/loja',
+    pode: PODE.CONFIGURAR_LOJA,
+  },
+  {
     rotulo: 'Trocar minha senha',
     descricao: 'Segurança da sua conta',
     icone: 'lock-outline',

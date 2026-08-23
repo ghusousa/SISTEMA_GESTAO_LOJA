@@ -431,3 +431,24 @@ export interface Auditoria {
   ip: string | null;
   quando: string;
 }
+
+/** Identidade da loja: o nome no recibo e as palavras que o ramo dela traz. */
+export interface ConfiguracaoLoja {
+  nome: string;
+  segmento: string;
+  documento: string | null;
+  telefone: string | null;
+  endereco: string | null;
+  vocabulario: {
+    icone: string;
+    exemplo_produto: string;
+    item: string;
+    itens: string;
+    artigo: string;
+    eixo1: string;
+    eixo1_exemplos: string;
+    eixo1_rapidos: string[];
+    eixo2: string;
+    eixo2_exemplos: string;
+  };
+}

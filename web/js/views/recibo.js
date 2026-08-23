@@ -16,6 +16,7 @@
 import { api } from '../api.js';
 import { formatar, paraCentavos } from '../dinheiro.js';
 import { avisarErro, cru, dataHora, grade, html, numero, plural } from '../ui.js';
+import { loja } from '../loja.js';
 
 const FORMAS = {
   DINHEIRO: 'Dinheiro',
@@ -60,7 +61,10 @@ export async function render(raiz, params) {
 
       <div class="recibo" data-recibo>
         <div class="recibo__cabecalho">
-          <strong>Gestão da Loja</strong>
+          <strong>${loja().nome}</strong>
+          ${loja().documento ? cru(html`<span>${loja().documento}</span>`) : ''}
+          ${loja().endereco ? cru(html`<span>${loja().endereco}</span>`) : ''}
+          ${loja().telefone ? cru(html`<span>${loja().telefone}</span>`) : ''}
           <span>${dataHora(venda.vendida_em)}</span>
           <span>Venda #${venda.id} · ${venda.vendedor}</span>
           ${venda.cliente ? cru(html`<span>Cliente: ${venda.cliente}</span>`) : ''}

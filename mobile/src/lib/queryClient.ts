@@ -43,6 +43,7 @@ export const chaves = {
   estoqueBaixo: ['estoque-baixo'] as const,
   usuarios: ['usuarios'] as const,
   auditoria: ['auditoria'] as const,
+  configuracao: ['configuracao'] as const,
   clientes: ['clientes'] as const,
   cliente: (id: number) => ['clientes', id] as const,
   extratoCliente: (id: number) => ['clientes', id, 'extrato'] as const,

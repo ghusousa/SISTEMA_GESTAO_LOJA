@@ -3,15 +3,16 @@
 import { entrar } from '../api.js';
 import { ir } from '../router.js';
 import { html, cru } from '../ui.js';
+import { loja } from '../loja.js';
 
 export function render(raiz) {
   raiz.innerHTML = html`
     <div class="entrada">
       <div class="entrada__caixa">
         <div class="entrada__marca">
-          <span class="entrada__logo" aria-hidden="true">👕</span>
+          <span class="entrada__logo" aria-hidden="true">${loja().vocabulario?.icone ?? '🏪'}</span>
           <span>
-            <h1>Gestão da Loja</h1>
+            <h1 data-nome-loja>${loja().nome}</h1>
             <span class="texto-suave">Estoque, vendas e financeiro</span>
           </span>
         </div>

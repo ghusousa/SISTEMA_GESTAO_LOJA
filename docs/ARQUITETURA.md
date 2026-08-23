@@ -252,6 +252,18 @@ apagada; o nome/papel congelados preservam o histórico. `login_attempts` alimen
 força bruta (ADR-24): a contagem é por janela de 15 min, e uma limpeza periódica descarta o
 que saiu da janela.
 
+### 2.9 Identidade da loja
+
+```sql
+store_config(id, nome, segmento, documento, telefone, endereco, created_at, updated_at)
+  ck_store_config_singleton CHECK (id = 1)   -- uma linha só, garantida pelo banco
+```
+
+`segmento` é texto validado na borda (`core/segmentos.py`), nunca um enum do banco: ramo novo é
+uma linha numa tabela Python, não uma migration. Ramo desconhecido cai no vocabulário neutro em
+vez de estourar — uma linha estranha (restauração antiga, edição na mão) não pode derrubar a tela
+de login.
+
 ---
 
 ## 3. Decisões (ADRs)
@@ -541,6 +553,22 @@ da loja), e toda resposta sai com `X-Content-Type-Options: nosniff`, `X-Frame-Op
 de graça o que o atacante teria de descobrir sozinho. A checagem é uma propriedade só
 (`config.py`), para "estamos em produção?" ter uma resposta e não várias.
 
+**ADR-26 — Nome e ramo da loja no banco, e o ramo troca palavras, não dados.**
+O sistema nasceu para uma loja de roupas e o vocabulário foi junto ("peça", "tamanho", "cor").
+Para servir a uma autopeças, a saída **não** foi generalizar o modelo: `product_variants` já tem
+dois eixos de variação (`size`, `color`) que são genéricos — "a primeira coisa que varia" e "a
+segunda". O que muda por ramo é o NOME que a tela dá a eles, e isso é uma tabela
+(`app/core/segmentos.py`), não uma migration. Trocar o ramo da loja amanhã não move um dado de
+lugar, e é por isso que a tela pode oferecer a troca sem medo — está escrito nela.
+A identidade mora em `store_config`, uma linha só garantida por `CHECK (id = 1)`: no `.env` ela
+exigiria acesso ao servidor para corrigir um acento, não entraria no `pg_dump` e cada ponta
+precisaria de uma cópia. `GET /configuracao` é **aberto, sem login** — a tela de entrada mostra o
+nome antes de existir sessão, e o que sai por ali já está na fachada (nome, ramo, contato do
+recibo); nenhum número, nenhum cliente. `PATCH` é `CONFIGURAR_LOJA`, só do dono: o nome vai
+impresso no papel que o cliente leva. A migration semeia a linha para a loja que já existia — sem
+ela, um `GET` aberto teria de ESCREVER no banco para a tela se desenhar. Espelhos obrigatórios:
+`web/js/loja.js` e `mobile/src/lib/segmento.ts`.
+
 ## 4. Contratos de API
 
 Prefixo `/api/v1`. Auth: `Authorization: Bearer <access_token>`.
@@ -654,6 +682,17 @@ recente primeiro. Cada linha: `{usuario_id, usuario, papel, acao, descricao, met
 entidade, entidade_id, ip, status_http, quando}` — `usuario`/`papel` são os que ficaram
 congelados (ADR-23). `inicio`/`fim` recortam pelo dia no fuso da loja. Nem o gerente entra:
 `403 SEM_PERMISSAO`.
+
+### 4.11 `configuracao`
+| método | rota | papel | notas |
+|---|---|---|---|
+| GET | `/configuracao` | **aberto** | nome, ramo, contato do recibo e o `vocabulario` já resolvido |
+| GET | `/configuracao/segmentos` | **aberto** | os ramos que o sistema conhece, para a tela montar o seletor |
+| PATCH | `/configuracao` | CONFIGURAR_LOJA | só o dono; campos opcionais (mudar o telefone não reenvia o nome) |
+
+`vocabulario` traz `item`/`itens`/`artigo`, `eixo1`/`eixo2` (os rótulos das duas variações),
+`eixo1_rapidos` (atalhos do cadastro em grade, vazio quando o ramo não tem valores previsíveis),
+`icone` e `exemplo_produto`. Vem pronto do servidor para web e app não divergirem.
 
 ---
 

@@ -5,6 +5,7 @@
 
 import { api } from './client';
 import type {
+  ConfiguracaoLoja,
   Categoria,
   CategoriaDespesa,
   Despesa,
@@ -86,6 +87,29 @@ export const sistema = {
   /** Que versão está instalada no servidor, e se existe coisa nova esperando. */
   async versao() {
     const { data } = await api.get<Versao>('/versao');
+    return data;
+  },
+  /**
+   * Quem é esta loja. Lida SEM sessão de propósito: a tela de entrada mostra o nome
+   * antes de alguém digitar senha, e é assim que dá para conferir que o aparelho está
+   * falando com o servidor da loja certa.
+   */
+  async configuracao() {
+    const { data } = await api.get<ConfiguracaoLoja>('/configuracao');
+    return data;
+  },
+  /** Os ramos que o sistema conhece, para a tela montar o seletor sem lista própria. */
+  async segmentos() {
+    const { data } = await api.get<
+      { valor: string; rotulo: string; eixo1: string; eixo2: string }[]
+    >('/configuracao/segmentos');
+    return data;
+  },
+  /** Só o dono (`CONFIGURAR_LOJA`). */
+  async salvarConfiguracao(dados: Partial<
+    Pick<ConfiguracaoLoja, 'nome' | 'segmento' | 'documento' | 'telefone' | 'endereco'>
+  >) {
+    const { data } = await api.patch<ConfiguracaoLoja>('/configuracao', dados);
     return data;
   },
 };

@@ -28,6 +28,7 @@ import { Botao, Campo } from '@/components/ui';
 import { ALVO_TOQUE, cores, espaco, fonte, raio } from '@/lib/tema';
 import { useServidorStore } from '@/stores/servidorStore';
 import { useAuthStore } from '@/stores/authStore';
+import { useLoja } from '@/hooks/useLoja';
 
 const esquema = z.object({
   email: z.email('Digite um e-mail válido.'),
@@ -37,6 +38,7 @@ const esquema = z.object({
 type Formulario = z.infer<typeof esquema>;
 
 export default function Login() {
+  const loja = useLoja();
   const router = useRouter();
   const entrar = useAuthStore((e) => e.entrar);
   const [erroServidor, setErroServidor] = useState<string | null>(null);
@@ -90,7 +92,7 @@ export default function Login() {
         keyboardShouldPersistTaps="handled"
       >
         <View style={s.cabecalho}>
-          <Text style={s.titulo}>Gestão da Loja</Text>
+          <Text style={s.titulo}>{loja.nome}</Text>
           <Text style={s.subtitulo}>Estoque, vendas e resultado na palma da mão</Text>
         </View>
 

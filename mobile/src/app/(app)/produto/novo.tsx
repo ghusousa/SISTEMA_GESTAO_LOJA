@@ -35,8 +35,10 @@ import { NovaCategoria } from '@/components/NovaCategoria';
 import { SeletorDeFoto } from '@/components/SeletorDeFoto';
 import type { FotoEscolhida } from '@/lib/foto';
 import { ALVO_TOQUE, cores, espaco, fonte, raio } from '@/lib/tema';
+import { useVocabulario } from '@/hooks/useLoja';
 
-const TAMANHOS_RAPIDOS = ['PP', 'P', 'M', 'G', 'GG', 'XG', 'U'];
+// Os atalhos da grade vêm do ramo da loja: 'PP, P, M, G' só faz sentido em roupa. Numa
+// autopeças a lista vem vazia de propósito — 'Aplicação' se digita, não se escolhe.
 
 interface LinhaGrade {
   chave: string;
@@ -47,6 +49,11 @@ interface LinhaGrade {
 }
 
 export default function NovoProduto() {
+  const vocab = useVocabulario();
+  const TAMANHOS_RAPIDOS = vocab.eixo1_rapidos;
+  // Ramo sem atalhos (autopeças, construção) precisa digitar: sem isto, "Montar grade"
+  // recusaria para sempre e o cadastro não teria saída nenhuma.
+  const [eixo1Digitado, setEixo1Digitado] = useState('');
   const router = useRouter();
   const params = useLocalSearchParams<{ codigo?: string; retorno?: string }>();
   const veioDoPdv = params.retorno === 'pdv';
@@ -84,13 +91,24 @@ export default function NovoProduto() {
   }
 
   function gerarGrade() {
-    if (tamanhosEscolhidos.length === 0) {
-      setErro('Escolha pelo menos um tamanho.');
+    // Vale o que foi digitado (separado por vírgula) OU o que foi escolhido nos atalhos.
+    const digitados = eixo1Digitado
+      .split(',')
+      .map((t) => t.trim())
+      .filter(Boolean);
+    const escolhidos = digitados.length ? digitados : tamanhosEscolhidos;
+
+    if (escolhidos.length === 0) {
+      setErro(
+        TAMANHOS_RAPIDOS.length
+          ? `Escolha pelo menos um valor de ${vocab.eixo1.toLowerCase()}.`
+          : `Digite ao menos um valor de ${vocab.eixo1.toLowerCase()}.`,
+      );
       return;
     }
     setErro(null);
     setGrade(
-      tamanhosEscolhidos.map((tamanho) => {
+      escolhidos.map((tamanho) => {
         const existente = grade.find((l) => l.tamanho === tamanho && l.cor === cor);
         return (
           existente ?? {
@@ -99,7 +117,7 @@ export default function NovoProduto() {
             cor,
             // Quem chegou aqui pelo PDV já tem um código na mão: ele vai na primeira peça.
             codigo:
-              params.codigo && tamanho === tamanhosEscolhidos[0] ? params.codigo : null,
+              params.codigo && tamanho === escolhidos[0] ? params.codigo : null,
             estoque: '',
           }
         );
@@ -206,7 +224,7 @@ export default function NovoProduto() {
           rotulo="Nome da peça"
           value={nome}
           onChangeText={setNome}
-          placeholder="Camiseta Básica Gola V"
+          placeholder={vocab.exemplo_produto}
           autoCapitalize="words"
         />
 
@@ -279,7 +297,12 @@ export default function NovoProduto() {
 
         <View style={s.duasColunas}>
           <View style={s.coluna}>
-            <Campo rotulo="Cor" value={cor} onChangeText={setCor} placeholder="Preta" />
+            <Campo
+              rotulo={vocab.eixo2}
+              value={cor}
+              onChangeText={setCor}
+              placeholder={vocab.eixo2_exemplos.split(", ")[0]}
+            />
           </View>
           <View style={s.coluna}>
             <Campo
@@ -292,7 +315,16 @@ export default function NovoProduto() {
           </View>
         </View>
 
-        <Text style={s.rotulo}>Tamanhos</Text>
+        <Text style={s.rotulo}>{vocab.eixo1}</Text>
+        {TAMANHOS_RAPIDOS.length === 0 ? (
+          <Campo
+            rotulo=""
+            value={eixo1Digitado}
+            onChangeText={setEixo1Digitado}
+            placeholder={vocab.eixo1_exemplos}
+            ajuda={`Separe por vírgula para gerar várias de uma vez. Use "Único" se não varia.`}
+          />
+        ) : null}
         <View style={s.chips}>
           {TAMANHOS_RAPIDOS.map((t) => (
             <Pressable

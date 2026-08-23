@@ -23,6 +23,7 @@ export const PODE = {
   FECHAR_CAIXA: 'FECHAR_CAIXA',
   GERIR_USUARIOS: 'GERIR_USUARIOS',
   VER_AUDITORIA: 'VER_AUDITORIA',
+  CONFIGURAR_LOJA: 'CONFIGURAR_LOJA',
 };
 
 const VENDEDORA = [];
@@ -84,6 +85,7 @@ const EM_PORTUGUES = {
   [PODE.FECHAR_CAIXA]: 'conferir e fechar o caixa do dia',
   [PODE.GERIR_USUARIOS]: 'administrar os logins da equipe',
   [PODE.VER_AUDITORIA]: 'ver o diário de auditoria',
+  [PODE.CONFIGURAR_LOJA]: 'mudar o nome e o ramo da loja',
 };
 
 /** Sempre aberto a quem entrou: é disto que o balcão vive. */

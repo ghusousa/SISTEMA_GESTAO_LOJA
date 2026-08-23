@@ -8,6 +8,7 @@
 
 import { ouvir } from '../tempo-real.js';
 import { api } from '../api.js';
+import { vocab } from '../loja.js';
 import { svgEan13 } from '../codigo-barras.js';
 import { TIPOS_ACEITOS, enviarFoto } from '../foto.js';
 import { formatar, paraCentavos, paraDecimalString } from '../dinheiro.js';
@@ -205,11 +206,11 @@ export async function render(raiz, { id }) {
       render: () => html`
         <div class="linha-campos">
           <label class="campo">
-            <span>Tamanho</span>
+            <span>${vocab().eixo1}</span>
             <input data-tamanho value="${v.tamanho}" maxlength="20" />
           </label>
           <label class="campo">
-            <span>Cor</span>
+            <span>${vocab().eixo2}</span>
             <input data-cor value="${v.cor}" maxlength="40" />
           </label>
         </div>
@@ -310,11 +311,11 @@ export async function render(raiz, { id }) {
       render: () => html`
         <div class="linha-campos">
           <label class="campo">
-            <span>Tamanho</span>
-            <input data-tamanho placeholder="P, M, G, 38…" maxlength="20" />
+            <span>${vocab().eixo1}</span>
+            <input data-tamanho placeholder="${vocab().eixo1_exemplos}" maxlength="20" />
           </label>
           <label class="campo">
-            <span>Cor</span>
+            <span>${vocab().eixo2}</span>
             <input data-cor value="Única" maxlength="40" />
           </label>
         </div>

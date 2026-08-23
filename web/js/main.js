@@ -11,6 +11,7 @@ import { limparTudoDaSessao, sessao } from './store.js';
 import { PODE, pode, titulo } from './permissoes.js';
 import { conectarTempoReal, desconectarTempoReal } from './tempo-real.js';
 import { html, confirmar, cru, aviso } from './ui.js';
+import { carregarLoja, loja, aoMudarLoja } from './loja.js';
 
 /* ------------------------------------------------------------------------- telas */
 
@@ -46,6 +47,7 @@ rota('/relatorios', () => import('./views/relatorios.js'), { pode: PODE.VER_DINH
 rota('/clientes', () => import('./views/clientes.js'), { pode: PODE.GERIR_CREDIARIO });
 rota('/usuarios', () => import('./views/usuarios.js'), { pode: PODE.GERIR_USUARIOS });
 rota('/auditoria', () => import('./views/auditoria.js'), { pode: PODE.VER_AUDITORIA });
+rota('/configuracao', () => import('./views/configuracao.js'), { pode: PODE.CONFIGURAR_LOJA });
 rota('/conta', () => import('./views/conta.js'));
 
 /* ------------------------------------------------------------------------ menu */
@@ -89,6 +91,7 @@ const MENU = [
     itens: [
       { href: '/usuarios', icone: '👥', texto: 'Usuários', pode: PODE.GERIR_USUARIOS },
       { href: '/auditoria', icone: '🔎', texto: 'Auditoria', pode: PODE.VER_AUDITORIA },
+      { href: '/configuracao', icone: '🏪', texto: 'A loja', pode: PODE.CONFIGURAR_LOJA },
       { href: '/conta', icone: '⚙️', texto: 'Minha conta' },
     ],
   },
@@ -128,9 +131,9 @@ function molduraHtml(usuario) {
     <div class="aplicacao">
       <nav class="lateral" aria-label="Navegação principal">
         <div class="lateral__marca">
-          <span class="lateral__logo" aria-hidden="true">👕</span>
+          <span class="lateral__logo" aria-hidden="true">${loja().vocabulario?.icone ?? '🏪'}</span>
           <span>
-            <strong>Gestão da Loja</strong>
+            <strong data-nome-loja>${loja().nome}</strong>
             <span>Estoque · PDV · Caixa</span>
           </span>
         </div>
@@ -262,6 +265,15 @@ definirTratadorDeSessaoPerdida(() => {
 sessao.inscrever(({ usuario }) => {
   if (usuario) conectarTempoReal();
   else desconectarTempoReal();
+});
+
+// O nome da loja é lido sem sessão: a tela de entrada já abre com ele. Não esperamos a
+// resposta para iniciar o roteador — a loja sem nome é um detalhe, a loja sem PDV não é.
+carregarLoja();
+aoMudarLoja((config) => {
+  document.querySelectorAll('[data-nome-loja]').forEach((el) => {
+    el.textContent = config.nome;
+  });
 });
 
 iniciarRoteador(areaDeConteudo);

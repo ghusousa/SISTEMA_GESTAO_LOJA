@@ -85,6 +85,13 @@ npm run bundle       # expo export: pega erro de import que o tsc não vê
   (`core/eventos.py`), não os services — mudou tabela, sai aviso. O que trafega é o
   ASSUNTO ("estoque"), nunca o dado: a tela refaz a consulta pela rota REST, e o filtro
   por papel continua inteiro. Token vai no primeiro quadro, nunca na URL.
+- **Identidade da loja (ADR-26)**: nome e ramo moram numa linha de `store_config` (`CHECK id = 1`),
+  não no `.env` — o dono corrige na tela, entra no backup, e as duas pontas leem da mesma rota.
+  `GET /configuracao` é **aberto, sem login** (a tela de entrada precisa do nome antes da sessão);
+  `PATCH` exige `CONFIGURAR_LOJA`, que só o dono tem. O ramo troca **só as palavras**:
+  `product_variants.size/color` são dois eixos genéricos, e `app/core/segmentos.py` diz como
+  chamá-los (Tamanho/Cor em roupas, Aplicação/Posição em autopeças). Trocar de ramo não move
+  um dado. `web/js/loja.js` e `mobile/src/lib/segmento.ts` são espelhos — mudou um, mude os três.
 - Versão: `GET /versao` diz o commit instalado E se é o mais novo. Quem sabe disso é o
   `atualizar.sh` (tem a credencial do GitHub), que grava `docker/estado/versao.json`; a API
   só lê o arquivo montado. **A API nunca fala com o GitHub** — token do código-fonte não

@@ -7,6 +7,7 @@
  */
 
 import { api } from '../api.js';
+import { vocab, maiuscula } from '../loja.js';
 import { PODE, pode } from '../permissoes.js';
 import { TIPOS_ACEITOS, enviarFoto } from '../foto.js';
 import { paraDecimalString } from '../dinheiro.js';
@@ -14,7 +15,9 @@ import { ir } from '../router.js';
 import { conferencia } from '../store.js';
 import { aviso, avisarErro, cru, html, ligarCampoDinheiro, modal } from '../ui.js';
 
-const TAMANHOS_RAPIDOS = ['PP', 'P', 'M', 'G', 'GG', 'XG'];
+// Os atalhos da grade vêm do ramo da loja (`vocab().eixo1_rapidos`): 'PP, P, M, G' só faz
+// sentido em roupa. Ramo sem valores previsíveis não mostra atalho nenhum — e aí o botão
+// "Outro", que abre uma linha em branco, é o caminho.
 
 export async function render(raiz, _params, consulta) {
   // A vendedora cadastra a peça; o custo é preenchido depois pela dona, na edição — é o
@@ -31,7 +34,7 @@ export async function render(raiz, _params, consulta) {
         <div>
           <a class="botao botao--fantasma botao--pequeno" href="#/produtos">← Produtos</a>
           <h1>Novo produto</h1>
-          <p class="texto-suave">Preencha os dados, escolha os tamanhos e confira os códigos.</p>
+          <p class="texto-suave">Preencha os dados, monte a grade e confira os códigos.</p>
         </div>
       </div>
 
@@ -40,7 +43,7 @@ export async function render(raiz, _params, consulta) {
           <div class="linha-campos">
             <label class="campo">
               <span>Nome do produto</span>
-              <input data-nome placeholder="Ex.: Camiseta Básica Algodão" maxlength="120" />
+              <input data-nome placeholder="Ex.: ${vocab().exemplo_produto}" maxlength="120" />
             </label>
             <label class="campo">
               <span>Categoria</span>
@@ -57,7 +60,7 @@ export async function render(raiz, _params, consulta) {
           </div>
           <label class="campo">
             <span>Descrição <span class="campo__dica">opcional</span></span>
-            <input data-descricao maxlength="2000" placeholder="Tecido, modelagem, observações" />
+            <input data-descricao maxlength="2000" placeholder="Detalhes, marca, observações" />
           </label>
 
           <div class="campo">
@@ -113,9 +116,9 @@ export async function render(raiz, _params, consulta) {
 
       <div class="cartao">
         <div class="cartao__topo">
-          <h2>Peças da grade</h2>
+          <h2>${maiuscula(vocab().itens)} da grade</h2>
           <div class="pagina__acoes">
-            ${TAMANHOS_RAPIDOS.map(
+            ${vocab().eixo1_rapidos.map(
               (t) => html`<button class="botao botao--neutro botao--pequeno" data-tamanho="${t}" type="button">${t}</button>`,
             )}
             <button class="botao botao--neutro botao--pequeno" data-linha-livre type="button">Outro</button>
@@ -125,8 +128,8 @@ export async function render(raiz, _params, consulta) {
           <table>
             <thead>
               <tr>
-                <th>Tamanho</th>
-                <th>Cor</th>
+                <th>${vocab().eixo1}</th>
+                <th>${vocab().eixo2}</th>
                 <th>Código de barras</th>
                 <th class="direita">Venda</th>
                 ${veDinheiro ? cru('<th class="direita">Custo</th>') : ''}
@@ -140,7 +143,10 @@ export async function render(raiz, _params, consulta) {
         </div>
         <div class="cartao__corpo" data-sem-linhas>
           <p class="texto-suave centro">
-            Clique nos tamanhos acima para montar a grade. Cada tamanho vira uma peça com código próprio.
+            ${vocab().eixo1_rapidos.length
+              ? `Clique nos atalhos de ${vocab().eixo1.toLowerCase()} acima para montar a grade.`
+              : `Use o botão "Outro" acima para abrir uma linha e digitar ${vocab().artigo} ${vocab().eixo1.toLowerCase()}.`}
+            Cada linha vira ${vocab().artigo === 'a' ? 'uma' : 'um'} ${vocab().item} com código próprio.
           </p>
         </div>
       </div>

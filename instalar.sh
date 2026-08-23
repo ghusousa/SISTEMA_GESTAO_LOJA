@@ -7,7 +7,8 @@
 #
 #   ./instalar.sh
 #   ./instalar.sh --dominio loja.exemplo.com.br --email dona@loja.com \
-#                 --nome "Dona Maria" --senha "..." --senha-banco "..." --sim
+#                 --nome "Dona Maria" --senha "..." --senha-banco "..." \
+#                 --loja "Boutique da Ana" --segmento ROUPAS --sim
 #
 # Se o Docker não estiver instalado, o instalador instala. Use --sem-docker para impedir.
 #
@@ -39,6 +40,8 @@ while [ $# -gt 0 ]; do
         --senha)        SENHA="${2:-}"; shift 2 ;;
         --senha-banco)  SENHA_BANCO="${2:-}"; shift 2 ;;
         --fuso)         FUSO="${2:-}"; shift 2 ;;
+        --loja)         LOJA="${2:-}"; shift 2 ;;
+        --segmento)     SEGMENTO="${2:-}"; shift 2 ;;
         --porta-http)   PORTA_HTTP="${2:-}"; shift 2 ;;
         --porta-https)  PORTA_HTTPS="${2:-}"; shift 2 ;;
         --sim|-y)       INTERATIVO=0; shift ;;
@@ -74,6 +77,56 @@ perguntar() {  # perguntar <texto> <padrão> <variável>
         read -r -p "  $texto: " resposta || true
     fi
     printf -v "$alvo" '%s' "${resposta:-$padrao}"
+}
+
+# O ramo da loja decide as PALAVRAS das telas, não as regras: em roupas o que varia é
+# Tamanho e Cor; numa autopeças, Aplicação e Posição. A lista abaixo é um espelho de
+# `api/app/core/segmentos.py` — mudou lá, mude aqui (o instalador não pode consultar a
+# API, que ainda nem subiu quando esta pergunta acontece).
+SEGMENTOS_VALOR=(ROUPAS CALCADOS AUTOPECAS INFORMATICA COSMETICOS ALIMENTOS CONSTRUCAO OUTRO)
+SEGMENTOS_ROTULO=(
+    "Roupas e confecção          (Tamanho / Cor)"
+    "Calçados                    (Numeração / Cor)"
+    "Peças de carro e moto       (Aplicação / Posição)"
+    "Informática e eletrônicos   (Capacidade / Cor)"
+    "Cosméticos e perfumaria     (Volume / Tom)"
+    "Alimentos e mercearia       (Peso / Sabor)"
+    "Material de construção      (Medida / Acabamento)"
+    "Outro ramo                  (Variação / Tipo)"
+)
+
+segmento_valido() {  # segmento_valido <valor>
+    local v
+    for v in "${SEGMENTOS_VALOR[@]}"; do [ "$v" = "$1" ] && return 0; done
+    return 1
+}
+
+perguntar_segmento() {  # perguntar_segmento <variável>
+    local alvo="$1" i escolha=""
+    # Veio por parâmetro: aceita em qualquer caixa, mas só se for um ramo que existe.
+    if [ -n "${!alvo:-}" ]; then
+        printf -v "$alvo" '%s' "$(printf '%s' "${!alvo}" | tr '[:lower:]' '[:upper:]')"
+        segmento_valido "${!alvo}" && return
+        morrer "segmento desconhecido: ${!alvo} (use um de: ${SEGMENTOS_VALOR[*]})"
+    fi
+    if [ "$INTERATIVO" -eq 0 ]; then printf -v "$alvo" '%s' "OUTRO"; return; fi
+    for i in "${!SEGMENTOS_VALOR[@]}"; do
+        printf '    %d) %s\n' "$((i + 1))" "${SEGMENTOS_ROTULO[$i]}"
+    done
+    while :; do
+        read -r -p "  Número do ramo [1]: " escolha || true
+        escolha="${escolha:-1}"
+        case "$escolha" in
+            ''|*[!0-9]*) alerta "digite o número da linha." ;;
+            *)
+                if [ "$escolha" -ge 1 ] && [ "$escolha" -le "${#SEGMENTOS_VALOR[@]}" ]; then
+                    printf -v "$alvo" '%s' "${SEGMENTOS_VALOR[$((escolha - 1))]}"
+                    return
+                fi
+                alerta "escolha entre 1 e ${#SEGMENTOS_VALOR[@]}."
+                ;;
+        esac
+    done
 }
 
 perguntar_senha() {  # perguntar_senha <texto> <variável>
@@ -348,14 +401,25 @@ if [ -f .env ] && [ "$FORCAR" -eq 0 ]; then
 else
     REAPROVEITADO=0
 
-    titulo "1. Endereço do sistema"
+    titulo "1. A loja"
+    echo "  O nome aparece na tela de entrada, no topo do sistema e no recibo do cliente."
+    while :; do
+        perguntar "Nome da loja" "Minha Loja" LOJA
+        [ -n "$LOJA" ] && break
+    done
+    echo
+    echo "  E o que a loja vende? Isso troca as palavras das telas — não muda regra nenhuma,"
+    echo "  e você pode mudar depois em Sistema > Configuração."
+    perguntar_segmento SEGMENTO
+
+    titulo "2. Endereço do sistema"
     echo "  Se a loja tem um domínio apontado para este servidor, informe-o: o certificado"
     echo "  HTTPS é pedido e renovado sozinho. Deixe 'localhost' para usar só nesta máquina."
     perguntar "Domínio (DNS)" "localhost" DOMINIO
 
     definir_endereco
 
-    titulo "2. Dono da loja"
+    titulo "3. Dono da loja"
     echo "  É a conta de administrador: vê custo, lucro, despesas e relatórios."
     while :; do
         perguntar "Nome" "Dona da Loja" NOME
@@ -368,7 +432,7 @@ else
     done
     perguntar_senha "Senha do dono (mínimo 8 caracteres)" SENHA
 
-    titulo "3. Banco de dados"
+    titulo "4. Banco de dados"
     echo "  Esta senha fica só entre os containers; ninguém digita no dia a dia."
     if [ "$INTERATIVO" -eq 1 ] && [ -z "$SENHA_BANCO" ]; then
         read -r -p "  Gerar uma senha forte automaticamente? [S/n]: " gerar || true
@@ -386,7 +450,7 @@ else
         esac
     fi
 
-    titulo "4. Fuso horário"
+    titulo "5. Fuso horário"
     echo "  Define o que é 'hoje' no caixa e nos relatórios."
     perguntar "Fuso" "America/Sao_Paulo" FUSO
 fi
@@ -543,6 +607,22 @@ if command -v curl >/dev/null 2>&1; then
     else
         alerta "a API subiu, mas $URL_FINAL/app/ não respondeu."
         alerta "veja o proxy com: docker compose logs proxy"
+    fi
+fi
+
+# ------------------------------------------------------------------ identidade da loja
+
+# Depois da API no ar (é ela que fala com o banco) e ANTES da conta do dono, para que a
+# primeira tela que ele vir já esteja com o nome certo.
+if [ -n "$LOJA" ]; then
+    titulo "Gravando o nome e o ramo da loja"
+    if dk compose exec -T api python -m app.cli configurar-loja \
+            --nome "$LOJA" --segmento "${SEGMENTO:-OUTRO}"; then
+        certo "identidade gravada"
+    else
+        alerta "não foi possível gravar (o sistema segue no ar, com o nome padrão)."
+        alerta "dá para ajustar depois em Sistema > Configuração, ou por aqui:"
+        echo "    ${PREFIXO_DOCKER:+sudo }docker compose exec api python -m app.cli configurar-loja --nome ... --segmento ..."
     fi
 fi
 

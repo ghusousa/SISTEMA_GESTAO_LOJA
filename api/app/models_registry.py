@@ -5,6 +5,7 @@ Um modelo que não estiver aqui simplesmente não entra nas migrations.
 
 from app.core.db import Base
 from app.modules.auditoria.models import AuditLog
+from app.modules.configuracao.models import StoreConfig
 from app.modules.auth.models import LoginAttempt, RefreshToken
 from app.modules.caixa.models import CashClosing, CashClosingLine
 from app.modules.catalogo.models import Category, Product, ProductVariant
@@ -24,6 +25,7 @@ from app.modules.vendas.models import (
 
 __all__ = [
     "AuditLog",
+    "StoreConfig",
     "Base",
     "CashClosing",
     "CashClosingLine",
