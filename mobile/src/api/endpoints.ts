@@ -26,6 +26,7 @@ import type {
   TipoMovimento,
   Tokens,
   Usuario,
+  Auditoria,
   Cliente,
   Devolucao,
   ExtratoCliente,
@@ -286,6 +287,20 @@ export const vendas = {
   },
   async consultarVale(codigo: string) {
     const { data } = await api.get<Vale>(`/vendas/vales/${encodeURIComponent(codigo)}`);
+    return data;
+  },
+};
+
+export const auditoria = {
+  async listar(
+    params: Paginado & {
+      usuario_id?: number;
+      acao?: string;
+      inicio?: string;
+      fim?: string;
+    } = {},
+  ) {
+    const { data } = await api.get<Pagina<Auditoria>>('/auditoria', { params });
     return data;
   },
 };

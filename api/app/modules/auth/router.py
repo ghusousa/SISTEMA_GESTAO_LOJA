@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Cookie, Response, status
+from fastapi import APIRouter, Cookie, Request, Response, status
 from typing import Annotated
 
 from app.core.config import settings
@@ -33,9 +33,20 @@ def _guardar_refresh(resposta: Response, token: str) -> None:
     )
 
 
+def _ip_do_cliente(request: Request) -> str | None:
+    """O IP de quem chamou. Atrás do proxy (Caddy/Nginx) o real vem no X-Forwarded-For."""
+    encaminhado = request.headers.get("x-forwarded-for")
+    if encaminhado:
+        # O primeiro da lista é o cliente; os demais são os proxies pelo caminho.
+        return encaminhado.split(",")[0].strip()[:64]
+    return request.client.host if request.client else None
+
+
 @router.post("/login", response_model=TokenOut, summary="Entrar")
-async def login(session: SessionDep, resposta: Response, dados: LoginIn) -> TokenOut:
-    tokens = await AuthService(session).login(dados.email, dados.senha)
+async def login(
+    session: SessionDep, request: Request, resposta: Response, dados: LoginIn
+) -> TokenOut:
+    tokens = await AuthService(session).login(dados.email, dados.senha, _ip_do_cliente(request))
     _guardar_refresh(resposta, tokens.refresh_token)
     return tokens
 

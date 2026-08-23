@@ -417,3 +417,17 @@ export interface ExtratoCliente {
   total_devolvido: string;
   deve: string;
 }
+
+export interface Auditoria {
+  id: number;
+  usuario_id: number | null;
+  /** Congelado no momento do ato — não muda se a pessoa for renomeada depois. */
+  usuario: string;
+  papel: Papel | null;
+  acao: string;
+  descricao: string;
+  entidade: string | null;
+  entidade_id: number | null;
+  ip: string | null;
+  quando: string;
+}

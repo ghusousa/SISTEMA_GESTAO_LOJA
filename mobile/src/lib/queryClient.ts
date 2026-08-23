@@ -42,6 +42,7 @@ export const chaves = {
     ['relatorio-despesas', inicio, fim] as const,
   estoqueBaixo: ['estoque-baixo'] as const,
   usuarios: ['usuarios'] as const,
+  auditoria: ['auditoria'] as const,
   clientes: ['clientes'] as const,
   cliente: (id: number) => ['clientes', id] as const,
   extratoCliente: (id: number) => ['clientes', id, 'extrato'] as const,

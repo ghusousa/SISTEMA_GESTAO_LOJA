@@ -47,6 +47,8 @@ TABELAS = [
     "categories",
     "expenses",
     "expense_categories",
+    "audit_log",
+    "login_attempts",
     "refresh_tokens",
     "users",
 ]

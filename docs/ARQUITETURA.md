@@ -229,6 +229,29 @@ cash_closing_lines(id, closing_id FK→cash_closings CASCADE, method CHECK(...),
 Refechar o mesmo dia é um UPDATE do registro (com novo snapshot do esperado). O fechamento é
 conferência: **não bloqueia** vendas nem cancelamentos.
 
+### 2.8 Auditoria e segurança do login
+
+```sql
+audit_log(id BIGINT, user_id FK→users ON DELETE SET NULL NULL,
+          user_nome, user_papel,          -- congelados na linha (ADR-23)
+          acao, descricao,                 -- descricao = frase de gente
+          metodo, caminho, entidade, entidade_id,
+          ip, status_http, created_at)
+  ix_audit_log_created_at (created_at)
+  ix_audit_log_user_created (user_id, created_at)
+  ix_audit_log_acao (acao)
+
+login_attempts(id BIGINT, email, ip, sucesso BOOL, created_at)
+  ix_login_attempts_email_created (email, created_at)
+  ix_login_attempts_ip_created (ip, created_at)
+```
+
+`audit_log` é append-only e nunca é lido por vendedora — só por quem tem `VER_AUDITORIA`
+(ADR-23). `user_id` fica nulo em falha de login (não há usuário) e vira nulo se a conta for
+apagada; o nome/papel congelados preservam o histórico. `login_attempts` alimenta a trava de
+força bruta (ADR-24): a contagem é por janela de 15 min, e uma limpeza periódica descarta o
+que saiu da janela.
+
 ---
 
 ## 3. Decisões (ADRs)
@@ -481,6 +504,43 @@ sobrescrever — porque restaurar o arquivo errado é o jeito mais rápido de pe
 ainda estava certo. O `diagnostico.sh` conta a idade do último backup: backup velho é o
 tipo de coisa que só se descobre no dia em que ele é preciso.
 
+**ADR-23 — Auditoria na borda, com nome e papel congelados na linha.**
+Quem cuida da loja precisa saber o que cada pessoa fez com o login dela — não para
+desconfiar, para responder "quem cancelou essa venda?" sem adivinhar. A captura mora numa
+**middleware** (`modules/auditoria/middleware.py`), não espalhada pelos services: toda
+mutação que entra (`POST/PUT/PATCH/DELETE` sob `/api/v1`) e **termina bem** (status < 400)
+vira uma linha em `audit_log`. Um classificador (`classificar.py`) traduz método+rota numa
+frase de gente ("Cancelou uma venda", "Deu entrada de mercadoria"); rota que ninguém mapeou
+ainda entra como `OUTRO`, então o diário nunca tem buraco. A linha **congela** o nome e o
+papel de quem agiu (`user_nome`, `user_papel`): renomear ou rebaixar alguém amanhã não pode
+reescrever o que o histórico diz que aconteceu. Ler o diário é a capacidade `VER_AUDITORIA`,
+que só o dono tem (ADR-15) — nem o gerente entra. Por que na borda e não no service: um
+lugar só, impossível de esquecer ao criar rota nova, e o texto sai do próprio contrato REST.
+A gravação é embrulhada em `try/except` largo: auditoria **nunca** derruba a requisição que
+ela observa — registro que falha vira log, não erro para o cliente. A middleware decodifica o
+token ela mesma (o `contextvar` do usuário, setado lá adentro, não volta visível depois do
+`call_next` no Starlette).
+
+**ADR-24 — Trava de força bruta por e-mail e por IP, sem revelar quem existe.**
+Senha é a única porta, então a porta conta tentativa. Cada login (certo ou errado) grava uma
+linha em `login_attempts`; antes de conferir a senha, o service soma as falhas recentes numa
+janela deslizante de 15 min e trava em `429 MUITAS_TENTATIVAS` com `Retry-After` quando passa
+de **10 falhas para o mesmo e-mail** ou **30 para o mesmo IP**. Dois limites porque um cobre o
+ataque focado numa conta e o outro a varredura de muitas contas do mesmo lugar. A trava é a
+mesma quer o e-mail exista ou não — errar a senha de `admin@loja.com` e bater num e-mail
+inventado dão a mesma resposta e o mesmo tempo, então a tela de login não vira um oráculo de
+"esse cliente é cadastrado?". O IP vem do `X-Forwarded-For` (a API serve atrás do Caddy);
+falha de login também entra no diário de auditoria (ADR-23) como `LOGIN_FALHOU`, com
+`user_id` nulo. As mesmas contas de tentativa são a matéria-prima do pentest (`scripts/pentest.py`).
+
+**ADR-25 — Em produção, a API não conta de si o que ajuda quem ataca.**
+`settings.producao` é verdadeiro em qualquer ambiente que não seja `dev`/`test`/`local`. Nele,
+`/docs`, `/redoc` e `/openapi.json` somem (o mapa da API não precisa ficar pendurado na porta
+da loja), e toda resposta sai com `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` e
+`Referrer-Policy: strict-origin-when-cross-origin`. Não é segurança de verdade — é não entregar
+de graça o que o atacante teria de descobrir sozinho. A checagem é uma propriedade só
+(`config.py`), para "estamos em produção?" ter uma resposta e não várias.
+
 ## 4. Contratos de API
 
 Prefixo `/api/v1`. Auth: `Authorization: Bearer <access_token>`.
@@ -498,6 +558,7 @@ Erros: `{"code": "...", "message": "...", "detail": {...}}`.
 | `OPERACAO_INVALIDA` | 409 | ex.: cancelar venda já cancelada |
 | `PAGAMENTO_DIVERGENTE` | 422 | soma dos pagamentos ≠ total |
 | `VALIDACAO` | 422 | payload inválido |
+| `MUITAS_TENTATIVAS` | 429 | logins errados demais na janela; `detail.retry_after` em segundos, header `Retry-After` |
 
 ### 4.1 `auth`
 | método | rota | papel | descrição |
@@ -586,6 +647,13 @@ Todos com `?inicio=&fim=` (≤ 366 dias), exceto `estoque-baixo` (sem período �
 - `/relatorios/mais-vendidos?limite=10` → ranking por quantidade (valor bruto, sem rateio de desconto)
 - `/relatorios/despesas-por-categoria`
 - `/relatorios/estoque-baixo` → variantes com `saldo <= min_stock`
+
+### 4.10 `auditoria` (VER_AUDITORIA: só o dono)
+`GET /auditoria?usuario_id=&acao=&inicio=YYYY-MM-DD&fim=YYYY-MM-DD&page=&size=` → paginado, mais
+recente primeiro. Cada linha: `{usuario_id, usuario, papel, acao, descricao, metodo, caminho,
+entidade, entidade_id, ip, status_http, quando}` — `usuario`/`papel` são os que ficaram
+congelados (ADR-23). `inicio`/`fim` recortam pelo dia no fuso da loja. Nem o gerente entra:
+`403 SEM_PERMISSAO`.
 
 ---
 

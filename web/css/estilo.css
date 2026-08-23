@@ -1659,3 +1659,14 @@ kbd {
     padding: 0;
   }
 }
+
+/* ---------------------------------------------------------------- auditoria */
+.tabela-auditoria .auditoria__descricao {
+  display: block;
+  margin-top: 3px;
+  color: var(--texto-suave);
+  font-size: 0.92rem;
+}
+.tabela-auditoria .etiqueta {
+  vertical-align: middle;
+}

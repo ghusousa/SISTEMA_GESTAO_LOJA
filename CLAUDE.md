@@ -62,11 +62,25 @@ npm run bundle       # expo export: pega erro de import que o tsc não vê
 - Papéis: dono (`ADMIN`) > gerente > supervisora > vendedora (`VENDEDOR`). O código **nunca**
   compara cargo: pergunta capacidade (`pode(user.role, Pode.VER_DINHEIRO)`), e a tabela única
   é `app/core/permissoes.py` (ADR-15). Rotas exigem o crachá (`ExigeDinheiro`, `ExigeCaixa`…).
+  `VER_AUDITORIA` é a única capacidade **só do dono** (nem o gerente): a auditoria audita o
+  gerente também. Como `DONO = frozenset(Pode)`, capacidade nova é dono-only por padrão.
   Custo/lucro/despesa saem por schemas de resposta distintos no servidor, não por esconder na
   tela. `web/js/permissoes.js` e `mobile/src/lib/permissoes.ts` são espelhos — mudou um, mude os três.
 - Saldo de estoque: só muda junto com uma linha em `stock_movements`, na mesma transação
   (`UPDATE stock_balances SET quantity = quantity + :delta ... RETURNING`). `CHECK quantity >= 0`
   é a rede de segurança. Escrita multi-variante sempre ordenada por `variant_id`.
+- **Auditoria (ADR-23)**: toda mutação bem-sucedida vira uma linha em `audit_log`, gravada
+  na BORDA (`auditoria/middleware.py`), não em cada service — registrar em cada rota é a
+  garantia de que um dia alguém esquece. O mapa `auditoria/classificar.py` traduz
+  `(método, caminho)` na frase que o dono lê; rota nova de mutação → uma linha nova ali. Nome
+  e papel de quem agiu são **congelados** na linha (renomear depois não reescreve o passado).
+  Login (sucesso/falha) é gravado pelo `AuthService`, que conhece o e-mail mesmo sem conta.
+- **Força bruta (ADR-24)**: o login conta as falhas recentes por e-mail e por IP
+  (`login_attempts`, janela de 15 min) e responde 429 com `Retry-After` quando passa do teto.
+  A resposta de e-mail real e falso é idêntica — a trava não vaza se a conta existe.
+- **Fora de dev o app se blinda**: `settings.producao` esconde `/docs` e `/openapi.json`, e
+  todo request leva `X-Content-Type-Options`, `X-Frame-Options` e `Referrer-Policy`.
+  `api/scripts/pentest.py` roda a bateria de ataques contra a API no ar (17 vetores).
 - Tempo real: `WS /api/v1/tempo-real`. Quem avisa é o commit do SQLAlchemy
   (`core/eventos.py`), não os services — mudou tabela, sai aviso. O que trafega é o
   ASSUNTO ("estoque"), nunca o dado: a tela refaz a consulta pela rota REST, e o filtro

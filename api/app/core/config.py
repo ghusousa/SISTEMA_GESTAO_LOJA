@@ -89,6 +89,11 @@ class Settings(BaseSettings):
     def tz_loja(self) -> ZoneInfo:
         return ZoneInfo(self.timezone_loja)
 
+    @property
+    def producao(self) -> bool:
+        """Está servindo a loja de verdade? (qualquer ambiente que não seja dev/test/local)."""
+        return self.ambiente.lower() not in {"dev", "test", "local"}
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -45,6 +45,7 @@ rota('/relatorios', () => import('./views/relatorios.js'), { pode: PODE.VER_DINH
 
 rota('/clientes', () => import('./views/clientes.js'), { pode: PODE.GERIR_CREDIARIO });
 rota('/usuarios', () => import('./views/usuarios.js'), { pode: PODE.GERIR_USUARIOS });
+rota('/auditoria', () => import('./views/auditoria.js'), { pode: PODE.VER_AUDITORIA });
 rota('/conta', () => import('./views/conta.js'));
 
 /* ------------------------------------------------------------------------ menu */
@@ -87,6 +88,7 @@ const MENU = [
     grupo: 'Sistema',
     itens: [
       { href: '/usuarios', icone: '👥', texto: 'Usuários', pode: PODE.GERIR_USUARIOS },
+      { href: '/auditoria', icone: '🔎', texto: 'Auditoria', pode: PODE.VER_AUDITORIA },
       { href: '/conta', icone: '⚙️', texto: 'Minha conta' },
     ],
   },

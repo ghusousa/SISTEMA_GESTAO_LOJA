@@ -15,10 +15,10 @@ o superior não tenha.
 |---|---|---|
 | **Vendedora** (`VENDEDOR`) | Vende no PDV, bipa e consulta preço, cadastra peça nova, dá entrada de mercadoria | Custo, lucro, despesas, relatórios, estorno, ajuste de estoque, inventário, vendas das colegas |
 | **Supervisora** (`SUPERVISORA`) | Ajusta estoque, faz inventário, edita e exclui produtos e categorias, confere e fecha o caixa do dia, vê as vendas de toda a equipe | Custo, lucro, despesas, relatórios, estorno, devolução, crediário, logins da equipe |
-| **Gerente** (`GERENTE`) | Vê custo, lucro e margem; lança despesas; abre relatórios; cancela venda concluída; recebe peça de volta (devolução) e cuida do crediário; administra os logins da equipe | A conta do dono: não cria, não promove, não edita, não redefine a senha dele |
-| **Dono** (`ADMIN`) | Tudo, inclusive criar e promover outro dono | — |
+| **Gerente** (`GERENTE`) | Vê custo, lucro e margem; lança despesas; abre relatórios; cancela venda concluída; recebe peça de volta (devolução) e cuida do crediário; administra os logins da equipe | A conta do dono (não cria, não promove, não edita, não redefine a senha dele) e o **diário de auditoria** — quem fez o quê no login não é dele |
+| **Dono** (`ADMIN`) | Tudo, inclusive criar e promover outro dono, e o **diário de auditoria**: tudo que cada login fez | — |
 
-**Três decisões que a loja tomou e que o sistema faz valer:**
+**Quatro decisões que a loja tomou e que o sistema faz valer:**
 
 - **Quem vende não desfaz.** Estornar é do dono e do gerente. A vendedora que errar no caixa
   chama alguém — é o controle clássico contra desvio, e vale inclusive para a venda dela.
@@ -27,6 +27,9 @@ o superior não tenha.
 - **Gerir logins não é virar dono.** O gerente contrata, promove até supervisora e desliga;
   a conta do dono é intocável para ele, senão a permissão de administrar a equipe seria, na
   prática, a permissão de se promover.
+- **O diário é só do dono.** O sistema anota o que cada login fez (vendeu, cancelou, deu
+  entrada, mexeu no cadastro) e quem lê é só o dono — nem o gerente. É prestação de contas da
+  equipe, não ferramenta de trabalho: fica fora do alcance de quem é auditado.
 
 Quem recusa é **sempre o servidor** — schemas de resposta distintos por capacidade e uma
 tabela única em `app/core/permissoes.py`. O app e o sistema web só escondem o que daria 403,
@@ -60,6 +63,10 @@ A loja consegue operar 100% sem celular.
   com categoria e marcação de recorrente.
 - **Fechamento de caixa** — conferência diária: quanto o sistema esperava por forma de pagamento
   versus quanto foi contado.
+- **Registro de auditoria** — uma linha para cada ação que alguém faz logado (vender, cancelar,
+  dar entrada, editar cadastro, entrar no sistema, errar a senha). Guarda quem, o quê, quando e
+  de onde, com o nome e o cargo **congelados** no momento — renomear a pessoa depois não reescreve
+  o histórico. Só o dono lê.
 
 ## Casos de uso principais
 
@@ -115,6 +122,11 @@ A loja consegue operar 100% sem celular.
 - O saldo devedor de um cliente nunca fica negativo: o abatimento para onde a dívida acaba, e
   a diferença sai em vale.
 - O mesmo vale não paga duas vendas.
+- Toda ação de quem está logado que muda alguma coisa fica registrada na auditoria, com o nome
+  e o cargo congelados; o registro não pode derrubar a operação que ele observa.
+- O login trava depois de erros de senha demais (por e-mail e por endereço), e a trava responde
+  igual exista o e-mail ou não — a tela de login não revela quem é cadastrado.
+- Só o dono lê a auditoria; para qualquer outro cargo a rota responde 403.
 
 ## Fora do escopo do v1
 

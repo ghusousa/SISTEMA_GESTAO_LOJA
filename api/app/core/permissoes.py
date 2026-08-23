@@ -39,6 +39,10 @@ class Pode(StrEnum):
     FECHAR_CAIXA = "FECHAR_CAIXA"
     #: Criar, editar, desativar login e redefinir senha de outra pessoa.
     GERIR_USUARIOS = "GERIR_USUARIOS"
+    #: Ler o diário de auditoria — tudo que cada pessoa fez no seu login. Só o dono.
+    #: Não entra no GERENTE de propósito: a auditoria existe para o dono conferir a
+    #: própria equipe, gerente incluído. Quem é auditado não controla o próprio registro.
+    VER_AUDITORIA = "VER_AUDITORIA"
 
 
 VENDEDORA: frozenset[Pode] = frozenset()

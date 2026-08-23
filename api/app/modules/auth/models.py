@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, func
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -31,4 +31,33 @@ class RefreshToken(Base):
     revoked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class LoginAttempt(Base):
+    """Cada tentativa de login, para travar força bruta.
+
+    Um atacante que testa senha atrás de senha precisa ser barrado — sem isto, a única
+    defesa é o comprimento da senha, e a dona escolhe "loja123". A trava conta as falhas
+    recentes por e-mail e por IP numa janela deslizante; passou do teto, o login responde
+    429 até a janela liberar. Não bloqueia a conta para sempre (não dá para uma pessoa
+    trancar a outra de fora); a janela escorrega e o acesso volta sozinho.
+
+    Guarda o e-mail digitado mesmo quando não existe: é assim que se barra quem fica
+    adivinhando e-mails, e não vaza se o e-mail existe ou não (a resposta é a mesma).
+    """
+
+    __tablename__ = "login_attempts"
+    __table_args__ = (
+        Index("ix_login_attempts_email_created_at", "email", "created_at"),
+        Index("ix_login_attempts_ip_created_at", "ip", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    #: Guardado em minúsculas — a conta é a mesma escrevendo DONA@ ou dona@.
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    ip: Mapped[str | None] = mapped_column(String(64))
+    sucesso: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=False
     )

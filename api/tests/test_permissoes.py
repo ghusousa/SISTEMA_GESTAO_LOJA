@@ -42,6 +42,8 @@ TODOS = [Papel.ADMIN, Papel.GERENTE, Papel.SUPERVISORA, Papel.VENDEDOR]
         (Pode.LANCAR_DESPESA, {Papel.ADMIN, Papel.GERENTE}),
         (Pode.CANCELAR_VENDA, {Papel.ADMIN, Papel.GERENTE}),
         (Pode.GERIR_USUARIOS, {Papel.ADMIN, Papel.GERENTE}),
+        # Auditoria é só do dono — nem o gerente lê, porque a auditoria audita o gerente também.
+        (Pode.VER_AUDITORIA, {Papel.ADMIN}),
         (Pode.VER_VENDAS_DE_TODOS, {Papel.ADMIN, Papel.GERENTE, Papel.SUPERVISORA}),
         (Pode.CORRIGIR_ESTOQUE, {Papel.ADMIN, Papel.GERENTE, Papel.SUPERVISORA}),
         (Pode.EDITAR_CATALOGO, {Papel.ADMIN, Papel.GERENTE, Papel.SUPERVISORA}),

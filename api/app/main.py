@@ -21,9 +21,29 @@ app = FastAPI(
     title=settings.app_name,
     version="1.0.0",
     description="Gestão de loja de roupas: estoque, PDV, despesas e relatórios.",
-    docs_url="/docs",
-    openapi_url="/openapi.json",
+    # A documentação interativa (Swagger) desenha o mapa inteiro da API: toda rota, todo
+    # campo, todo formato de erro. Ótimo para quem desenvolve, presente de bandeja para
+    # quem sonda o servidor. Fora de desenvolvimento ela não existe (rota 404).
+    docs_url="/docs" if not settings.producao else None,
+    redoc_url="/redoc" if not settings.producao else None,
+    openapi_url="/openapi.json" if not settings.producao else None,
 )
+
+
+@app.middleware("http")
+async def _cabecalhos_de_seguranca(request, call_next):
+    """Instrui o navegador a se defender, em toda resposta.
+
+    São três recados curtos que fecham brechas clássicas do lado do cliente: não adivinhe o
+    tipo do arquivo (impede um upload ser tratado como script), não me coloque dentro de um
+    iframe de outro site (clickjacking), e não vaze o endereço interno como referer.
+    """
+    resposta = await call_next(request)
+    resposta.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resposta.headers.setdefault("X-Frame-Options", "DENY")
+    resposta.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    return resposta
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -35,6 +55,11 @@ app.add_middleware(
 
 registrar_handlers(app)
 
+# Toda mutação bem-sucedida vira uma linha no diário de auditoria (só o dono lê).
+from app.modules.auditoria.middleware import AuditoriaMiddleware  # noqa: E402
+
+app.add_middleware(AuditoriaMiddleware)
+
 
 @app.get("/health", tags=["infra"], summary="Healthcheck (verifica o banco)")
 async def health() -> dict[str, str]:
@@ -44,6 +69,7 @@ async def health() -> dict[str, str]:
 
 
 def _montar_rotas() -> None:
+    from app.modules.auditoria.router import router as auditoria_router
     from app.modules.auth.router import router as auth_router
     from app.modules.caixa.router import router as caixa_router
     from app.modules.catalogo.router import router as catalogo_router
@@ -68,6 +94,7 @@ def _montar_rotas() -> None:
         tempo_real_router,
         sistema_router,
         clientes_router,
+        auditoria_router,
     ):
         app.include_router(r, prefix="/api/v1")
 

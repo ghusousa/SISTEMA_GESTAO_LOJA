@@ -56,6 +56,13 @@ const OPCOES: Opcao[] = [
     pode: PODE.GERIR_USUARIOS,
   },
   {
+    rotulo: 'Auditoria',
+    descricao: 'Tudo que cada um fez no login',
+    icone: 'shield-search',
+    rota: '/mais/auditoria',
+    pode: PODE.VER_AUDITORIA,
+  },
+  {
     rotulo: 'Trocar minha senha',
     descricao: 'Segurança da sua conta',
     icone: 'lock-outline',

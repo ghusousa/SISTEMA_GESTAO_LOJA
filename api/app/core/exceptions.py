@@ -75,12 +75,35 @@ class Validacao(AppError):
     message = "Dados inválidos."
 
 
+class MuitasTentativas(AppError):
+    """Bloqueio de força bruta: erros de senha demais no mesmo e-mail ou IP.
+
+    Carrega os segundos até liberar, que viram o cabeçalho `Retry-After` no handler.
+    """
+
+    code = "MUITAS_TENTATIVAS"
+    http_status = status.HTTP_429_TOO_MANY_REQUESTS
+    message = "Tentativas de mais. Espere um pouco antes de tentar de novo."
+
+    def __init__(self, segundos: int):
+        super().__init__(detail={"retry_after": segundos})
+        self.segundos = segundos
+
+
 def registrar_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def _app_error(_: Request, exc: AppError) -> JSONResponse:
+        # Retry-After é o cabeçalho padrão do 429: diz ao cliente (e a um humano) quantos
+        # segundos esperar. O front lê daqui para mostrar "tente de novo em X".
+        cabecalhos = (
+            {"Retry-After": str(exc.detail["retry_after"])}
+            if exc.code == "MUITAS_TENTATIVAS" and "retry_after" in exc.detail
+            else None
+        )
         return JSONResponse(
             status_code=exc.http_status,
             content={"code": exc.code, "message": exc.message, "detail": exc.detail},
+            headers=cabecalhos,
         )
 
     @app.exception_handler(RequestValidationError)

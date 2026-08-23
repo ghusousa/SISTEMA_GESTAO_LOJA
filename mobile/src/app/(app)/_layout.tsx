@@ -38,6 +38,7 @@ export default function AppLayout() {
       <Stack.Screen name="financeiro/relatorios" options={{ title: 'Relatórios' }} />
       <Stack.Screen name="financeiro/caixa" options={{ title: 'Fechamento de caixa' }} />
       <Stack.Screen name="mais/usuarios" options={{ title: 'Usuários' }} />
+      <Stack.Screen name="mais/auditoria" options={{ title: 'Auditoria' }} />
       <Stack.Screen name="mais/usuario-novo" options={{ title: 'Novo usuário' }} />
       <Stack.Screen name="mais/senha" options={{ title: 'Trocar senha' }} />
       <Stack.Screen name="mais/categorias" options={{ title: 'Categorias' }} />

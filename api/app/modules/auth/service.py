@@ -4,13 +4,14 @@ from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.exceptions import TokenInvalido
+from app.core.exceptions import CredenciaisInvalidas, MuitasTentativas, TokenInvalido
 from app.core.security import (
     criar_access_token,
     criar_refresh_token,
     decodificar_token,
     validade_refresh,
 )
+from app.modules.auditoria.repository import AuditoriaRepository
 from app.modules.auth.repository import AuthRepository
 from app.modules.auth.schemas import TokenOut
 from app.modules.usuarios.models import User
@@ -34,8 +35,46 @@ class AuthService:
             usuario=UsuarioOut.model_validate(user),
         )
 
-    async def login(self, email: str, senha: str) -> TokenOut:
-        user = await self.usuarios.autenticar(email, senha)
+    async def login(self, email: str, senha: str, ip: str | None = None) -> TokenOut:
+        # Antes de conferir a senha, checa a trava: erros demais recentes → 429 sem nem
+        # olhar a senha, que é o que torna a força bruta inviável.
+        bloqueio = await self.repo.segundos_de_bloqueio(email, ip)
+        if bloqueio > 0:
+            raise MuitasTentativas(bloqueio)
+
+        try:
+            user = await self.usuarios.autenticar(email, senha)
+        except CredenciaisInvalidas:
+            # Registra a falha (alimenta a trava e o diário) e devolve o mesmo erro de
+            # sempre — a resposta não muda, para não revelar se o e-mail existe. No diário,
+            # uma senha errada seguida da mesma pessoa é justamente o que o dono quer ver.
+            self.repo.registrar_tentativa(email, ip, sucesso=False)
+            AuditoriaRepository(self.session).registrar(
+                user_id=None,
+                user_nome=email.strip()[:160],
+                user_papel=None,
+                acao="LOGIN_FALHOU",
+                descricao=f"Tentou entrar e errou a senha ({email.strip()})",
+                metodo="POST",
+                caminho="/auth/login",
+                ip=ip,
+                status_http=401,
+            )
+            await self.session.commit()
+            raise
+
+        self.repo.registrar_tentativa(email, ip, sucesso=True)
+        AuditoriaRepository(self.session).registrar(
+            user_id=user.id,
+            user_nome=user.name,
+            user_papel=user.role,
+            acao="LOGIN",
+            descricao="Entrou no sistema",
+            metodo="POST",
+            caminho="/auth/login",
+            ip=ip,
+            status_http=200,
+        )
         tokens = await self._emitir(user, family_id=uuid.uuid4())
         await self.session.commit()
         return tokens
