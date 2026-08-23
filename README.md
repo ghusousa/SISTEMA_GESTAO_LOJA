@@ -238,6 +238,10 @@ docker compose restart     # reinicia tudo
 ./instalar.sh              # reconstrói e sobe — não apaga os dados
 ```
 
+**Rode o diagnóstico ANTES de reiniciar.** Reiniciar com `up -d --build` troca o contêiner, e o
+log do que caiu vai junto — depois disso não há mais como saber o motivo. (O `./atualizar.sh`
+guarda o log sozinho antes de reconstruir, num `loja-backup-log-*.txt`.)
+
 **A causa mais comum é a menos óbvia: disco cheio.** Perto de 100% o Postgres para de aceitar
 escrita e a loja trava sem que nada de errado apareça no log da aplicação. `df -h /` mostra; o
 diagnóstico avisa sozinho a partir de 90%.

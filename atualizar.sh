@@ -193,6 +193,18 @@ titulo "Baixando a versão nova"
 git reset --hard --quiet "$DEPOIS"
 ok "código em $(git rev-parse --short HEAD)"
 
+titulo "Guardando o log de agora"
+# `up -d --build` REMOVE o contêiner velho, e o log dele vai junto. Se a loja estava com
+# problema antes da atualização, é essa a única cópia do motivo — e sem ela a pergunta
+# "por que parou ontem?" não tem mais resposta em lugar nenhum.
+ARQUIVO_LOG="loja-backup-log-antes-de-atualizar-$(date +%Y%m%d-%H%M%S).txt"
+if dk compose logs --tail 2000 > "$ARQUIVO_LOG" 2>&1; then
+    ok "$ARQUIVO_LOG ($(du -h "$ARQUIVO_LOG" | cut -f1))"
+else
+    rm -f "$ARQUIVO_LOG"
+    aviso "não consegui guardar o log (os contêineres estão de pé?)."
+fi
+
 titulo "Reconstruindo e subindo"
 # `up -d --build` em vez de `restart`: dependência nova no requirements só entra na
 # imagem se ela for reconstruída, e uma imagem velha com código novo quebra de um jeito

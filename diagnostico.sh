@@ -5,6 +5,7 @@
 #     ./diagnostico.sh
 #
 # Só LÊ. Não reinicia, não muda nada, não apaga nada — dá para rodar com a loja aberta.
+# RODE ANTES DE REINICIAR: reiniciar apaga o log do contêiner que caiu, e o motivo vai junto.
 # Ao final, salva tudo num arquivo para você mandar por WhatsApp.
 #
 # Existe porque "parou e não voltou" pode ser meia dúzia de coisas bem diferentes —
@@ -86,10 +87,31 @@ for id in $(dk compose ps -aq 2>/dev/null); do
         mal "$nome está '$estado', saiu com código $saiu (reinícios: $reinicios)"
     elif [ "${reinicios:-0}" -gt 3 ]; then
         nota "$nome está de pé, mas já reiniciou $reinicios vezes — algo o derruba"
+    elif [ "${reinicios:-0}" -gt 0 ]; then
+        ok "$nome: $estado (reiniciou $reinicios vez(es))"
     else
         ok "$nome: $estado"
     fi
 done
+
+# Reiniciar APAGA o log de antes: o contêiner velho é removido e leva o motivo junto.
+# É o que sempre acontece — a pessoa reinicia primeiro (certo: a loja precisa abrir) e
+# só depois vai investigar. Dizer isso aqui evita procurar por horas o que não existe.
+RECENTE=0
+for id in $(dk compose ps -q 2>/dev/null); do
+    # `.Created`, não `.State.StartedAt`: um `restart` reaproveita o contêiner e o log
+    # continua inteiro. Quem apaga é `up -d --build` / `down`, que TROCAM o contêiner.
+    inicio="$(dk inspect --format '{{.Created}}' "$id" 2>/dev/null)"
+    segundos=$(( $(date +%s) - $(date -d "$inicio" +%s 2>/dev/null || echo 0) ))
+    [ "$segundos" -lt 1800 ] && [ "$segundos" -ge 0 ] && RECENTE=1
+done
+if [ "$RECENTE" -eq 1 ]; then
+    printf '\n'
+    nota "os contêineres subiram há pouco — o log de ANTES disso não existe mais."
+    printf '    Se o sistema tinha parado, o motivo se apagou junto com o contêiner velho.\n'
+    printf '    Da próxima vez: rode %s./diagnostico.sh%s ANTES de reiniciar.\n' "$FORTE" "$NORMAL"
+    printf '    (O %s./atualizar.sh%s guarda o log sozinho antes de reconstruir.)\n' "$FORTE" "$NORMAL"
+fi
 
 # --------------------------------------------------------------- 3. a aplicação
 
@@ -111,15 +133,54 @@ else
     mal "o banco não responde — sem ele a API não sobe"
 fi
 
-titulo "E de fora, pela porta?"
-PORTA="$(grep -E '^PORTA_HTTP=' .env 2>/dev/null | cut -d= -f2)"
+titulo "E de fora, pelo endereço que a loja usa?"
+PORTA="$(grep -E '^PORTA_HTTP=' .env 2>/dev/null | cut -d= -f2 | tr -d '"')"
 PORTA="${PORTA:-80}"
-CODIGO="$(curl -s -o /dev/null -w '%{http_code}' -m 10 "http://localhost:${PORTA}/health" 2>/dev/null)"
+DOMINIO="$(grep -E '^DOMINIO=' .env 2>/dev/null | cut -d= -f2 | tr -d '"')"
+
+# Bater em localhost quando a loja tem domínio não prova nada: o Caddy responde 308
+# mandando para o HTTPS, e "308" assusta quem lê sem dizer se a loja abre ou não.
+# O teste tem de ser o endereço que a pessoa digita no navegador.
+case "$DOMINIO" in
+    ""|localhost|127.0.0.1) ALVO="http://localhost:${PORTA}/health" ;;
+    *)                      ALVO="https://${DOMINIO}/health" ;;
+esac
+
+CODIGO="$(curl -s -o /dev/null -w '%{http_code}' -m 15 "$ALVO" 2>/dev/null)"
 case "$CODIGO" in
-    200) ok "http://localhost:${PORTA}/health → 200" ;;
-    502|503) mal "$CODIGO — o proxy está de pé, mas a API atrás dele não" ;;
-    000) mal "sem resposta na porta ${PORTA} — o proxy não está atendendo" ;;
-    *) nota "respondeu $CODIGO" ;;
+    200)              ok "$ALVO → 200 (a loja abre)" ;;
+    502|503)          mal "$CODIGO em $ALVO — o proxy está de pé, mas a API atrás dele não" ;;
+    301|302|307|308)  ok "$ALVO → $CODIGO (manda para o HTTPS; é o esperado)" ;;
+    000)
+        mal "sem resposta em $ALVO"
+        # Certificado vencido e DNS mudado derrubam a loja com TODOS os contêineres de
+        # pé — o motivo só aparece no recado do curl, nunca no log dos contêineres.
+        RECADO="$(curl -sS -o /dev/null -m 15 "$ALVO" 2>&1 | head -2)"
+        [ -n "$RECADO" ] && printf '    %s\n' "$RECADO"
+        ;;
+    *) nota "respondeu $CODIGO em $ALVO" ;;
+esac
+
+# Certificado: o Caddy renova sozinho, mas renovação que falha só aparece no dia em que
+# vence — e aí a loja "para" sem nenhum contêiner ter caído.
+case "$DOMINIO" in
+    ""|localhost|127.0.0.1) ;;
+    *)
+        if command -v openssl >/dev/null 2>&1; then
+            VENCE="$(echo | openssl s_client -connect "${DOMINIO}:443" -servername "$DOMINIO" 2>/dev/null \
+                | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)"
+            if [ -n "$VENCE" ]; then
+                DIAS=$(( ( $(date -d "$VENCE" +%s 2>/dev/null || echo 0) - $(date +%s) ) / 86400 ))
+                if [ "$DIAS" -lt 0 ]; then
+                    mal "o certificado VENCEU há $(( -DIAS )) dias — o navegador recusa o site"
+                elif [ "$DIAS" -lt 10 ]; then
+                    nota "o certificado vence em $DIAS dias e não renovou ainda"
+                else
+                    ok "certificado válido por mais $DIAS dias"
+                fi
+            fi
+        fi
+        ;;
 esac
 
 # --------------------------------------------------------------- 4. os logs

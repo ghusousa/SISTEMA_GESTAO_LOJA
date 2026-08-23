@@ -36,8 +36,11 @@ mobile/.expo-export/
 # Certificado de rede corporativa: local, nunca versionado
 docker/certificados/*.crt
 
-# Backups gerados pelo desinstalador
-loja-backup-*.dump
+# Backups e logs guardados pelo desinstalador e pelo ./atualizar.sh.
+# O padrão é `loja-backup-*` sem extensão de propósito: um arquivo gerado aqui que
+# escape do .gitignore vira "alteração local" e faz o PRÓXIMO ./atualizar.sh se recusar
+# a rodar — com a loja esperando.
+loja-backup-*
 
 # Coletas do ./diagnostico.sh — ficam na pasta do servidor, nunca no repositório.
 # (Sem isto, o arquivo vira "alteração local" e o PRÓXIMO ./atualizar.sh se recusa a rodar.)
