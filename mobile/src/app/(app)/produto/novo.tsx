@@ -31,6 +31,7 @@ import { formatarSemSimbolo, paraCentavos, paraDecimalString } from '@/lib/money
 import { chaves, invalidarAposMovimentoEstoque, queryClient } from '@/lib/queryClient';
 import { useAuthStore } from '@/stores/authStore';
 import { PODE, pode } from '@/lib/permissoes';
+import { NovaCategoria } from '@/components/NovaCategoria';
 import { SeletorDeFoto } from '@/components/SeletorDeFoto';
 import type { FotoEscolhida } from '@/lib/foto';
 import { ALVO_TOQUE, cores, espaco, fonte, raio } from '@/lib/tema';
@@ -52,6 +53,9 @@ export default function NovoProduto() {
   // A SPEC diz que o vendedor não vê preço de custo. Ele cadastra a peça; o custo é
   // preenchido depois pela dona na edição.
   const veDinheiro = useAuthStore((e) => pode(e.usuario?.papel, PODE.VER_DINHEIRO));
+  // Categoria é a arrumação do catálogo, não um campo do cadastro: quem organiza a loja
+  // cria. Mostrar o botão para quem levaria 403 seria oferecer um caminho fechado.
+  const podeCriarCategoria = useAuthStore((e) => pode(e.usuario?.papel, PODE.EDITAR_CATALOGO));
 
   const [nome, setNome] = useState('');
   const [categoriaId, setCategoriaId] = useState<number | null>(null);
@@ -209,24 +213,27 @@ export default function NovoProduto() {
         <SeletorDeFoto uri={foto?.uri} aoEscolher={setFoto} />
 
         <Text style={s.rotulo}>Categoria</Text>
-        {listaCategorias.length === 0 ? (
+        <View style={s.chips}>
+          {listaCategorias.map((c) => (
+            <Pressable
+              key={c.id}
+              onPress={() => setCategoriaId(c.id)}
+              style={[s.chip, categoriaId === c.id && s.chipAtivo]}
+            >
+              <Text style={[s.chipTexto, categoriaId === c.id && s.chipTextoAtivo]}>
+                {c.nome}
+              </Text>
+            </Pressable>
+          ))}
+          {/* O "+ Nova" fica na mesma fileira das outras: é ali que a pessoa já está
+              olhando quando descobre que a categoria certa não existe. */}
+          {podeCriarCategoria && <NovaCategoria aoCriar={(c) => setCategoriaId(c.id)} />}
+        </View>
+        {listaCategorias.length === 0 && !podeCriarCategoria && (
           <Text style={s.semCategoria}>
-            Nenhuma categoria ainda. Crie uma em Mais → Categorias.
+            Nenhuma categoria cadastrada ainda. Peça a quem cuida do catálogo para criar a
+            primeira.
           </Text>
-        ) : (
-          <View style={s.chips}>
-            {listaCategorias.map((c) => (
-              <Pressable
-                key={c.id}
-                onPress={() => setCategoriaId(c.id)}
-                style={[s.chip, categoriaId === c.id && s.chipAtivo]}
-              >
-                <Text style={[s.chipTexto, categoriaId === c.id && s.chipTextoAtivo]}>
-                  {c.nome}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
         )}
 
         {veDinheiro ? (

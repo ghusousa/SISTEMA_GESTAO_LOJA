@@ -7,6 +7,7 @@
  */
 
 import { api } from '../api.js';
+import { PODE, pode } from '../permissoes.js';
 import { TIPOS_ACEITOS, enviarFoto } from '../foto.js';
 import { paraDecimalString } from '../dinheiro.js';
 import { ir } from '../router.js';
@@ -38,7 +39,12 @@ export async function render(raiz, _params, consulta) {
               <span>Categoria</span>
               <span style="display:flex;gap:8px">
                 <select data-categoria></select>
-                <button class="botao botao--neutro botao--pequeno" data-nova-categoria type="button">+</button>
+                ${pode(PODE.EDITAR_CATALOGO)
+                  ? cru(
+                      '<button class="botao botao--neutro botao--pequeno" data-nova-categoria ' +
+                        'type="button" title="Criar categoria">+</button>',
+                    )
+                  : ''}
               </span>
             </label>
           </div>
@@ -261,7 +267,7 @@ export async function render(raiz, _params, consulta) {
     aviso('Valores aplicados a toda a grade.');
   });
 
-  raiz.querySelector('[data-nova-categoria]').addEventListener('click', async () => {
+  raiz.querySelector('[data-nova-categoria]')?.addEventListener('click', async () => {
     const nome = await modal({
       titulo: 'Nova categoria',
       largura: '400px',
