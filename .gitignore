@@ -50,3 +50,6 @@ diagnostico-*.txt
 # mais nova). É de cada servidor, nunca do repositório — a pasta fica, o conteúdo não.
 docker/estado/*
 !docker/estado/.gitkeep
+
+# Cópias de segurança do ./backup.sh — de cada servidor, nunca do repositório.
+backups/

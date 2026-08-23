@@ -28,6 +28,20 @@ const OPCOES: Opcao[] = [
     rota: '/mais/vendas',
   },
   {
+    rotulo: 'Devolução',
+    descricao: 'A cliente voltou com a peça',
+    icone: 'keyboard-return',
+    rota: '/venda/devolucao',
+    pode: PODE.DEVOLVER_VENDA,
+  },
+  {
+    rotulo: 'Crediário',
+    descricao: 'Quem levou fiado e quanto deve',
+    icone: 'handshake-outline',
+    rota: '/clientes',
+    pode: PODE.GERIR_CREDIARIO,
+  },
+  {
     rotulo: 'Categorias de produto',
     descricao: 'Organizar o catálogo',
     icone: 'shape-outline',

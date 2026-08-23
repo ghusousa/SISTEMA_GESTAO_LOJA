@@ -8,6 +8,8 @@
  */
 
 import { api } from '../api.js';
+import { escolherCliente, pedirVale } from '../pagar-fiado-vale.js';
+import { PODE, pode } from '../permissoes.js';
 import { formatar, paraCentavos, paraDecimalString, somar } from '../dinheiro.js';
 import {
   FORMAS,
@@ -23,8 +25,19 @@ import {
   plural,
 } from '../ui.js';
 
-const ICONES = { DINHEIRO: '💵', PIX: '📱', DEBITO: '💳', CREDITO: '🧾' };
-const ORDEM = ['DINHEIRO', 'PIX', 'DEBITO', 'CREDITO'];
+const ICONES = { DINHEIRO: '💵', PIX: '📱', DEBITO: '💳', CREDITO: '🧾', VALE: '🎟️', FIADO: '🤝' };
+// Vale e fiado no fim: são a exceção, e a mão vai primeiro no que acontece o dia todo.
+const ORDEM = ['DINHEIRO', 'PIX', 'DEBITO', 'CREDITO', 'VALE', 'FIADO'];
+
+/**
+ * Fiado só aparece para quem cuida do crediário.
+ *
+ * Sem isto o botão existe para todo mundo, mas a busca de cliente responde 403 — e a
+ * vendedora fica travada com a cliente na frente, que é exatamente o caminho de volta para
+ * o papel. O vale continua para todos: consultar o papel na mão da cliente é do balcão.
+ */
+const formasVisiveis = () =>
+  ORDEM.filter((forma) => forma !== 'FIADO' || pode(PODE.GERIR_CREDIARIO));
 
 /**
  * Abre a cobrança. Resolve `true` quando a venda foi registrada (aí o carrinho pode sumir).
@@ -45,7 +58,7 @@ export async function cobrar({ total, itens, desconto, clientUuid }) {
       </div>
 
       <div class="formas">
-        ${ORDEM.map(
+        ${formasVisiveis().map(
           (forma) => html`
             <button class="forma" data-forma="${forma}" aria-pressed="false">
               <span class="forma__icone" aria-hidden="true">${ICONES[forma]}</span>
@@ -73,7 +86,9 @@ export async function cobrar({ total, itens, desconto, clientUuid }) {
 }
 
 function ligarCobranca(corpo, fechar, { total, desconto, itens, clientUuid }) {
-  /** @type {{forma: string, valor: number}[]} */
+  /** Cliente da venda — só existe quando há fiado. */
+  let cliente = null;
+  /** @type {{forma: string, valor: number, codigoVale?: string}[]} */
   let pagamentos = [];
   let recebidoEmDinheiro = 0;
   let enviando = false;
@@ -158,6 +173,9 @@ function ligarCobranca(corpo, fechar, { total, desconto, itens, clientUuid }) {
       b.addEventListener('click', () => {
         pagamentos.splice(Number(b.dataset.remover), 1);
         if (!pagamentos.some((p) => p.forma === 'DINHEIRO')) recebidoEmDinheiro = 0;
+        // Tirou a linha do fiado pelo ✕: a cliente sai junto. Senão a venda (e o recibo)
+        // ficariam no nome de quem não levou nada fiado.
+        if (!pagamentos.some((p) => p.forma === 'FIADO')) cliente = null;
         pintarTudo();
       }),
     );
@@ -200,12 +218,28 @@ function ligarCobranca(corpo, fechar, { total, desconto, itens, clientUuid }) {
   const pintarTudo = () => pintarPagamentos();
 
   corpo.querySelectorAll('[data-forma]').forEach((botao) =>
-    botao.addEventListener('click', () => {
+    botao.addEventListener('click', async () => {
       const forma = botao.dataset.forma;
       const indice = pagamentos.findIndex((p) => p.forma === forma);
       if (indice >= 0) {
         pagamentos.splice(indice, 1);
         if (forma === 'DINHEIRO') recebidoEmDinheiro = 0;
+        if (forma === 'FIADO') cliente = null;
+      } else if (forma === 'VALE') {
+        // Vale precisa saber QUAL vale antes de saber quanto. E o valor é limitado pelo
+        // saldo dele: pedir mais faria o servidor recusar a venda inteira no fim.
+        const vale = await pedirVale(Math.max(0, falta()));
+        if (!vale) return;
+        pagamentos.push({
+          forma,
+          valor: Math.min(Math.max(0, falta()), vale.saldo),
+          codigoVale: vale.codigo,
+        });
+      } else if (forma === 'FIADO') {
+        const escolhido = await escolherCliente();
+        if (!escolhido) return;
+        cliente = escolhido;
+        pagamentos.push({ forma, valor: Math.max(0, falta()) });
       } else {
         // O normal é uma forma só: já entra com o que falta, e a venda fecha num clique.
         pagamentos.push({ forma, valor: Math.max(0, falta()) });
@@ -227,9 +261,14 @@ function ligarCobranca(corpo, fechar, { total, desconto, itens, clientUuid }) {
         client_uuid: clientUuid,
         desconto: paraDecimalString(desconto),
         itens: itens.map((i) => ({ variante_id: i.variante_id, quantidade: i.quantidade })),
+        cliente_id: cliente?.id ?? null,
         pagamentos: pagamentos
           .filter((p) => p.valor > 0)
-          .map((p) => ({ forma: p.forma, valor: paraDecimalString(p.valor) })),
+          .map((p) => ({
+            forma: p.forma,
+            valor: paraDecimalString(p.valor),
+            ...(p.codigoVale ? { codigo_vale: p.codigoVale } : {}),
+          })),
       });
       fechar({ dados, troco: troco() });
     } catch (erro) {

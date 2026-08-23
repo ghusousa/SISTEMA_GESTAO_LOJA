@@ -91,6 +91,12 @@ async function aplicar() {
   limparAnterior?.();
   limparAnterior = null;
 
+  // Modal fica pendurado no `body`, fora da raiz da view: trocar de tela não o remove, e
+  // ele continua por cima interceptando todo clique — a tela nova aparece e não responde
+  // a nada, o que a pessoa lê como "o sistema travou". Acontece de verdade: um clique no
+  // menu com a confirmação de venda aberta.
+  document.querySelectorAll('.modal-fundo').forEach((m) => m.remove());
+
   // A moldura (barra lateral ou tela de login) é montada aqui, uma vez por troca de
   // contexto: navegar entre telas não redesenha o menu nem perde o foco de quem digita.
   const raiz = obterRaiz(caminho, usuario);

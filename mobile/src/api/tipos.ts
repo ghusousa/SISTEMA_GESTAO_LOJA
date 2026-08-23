@@ -7,7 +7,11 @@
  */
 
 export type Papel = 'ADMIN' | 'GERENTE' | 'SUPERVISORA' | 'VENDEDOR';
-export type FormaPagamento = 'DINHEIRO' | 'PIX' | 'DEBITO' | 'CREDITO';
+export type FormaPagamento = 'DINHEIRO' | 'PIX' | 'DEBITO' | 'CREDITO' | 'VALE' | 'FIADO';
+
+/** O que vira dinheiro NA GAVETA hoje. Vale e fiado não — espelha `FORMAS_DE_GAVETA`
+ * da API: o vale foi pago na venda anterior, o fiado ainda nem foi pago. */
+export const FORMAS_DE_GAVETA = ['DINHEIRO', 'PIX', 'DEBITO', 'CREDITO'] as const;
 export type StatusVenda = 'CONCLUIDA' | 'CANCELADA';
 export type TipoMovimento = 'ENTRADA' | 'AJUSTE' | 'INVENTARIO' | 'VENDA' | 'ESTORNO';
 export type TipoCodigo = 'EAN' | 'INTERNO';
@@ -158,6 +162,8 @@ export interface ItemVenda {
   cor: string;
   codigo_barras: string;
   quantidade: number;
+  /** Quanto desta linha já voltou — a tela de devolução usa para não oferecer de novo. */
+  quantidade_devolvida: number;
   preco_unitario: string;
   total_item: string;
   custo_unitario?: string;
@@ -181,6 +187,9 @@ export interface Venda {
   cancelada_em: string | null;
   motivo_cancelamento: string | null;
   observacao: string | null;
+  /** Nome de quem levou no fiado. Nulo na venda à vista. */
+  cliente: string | null;
+  cliente_id: number | null;
   itens: ItemVenda[];
   pagamentos: Pagamento[];
   /** Só para ADMIN. */
@@ -320,4 +329,84 @@ export interface Versao {
   atualizada: boolean | null;
   conferido_recente: boolean;
   resumo: string;
+}
+
+/* ------------------------------------------------- devolução, vale e fiado */
+
+export interface ItemDevolvido {
+  item_id: number;
+  variante_id: number;
+  produto: string;
+  tamanho: string;
+  cor: string;
+  codigo_barras: string;
+  quantidade: number;
+  preco_unitario: string;
+  valor_devolvido: string;
+  voltou_ao_estoque: boolean;
+}
+
+export interface PagamentoDevolucao {
+  forma: FormaPagamento;
+  valor: string;
+  /** Preenchido quando a devolução virou vale — é o código que vai no papel. */
+  codigo_vale: string | null;
+}
+
+export interface Devolucao {
+  id: number;
+  venda_id: number;
+  devolvida_em: string;
+  motivo: string | null;
+  total: string;
+  itens: ItemDevolvido[];
+  pagamentos: PagamentoDevolucao[];
+}
+
+export interface Vale {
+  id: number;
+  codigo: string;
+  valor: string;
+  usado: string;
+  saldo: string;
+  vence_em: string | null;
+}
+
+export interface Cliente {
+  id: number;
+  nome: string;
+  telefone: string | null;
+  documento: string | null;
+  limite: string | null;
+  observacao: string | null;
+  ativo: boolean;
+  /** Calculado no servidor: não existe coluna guardando isto. */
+  deve: string;
+  acima_do_limite: boolean;
+}
+
+export interface PagamentoCliente {
+  id: number;
+  cliente_id: number;
+  forma: FormaPagamento;
+  valor: string;
+  pago_em: string;
+  observacao: string | null;
+}
+
+export interface VendaEmAberto {
+  venda_id: number;
+  vendida_em: string;
+  total_da_venda: string;
+  no_fiado: string;
+}
+
+export interface ExtratoCliente {
+  cliente: Cliente;
+  vendas: VendaEmAberto[];
+  pagamentos: PagamentoCliente[];
+  total_fiado: string;
+  total_pago: string;
+  total_devolvido: string;
+  deve: string;
 }

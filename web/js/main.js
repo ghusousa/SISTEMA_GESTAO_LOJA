@@ -18,6 +18,9 @@ rota('/entrar', () => import('./views/entrar.js'));
 
 rota('/pdv', () => import('./views/pdv.js'));
 rota('/vendas', () => import('./views/vendas.js'));
+// Antes de '/vendas/:id': ':id' casaria com 'devolucao' como se fosse um número.
+rota('/vendas/devolucao', () => import('./views/devolucao.js'), { pode: PODE.DEVOLVER_VENDA });
+rota('/vendas/:id/recibo', () => import('./views/recibo.js'));
 rota('/vendas/:id', () => import('./views/venda-detalhe.js'));
 
 rota('/produtos', () => import('./views/produtos.js'));
@@ -40,6 +43,7 @@ rota('/caixa', () => import('./views/caixa.js'), { pode: PODE.FECHAR_CAIXA });
 rota('/despesas', () => import('./views/despesas.js'), { pode: PODE.LANCAR_DESPESA });
 rota('/relatorios', () => import('./views/relatorios.js'), { pode: PODE.VER_DINHEIRO });
 
+rota('/clientes', () => import('./views/clientes.js'), { pode: PODE.GERIR_CREDIARIO });
 rota('/usuarios', () => import('./views/usuarios.js'), { pode: PODE.GERIR_USUARIOS });
 rota('/conta', () => import('./views/conta.js'));
 
@@ -51,6 +55,7 @@ const MENU = [
     itens: [
       { href: '/pdv', icone: '🛒', texto: 'Vender (PDV)' },
       { href: '/vendas', icone: '🧾', texto: 'Vendas' },
+      { href: '/vendas/devolucao', icone: '↩️', texto: 'Devolução', pode: PODE.DEVOLVER_VENDA },
     ],
   },
   {
@@ -75,6 +80,7 @@ const MENU = [
       { href: '/caixa', icone: '💰', texto: 'Caixa do dia', pode: PODE.FECHAR_CAIXA },
       { href: '/despesas', icone: '💸', texto: 'Despesas', pode: PODE.LANCAR_DESPESA },
       { href: '/relatorios', icone: '📊', texto: 'Relatórios', pode: PODE.VER_DINHEIRO },
+      { href: '/clientes', icone: '🤝', texto: 'Crediário', pode: PODE.GERIR_CREDIARIO },
     ],
   },
   {

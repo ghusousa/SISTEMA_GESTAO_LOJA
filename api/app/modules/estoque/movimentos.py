@@ -48,6 +48,7 @@ async def aplicar_movimento(
     user_id: int,
     entry_id: int | None = None,
     sale_id: int | None = None,
+    return_id: int | None = None,
     observacao: str | None = None,
 ) -> StockMovement:
     """Aplica `delta` ao saldo e registra a movimentação. Devolve a movimentação criada.
@@ -105,6 +106,7 @@ async def aplicar_movimento(
         balance_after=saldo_apos,
         entry_id=entry_id,
         sale_id=sale_id,
+        return_id=return_id,
         user_id=user_id,
         note=observacao,
     )

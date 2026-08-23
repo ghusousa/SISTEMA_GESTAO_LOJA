@@ -53,6 +53,9 @@ class Assunto(StrEnum):
     DESPESAS = "despesas"
     """Despesa lançada, editada ou apagada."""
 
+    CLIENTES = "clientes"
+    """Cliente cadastrado ou editado, e quanto cada um deve."""
+
     CAIXA = "caixa"
     """Fechamento de caixa registrado."""
 
@@ -142,6 +145,14 @@ ASSUNTO_POR_TABELA: dict[str, Assunto] = {
     "cash_closings": Assunto.CAIXA,
     "cash_closing_lines": Assunto.CAIXA,
     "users": Assunto.USUARIOS,
+    "customers": Assunto.CLIENTES,
+    # Recebimento de fiado e devolução mexem na GAVETA do dia: quem está com a tela do
+    # caixa aberta precisa saber, e não só quem olha a lista de clientes.
+    "customer_payments": Assunto.CAIXA,
+    "sale_return_payments": Assunto.CAIXA,
+    "sale_returns": Assunto.VENDAS,
+    "sale_return_items": Assunto.ESTOQUE,
+    "vouchers": Assunto.VENDAS,
 }
 
 _CHAVE = "_tabelas_tocadas"

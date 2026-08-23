@@ -23,7 +23,16 @@ from app.modules.relatorios.schemas import (
     MaisVendidoOut,
     ResumoOut,
 )
-from app.modules.vendas.models import Sale, SaleItem, StatusVenda
+from app.modules.clientes.models import CustomerPayment
+from app.modules.vendas.models import (
+    FormaPagamento,
+    Sale,
+    SaleItem,
+    SalePayment,
+    SaleReturn,
+    SaleReturnItem,
+    StatusVenda,
+)
 
 ZERO = Decimal("0.00")
 MAX_DIAS = 366
@@ -90,10 +99,53 @@ class RelatorioService:
             )
         )
 
+        # Devoluções entram pelo dia em que ACONTECERAM (ADR-19). Amarrar pelo dia da venda
+        # reescreveria um mês já fechado — e a dona olharia dois números diferentes para o
+        # mesmo agosto, dependendo de quando abriu a tela.
+        devolvido, pecas_devolvidas, cmv_devolvido = (
+            await self.session.execute(
+                select(
+                    func.coalesce(func.sum(SaleReturnItem.refund_amount), 0),
+                    func.coalesce(func.sum(SaleReturnItem.quantity), 0),
+                    func.coalesce(
+                        func.sum(
+                            case(
+                                (
+                                    SaleReturnItem.restock.is_(True),
+                                    SaleItem.unit_cost * SaleReturnItem.quantity,
+                                ),
+                                else_=0,
+                            )
+                        ),
+                        0,
+                    ),
+                )
+                .join(SaleReturn, SaleReturn.id == SaleReturnItem.return_id)
+                .join(SaleItem, SaleItem.id == SaleReturnItem.sale_item_id)
+                .where(dia_da_loja(SaleReturn.returned_at).between(inicio, fim))
+            )
+        ).one()
+
+        a_prazo = await self.session.scalar(
+            select(func.coalesce(func.sum(SalePayment.amount), 0))
+            .join(Sale, Sale.id == SalePayment.sale_id)
+            .where(*filtros, SalePayment.method == FormaPagamento.FIADO)
+        )
+        recebido = await self.session.scalar(
+            select(func.coalesce(func.sum(CustomerPayment.amount), 0)).where(
+                dia_da_loja(CustomerPayment.paid_at).between(inicio, fim)
+            )
+        )
+
         faturamento = _centavos(faturamento)
+        devolvido = _centavos(devolvido)
         cmv = _centavos(cmv)
+        cmv_devolvido = _centavos(cmv_devolvido)
         despesas = _centavos(despesas)
-        lucro_bruto = faturamento - cmv
+        faturamento_liquido = faturamento - devolvido
+        # O lucro sai do líquido dos dois lados: a peça que voltou não faturou e também
+        # não consumiu mercadoria (quando voltou vendável).
+        lucro_bruto = faturamento_liquido - (cmv - cmv_devolvido)
         margem = (
             (lucro_bruto / faturamento * 100).quantize(
                 Decimal("0.01"), rounding=ROUND_HALF_UP
@@ -107,7 +159,13 @@ class RelatorioService:
             inicio=inicio,
             fim=fim,
             faturamento=faturamento,
+            devolucoes=devolvido,
+            faturamento_liquido=faturamento_liquido,
             custo_mercadoria_vendida=cmv,
+            cmv_devolvido=cmv_devolvido,
+            pecas_devolvidas=int(pecas_devolvidas),
+            vendas_a_prazo=_centavos(a_prazo),
+            recebimentos_de_fiado=_centavos(recebido),
             lucro_bruto=lucro_bruto,
             despesas=despesas,
             resultado=lucro_bruto - despesas,

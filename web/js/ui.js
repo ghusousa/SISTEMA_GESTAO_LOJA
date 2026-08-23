@@ -342,6 +342,8 @@ export const FORMAS = {
   PIX: 'PIX',
   DEBITO: 'Débito',
   CREDITO: 'Crédito',
+  VALE: 'Vale de troca',
+  FIADO: 'Fiado',
 };
 
 export const TIPOS_MOVIMENTO = {

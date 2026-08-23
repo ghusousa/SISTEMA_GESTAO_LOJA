@@ -23,6 +23,10 @@ export default function AppLayout() {
         options={{ title: 'Cobrar', presentation: 'modal' }}
       />
       <Stack.Screen name="venda/[id]" options={{ title: 'Venda' }} />
+      <Stack.Screen name="venda/devolucao" options={{ title: 'Devolução' }} />
+      <Stack.Screen name="venda/recibo" options={{ title: 'Recibo' }} />
+      <Stack.Screen name="clientes/index" options={{ title: 'Crediário' }} />
+      <Stack.Screen name="clientes/[id]" options={{ title: 'Conta da cliente' }} />
       <Stack.Screen name="produto/novo" options={{ title: 'Nova peça' }} />
       <Stack.Screen name="produto/[id]" options={{ title: 'Produto' }} />
       <Stack.Screen name="estoque/entrada" options={{ title: 'Entrada de mercadoria' }} />

@@ -28,6 +28,14 @@ from app.modules.usuarios.models import Papel, User  # noqa: E402
 TABELAS = [
     "cash_closing_lines",
     "cash_closings",
+    # Tabela nova que não entra aqui vaza entre os testes, e o sintoma é uma falha
+    # aleatória num teste que não tem nada a ver — foi assim que este comentário nasceu.
+    "sale_return_payments",
+    "sale_return_items",
+    "sale_returns",
+    "vouchers",
+    "customer_payments",
+    "customers",
     "sale_payments",
     "sale_items",
     "stock_movements",
@@ -57,6 +65,7 @@ async def _limpar_banco() -> AsyncGenerator[None, None]:
     async with engine.begin() as conn:
         await conn.execute(text(f"TRUNCATE {', '.join(TABELAS)} RESTART IDENTITY CASCADE"))
         await conn.execute(text("ALTER SEQUENCE internal_barcode_seq RESTART WITH 1"))
+        await conn.execute(text("ALTER SEQUENCE voucher_code_seq RESTART WITH 1"))
 
 
 @pytest.fixture

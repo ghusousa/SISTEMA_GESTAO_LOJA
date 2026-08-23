@@ -42,6 +42,10 @@ export const chaves = {
     ['relatorio-despesas', inicio, fim] as const,
   estoqueBaixo: ['estoque-baixo'] as const,
   usuarios: ['usuarios'] as const,
+  clientes: ['clientes'] as const,
+  cliente: (id: number) => ['clientes', id] as const,
+  extratoCliente: (id: number) => ['clientes', id, 'extrato'] as const,
+  devolucoesDaVenda: (vendaId: number) => ['devolucoes', vendaId] as const,
 };
 
 /** Tudo que depende de faturamento, custo ou resultado. */
@@ -70,6 +74,9 @@ export function invalidarAposVenda(): void {
   queryClient.invalidateQueries({ queryKey: chaves.movimentacoes });
   queryClient.invalidateQueries({ queryKey: ['caixa-dia'] });
   queryClient.invalidateQueries({ queryKey: chaves.estoqueBaixo });
+  // Venda no fiado mexe na dívida da cliente: sem isto, a segunda venda fiado seguida
+  // mostraria o saldo antigo no seletor — e poderia não disparar o aviso de limite.
+  queryClient.invalidateQueries({ queryKey: chaves.clientes });
   invalidarRelatorios();
 }
 
@@ -83,5 +90,37 @@ export function invalidarAposMovimentoEstoque(): void {
 /** Despesa entra no resultado do mês: a lista sozinha não basta. */
 export function invalidarAposDespesa(): void {
   queryClient.invalidateQueries({ queryKey: chaves.despesas });
+  invalidarRelatorios();
+}
+
+/**
+ * Devolver mexe em quase tudo: o estoque volta (quando a peça volta), o dinheiro sai da
+ * gaveta e o faturamento do dia encolhe. A venda em si muda de cara — passa a mostrar o
+ * que foi devolvido —, então a chave dela também cai.
+ */
+export function invalidarAposDevolucao(vendaId: number): void {
+  queryClient.invalidateQueries({ queryKey: chaves.venda(vendaId) });
+  queryClient.invalidateQueries({ queryKey: chaves.devolucoesDaVenda(vendaId) });
+  queryClient.invalidateQueries({ queryKey: chaves.vendas });
+  queryClient.invalidateQueries({ queryKey: chaves.saldos });
+  queryClient.invalidateQueries({ queryKey: chaves.produtos });
+  queryClient.invalidateQueries({ queryKey: chaves.movimentacoes });
+  queryClient.invalidateQueries({ queryKey: chaves.estoqueBaixo });
+  queryClient.invalidateQueries({ queryKey: ['caixa-dia'] });
+  // A devolução pode ter abatido fiado: o saldo da cliente mudou junto.
+  queryClient.invalidateQueries({ queryKey: chaves.clientes });
+  invalidarRelatorios();
+}
+
+/**
+ * Fiado recebido é dinheiro que entrou na gaveta hoje — mas não é faturamento de hoje
+ * (a venda já foi contada no dia dela). Por isso o caixa cai e os relatórios também: o
+ * resumo mostra "recebimentos de fiado" separado do faturamento.
+ */
+export function invalidarAposCrediario(): void {
+  // `['clientes']` é prefixo de `['clientes', id]` e `['clientes', id, 'extrato']`: uma
+  // invalidação derruba a lista, o cliente e o extrato dele.
+  queryClient.invalidateQueries({ queryKey: chaves.clientes });
+  queryClient.invalidateQueries({ queryKey: ['caixa-dia'] });
   invalidarRelatorios();
 }

@@ -14,6 +14,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 
 import { codigoDoErro, mensagemDoErro } from '@/api/client';
 import { catalogo, estoque } from '@/api/endpoints';
+import { BuscarPeca } from '@/components/BuscarPeca';
 import { CodigoManual } from '@/components/CodigoManual';
 import { Scanner } from '@/components/Scanner';
 import { Botao, Etiqueta } from '@/components/ui';
@@ -36,6 +37,26 @@ export default function Inventario() {
   const [consultando, setConsultando] = useState(false);
   const buscando = useRef(false);
 
+  /**
+   * Soma 1 à contagem. Peça com a etiqueta caída também está na arara e precisa ser
+   * contada — senão a contagem acusa uma falta que não existe, e o acerto tira do estoque
+   * uma peça que está pendurada ali na frente.
+   */
+  const contar = useCallback(
+    (peca: { varianteId: number; produto: string; tamanho: string; cor: string; saldoSistema: number }) => {
+      setContagens((atuais) => {
+        const existente = atuais.find((c) => c.varianteId === peca.varianteId);
+        if (existente) {
+          return atuais.map((c) =>
+            c.varianteId === peca.varianteId ? { ...c, contado: c.contado + 1 } : c,
+          );
+        }
+        return [{ ...peca, contado: 1 }, ...atuais];
+      });
+    },
+    [],
+  );
+
   const aoLer = useCallback(async (codigo: string) => {
     if (buscando.current) return;
     buscando.current = true;
@@ -44,24 +65,12 @@ export default function Inventario() {
     try {
       const peca = await catalogo.porCodigoBarras(codigo);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      setContagens((atuais) => {
-        const existente = atuais.find((c) => c.varianteId === peca.variante_id);
-        if (existente) {
-          return atuais.map((c) =>
-            c.varianteId === peca.variante_id ? { ...c, contado: c.contado + 1 } : c,
-          );
-        }
-        return [
-          {
-            varianteId: peca.variante_id,
-            produto: peca.produto,
-            tamanho: peca.tamanho,
-            cor: peca.cor,
-            saldoSistema: peca.saldo,
-            contado: 1,
-          },
-          ...atuais,
-        ];
+      contar({
+        varianteId: peca.variante_id,
+        produto: peca.produto,
+        tamanho: peca.tamanho,
+        cor: peca.cor,
+        saldoSistema: peca.saldo,
       });
     } catch (erro) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -74,7 +83,7 @@ export default function Inventario() {
       buscando.current = false;
       setConsultando(false);
     }
-  }, []);
+  }, [contar]);
 
   const enviar = useMutation({
     mutationFn: () =>
@@ -113,6 +122,17 @@ export default function Inventario() {
 
       <View style={s.barraCodigo}>
         <CodigoManual aoConfirmar={(codigo) => void aoLer(codigo)} />
+        <BuscarPeca
+          aoEscolher={(peca) =>
+            contar({
+              varianteId: peca.id,
+              produto: peca.produto,
+              tamanho: peca.tamanho,
+              cor: peca.cor,
+              saldoSistema: peca.saldo,
+            })
+          }
+        />
       </View>
 
       {!!aviso && (
@@ -194,6 +214,8 @@ const s = StyleSheet.create({
   cameraArea: { height: '32%', backgroundColor: '#000' },
 
   barraCodigo: {
+    flexDirection: 'row',
+    gap: espaco.sm,
     paddingHorizontal: espaco.lg,
     paddingTop: espaco.sm,
     alignItems: 'flex-start',

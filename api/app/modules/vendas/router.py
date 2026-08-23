@@ -3,10 +3,19 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.core.deps import CurrentUser, ExigeCancelarVenda, SessionDep
+from app.core.deps import CurrentUser, ExigeCancelarVenda, ExigeDevolucao, SessionDep
 from app.core.pagination import Pagina, Paginacao, paginacao
 from app.modules.vendas.models import StatusVenda
-from app.modules.vendas.schemas import CancelamentoIn, VendaIn, VendaOut, VendaResumoOut
+from app.modules.vendas.devolucao import DevolucaoService
+from app.modules.vendas.schemas import (
+    CancelamentoIn,
+    DevolucaoIn,
+    DevolucaoOut,
+    VendaIn,
+    ValeOut,
+    VendaOut,
+    VendaResumoOut,
+)
 from app.modules.vendas.service import VendaService
 
 router = APIRouter(prefix="/vendas", tags=["vendas"])
@@ -38,8 +47,48 @@ async def listar(
     fim: datetime | None = None,
     situacao: Annotated[StatusVenda | None, Query(alias="status")] = None,
     vendedor_id: int | None = None,
+    variante_id: Annotated[
+        int | None, Query(description="Só vendas que levaram esta peça — para devolver")
+    ] = None,
+    cliente_id: int | None = None,
 ) -> Pagina[VendaResumoOut]:
-    return await VendaService(session).listar(p, inicio, fim, situacao, vendedor_id, usuario)
+    return await VendaService(session).listar(
+        p, inicio, fim, situacao, vendedor_id, usuario, variante_id, cliente_id
+    )
+
+
+@router.get(
+    "/vales/{codigo}",
+    response_model=ValeOut,
+    summary="Saldo de um vale de troca",
+)
+async def consultar_vale(session: SessionDep, _: CurrentUser, codigo: str) -> ValeOut:
+    """Aberto a qualquer autenticado: é a vendedora no balcão que precisa saber se o vale
+    do papel na mão da cliente ainda vale, e quanto."""
+    return await DevolucaoService(session).consultar_vale(codigo)
+
+
+@router.post(
+    "/{venda_id}/devolucoes",
+    response_model=None,
+    status_code=status.HTTP_201_CREATED,
+    summary="Receber peça de volta (devolução parcial)",
+)
+async def devolver(
+    session: SessionDep, usuario: ExigeDevolucao, venda_id: int, dados: DevolucaoIn
+) -> DevolucaoOut:
+    return await DevolucaoService(session).devolver(venda_id, dados, usuario)
+
+
+@router.get(
+    "/{venda_id}/devolucoes",
+    response_model=list[DevolucaoOut],
+    summary="Devoluções desta venda",
+)
+async def devolucoes_da_venda(
+    session: SessionDep, usuario: CurrentUser, venda_id: int
+) -> list[DevolucaoOut]:
+    return await DevolucaoService(session).listar_da_venda(venda_id, usuario)
 
 
 @router.get("/{venda_id}", response_model=None, summary="Detalhe da venda")

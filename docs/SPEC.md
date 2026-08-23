@@ -14,8 +14,8 @@ o superior não tenha.
 | Cargo | Além do degrau anterior | O que NÃO alcança |
 |---|---|---|
 | **Vendedora** (`VENDEDOR`) | Vende no PDV, bipa e consulta preço, cadastra peça nova, dá entrada de mercadoria | Custo, lucro, despesas, relatórios, estorno, ajuste de estoque, inventário, vendas das colegas |
-| **Supervisora** (`SUPERVISORA`) | Ajusta estoque, faz inventário, edita e exclui produtos e categorias, confere e fecha o caixa do dia, vê as vendas de toda a equipe | Custo, lucro, despesas, relatórios, estorno, logins da equipe |
-| **Gerente** (`GERENTE`) | Vê custo, lucro e margem; lança despesas; abre relatórios; cancela venda concluída; administra os logins da equipe | A conta do dono: não cria, não promove, não edita, não redefine a senha dele |
+| **Supervisora** (`SUPERVISORA`) | Ajusta estoque, faz inventário, edita e exclui produtos e categorias, confere e fecha o caixa do dia, vê as vendas de toda a equipe | Custo, lucro, despesas, relatórios, estorno, devolução, crediário, logins da equipe |
+| **Gerente** (`GERENTE`) | Vê custo, lucro e margem; lança despesas; abre relatórios; cancela venda concluída; recebe peça de volta (devolução) e cuida do crediário; administra os logins da equipe | A conta do dono: não cria, não promove, não edita, não redefine a senha dele |
 | **Dono** (`ADMIN`) | Tudo, inclusive criar e promover outro dono | — |
 
 **Três decisões que a loja tomou e que o sistema faz valer:**
@@ -49,6 +49,13 @@ A loja consegue operar 100% sem celular.
   completa ("por que tenho 3 e não 5?").
 - **Venda** — o que saiu no PDV: itens (com preço e custo **congelados** no momento da venda),
   pagamentos (pode ser misto) e desconto.
+- **Devolução** — a cliente voltou com a peça. Registra o que voltou, quanto saiu e por qual
+  forma. Cada peça decide se volta ao estoque (a manchada não volta). Não existe "modo
+  troca": troca é devolução + venda nova.
+- **Vale de troca** — papel com código, gerado quando o valor não pode voltar pela forma que
+  entrou. Vale como pagamento na próxima compra, inteiro ou em parte.
+- **Cliente do crediário** — quem leva no fiado. Tem nome, telefone e um limite **combinado**
+  que avisa, mas não bloqueia. Quanto deve é sempre calculado, nunca guardado.
 - **Despesa** — saída de dinheiro que não é compra de mercadoria (aluguel, energia, salário...),
   com categoria e marcação de recorrente.
 - **Fechamento de caixa** — conferência diária: quanto o sistema esperava por forma de pagamento
@@ -71,12 +78,22 @@ A loja consegue operar 100% sem celular.
    entrada, oferece a folha de etiquetas do que acabou de chegar — na quantidade que chegou.
 4. **Conferir estoque (inventário)** — contar fisicamente e lançar as contagens; o sistema gera as
    movimentações de acerto e mostra as diferenças.
-5. **Lançar despesas** — valor, categoria, data, se é recorrente. Despesas recorrentes podem ser
+5. **Receber peça de volta (devolução)** — a cliente chega com a blusa e sem nota. Bipa a
+   peça (ou acha pelo nome), o sistema mostra de quais vendas ela saiu, escolhe-se a venda e
+   quantas unidades voltam. O valor sai **pelas mesmas formas em que entrou**, proporcional;
+   o que não puder voltar assim vira vale. Peça com defeito não volta ao estoque.
+6. **Vender no fiado e receber depois** — na cobrança, escolher (ou cadastrar na hora) a
+   cliente. A dívida aparece no crediário, que abre em *quem está devendo*. Receber é um
+   toque, já com o valor da dívida preenchido.
+7. **Dar o recibo à cliente** — o papel de sempre: o que levou, quanto pagou, quando, com
+   quem. No computador sai na impressora de bobina; no celular vai pelo WhatsApp. Não é nota
+   fiscal, e está escrito no rodapé.
+8. **Lançar despesas** — valor, categoria, data, se é recorrente. Despesas recorrentes podem ser
    replicadas para a competência seguinte sem duplicar.
-6. **Ver o resultado** — faturamento, custo das mercadorias vendidas (CMV), lucro bruto, despesas e
+9. **Ver o resultado** — faturamento, custo das mercadorias vendidas (CMV), lucro bruto, despesas e
    resultado do período; produtos mais vendidos; peças com estoque abaixo do mínimo; curva de vendas
    por dia.
-7. **Fechar o caixa do dia** — conferir o esperado por forma de pagamento contra o contado.
+10. **Fechar o caixa do dia** — conferir o esperado por forma de pagamento contra o contado.
 
 ## Regras de negócio que não podem ser violadas
 
@@ -87,11 +104,25 @@ A loja consegue operar 100% sem celular.
 - Cancelar uma venda nunca apaga: marca como CANCELADA e devolve o estoque por movimentação.
 - Desconto existe apenas no total da venda (não por item).
 - Vendedor não recebe custo em nenhuma resposta da API.
-- Retry de rede não duplica venda nem entrada (idempotência por `client_uuid`).
+- Retry de rede não duplica venda, entrada, devolução nem recebimento de fiado
+  (idempotência por `client_uuid`).
+- Nunca volta mais peça do que saiu na venda, nem em duas devoluções simultâneas.
+- O que a devolução paga respeita o que cada forma recebeu: não sai da gaveta dinheiro que
+  nunca entrou nela.
+- Devolução é reconhecida no dia em que acontece — nunca reescreve o caixa de um dia fechado.
+- Fiado e vale nunca contam como dinheiro na conferência do caixa; recebimento de fiado conta,
+  separado do faturamento.
+- O saldo devedor de um cliente nunca fica negativo: o abatimento para onde a dívida acaba, e
+  a diferença sai em vale.
+- O mesmo vale não paga duas vendas.
 
 ## Fora do escopo do v1
 
 Funcionamento offline com sincronização (v2 — já preparado pelo `client_uuid`), emissão fiscal
-(NF-e/NFC-e), impressão de etiquetas e de recibo, cadastro de clientes e fidelidade, trocas com
-vale-crédito, condicional, múltiplas lojas, e-commerce, limite de desconto por vendedor, sessões de
-inventário compartilhadas no servidor, contagem cega, foto por variante, notificações push.
+(NF-e/NFC-e), fidelidade e pontos, condicional, múltiplas lojas, e-commerce, limite de desconto por
+vendedor, sessões de inventário compartilhadas no servidor, contagem cega, foto por variante,
+notificações push, parcelamento do crediário em datas fixas (hoje é dívida única, recebida em
+qualquer valor), cobrança automática por mensagem.
+
+*Saíram de "fora do escopo" e hoje existem:* impressão de etiquetas, recibo da venda, cadastro de
+clientes, e trocas com vale.

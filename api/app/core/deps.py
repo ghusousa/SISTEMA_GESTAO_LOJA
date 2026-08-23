@@ -52,6 +52,8 @@ def exige(capacidade: Pode) -> Callable[[User], User]:
 ExigeDinheiro = Annotated[User, Depends(exige(Pode.VER_DINHEIRO))]
 ExigeDespesa = Annotated[User, Depends(exige(Pode.LANCAR_DESPESA))]
 ExigeCancelarVenda = Annotated[User, Depends(exige(Pode.CANCELAR_VENDA))]
+ExigeDevolucao = Annotated[User, Depends(exige(Pode.DEVOLVER_VENDA))]
+ExigeCrediario = Annotated[User, Depends(exige(Pode.GERIR_CREDIARIO))]
 ExigeCorrigirEstoque = Annotated[User, Depends(exige(Pode.CORRIGIR_ESTOQUE))]
 ExigeEditarCatalogo = Annotated[User, Depends(exige(Pode.EDITAR_CATALOGO))]
 ExigeCaixa = Annotated[User, Depends(exige(Pode.FECHAR_CAIXA))]

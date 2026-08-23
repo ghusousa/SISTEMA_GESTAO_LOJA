@@ -20,6 +20,9 @@ fecha o caixa. Mesma API, mesmas regras, mesmos papéis.
 | **Vender** | Bipar a etiqueta, montar o carrinho, dar desconto, receber em dinheiro/PIX/débito/crédito (podendo dividir entre formas) e confirmar. O estoque baixa na mesma transação. Venda comum sai em quatro toques. |
 | **Cadastrar peças** | Produto com grade de tamanhos e cores. Cada peça tem seu código de barras: o EAN da etiqueta do fornecedor ou um código interno que o sistema gera — porque muita peça chega sem etiqueta. |
 | **Controlar estoque** | Entrada por bipagem contínua, ajuste com motivo, inventário por contagem física e um extrato que explica cada saldo: quem mexeu, quando e por quê. |
+| **Receber peça de volta** | A cliente chega com a blusa e sem nota: bipa a peça, o sistema mostra de quais vendas ela saiu, e o valor volta pelas mesmas formas em que entrou. Peça com defeito não volta para a arara. O que não puder voltar em dinheiro vira vale de troca — com código, para usar na próxima compra. |
+| **Vender no fiado** | A caderneta dentro do sistema: quem levou, quanto deve, quem já acertou. O crediário abre em *quem está devendo*, que é a pergunta de segunda-feira. O limite combinado avisa, mas não bloqueia — quem conhece a freguesa é a dona. |
+| **Dar o recibo** | O papel de sempre, com o que levou e como pagou. No balcão sai na impressora de bobina de 80 mm; no celular vai pelo WhatsApp. |
 | **Controlar despesas** | Aluguel, energia, fornecedores. Contas fixas se repetem para o mês seguinte sem duplicar. |
 | **Saber o resultado** | Faturamento, custo das peças vendidas, lucro bruto, despesas e o que sobrou. Mais vendidos, curva de vendas por dia e o que precisa repor. |
 | **Fechar o caixa** | Conferir o esperado por forma de pagamento contra o contado. A diferença aparece — não é escondida. |
@@ -34,9 +37,9 @@ para catálogo, estoque, vendas, despesas e caixa.
 
 | Cargo | Faz | Não alcança |
 |---|---|---|
-| **Vendedora** | Vende, bipa, consulta preço, cadastra peça, dá entrada | Custo, lucro, despesas, estorno, ajuste de estoque |
-| **Supervisora** | Tudo acima, mais ajuste, inventário, editar catálogo, fechar o caixa e ver as vendas da equipe | Custo, lucro, despesas, estorno, logins |
-| **Gerente** | Tudo acima, mais custo, lucro, despesas, relatórios, estorno e os logins da equipe | A conta do dono |
+| **Vendedora** | Vende, bipa, consulta preço, cadastra peça, dá entrada | Custo, lucro, despesas, estorno, devolução, crediário, ajuste de estoque |
+| **Supervisora** | Tudo acima, mais ajuste, inventário, editar catálogo, fechar o caixa e ver as vendas da equipe | Custo, lucro, despesas, estorno, devolução, crediário, logins |
+| **Gerente** | Tudo acima, mais custo, lucro, despesas, relatórios, estorno, devolução, crediário e os logins da equipe | A conta do dono |
 | **Dono** | Tudo | — |
 
 Três regras que valem a pena saber: **quem vende não desfaz** (estorno é do dono e do gerente,
@@ -242,6 +245,32 @@ instalação) e rode `instalar.bat`. Os dados ficam nos volumes do Docker, não 
 trocar a pasta não perde venda nenhuma.
 
 Depois de atualizar: no balcão, **Ctrl+F5** no navegador; no celular, feche e abra o app.
+
+### Backup automático, todo dia
+
+O `./instalar.sh` e o `./atualizar.sh` já fazem uma cópia antes de mexer em qualquer coisa.
+Isso protege contra o que **você** faz — não contra o disco que morre às três da manhã. Para
+isso existe o `backup.sh`:
+
+```bash
+./backup.sh                       # agora, uma vez: dump validado + cópia fora
+./backup.sh --automatico          # passa a fazer sozinho, todo dia às 03:15
+./backup.sh --automatico 23:40    # noutro horário
+./backup.sh --listar              # o que existe, com data e tamanho
+./backup.sh --restaurar backups/loja-2026-08-23-0315.dump
+```
+
+Três coisas que ele faz e que um `pg_dump` solto não faz:
+
+1. **Confere o arquivo depois de gerar.** Dump que não abre é um arquivo, não um backup.
+2. **Manda a cópia para fora do servidor**, quando você configura `BACKUP_REMOTO` no `.env`
+   (qualquer destino do [rclone](https://rclone.org): Google Drive, S3, Backblaze…). Backup
+   que mora só no servidor morre junto com ele.
+3. **Tira um dump de segurança ANTES de restaurar.** Restaurar o arquivo errado é o jeito
+   mais rápido de perder o que ainda estava certo.
+
+Guarda 14 dias e apaga o resto sozinho. O `./diagnostico.sh` diz a idade do último backup —
+backup velho é o tipo de coisa que só se descobre no dia em que ele é preciso.
 
 ### Quando o sistema parar
 
@@ -511,7 +540,8 @@ No Windows são as mesmas, com traço único: `-ManterDados`, `-SemBackup`, `-Ap
 
 ### Restaurar um backup
 
-Instale de novo e mande o arquivo para dentro do banco:
+O caminho normal é `./backup.sh --restaurar ARQUIVO` (ver **Backup automático, todo dia**).
+Na mão, para um dump antigo:
 
 ```bash
 ./instalar.sh

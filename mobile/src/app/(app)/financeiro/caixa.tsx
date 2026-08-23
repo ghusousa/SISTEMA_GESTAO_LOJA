@@ -22,6 +22,10 @@ const ROTULOS: Record<FormaPagamento, string> = {
   PIX: 'PIX recebido',
   DEBITO: 'Cartão de débito',
   CREDITO: 'Cartão de crédito',
+  // Não aparecem na conferência (o caixa só itera formas de gaveta), mas o Record
+  // precisa ser completo — e é o TypeScript que garante que ninguém esqueça um caso.
+  VALE: 'Vale de troca',
+  FIADO: 'Fiado',
 };
 
 export default function Caixa() {

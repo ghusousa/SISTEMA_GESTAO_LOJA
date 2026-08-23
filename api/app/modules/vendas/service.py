@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,7 +18,14 @@ from app.modules.estoque import movimentos
 from app.modules.estoque.models import TipoMovimento
 from app.core.permissoes import Pode, pode
 from app.modules.usuarios.models import User
-from app.modules.vendas.models import Sale, SaleItem, SalePayment, StatusVenda
+from app.modules.vendas.models import (
+    FormaPagamento,
+    Sale,
+    SaleItem,
+    SalePayment,
+    StatusVenda,
+    Voucher,
+)
 from app.modules.vendas.repository import VendaRepository
 from app.modules.vendas.schemas import (
     ItemVendaAdminOut,
@@ -87,6 +95,17 @@ class VendaService:
             self.session, {i.variante_id: i.quantidade for i in dados.itens}
         )
 
+        if any(pg.forma == FormaPagamento.FIADO for pg in dados.pagamentos):
+            # Vender no fiado é abrir uma dívida que alguém vai ter de cobrar depois. Quem
+            # não cuida do crediário não enxerga essa dívida em tela nenhuma: deixar
+            # registrar criaria a conta e esconderia a cobrança. O vale, ao contrário,
+            # continua aberto a todos — é o papel na mão da cliente, no balcão.
+            if not pode(usuario.role, Pode.GERIR_CREDIARIO):
+                raise SemPermissao("Vender no fiado é de quem cuida do crediário.")
+
+        if dados.cliente_id is not None:
+            await self._conferir_cliente(dados.cliente_id)
+
         venda = Sale(
             seller_id=usuario.id,
             status=StatusVenda.CONCLUIDA,
@@ -95,6 +114,7 @@ class VendaService:
             total=total,
             client_uuid=dados.client_uuid,
             note=dados.observacao,
+            customer_id=dados.cliente_id,
         )
         self.session.add(venda)
         try:
@@ -120,8 +140,20 @@ class VendaService:
                 )
             )
         for pagamento in dados.pagamentos:
+            voucher_id = None
+            if pagamento.forma == FormaPagamento.VALE:
+                voucher_id = await self._consumir_vale(pagamento.codigo_vale, pagamento.valor)
             self.session.add(
-                SalePayment(sale_id=venda.id, method=pagamento.forma, amount=pagamento.valor)
+                SalePayment(
+                    sale_id=venda.id,
+                    method=pagamento.forma,
+                    amount=pagamento.valor,
+                    voucher_id=voucher_id,
+                    # A FK composta obriga: o cliente do pagamento é o cliente DA VENDA.
+                    customer_id=(
+                        dados.cliente_id if pagamento.forma == FormaPagamento.FIADO else None
+                    ),
+                )
             )
 
         quantidades = {i.variante_id: i.quantidade for i in dados.itens}
@@ -139,6 +171,73 @@ class VendaService:
         registrada = await self.repo.por_id(venda.id)
         assert registrada is not None
         return await self._montar_venda(registrada, usuario)
+
+    async def _conferir_cliente(self, cliente_id: int) -> None:
+        """A cliente do fiado precisa existir E estar ativa.
+
+        Sem esta checagem: cliente inexistente vira 500 (a FK estoura crua, e o handler
+        global só entende `AppError`); cliente EXCLUÍDA passa com 201 e cria uma dívida
+        que ninguém mais vê — a listagem do crediário só mostra quem tem
+        `deleted_at IS NULL`. Não é caso de laboratório: basta a cliente ter sido excluída
+        noutro aparelho enquanto o PDV ainda a tinha na tela.
+
+        Quem pergunta é o serviço público do outro módulo, nunca o repositório dele.
+        """
+        from app.modules.clientes.service import ClienteService
+
+        await ClienteService(self.session).obter(cliente_id)
+
+    async def _consumir_vale(self, codigo: str, valor: Decimal) -> int:
+        """Gasta `valor` do vale, ou recusa. A trava é o UPDATE, não uma leitura antes.
+
+        Conferir o saldo e depois gravar deixaria o mesmo vale pagar duas vendas
+        simultâneas — e o dinheiro da segunda nunca existiu. Mesma mecânica do saldo de
+        estoque: a condição vai DENTRO do UPDATE e quem não alterar linha nenhuma perdeu.
+        """
+        vale = (
+            await self.session.execute(select(Voucher).where(Voucher.code == codigo))
+        ).scalar_one_or_none()
+        if vale is None:
+            raise NaoEncontrado("Vale não encontrado.", {"codigo": codigo})
+
+        resultado = await self.session.execute(
+            update(Voucher)
+            .where(
+                Voucher.id == vale.id,
+                Voucher.used_value + valor <= Voucher.value,
+                or_(Voucher.expires_at.is_(None), Voucher.expires_at > func.now()),
+            )
+            .values(used_value=Voucher.used_value + valor)
+        )
+        if (resultado.rowcount or 0) == 0:
+            raise OperacaoInvalida(
+                "Este vale não cobre esse valor, já foi usado ou está vencido.",
+                {"codigo": codigo, "saldo": str(vale.value - vale.used_value)},
+            )
+        return vale.id
+
+    async def _devolver_vales_da_venda(self, venda: Sale) -> None:
+        """Cancelou a venda, o vale volta a valer.
+
+        Sem isto, a peça volta para a arara E o crédito da cliente evapora: `used_value`
+        continua cheio, o papel na mão dela não compra mais nada, e a loja fica com o
+        dinheiro sem nada em lugar nenhum registrando que aquele crédito existiu. É o
+        dinheiro sumindo do lado mais silencioso.
+
+        O `WHERE used_value >= :valor` é a mesma disciplina do consumo: devolver mais do
+        que se gastou criaria crédito do nada.
+        """
+        for pagamento in venda.payments:
+            if pagamento.voucher_id is None:
+                continue
+            await self.session.execute(
+                update(Voucher)
+                .where(
+                    Voucher.id == pagamento.voucher_id,
+                    Voucher.used_value >= pagamento.amount,
+                )
+                .values(used_value=Voucher.used_value - pagamento.amount)
+            )
 
     # ------------------------------------------------------------ cancelamento
     async def cancelar(self, venda_id: int, motivo: str, usuario: User) -> VendaOut:
@@ -165,6 +264,12 @@ class VendaService:
         )
         if not cancelou:
             await self.session.rollback()
+            # Dois motivos possíveis, e a diferença importa para quem está no balcão.
+            atual = await self.repo.por_id(venda_id)
+            if atual is not None and atual.status == StatusVenda.CONCLUIDA:
+                raise OperacaoInvalida(
+                    "Esta venda já teve peça devolvida. Devolva o restante em vez de cancelar."
+                )
             raise OperacaoInvalida("Esta venda já está cancelada.")
 
         quantidades = {item.variant_id: item.quantity for item in venda.items}
@@ -179,6 +284,10 @@ class VendaService:
                 observacao=f"Cancelamento da venda #{venda.id}: {motivo}",
             )
 
+        await self._devolver_vales_da_venda(venda)
+
+        # O fiado desta venda some junto, sem nada a fazer: o saldo do cliente só soma
+        # pagamentos de vendas CONCLUÍDAS, e esta deixou de ser uma.
         await self.session.commit()
 
         atualizada = await self.repo.por_id(venda_id)
@@ -207,10 +316,14 @@ class VendaService:
         status: str | None,
         vendedor_id: int | None,
         usuario: User,
+        variante_id: int | None = None,
+        cliente_id: int | None = None,
     ) -> Pagina[VendaResumoOut]:
         if not pode(usuario.role, Pode.VER_VENDAS_DE_TODOS):
             vendedor_id = usuario.id  # vendedora só enxerga as próprias vendas
-        linhas, total = await self.repo.listar(p, inicio, fim, status, vendedor_id)
+        linhas, total = await self.repo.listar(
+            p, inicio, fim, status, vendedor_id, variante_id, cliente_id
+        )
         resumos = await self.repo.resumo_de_vendas([venda.id for venda, _ in linhas])
         items = [
             VendaResumoOut(
@@ -242,6 +355,7 @@ class VendaService:
                 "cor": variante.color if variante else "",
                 "codigo_barras": variante.barcode if variante else "",
                 "quantidade": item.quantity,
+                "quantidade_devolvida": item.returned_quantity,
                 "preco_unitario": item.unit_price,
                 "total_item": item.unit_price * item.quantity,
             }
@@ -263,6 +377,8 @@ class VendaService:
             "vendida_em": venda.sold_at,
             "cancelada_em": venda.cancelled_at,
             "motivo_cancelamento": venda.cancel_reason,
+            "cliente_id": venda.customer_id,
+            "cliente": await self.repo.nome_do_cliente(venda.customer_id),
             "observacao": venda.note,
             "itens": itens,
             "pagamentos": [

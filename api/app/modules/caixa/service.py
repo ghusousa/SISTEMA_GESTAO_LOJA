@@ -17,7 +17,17 @@ from app.modules.caixa.schemas import (
     LinhaCaixa,
 )
 from app.modules.usuarios.models import User
-from app.modules.vendas.models import FormaPagamento, Sale, SalePayment, StatusVenda
+from app.modules.clientes.models import CustomerPayment
+from app.modules.vendas.devolucao import FORMAS_QUE_SAEM_DA_GAVETA
+from app.modules.vendas.models import (
+    FORMAS_DE_GAVETA,
+    FormaPagamento,
+    Sale,
+    SalePayment,
+    SaleReturn,
+    SaleReturnPayment,
+    StatusVenda,
+)
 
 ZERO = Decimal("0.00")
 
@@ -33,20 +43,55 @@ class CaixaService:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def _esperado_do_dia(self, dia: date) -> tuple[dict[str, Decimal], int, int]:
-        por_forma = dict(
-            (
-                await self.session.execute(
-                    select(SalePayment.method, func.sum(SalePayment.amount))
-                    .join(Sale, Sale.id == SalePayment.sale_id)
-                    .where(
-                        dia_da_loja(Sale.sold_at) == dia,
-                        Sale.status == StatusVenda.CONCLUIDA,
-                    )
-                    .group_by(SalePayment.method)
-                )
-            ).all()
+    async def _somar(self, stmt) -> dict[str, Decimal]:
+        return {forma: Decimal(valor) for forma, valor in (await self.session.execute(stmt)).all()}
+
+    async def _movimento_do_dia(
+        self, dia: date
+    ) -> tuple[dict[str, Decimal], dict[str, Decimal], dict[str, Decimal]]:
+        """As três coisas que mexem na gaveta hoje: venda, devolução e fiado recebido.
+
+        **Só formas de gaveta.** VALE e FIADO ficam de fora porque não são dinheiro:
+        o vale foi pago na venda que o gerou, e o fiado ainda nem foi pago. Somá-los faria
+        a loja procurar na gaveta por um dinheiro que nunca entrou, e o caixa fecharia com
+        falta todo santo dia em que alguém vendesse no fiado.
+        """
+        vendas = await self._somar(
+            select(SalePayment.method, func.sum(SalePayment.amount))
+            .join(Sale, Sale.id == SalePayment.sale_id)
+            .where(
+                dia_da_loja(Sale.sold_at) == dia,
+                Sale.status == StatusVenda.CONCLUIDA,
+                SalePayment.method.in_(FORMAS_DE_GAVETA),
+            )
+            .group_by(SalePayment.method)
         )
+        # Pelo dia da DEVOLUÇÃO, nunca pelo da venda (ADR-19): amarrar pela venda
+        # reescreveria um caixa já fechado e o esperado de hoje discordaria do de ontem.
+        devolucoes = await self._somar(
+            select(SaleReturnPayment.method, func.sum(SaleReturnPayment.amount))
+            .join(SaleReturn, SaleReturn.id == SaleReturnPayment.return_id)
+            .where(
+                dia_da_loja(SaleReturn.returned_at) == dia,
+                SaleReturnPayment.method.in_(FORMAS_QUE_SAEM_DA_GAVETA),
+            )
+            .group_by(SaleReturnPayment.method)
+        )
+        recebimentos = await self._somar(
+            select(CustomerPayment.method, func.sum(CustomerPayment.amount))
+            .where(dia_da_loja(CustomerPayment.paid_at) == dia)
+            .group_by(CustomerPayment.method)
+        )
+        return vendas, devolucoes, recebimentos
+
+    async def _esperado_do_dia(self, dia: date) -> tuple[dict[str, Decimal], int, int]:
+        vendas, devolucoes, recebimentos = await self._movimento_do_dia(dia)
+        por_forma = {
+            forma: vendas.get(forma, ZERO)
+            + recebimentos.get(forma, ZERO)
+            - devolucoes.get(forma, ZERO)
+            for forma in FORMAS_DE_GAVETA
+        }
         contagens = (
             await self.session.execute(
                 select(Sale.status, func.count())
@@ -66,16 +111,22 @@ class CaixaService:
             if fechamento
             else {}
         )
+        vendas, devolucoes, recebimentos = await self._movimento_do_dia(dia)
         linhas = [
             LinhaCaixa(
                 forma=forma,
+                vendas=vendas.get(forma, ZERO),
+                devolucoes=devolucoes.get(forma, ZERO),
+                recebimentos_de_fiado=recebimentos.get(forma, ZERO),
                 esperado=esperado.get(forma, ZERO),
                 contado=contados.get(forma),
                 diferenca=(
                     contados[forma] - esperado.get(forma, ZERO) if forma in contados else None
                 ),
             )
-            for forma in FormaPagamento
+            # `FORMAS_DE_GAVETA` e não `FormaPagamento`: pedir a contagem de VALE e de
+            # FIADO seria pedir para contar o que não está lá.
+            for forma in FORMAS_DE_GAVETA
         ]
         return DiaCaixaOut(
             data=dia,
@@ -113,10 +164,12 @@ class CaixaService:
         # Forma com dinheiro esperado precisa ser conferida: gravar "contado zero" para uma
         # forma que ninguém contou inventaria uma diferença enorme e mentiria sobre o dia.
         esperado_previa, _, _ = await self._esperado_do_dia(dados.data)
+        # `!= ZERO` e não `> ZERO`: um dia em que se devolveu mais do que se vendeu numa
+        # forma tem esperado NEGATIVO — e é justamente o dia que mais precisa de contagem.
         nao_conferidas = [
             forma
             for forma, valor in esperado_previa.items()
-            if valor > ZERO and forma not in set(formas)
+            if valor != ZERO and forma not in set(formas)
         ]
         if nao_conferidas:
             raise Validacao(
@@ -155,7 +208,9 @@ class CaixaService:
         fechamento.note = dados.observacao
         total_esperado = ZERO
         total_contado = ZERO
-        for forma in FormaPagamento:
+        # `FORMAS_DE_GAVETA`: o CHECK de `cash_closing_lines` só aceita estas quatro, e é
+        # ele que garante que VALE e FIADO nunca entrem numa conferência de gaveta.
+        for forma in FORMAS_DE_GAVETA:
             valor_esperado = esperado.get(forma, ZERO)
             valor_contado = contados.get(forma, ZERO)
             total_esperado += valor_esperado

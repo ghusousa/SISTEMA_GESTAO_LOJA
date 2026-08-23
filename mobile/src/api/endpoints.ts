@@ -26,6 +26,11 @@ import type {
   TipoMovimento,
   Tokens,
   Usuario,
+  Cliente,
+  Devolucao,
+  ExtratoCliente,
+  PagamentoCliente,
+  Vale,
   Variante,
   VarianteLookup,
   Versao,
@@ -236,14 +241,22 @@ export const vendas = {
     client_uuid: string;
     desconto?: string;
     observacao?: string | null;
+    cliente_id?: number | null;
     itens: { variante_id: number; quantidade: number }[];
-    pagamentos: { forma: FormaPagamento; valor: string }[];
+    pagamentos: { forma: FormaPagamento; valor: string; codigo_vale?: string }[];
   }) {
     const { data } = await api.post<Venda>('/vendas', dados);
     return data;
   },
   async listar(
-    params: Paginado & { inicio?: string; fim?: string; status?: string } = {},
+    params: Paginado & {
+      inicio?: string;
+      fim?: string;
+      status?: string;
+      /** Só vendas que levaram esta peça — é o caminho da devolução no balcão. */
+      variante_id?: number;
+      cliente_id?: number;
+    } = {},
   ) {
     const { data } = await api.get<Pagina<VendaResumo>>('/vendas', { params });
     return data;
@@ -254,6 +267,57 @@ export const vendas = {
   },
   async cancelar(id: number, motivo: string) {
     const { data } = await api.post<Venda>(`/vendas/${id}/cancelamento`, { motivo });
+    return data;
+  },
+  async devolver(
+    vendaId: number,
+    dados: {
+      client_uuid: string;
+      motivo?: string | null;
+      itens: { item_id: number; quantidade: number; voltar_ao_estoque?: boolean }[];
+    },
+  ) {
+    const { data } = await api.post<Devolucao>(`/vendas/${vendaId}/devolucoes`, dados);
+    return data;
+  },
+  async devolucoesDaVenda(vendaId: number) {
+    const { data } = await api.get<Devolucao[]>(`/vendas/${vendaId}/devolucoes`);
+    return data;
+  },
+  async consultarVale(codigo: string) {
+    const { data } = await api.get<Vale>(`/vendas/vales/${encodeURIComponent(codigo)}`);
+    return data;
+  },
+};
+
+export const clientes = {
+  async listar(params: Paginado & { q?: string; somente_devendo?: boolean } = {}) {
+    const { data } = await api.get<Pagina<Cliente>>('/clientes', { params });
+    return data;
+  },
+  async criar(dados: {
+    nome: string;
+    telefone?: string | null;
+    documento?: string | null;
+    /** Limite combinado, string decimal. Avisa na venda, nunca bloqueia (ADR-20). */
+    limite?: string | null;
+  }) {
+    const { data } = await api.post<Cliente>('/clientes', dados);
+    return data;
+  },
+  async detalhe(id: number) {
+    const { data } = await api.get<Cliente>(`/clientes/${id}`);
+    return data;
+  },
+  async extrato(id: number) {
+    const { data } = await api.get<ExtratoCliente>(`/clientes/${id}/extrato`);
+    return data;
+  },
+  async receber(
+    id: number,
+    dados: { forma: FormaPagamento; valor: string; client_uuid: string; observacao?: string | null },
+  ) {
+    const { data } = await api.post<PagamentoCliente>(`/clientes/${id}/pagamentos`, dados);
     return data;
   },
 };

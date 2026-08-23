@@ -125,15 +125,78 @@ sale_items(id, sale_id FK→sales CASCADE, variant_id FK→product_variants REST
   ix_sale_items_sale_id, ix_sale_items_variant_id
 
 sale_payments(id, sale_id FK→sales CASCADE,
-              method CHECK IN ('DINHEIRO','PIX','DEBITO','CREDITO'),
-              amount NUMERIC(14,2) CHECK > 0)
+              method CHECK IN ('DINHEIRO','PIX','DEBITO','CREDITO','VALE','FIADO'),
+              amount NUMERIC(14,2) CHECK > 0,
+              voucher_id FK→vouchers NULL,      -- qual vale pagou
+              customer_id FK→customers NULL)    -- de quem é a dívida
+  CHECK ((method = 'FIADO') = (customer_id IS NOT NULL))   -- ck_fiado_tem_cliente
+  FK (sale_id, customer_id) → sales(id, customer_id)       -- é a MESMA cliente da venda
   ix_sale_payments_sale_id
 ```
 
 Congelar `unit_price`/`unit_cost` é o que torna o lucro histórico correto: reajustar o preço amanhã
 não reescreve o resultado de ontem.
 
-### 2.5 Despesas
+A FK composta `(sale_id, customer_id) → sales(id, customer_id)` não é enfeite: sem ela, um
+pagamento no fiado poderia apontar para uma cliente diferente da cliente da venda, e a
+dívida apareceria na conta de quem não levou a peça. O banco recusa; ninguém precisa
+lembrar.
+
+### 2.5 Devolução, vale e crediário
+
+```sql
+sale_items( ... , returned_quantity INT DEFAULT 0)
+  CHECK (returned_quantity >= 0 AND returned_quantity <= quantity)
+  UNIQUE (id, sale_id, variant_id)   -- alvo das FKs compostas abaixo
+
+sale_returns(id, sale_id FK→sales RESTRICT, user_id FK→users, returned_at,
+             reason NULL, total NUMERIC(14,2) CHECK >= 0,
+             client_uuid UUID UNIQUE NOT NULL, created_at)
+  ix_sale_returns_sale_id, ix_sale_returns_returned_at
+
+sale_return_items(id, return_id FK→sale_returns CASCADE, sale_item_id, variant_id,
+                  quantity INT CHECK > 0, refund_amount NUMERIC(14,2) CHECK >= 0,
+                  restock BOOL DEFAULT TRUE)
+  FK (sale_item_id, variant_id) → sale_items(id, variant_id)
+  -- sem unit_price/unit_cost: vêm de sale_items por JOIN. Copiar seria deixar dois
+  -- lugares dizerem o preço da mesma peça, e um dia eles discordam.
+
+sale_return_payments(id, return_id FK→sale_returns CASCADE,
+                     method CHECK IN (as 6 formas), amount CHECK > 0,
+                     voucher_id FK→vouchers NULL)
+
+vouchers(id, code UNIQUE, value NUMERIC(14,2) CHECK > 0,
+         used_value NUMERIC(14,2) DEFAULT 0, return_id FK→sale_returns NULL,
+         expires_at NULL, created_at)
+  CHECK (used_value >= 0 AND used_value <= value)
+  -- consumo por UPDATE condicional (WHERE used_value + :v <= value), igual ao saldo de
+  -- estoque: conferir antes deixaria o mesmo vale pagar duas vendas simultâneas.
+
+customers(id, name, phone NULL, document NULL, credit_limit NULL, note NULL,
+          deleted_at NULL, created_at, updated_at)
+  uq_customers_phone_active UNIQUE (phone) WHERE deleted_at IS NULL
+  uq_customers_document_active UNIQUE (document) WHERE deleted_at IS NULL
+
+customer_payments(id, customer_id FK→customers RESTRICT, user_id FK→users,
+                  method CHECK IN ('DINHEIRO','PIX','DEBITO','CREDITO'),
+                  amount CHECK > 0, paid_at, note NULL,
+                  client_uuid UUID UNIQUE NOT NULL)
+```
+
+`returned_quantity` sobe por `UPDATE ... WHERE returned_quantity + :q <= quantity`, a mesma
+mecânica de `stock_balances`. Duas devoluções simultâneas da mesma peça (toque duplo, retry
+de rede) passariam as duas por qualquer checagem em memória — e a peça voltaria duas vezes
+para a arara, com o dinheiro saindo duas vezes da gaveta.
+
+Quanto o cliente deve **não é coluna nenhuma**:
+
+```
+deve = Σ pagamentos FIADO de vendas CONCLUÍDAS
+     − Σ customer_payments
+     − Σ devoluções que abateram FIADO
+```
+
+### 2.6 Despesas
 
 ```sql
 expense_categories(id, name, deleted_at, created_at)
@@ -151,7 +214,7 @@ expenses(id, category_id FK→expense_categories RESTRICT, description,
 A UNIQUE `(recurring_source_id, competencia)` é o que torna "replicar recorrentes do mês" idempotente:
 rodar duas vezes não duplica o aluguel.
 
-### 2.6 Caixa
+### 2.7 Caixa
 
 ```sql
 cash_closings(id, closing_date DATE UNIQUE, user_id FK→users, note,
@@ -366,6 +429,58 @@ Duas datas, não uma: "atualizada" de três dias atrás não tranquiliza ningué
 timer pode ter morrido ontem. Passadas 24h sem conferir, a tela diz isso em vez de repetir
 uma resposta velha com cara de nova.
 
+**ADR-19 — Não existe "modo troca": troca é devolução que vira vale, mais uma venda nova.**
+A troca parece uma operação só, e virou muitas telas em muitos sistemas: escolher o que
+sai, o que entra, calcular a diferença nos dois sentidos, decidir o que fazer quando a peça
+nova é mais barata. Cada um desses ramos é um lugar novo onde o dinheiro pode sumir.
+Quebrando em duas operações que já existem, a troca não precisa de código nenhum: a peça
+volta (devolução, com rastro em `sale_returns`), o valor sai por onde entrou, e a peça nova
+é uma venda comum. Se o valor não pode voltar pela forma original, vira vale — um papel com
+código, em `vouchers`, que a próxima venda consome.
+**A devolução é reconhecida no dia em que acontece, não no dia da venda.** Refazer o
+faturamento de terça porque a cliente voltou na sexta é reescrever um caixa que já foi
+conferido e fechado. O relatório mostra bruto e líquido lado a lado.
+**O que volta por cada forma respeita o que entrou por ela.** Uma venda de R$ 200 paga
+metade em dinheiro e metade no cartão devolve metade e metade — devolver tudo em espécie
+tiraria da gaveta um dinheiro que nunca entrou nela. Cartão fica fora do esperado do caixa
+de propósito: o estorno na adquirente cai dias depois e não muda o que está na gaveta hoje.
+**Cada item decide se volta ao estoque.** Peça manchada ou rasgada volta para a loja, não
+para a arara: o dinheiro sai igual, o saldo não sobe. Sem essa escolha, a vendedora
+devolveria e teria de lembrar de um ajuste depois — e é disso que o estoque adoece.
+
+**ADR-20 — Limite do crediário avisa, não bloqueia.**
+Travar a venda quando a cliente passa do limite parece proteger a loja, e faz o contrário:
+quem conhece a freguesa é a dona, e a vendedora que não consegue lançar aprende no mesmo
+dia a registrar como dinheiro e anotar no papel. Aí a dívida sai da conta e volta para a
+caderneta, que é exatamente o problema que o crediário veio resolver. O limite aparece como
+aviso na hora de escolher a cliente e como etiqueta na lista; a decisão continua sendo de
+quem está no balcão.
+**O saldo devedor nunca é uma coluna.** É sempre calculado: fiado das vendas concluídas,
+menos o que o cliente pagou, menos o que foi devolvido abatendo fiado. Saldo guardado é
+saldo que sai do lugar no dia em que alguém esquece de atualizar — e aqui isso significaria
+cobrar o que já foi pago.
+**Fiado e vale nunca entram na conferência de gaveta.** O vale foi pago na venda que o
+gerou; o fiado ainda nem foi pago. Somá-los faria o caixa fechar com falta todo santo dia
+em que a loja vendesse fiado. Recebimento de fiado, ao contrário, entra: é dinheiro que
+passou pela gaveta hoje — mas aparece separado do faturamento, porque a venda já foi
+contada no dia dela.
+
+**ADR-21 — Devolução só abate a dívida até onde ela existe; o resto vira vale.**
+A cliente levou no fiado, pagou tudo e só então voltou com a peça. Abater o fiado outra vez
+deixa o saldo em −R$ 100,00: a loja passa a dever a ela, ela some da lista de quem está
+devendo, e nenhuma tela diz isso. O abatimento é limitado ao que ela ainda deve **hoje**, e
+a diferença sai como vale — um papel na mão dela, que ela vê. Devolver em espécie seria
+tirar da gaveta de hoje um dinheiro que entrou noutro dia, por outra venda; o sistema não
+sabe qual pagamento quitou qual compra, e não vai fingir que sabe.
+
+**ADR-22 — Backup é do servidor, com cópia fora dele, e só vale se a restauração for testada.**
+`pg_dump` que ninguém nunca restaurou é um arquivo, não um backup. `backup.sh` valida o
+dump abrindo-o depois de gerar, guarda 14 dias, manda a cópia para fora por `rclone` quando
+`BACKUP_REMOTO` está configurado, e a restauração tira um dump de segurança ANTES de
+sobrescrever — porque restaurar o arquivo errado é o jeito mais rápido de perder o que
+ainda estava certo. O `diagnostico.sh` conta a idade do último backup: backup velho é o
+tipo de coisa que só se descobre no dia em que ele é preciso.
+
 ## 4. Contratos de API
 
 Prefixo `/api/v1`. Auth: `Authorization: Bearer <access_token>`.
@@ -425,25 +540,45 @@ Desativar = `PATCH {ativo:false}`. Bootstrap do primeiro admin: `python -m app.c
 ### 4.5 `vendas`
 | método | rota | papel | notas |
 |---|---|---|---|
-| POST | `/vendas` | A/V | `{client_uuid, desconto?, observacao?, itens:[{variante_id, quantidade}], pagamentos:[{forma, valor}]}` → venda completa. Atômico. Replay → 200 |
-| GET | `/vendas` | todos | `?inicio=&fim=&status=&vendedor_id=`; sem VER_VENDAS_DE_TODOS, o service força as próprias |
+| POST | `/vendas` | A/V | `{client_uuid, desconto?, observacao?, cliente_id?, itens:[{variante_id, quantidade}], pagamentos:[{forma, valor, codigo_vale?}]}` → venda completa. Atômico. Replay → 200 |
+| GET | `/vendas` | todos | `?inicio=&fim=&status=&vendedor_id=&variante_id=&cliente_id=`; sem VER_VENDAS_DE_TODOS, o service força as próprias |
 | GET | `/vendas/{id}` | A/V | idem escopo |
 | POST | `/vendas/{id}/cancelamento` | CANCELAR_VENDA | `{motivo}`; dono e gerente — quem vende não desfaz |
+| POST | `/vendas/{id}/devolucoes` | DEVOLVER_VENDA | `{client_uuid, motivo?, itens:[{item_id, quantidade, voltar_ao_estoque?}]}` → devolução com os valores decididos pelo servidor. Replay → 200 |
+| GET | `/vendas/{id}/devolucoes` | DEVOLVER_VENDA | o que já voltou desta venda |
+| GET | `/vendas/vales/{codigo}` | A/V | consulta o vale: `{codigo, valor, usado, saldo}` |
 
 Troco não trafega: é calculado no app a partir do valor recebido em dinheiro.
 
-### 4.6 `despesas` (LANCAR_DESPESA: dono e gerente)
+`?variante_id=` existe para a devolução: no balcão a cliente chega com a blusa e sem nota, e
+o caminho começa na peça — "de quais vendas esta peça saiu?" — não no número da venda.
+
+Venda cancelada não pode ter devolução, e venda com devolução não pode ser cancelada: são
+dois caminhos para desfazer a mesma coisa, e deixar os dois abertos devolveria a peça duas
+vezes.
+
+### 4.6 `clientes` (GERIR_CREDIARIO: dono e gerente)
+| método | rota | notas |
+|---|---|---|
+| GET | `/clientes` | `?q=&somente_devendo=`; `deve` e `acima_do_limite` vêm calculados |
+| POST | `/clientes` | `{nome, telefone?, documento?, limite?}` |
+| GET/PATCH | `/clientes/{id}` | |
+| DELETE | `/clientes/{id}` | soft delete; recusa quem ainda deve |
+| GET | `/clientes/{id}/extrato` | compras no fiado, pagamentos, e os três totais que fecham a conta |
+| POST | `/clientes/{id}/pagamentos` | `{forma, valor, client_uuid, observacao?}`; só formas de gaveta, e não aceita mais do que a dívida |
+
+### 4.7 `despesas` (LANCAR_DESPESA: dono e gerente)
 `GET/POST /despesas/categorias`, `PATCH/DELETE /despesas/categorias/{id}`,
 `GET/POST /despesas`, `GET/PATCH/DELETE /despesas/{id}`,
 `POST /despesas/replicar-recorrentes?competencia=YYYY-MM` (idempotente; devolve `{criadas, ignoradas}`).
 
-### 4.7 `caixa` (FECHAR_CAIXA: dono, gerente e supervisora)
+### 4.8 `caixa` (FECHAR_CAIXA: dono, gerente e supervisora)
 `GET /caixa/dia?data=YYYY-MM-DD` → esperado por forma de pagamento (vendas concluídas do dia no fuso
 da loja) + fechamento existente, se houver.
 `POST /caixa/fechamentos` `{data, contagens:[{forma, valor_contado}], observacao?}` → upsert do dia.
 `GET /caixa/fechamentos?inicio=&fim=`.
 
-### 4.8 `relatorios` (VER_DINHEIRO: dono e gerente)
+### 4.9 `relatorios` (VER_DINHEIRO: dono e gerente)
 Todos com `?inicio=&fim=` (≤ 366 dias), exceto `estoque-baixo` (sem período — é fotografia do agora).
 
 - `/relatorios/resumo` → faturamento, CMV, lucro bruto, despesas, resultado, nº de vendas, ticket médio

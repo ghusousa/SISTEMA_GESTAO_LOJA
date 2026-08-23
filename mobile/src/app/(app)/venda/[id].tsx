@@ -1,5 +1,6 @@
 /**
- * Recibo da venda. Serve como confirmação para o vendedor e como base do cancelamento.
+ * A venda por dentro: confirmação para quem vendeu, e a base do cancelamento, da
+ * devolução e do recibo que vai para a cliente.
  */
 
 import { useMutation, useQuery } from '@tanstack/react-query';
@@ -23,6 +24,8 @@ const ROTULO_FORMA: Record<FormaPagamento, string> = {
   PIX: 'PIX',
   DEBITO: 'Cartão de débito',
   CREDITO: 'Cartão de crédito',
+  VALE: 'Vale de troca',
+  FIADO: 'Fiado',
 };
 
 export default function DetalheVenda() {
@@ -34,6 +37,14 @@ export default function DetalheVenda() {
   const consulta = useQuery({
     queryKey: chaves.venda(vendaId),
     queryFn: () => vendas.detalhe(vendaId),
+    enabled: Number.isFinite(vendaId),
+  });
+
+  // As devoluções já feitas nesta venda. Só existe conversa sobre devolver o que ainda
+  // não voltou, e o histórico responde "já devolvi isso?" sem sair da tela.
+  const devolucoes = useQuery({
+    queryKey: chaves.devolucoesDaVenda(vendaId),
+    queryFn: () => vendas.devolucoesDaVenda(vendaId),
     enabled: Number.isFinite(vendaId),
   });
 
@@ -62,6 +73,12 @@ export default function DetalheVenda() {
   // Estornar é de dono e gerente — quem vende não desfaz a própria venda. A API recusa de
   // qualquer forma; esconder o botão evita oferecer uma ação que daria 403.
   const podeCancelar = !cancelada && pode(usuario?.papel, PODE.CANCELAR_VENDA);
+  const podeDevolver = !cancelada && pode(usuario?.papel, PODE.DEVOLVER_VENDA);
+  // Sobra alguma peça para voltar? Uma venda inteira já devolvida não abre a tela.
+  const temOQueDevolver = venda.itens.some(
+    (i) => i.quantidade - (i.quantidade_devolvida ?? 0) > 0,
+  );
+  const jaDevolvido = devolucoes.data ?? [];
 
   function pedirMotivo() {
     Alert.prompt?.(
@@ -105,6 +122,7 @@ export default function DetalheVenda() {
               {format(new Date(venda.vendida_em), "dd 'de' MMMM 'às' HH:mm", { locale: ptBR })}
             </Text>
             <Text style={s.data}>por {venda.vendedor}</Text>
+            {!!venda.cliente && <Text style={s.data}>cliente: {venda.cliente}</Text>}
           </View>
           <Etiqueta
             texto={cancelada ? 'cancelada' : 'concluída'}
@@ -128,6 +146,11 @@ export default function DetalheVenda() {
                 {item.tamanho} · {item.cor} · {item.quantidade}x{' '}
                 {formatar(paraCentavos(item.preco_unitario))}
               </Text>
+              {(item.quantidade_devolvida ?? 0) > 0 && (
+                <Text style={s.itemDevolvido}>
+                  {item.quantidade_devolvida} devolvida(s)
+                </Text>
+              )}
             </View>
             <Text style={s.itemTotal}>{formatar(paraCentavos(item.total_item))}</Text>
           </View>
@@ -171,7 +194,36 @@ export default function DetalheVenda() {
         </Cartao>
       )}
 
+      {jaDevolvido.length > 0 && (
+        <Cartao>
+          <Text style={s.secao}>Devoluções</Text>
+          {jaDevolvido.map((d) => (
+            <Linha
+              key={d.id}
+              esquerda={format(new Date(d.devolvida_em), 'dd/MM/yyyy', { locale: ptBR })}
+              direita={`− ${formatar(paraCentavos(d.total))}`}
+            />
+          ))}
+        </Cartao>
+      )}
+
       <View style={s.acoes}>
+        <Botao
+          titulo="Recibo para a cliente"
+          variante="secundario"
+          onPress={() =>
+            router.push({ pathname: '/venda/recibo', params: { id: String(venda.id) } })
+          }
+        />
+        {podeDevolver && temOQueDevolver && (
+          <Botao
+            titulo="Devolver peça desta venda"
+            variante="secundario"
+            onPress={() =>
+              router.push({ pathname: '/venda/devolucao', params: { venda: String(venda.id) } })
+            }
+          />
+        )}
         {podeCancelar && (
           <Botao
             titulo="Cancelar esta venda"
@@ -212,6 +264,7 @@ const s = StyleSheet.create({
   itemNome: { fontSize: fonte.base, fontWeight: '600', color: cores.texto },
   itemDetalhe: { fontSize: fonte.pequena, color: cores.textoSuave, marginTop: 2 },
   itemTotal: { fontSize: fonte.base, fontWeight: '700', color: cores.texto },
+  itemDevolvido: { fontSize: fonte.micro, color: cores.perigo, marginTop: 2 },
 
   acoes: { gap: espaco.sm, marginTop: espaco.sm },
 });

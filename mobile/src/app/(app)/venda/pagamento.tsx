@@ -12,7 +12,8 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 
 import { mensagemDoErro, codigoDoErro, detalheDoErro } from '@/api/client';
 import { vendas } from '@/api/endpoints';
-import type { FormaPagamento } from '@/api/tipos';
+import type { Cliente, FormaPagamento } from '@/api/tipos';
+import { ModalCliente, ModalVale, type ValeEscolhido } from '@/components/PagarValeFiado';
 import { TecladoNumerico } from '@/components/TecladoNumerico';
 import { Botao } from '@/components/ui';
 import {
@@ -22,8 +23,10 @@ import {
   percentual,
   type Centavos,
 } from '@/lib/money';
+import { PODE, pode } from '@/lib/permissoes';
 import { invalidarAposVenda } from '@/lib/queryClient';
 import { ALVO_TOQUE, cores, espaco, fonte, raio } from '@/lib/tema';
+import { useAuthStore } from '@/stores/authStore';
 import { useCartStore } from '@/stores/cartStore';
 
 const FORMAS: { forma: FormaPagamento; rotulo: string }[] = [
@@ -31,7 +34,16 @@ const FORMAS: { forma: FormaPagamento; rotulo: string }[] = [
   { forma: 'PIX', rotulo: 'PIX' },
   { forma: 'DEBITO', rotulo: 'Débito' },
   { forma: 'CREDITO', rotulo: 'Crédito' },
+  { forma: 'VALE', rotulo: 'Vale de troca' },
+  { forma: 'FIADO', rotulo: 'Fiado' },
 ];
+
+/** Um pagamento montado na tela. `codigoVale` só existe na linha do VALE. */
+interface Pagamento {
+  forma: FormaPagamento;
+  valor: Centavos;
+  codigoVale?: string;
+}
 
 type Etapa = 'desconto' | 'pagamento';
 
@@ -47,10 +59,20 @@ export default function Pagamento() {
 
   const [etapa, setEtapa] = useState<Etapa>('pagamento');
   const [descontoDigitado, setDescontoDigitado] = useState<Centavos>(descontoAtual);
-  const [pagos, setPagos] = useState<{ forma: FormaPagamento; valor: Centavos }[]>([]);
+  const [pagos, setPagos] = useState<Pagamento[]>([]);
   const [valorDigitado, setValorDigitado] = useState<Centavos>(0);
   const [recebidoDinheiro, setRecebidoDinheiro] = useState<Centavos>(0);
   const [enviando, setEnviando] = useState(false);
+  // Quem responde pelo fiado. Sem cliente não existe dívida a cobrar depois — por isso a
+  // forma FIADO só entra na lista depois que alguém foi escolhido.
+  const [cliente, setCliente] = useState<Cliente | null>(null);
+  const [perguntandoVale, setPerguntandoVale] = useState(false);
+  const [perguntandoCliente, setPerguntandoCliente] = useState(false);
+  // Fiado só para quem cuida do crediário: sem a capacidade, a busca de cliente responde
+  // 403 e a vendedora fica travada com a cliente na frente — o caminho de volta para o
+  // papel. O vale continua para todos: conferir o papel na mão da cliente é do balcão.
+  const podeFiado = pode(useAuthStore((e) => e.usuario?.papel), PODE.GERIR_CREDIARIO);
+  const formas = podeFiado ? FORMAS : FORMAS.filter((f) => f.forma !== 'FIADO');
 
   const total = Math.max(0, subtotal - descontoAtual);
   const jaPago = pagos.reduce((soma, p) => soma + p.valor, 0);
@@ -62,15 +84,51 @@ export default function Pagamento() {
 
   function aplicarDesconto() {
     definirDesconto(descontoDigitado);
+    // Mudou o total: a divisão montada antes não vale mais, e o fiado ia junto com ela.
     setPagos([]);
+    setCliente(null);
+    setRecebidoDinheiro(0);
     setValorDigitado(0);
     setEtapa('pagamento');
   }
 
+  /** Quanto esta forma vai cobrir: o digitado, ou tudo que falta — o caso de sempre. */
+  function valorPretendido() {
+    return valorDigitado > 0 ? Math.min(valorDigitado, restante) : restante;
+  }
+
+  function somar(pagamento: Pagamento) {
+    void Haptics.selectionAsync();
+    setPagos((atuais) => {
+      const existente = atuais.find((p) => p.forma === pagamento.forma);
+      return existente
+        ? atuais.map((p) =>
+            p.forma === pagamento.forma ? { ...p, valor: p.valor + pagamento.valor } : p,
+          )
+        : [...atuais, pagamento];
+    });
+    setValorDigitado(0);
+  }
+
   function registrarPagamento(forma: FormaPagamento) {
-    // Sem valor digitado, a forma escolhida quita o que falta — o caso de sempre.
-    const valor = valorDigitado > 0 ? Math.min(valorDigitado, restante) : restante;
+    const valor = valorPretendido();
     if (valor <= 0) return;
+
+    // Vale e fiado precisam de uma pergunta ANTES do valor: qual papel, e de quem é a
+    // dívida. Uma linha de cada por venda — dois vales na mesma compra é caso que não
+    // existe no balcão, e somar em cima estouraria o saldo do primeiro.
+    if (forma === 'VALE' || forma === 'FIADO') {
+      if (pagos.some((p) => p.forma === forma)) {
+        Alert.alert(
+          forma === 'VALE' ? 'Já tem um vale nesta venda' : 'Já tem um fiado nesta venda',
+          'Remova o que já está lançado para trocar.',
+        );
+        return;
+      }
+      if (forma === 'VALE') setPerguntandoVale(true);
+      else setPerguntandoCliente(true);
+      return;
+    }
 
     if (forma === 'DINHEIRO') {
       // Recebeu mais do que devia: a diferença é troco, não pagamento a mais.
@@ -85,19 +143,44 @@ export default function Pagamento() {
       return;
     }
 
-    void Haptics.selectionAsync();
-    setPagos((atuais) => {
-      const existente = atuais.find((p) => p.forma === forma);
-      return existente
-        ? atuais.map((p) => (p.forma === forma ? { ...p, valor: p.valor + valor } : p))
-        : [...atuais, { forma, valor }];
-    });
-    setValorDigitado(0);
+    somar({ forma, valor });
+  }
+
+  function aplicarVale(vale: ValeEscolhido) {
+    setPerguntandoVale(false);
+    // O vale cobre até o saldo dele; o resto sai por outra forma. Pedir mais faria o
+    // servidor recusar a venda inteira no fim — depois da cliente já ter ido embora.
+    const valor = Math.min(valorPretendido(), vale.saldo);
+    if (valor <= 0) return;
+    if (vale.saldo < valorPretendido()) {
+      Alert.alert(
+        'O vale não cobre tudo',
+        `Este vale tem ${formatar(vale.saldo)}. O resto sai por outra forma.`,
+      );
+    }
+    somar({ forma: 'VALE', valor, codigoVale: vale.codigo });
+  }
+
+  function aplicarFiado(escolhido: Cliente) {
+    setPerguntandoCliente(false);
+    const valor = valorPretendido();
+    if (valor <= 0) return;
+    setCliente(escolhido);
+    // Avisa, não bloqueia (ADR-20): travar aqui só ensina a lançar como dinheiro e
+    // anotar no papel — e aí a dívida some da conta.
+    if (escolhido.acima_do_limite) {
+      Alert.alert(
+        'Acima do limite combinado',
+        `${escolhido.nome} já passou do limite. A venda pode seguir — a decisão é sua.`,
+      );
+    }
+    somar({ forma: 'FIADO', valor });
   }
 
   function removerPagamento(forma: FormaPagamento) {
     setPagos((atuais) => atuais.filter((p) => p.forma !== forma));
     if (forma === 'DINHEIRO') setRecebidoDinheiro(0);
+    if (forma === 'FIADO') setCliente(null);
   }
 
   async function confirmar() {
@@ -108,7 +191,12 @@ export default function Pagamento() {
         client_uuid: clientUuid,
         desconto: paraDecimalString(descontoAtual),
         itens: itens.map((i) => ({ variante_id: i.varianteId, quantidade: i.quantidade })),
-        pagamentos: pagos.map((p) => ({ forma: p.forma, valor: paraDecimalString(p.valor) })),
+        cliente_id: cliente?.id ?? null,
+        pagamentos: pagos.map((p) => ({
+          forma: p.forma,
+          valor: paraDecimalString(p.valor),
+          ...(p.codigoVale ? { codigo_vale: p.codigoVale } : {}),
+        })),
       });
 
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -197,12 +285,18 @@ export default function Pagamento() {
             {pagos.map((p) => (
               <Pressable
                 key={p.forma}
-                style={s.pagoItem}
+                style={[s.pagoItem, s.pagoItemDetalhado]}
                 onPress={() => removerPagamento(p.forma)}
               >
-                <Text style={s.pagoForma}>
-                  {FORMAS.find((f) => f.forma === p.forma)?.rotulo}
-                </Text>
+                <View style={s.pagoTexto}>
+                  <Text style={s.pagoForma}>
+                    {FORMAS.find((f) => f.forma === p.forma)?.rotulo}
+                  </Text>
+                  {!!p.codigoVale && <Text style={s.pagoDetalhe}>{p.codigoVale}</Text>}
+                  {p.forma === 'FIADO' && !!cliente && (
+                    <Text style={s.pagoDetalhe}>{cliente.nome}</Text>
+                  )}
+                </View>
                 <Text style={s.pagoValor}>{formatar(p.valor)}</Text>
                 <Text style={s.pagoRemover}>remover</Text>
               </Pressable>
@@ -225,7 +319,7 @@ export default function Pagamento() {
             </Text>
 
             <View style={s.formas}>
-              {FORMAS.map(({ forma, rotulo }) => (
+              {formas.map(({ forma, rotulo }) => (
                 <Pressable
                   key={forma}
                   style={({ pressed }) => [s.forma, pressed && s.formaPressionada]}
@@ -277,6 +371,18 @@ export default function Pagamento() {
           onPress={() => void confirmar()}
         />
       </View>
+
+      <ModalVale
+        visivel={perguntandoVale}
+        falta={Math.max(0, valorPretendido())}
+        aoEscolher={aplicarVale}
+        aoCancelar={() => setPerguntandoVale(false)}
+      />
+      <ModalCliente
+        visivel={perguntandoCliente}
+        aoEscolher={aplicarFiado}
+        aoCancelar={() => setPerguntandoCliente(false)}
+      />
     </View>
   );
 }
@@ -306,12 +412,16 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: espaco.sm,
     backgroundColor: cores.sucessoFraco,
     borderRadius: raio.md,
     paddingHorizontal: espaco.lg,
     minHeight: ALVO_TOQUE,
   },
+  pagoItemDetalhado: { paddingVertical: espaco.sm },
+  pagoTexto: { flex: 1 },
   pagoForma: { fontSize: fonte.base, fontWeight: '700', color: cores.acaoEscura },
+  pagoDetalhe: { fontSize: fonte.micro, color: cores.acaoEscura, opacity: 0.75 },
   pagoValor: { fontSize: fonte.media, fontWeight: '800', color: cores.acaoEscura },
   pagoRemover: { fontSize: fonte.micro, color: cores.perigo },
   trocoItem: { backgroundColor: cores.alertaFraco },

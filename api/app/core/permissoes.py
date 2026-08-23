@@ -23,6 +23,12 @@ class Pode(StrEnum):
     LANCAR_DESPESA = "LANCAR_DESPESA"
     #: Cancelar venda concluída, devolvendo a peça ao estoque.
     CANCELAR_VENDA = "CANCELAR_VENDA"
+    #: Receber peça de volta. Fica junto de cancelar pelo mesmo motivo: quem vende não
+    #: desfaz a própria venda — é o controle clássico contra desvio (peça "devolvida" que
+    #: sai pela porta com o dinheiro).
+    DEVOLVER_VENDA = "DEVOLVER_VENDA"
+    #: Cadastrar cliente, vender fiado e receber o que devem.
+    GERIR_CREDIARIO = "GERIR_CREDIARIO"
     #: Ver as vendas de toda a equipe, não só as próprias.
     VER_VENDAS_DE_TODOS = "VER_VENDAS_DE_TODOS"
     #: Ajuste manual de saldo e inventário — as duas portas de mexer no estoque sem venda.
@@ -59,6 +65,8 @@ GERENTE: frozenset[Pode] = SUPERVISORA | {
     Pode.VER_DINHEIRO,
     Pode.LANCAR_DESPESA,
     Pode.CANCELAR_VENDA,
+    Pode.DEVOLVER_VENDA,
+    Pode.GERIR_CREDIARIO,
     Pode.GERIR_USUARIOS,
 }
 """Responde pelo resultado da loja, então enxerga o resultado — e mexe na equipe.

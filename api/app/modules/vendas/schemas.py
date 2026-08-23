@@ -1,8 +1,9 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.modules.vendas.models import FormaPagamento, StatusVenda
 
@@ -17,6 +18,17 @@ class ItemVendaIn(BaseModel):
 class PagamentoIn(BaseModel):
     forma: FormaPagamento
     valor: Decimal = Field(gt=0, decimal_places=2)
+    #: Obrigatório quando a forma é VALE. Quem decide quanto o vale cobre é o servidor
+    #: (ADR-4) — o app manda o código, não o crédito.
+    codigo_vale: str | None = Field(default=None, max_length=16)
+
+    @model_validator(mode="after")
+    def _vale_tem_codigo(self) -> "PagamentoIn":
+        if self.forma == FormaPagamento.VALE and not self.codigo_vale:
+            raise ValueError("Pagamento em vale precisa do código do vale.")
+        if self.forma != FormaPagamento.VALE and self.codigo_vale:
+            raise ValueError("Código de vale só faz sentido em pagamento com vale.")
+        return self
 
 
 class VendaIn(BaseModel):
@@ -27,6 +39,16 @@ class VendaIn(BaseModel):
     observacao: str | None = Field(default=None, max_length=500)
     itens: list[ItemVendaIn] = Field(min_length=1, max_length=200)
     pagamentos: list[PagamentoIn] = Field(min_length=1, max_length=4)
+    #: Obrigatório quando algum pagamento é FIADO. Dívida sem nome não se cobra — e o
+    #: banco também recusa (CHECK `fiado_tem_cliente`).
+    cliente_id: int | None = None
+
+    @model_validator(mode="after")
+    def _fiado_tem_cliente(self) -> "VendaIn":
+        tem_fiado = any(p.forma == FormaPagamento.FIADO for p in self.pagamentos)
+        if tem_fiado and self.cliente_id is None:
+            raise ValueError("Venda no fiado precisa dizer de quem é a dívida.")
+        return self
 
     @field_validator("itens")
     @classmethod
@@ -49,6 +71,9 @@ class ItemVendaOut(BaseModel):
     cor: str
     codigo_barras: str
     quantidade: int
+    #: Quanto desta linha já voltou. É o que a tela de devolução usa para não oferecer de
+    #: novo uma peça que já foi devolvida.
+    quantidade_devolvida: int = 0
     preco_unitario: Decimal
     total_item: Decimal
 
@@ -77,6 +102,9 @@ class VendaOut(BaseModel):
     observacao: str | None = None
     itens: list[ItemVendaOut]
     pagamentos: list[PagamentoOut]
+    #: Nome de quem comprou, quando a venda tem fiado ou foi nominal.
+    cliente: str | None = None
+    cliente_id: int | None = None
 
 
 class VendaAdminOut(VendaOut):
@@ -97,3 +125,68 @@ class VendaResumoOut(BaseModel):
     quantidade_pecas: int
     vendida_em: datetime
     formas_pagamento: list[FormaPagamento]
+
+
+# ---------------------------------------------------------------- devolução
+class ItemDevolucaoIn(BaseModel):
+    #: `id` da LINHA da venda, não da variante: a mesma peça pode aparecer duas vezes numa
+    #: venda (com preços diferentes, se o preço mudou entre um bipe e outro).
+    item_id: int
+    quantidade: int = Field(gt=0)
+    #: Peça com defeito não volta para a arara — e o custo dela continua sendo custo.
+    voltar_ao_estoque: bool = True
+
+
+class DevolucaoIn(BaseModel):
+    itens: list[ItemDevolucaoIn] = Field(min_length=1)
+    motivo: str | None = Field(default=None, max_length=500)
+    client_uuid: UUID
+
+    @field_validator("itens")
+    @classmethod
+    def _sem_repetir(cls, v: list[ItemDevolucaoIn]) -> list[ItemDevolucaoIn]:
+        vistos = {i.item_id for i in v}
+        if len(vistos) != len(v):
+            raise ValueError("A mesma peça aparece duas vezes na devolução.")
+        return v
+
+
+class ItemDevolvidoOut(BaseModel):
+    item_id: int
+    variante_id: int
+    produto: str
+    tamanho: str
+    cor: str
+    codigo_barras: str
+    quantidade: int
+    preco_unitario: Decimal
+    valor_devolvido: Decimal
+    voltou_ao_estoque: bool
+
+
+class PagamentoDevolucaoOut(BaseModel):
+    forma: FormaPagamento
+    valor: Decimal
+    #: Preenchido quando a devolução virou vale — é o código que a cliente leva no papel.
+    codigo_vale: str | None = None
+
+
+class DevolucaoOut(BaseModel):
+    id: int
+    venda_id: int
+    devolvida_em: datetime
+    motivo: str | None
+    total: Decimal
+    itens: list[ItemDevolvidoOut]
+    pagamentos: list[PagamentoDevolucaoOut]
+
+
+class ValeOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+    id: int
+    codigo: str = Field(validation_alias="code")
+    valor: Decimal = Field(validation_alias="value")
+    usado: Decimal = Field(validation_alias="used_value")
+    saldo: Decimal = Decimal("0.00")
+    vence_em: datetime | None = Field(default=None, validation_alias="expires_at")

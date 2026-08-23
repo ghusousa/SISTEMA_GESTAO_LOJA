@@ -1,14 +1,14 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select, update
+from sqlalchemy import exists, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.pagination import Paginacao
 from app.modules.catalogo.models import Product, ProductVariant
 from app.modules.usuarios.models import User
-from app.modules.vendas.models import Sale, SaleItem, SalePayment, StatusVenda
+from app.modules.vendas.models import Sale, SaleItem, SalePayment, SaleReturn, StatusVenda
 
 
 class VendaRepository:
@@ -31,10 +31,20 @@ class VendaRepository:
 
         O `WHERE status = 'CONCLUIDA'` é o que serializa dois cancelamentos simultâneos:
         o segundo atualiza zero linhas e o chamador sabe que não pode estornar de novo.
+
+        O `NOT EXISTS` sobre devoluções é a mesma ideia contra outro erro: cancelar uma
+        venda que já teve peça devolvida estornaria o estoque inteiro DE NOVO, incluindo o
+        que já voltou — e o dinheiro ficaria sem caminho, porque a devolução já pagou parte
+        e o cancelamento não sabe quanto nem por qual forma. Quem quer desfazer o resto
+        devolve o resto.
         """
         resultado = await self.session.execute(
             update(Sale)
-            .where(Sale.id == venda_id, Sale.status == StatusVenda.CONCLUIDA)
+            .where(
+                Sale.id == venda_id,
+                Sale.status == StatusVenda.CONCLUIDA,
+                ~exists().where(SaleReturn.sale_id == venda_id),
+            )
             .values(
                 status=StatusVenda.CANCELADA,
                 cancelled_at=datetime.now(UTC),
@@ -43,6 +53,15 @@ class VendaRepository:
             )
         )
         return (resultado.rowcount or 0) == 1
+
+    async def nome_do_cliente(self, cliente_id: int | None) -> str | None:
+        """Sem filtrar por `deleted_at`: venda antiga de cliente desativado continua tendo
+        dono. Esconder o nome não protege ninguém e some com a explicação do fiado."""
+        if cliente_id is None:
+            return None
+        from app.modules.clientes.models import Customer
+
+        return await self.session.scalar(select(Customer.name).where(Customer.id == cliente_id))
 
     async def por_client_uuid(self, client_uuid: uuid.UUID) -> Sale | None:
         stmt = (
@@ -89,8 +108,22 @@ class VendaRepository:
         fim: datetime | None,
         status: str | None,
         vendedor_id: int | None,
+        variante_id: int | None = None,
+        cliente_id: int | None = None,
     ) -> tuple[list[tuple], int]:
         stmt = select(Sale, User).join(User, User.id == Sale.seller_id)
+        if variante_id:
+            # É este filtro que torna a devolução possível no balcão: a cliente chega com
+            # a blusa na mão e sem nota, e sem ele a vendedora teria que abrir venda por
+            # venda de um sábado de quarenta. Sem isso, a devolução não acontece pelo
+            # sistema — acontece um AJUSTE de estoque e dinheiro saindo da gaveta.
+            stmt = stmt.where(
+                exists().where(
+                    SaleItem.sale_id == Sale.id, SaleItem.variant_id == variante_id
+                )
+            )
+        if cliente_id:
+            stmt = stmt.where(Sale.customer_id == cliente_id)
         if inicio:
             stmt = stmt.where(Sale.sold_at >= inicio)
         if fim:

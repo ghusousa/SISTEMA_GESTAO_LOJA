@@ -223,6 +223,32 @@ for id in $(dk compose ps -aq 2>/dev/null); do
     printf '  %s: %s\n' "$nome" "${tamanho:-?}"
 done
 
+titulo "Cópias de segurança"
+# Backup que ninguém confere é backup que não existe. O jeito de descobrir que parou de
+# rodar há três semanas não pode ser precisar dele.
+ULTIMO="$(ls -1t backups/loja-*.dump 2>/dev/null | head -1)"
+if [ -z "$ULTIMO" ]; then
+    mal "NENHUMA cópia do banco existe neste servidor."
+    printf '    Perder o disco é perder o histórico de vendas e o estoque inteiro.\n'
+    printf '    Ligue agora: %s./backup.sh --automatico%s\n' "$FORTE" "$NORMAL"
+else
+    HORAS=$(( ( $(date +%s) - $(date -r "$ULTIMO" +%s) ) / 3600 ))
+    if [ "$HORAS" -gt 48 ]; then
+        mal "a cópia mais nova tem $((HORAS / 24)) dias — a diária não está rodando"
+        printf '    Ver por quê: %sjournalctl -u loja-backup -n 30%s\n' "$FORTE" "$NORMAL"
+    else
+        ok "última cópia há ${HORAS}h ($(du -h "$ULTIMO" | cut -f1)), $(ls -1 backups/loja-*.dump 2>/dev/null | wc -l) guardadas"
+    fi
+    # A pergunta que decide se o backup salva a loja: ele existe em outro lugar?
+    if grep -qE '^BACKUP_REMOTO=.+' .env 2>/dev/null; then
+        ok "cópia enviada para fora do servidor ($(grep -E '^BACKUP_REMOTO=' .env | cut -d= -f2-))"
+    else
+        nota "as cópias só existem NESTE servidor — se o disco morrer, morrem junto"
+        printf '    Ponha %sBACKUP_REMOTO=destino:pasta%s no .env e instale o rclone.\n' \
+            "$FORTE" "$NORMAL"
+    fi
+fi
+
 titulo "Atualização sozinha"
 # Timer parado ou falhando é a diferença entre "o sistema está velho" e "o sistema não
 # consegue mais se atualizar" — e as duas se parecem: nada acontece.

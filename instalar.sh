@@ -435,6 +435,11 @@ JWT_SECRET=$(sortear 64)
 AMBIENTE=$AMBIENTE
 CORS_ORIGINS=$CORS_ORIGINS
 TIMEZONE_LOJA=$FUSO
+
+# Para onde o ./backup.sh manda a cópia de fora do servidor. Qualquer destino do rclone
+# (rclone.org): gdrive:loja-backups, s3:meu-bucket/loja, b2:loja... Vazio = a cópia fica
+# só neste servidor, e morre junto com ele.
+BACKUP_REMOTO=
 FIM
     chmod 600 .env
     certo ".env gravado (só você consegue ler)"

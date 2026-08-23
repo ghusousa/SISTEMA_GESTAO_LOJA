@@ -1546,3 +1546,116 @@ kbd {
 .lateral__versao.is-atencao strong {
   color: var(--alerta);
 }
+
+/* ------------------------------------------------------------- recibo
+   Largura de bobina térmica de 80mm (a impressora que existe em balcão de loja pequena).
+   Em A4 o navegador ajusta sozinho; o contrário — desenhar para A4 e imprimir em bobina —
+   sai cortado, e ninguém descobre isso antes do primeiro cliente esperando. */
+
+.recibo {
+  width: 80mm;
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 6mm 4mm;
+  background: var(--superficie);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-md);
+  font-size: 12px;
+  line-height: 1.45;
+  color: #000;
+}
+
+.recibo__cabecalho {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 2px;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed #999;
+}
+
+.recibo__cabecalho strong {
+  font-size: 15px;
+}
+
+.recibo__linhas {
+  padding: 8px 0;
+  border-bottom: 1px dashed #999;
+}
+
+.recibo__item + .recibo__item {
+  margin-top: 6px;
+}
+
+.recibo__nome {
+  display: block;
+  font-weight: 600;
+}
+
+.recibo__detalhe {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.recibo__contas {
+  padding: 8px 0;
+  border-bottom: 1px dashed #999;
+}
+
+.recibo__contas > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.recibo__total {
+  margin: 4px 0;
+  padding: 4px 0;
+  border-top: 1px solid #000;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.recibo__pagamento {
+  color: #333;
+}
+
+.recibo__aviso {
+  margin: 8px 0 0;
+  padding: 6px;
+  border: 1px dashed #999;
+  font-size: 11px;
+}
+
+.recibo__rodape {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 3px;
+  padding-top: 8px;
+  font-size: 11px;
+  color: #333;
+}
+
+.recibo__miudo {
+  font-size: 10px;
+  color: #666;
+}
+
+@media print {
+  /* Só o recibo vai para o papel: menu, botões e o resto da tela ficam de fora. */
+  .lateral,
+  .pagina__topo,
+  .folha-topo {
+    display: none !important;
+  }
+  .recibo {
+    border: 0;
+    border-radius: 0;
+    width: 100%;
+    padding: 0;
+  }
+}

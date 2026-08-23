@@ -2,12 +2,15 @@
  * Inventário: contagem física da loja.
  *
  * A pessoa anda com o leitor e bipa o que está na arara; cada bipada soma 1 à contagem
- * daquela peça. No fim, um envio só compara com o sistema e gera as movimentações das
+ * daquela peça. Peça com a etiqueta caída também precisa ser contada — senão a contagem
+ * acusaria uma falta que não existe e o acerto tiraria do estoque uma peça que está na
+ * arara. Por isso o mesmo campo aceita o nome (`js/busca-peca.js`). No fim, um envio só compara com o sistema e gera as movimentações das
  * diferenças — o que não foi contado não é mexido, porque contagem parcial de uma arara não
  * pode zerar o resto da loja.
  */
 
 import { api, ErroApi } from '../api.js';
+import { ligarBuscaDePeca } from '../busca-peca.js';
 import { criarLeitor, manterFoco } from '../leitor.js';
 import {
   aviso,
@@ -31,11 +34,12 @@ export function render(raiz) {
       <div>
         <div class="pdv__leitura">
           <div class="pdv__campo">
-            <label class="so-leitor" for="leitura-inventario">Código de barras</label>
+            <label class="so-leitor" for="leitura-inventario">Código de barras ou nome da peça</label>
             <input id="leitura-inventario" data-leitor type="text" autocomplete="off"
-              placeholder="Bipe cada peça encontrada na loja" />
+              placeholder="Bipe a peça, ou digite o nome se a etiqueta caiu" />
             <span class="pdv__pisca">Leitor pronto</span>
           </div>
+          <div class="busca-peca" data-busca hidden></div>
         </div>
         <div class="pdv__itens" data-itens></div>
       </div>
@@ -79,28 +83,33 @@ export function render(raiz) {
   const botaoFechar = raiz.querySelector('[data-fechar]');
   const botaoLimpar = raiz.querySelector('[data-limpar]');
 
+  /** Soma 1 à contagem. Aceita a resposta do bipe (`variante_id`) e a da busca (`id`). */
+  function contar(peca) {
+    const varianteId = peca.variante_id ?? peca.id;
+    const existente = contagens.find((c) => c.variante_id === varianteId);
+    if (existente) {
+      existente.contado += 1;
+      existente.saldo = peca.saldo;
+    } else {
+      contagens = [
+        ...contagens,
+        {
+          variante_id: varianteId,
+          produto: peca.produto,
+          tamanho: peca.tamanho,
+          cor: peca.cor,
+          codigo_barras: peca.codigo_barras,
+          contado: 1,
+          saldo: peca.saldo,
+        },
+      ];
+    }
+    pintar();
+  }
+
   async function lerCodigo(codigo) {
     try {
-      const peca = await api.get(`/variantes/codigo-barras/${encodeURIComponent(codigo)}`);
-      const existente = contagens.find((c) => c.variante_id === peca.variante_id);
-      if (existente) {
-        existente.contado += 1;
-        existente.saldo = peca.saldo;
-      } else {
-        contagens = [
-          ...contagens,
-          {
-            variante_id: peca.variante_id,
-            produto: peca.produto,
-            tamanho: peca.tamanho,
-            cor: peca.cor,
-            codigo_barras: peca.codigo_barras,
-            contado: 1,
-            saldo: peca.saldo,
-          },
-        ];
-      }
-      pintar();
+      contar(await api.get(`/variantes/codigo-barras/${encodeURIComponent(codigo)}`));
     } catch (erro) {
       if (erro instanceof ErroApi && erro.status === 404) {
         aviso(`Código ${codigo} não está cadastrado. Anote e cadastre depois.`, 'alerta');
@@ -245,14 +254,20 @@ export function render(raiz) {
     campo.focus();
   });
 
+  const busca = ligarBuscaDePeca({
+    campo,
+    painel: raiz.querySelector('[data-busca]'),
+    aoEscolher: contar,
+  });
   // Mesma janela curta da entrada: 250ms só descartam a rajada dupla do próprio leitor.
-  const leitor = criarLeitor({ aoLer: lerCodigo, repeticaoMs: 250 });
+  const leitor = criarLeitor({ aoLer: lerCodigo, repeticaoMs: 250, ignorarQuando: busca.aberta });
   leitor.ligar();
   const pararFoco = manterFoco(campo);
   pintar();
 
   return () => {
     leitor.desligar();
+    busca.desligar();
     pararFoco();
   };
 }

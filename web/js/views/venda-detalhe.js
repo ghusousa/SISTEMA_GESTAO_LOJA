@@ -53,9 +53,14 @@ export async function render(raiz, { id }) {
           <p class="texto-suave">
             ${dataHora(venda.vendida_em)} · ${venda.vendedor} ·
             ${plural(venda.quantidade_pecas, 'peça', 'peças')}
+            ${venda.cliente ? cru(html` · cliente <strong>${venda.cliente}</strong>`) : ''}
           </p>
         </div>
         <div class="pagina__acoes">
+          <a class="botao botao--fantasma" href="#/vendas/${venda.id}/recibo">Recibo</a>
+          ${!cancelada && pode(PODE.DEVOLVER_VENDA)
+            ? cru(html`<a class="botao" href="#/vendas/devolucao?venda=${venda.id}">Devolver peça</a>`)
+            : ''}
           ${cancelada ? '' : cru('<button class="botao botao--perigo" data-cancelar>Cancelar venda</button>')}
         </div>
       </div>
@@ -117,7 +122,12 @@ export async function render(raiz, { id }) {
                   ${veDinheiro
                     ? cru(html`<td class="direita dinheiro texto-suave">${formatar(paraCentavos(i.custo_unitario ?? 0))}</td>`)
                     : ''}
-                  <td class="centro dinheiro">${numero(i.quantidade)}</td>
+                  <td class="centro dinheiro">
+                    ${numero(i.quantidade)}
+                    ${(i.quantidade_devolvida || 0) > 0
+                      ? cru(html`<span class="celula-secundaria alerta">${numero(i.quantidade_devolvida)} devolvida(s)</span>`)
+                      : ''}
+                  </td>
                   <td class="direita dinheiro celula-principal">${formatar(paraCentavos(i.total_item))}</td>
                 </tr>
               `,

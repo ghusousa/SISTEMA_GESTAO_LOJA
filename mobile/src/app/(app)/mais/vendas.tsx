@@ -18,6 +18,8 @@ const SIGLA: Record<FormaPagamento, string> = {
   PIX: 'pix',
   DEBITO: 'débito',
   CREDITO: 'crédito',
+  VALE: 'vale',
+  FIADO: 'fiado',
 };
 
 export default function HistoricoVendas() {

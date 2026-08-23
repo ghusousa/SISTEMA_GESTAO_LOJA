@@ -21,6 +21,9 @@ contratos, ADRs). Mudou algo? Atualize o doc no mesmo commit.**
 # Atualizar o servidor com o que está no GitHub (raiz do repo)
 ./atualizar.sh                                            # backup, pull, build, migra e confere
 ./diagnostico.sh                                          # só lê: por que parou (memória, disco, contêineres, logs)
+./backup.sh                                               # dump validado + cópia fora (BACKUP_REMOTO)
+./backup.sh --automatico                                  # passa a fazer sozinho, todo dia (timer)
+./backup.sh --listar / --restaurar ARQUIVO                # restaurar tira um dump de segurança antes
 ./atualizar.sh --automatico                               # passa a se atualizar sozinho (timer do systemd)
 
 # API (dentro de api/)
@@ -72,8 +75,14 @@ npm run bundle       # expo export: pega erro de import que o tsc não vê
   `atualizar.sh` (tem a credencial do GitHub), que grava `docker/estado/versao.json`; a API
   só lê o arquivo montado. **A API nunca fala com o GitHub** — token do código-fonte não
   entra no contêiner que serve a loja.
-- Mutações idempotentes por `client_uuid`: `POST /vendas` e `POST /estoque/entradas` (replay → 200
-  com o registro existente).
+- Mutações idempotentes por `client_uuid`: `POST /vendas`, `POST /estoque/entradas`,
+  `POST /vendas/{id}/devolucoes` e `POST /clientes/{id}/pagamentos` (replay → 200 com o existente).
+- **Devolução, vale e fiado (ADR-19 a ADR-21)**: não existe "modo troca" — troca é devolução que
+  vira vale mais uma venda nova. O valor volta pró-rata **pelas formas em que entrou**, com teto
+  no que cada uma recebeu; o que não couber vira vale (`vouchers`, consumido por `UPDATE`
+  condicional, igual ao saldo de estoque). `FORMAS_DE_GAVETA` (dinheiro, PIX, débito, crédito) é o
+  que o caixa confere — VALE e FIADO **nunca** entram numa conferência de gaveta. O saldo do
+  cliente é sempre calculado, nunca coluna, e o abatimento para onde a dívida acaba.
 
 ## Convenções do web (`web/`)
 
@@ -150,5 +159,12 @@ estoque, concorrência do último item, idempotência por `client_uuid`.
   teto (o padrão) e o disco enche sozinho — disco cheio para o Postgres, e a loja "para e não
   volta" sem nada de errado no log da aplicação. Por isso `docker-compose.yml` fixa
   `max-size: 10m, max-file: 3` em todo serviço.
+- **Devolver o que já foi pago**: cliente que levou no fiado, pagou e só depois devolveu não pode
+  ter a dívida abatida de novo — o saldo iria a −R$ 100,00, ela sumiria da lista de quem deve, e
+  a loja ficaria devendo escondido. O abatimento é limitado ao que ela deve HOJE; a diferença sai
+  em vale, que é papel na mão dela (ADR-21).
+- **`Alert.alert` é no-op no react-native-web**: o export web do app serve de bancada de teste, mas
+  nenhum diálogo aparece nele. Verificação por navegador que dependa de confirmação precisa de um
+  shim — o app no aparelho está certo, quem não implementa é a plataforma web.
 - **Foco no PDV web**: ninguém clica antes de bipar. `manterFoco` devolve o cursor ao campo de
   leitura, mas sai de cena com modal aberto ou enquanto a pessoa digita em outro campo.
