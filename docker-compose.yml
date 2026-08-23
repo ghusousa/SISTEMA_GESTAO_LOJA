@@ -7,10 +7,21 @@
 
 name: loja
 
+# Log com tamanho máximo. O padrão do Docker é json-file SEM LIMITE: o arquivo cresce
+# até o disco acabar, e disco cheio faz o Postgres parar de aceitar escrita — a loja
+# "para e não volta" sem nada de errado no código. 10 MB × 3 arquivos por contêiner é
+# histórico suficiente para achar um problema e teto suficiente para nunca ser o problema.
+x-log: &log
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
+    logging: *log
     environment:
       POSTGRES_USER: loja
       POSTGRES_PASSWORD: ${SENHA_BANCO:?rode ./instalar.sh para gerar o .env}
@@ -30,6 +41,7 @@ services:
       dockerfile: Dockerfile
     image: loja-api:local
     restart: unless-stopped
+    logging: *log
     depends_on:
       db:
         condition: service_healthy
@@ -57,6 +69,7 @@ services:
   proxy:
     image: caddy:2-alpine
     restart: unless-stopped
+    logging: *log
     depends_on:
       - api
     ports:

@@ -320,6 +320,15 @@ no histórico de todo intermediário. Entrega é melhor esforço — ouvinte len
 (fila de 32) e se acerta ao reconectar, quando o cliente invalida tudo. A central é em
 memória e por processo: a loja roda um servidor, e empilhar Redis seria mais uma peça
 para quebrar num sábado cheio.
+**Queda de cliente não é erro.** A task que lê do socket (`_escutar_ate_cair`) existe para
+PERCEBER a queda, e morre com `WebSocketDisconnect` quando ela acontece. `await` numa task
+morta relança a exceção dela: sem suprimir, ela sobe até o uvicorn, que escreve um traceback
+inteiro (~2 KB) por aparelho que fecha o app. É o tipo de defeito que não quebra nada e
+custa o servidor: o log do Docker não tem teto por padrão, o arquivo cresce sem parar e
+disco cheio faz o Postgres parar de aceitar escrita — a loja "para e não volta" sem nada de
+errado aparecer no log da aplicação. Daí as duas metades da correção: o endpoint engole a
+queda (`test_cliente_que_cai_nao_vira_erro_no_log` guarda isso) e o `docker-compose.yml`
+fixa `max-size: 10m` × `max-file: 3` em todo serviço.
 
 
 ## 4. Contratos de API

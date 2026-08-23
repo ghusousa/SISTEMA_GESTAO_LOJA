@@ -221,6 +221,12 @@ if ! SAUDE="$(esperar_saude 30)"; then
 fi
 ok "a API respondeu: $SAUDE"
 
+# Cada `--build` deixa a imagem antiga para trás, sem nome, ocupando disco. Vinte
+# atualizações depois são vários GB — e num servidor de loja o disco acaba antes.
+# `image prune -f` sem `-a` só apaga imagem órfã: nada em uso, nenhum dado, nada de volume.
+LIXO="$(dk image prune -f 2>/dev/null | grep -i 'reclaimed' | sed 's/.*: *//')"
+[ -n "$LIXO" ] && [ "$LIXO" != "0B" ] && ok "disco liberado das imagens antigas: $LIXO"
+
 # ------------------------------------------------------------------ pronto
 
 printf '\n%s%s✓ Atualizado.%s\n' "$FORTE" "$VERDE" "$NORMAL"

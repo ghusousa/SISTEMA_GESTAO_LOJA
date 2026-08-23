@@ -122,7 +122,13 @@ async def tempo_real(websocket: WebSocket) -> None:
             pass  # desligar no meio de um envio é rotina, não erro
         finally:
             vigia.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            # `await` numa task que MORREU relança a exceção dela — e a queda do cliente
+            # chega aqui justamente como WebSocketDisconnect. Escapando daqui, ela sobe
+            # até o uvicorn, que escreve um traceback inteiro (~2 KB) no log A CADA
+            # celular que fecha o app. O log do Docker não tem limite de tamanho por
+            # padrão: numa loja com meia dúzia de aparelhos isso enche o disco sozinho,
+            # e disco cheio derruba o Postgres. Cair é rotina; não é erro.
+            with contextlib.suppress(asyncio.CancelledError, WebSocketDisconnect, RuntimeError):
                 await vigia
             await _fechar(websocket, 1000, "Até logo.")
             logger.info("tempo-real: %s saiu", usuario.email)

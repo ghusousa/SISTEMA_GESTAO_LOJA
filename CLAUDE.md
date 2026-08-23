@@ -20,6 +20,7 @@ contratos, ADRs). Mudou algo? Atualize o doc no mesmo commit.**
 ```bash
 # Atualizar o servidor com o que está no GitHub (raiz do repo)
 ./atualizar.sh                                            # backup, pull, build, migra e confere
+./diagnostico.sh                                          # só lê: por que parou (memória, disco, contêineres, logs)
 
 # API (dentro de api/)
 .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0    # servidor
@@ -131,5 +132,11 @@ estoque, concorrência do último item, idempotência por `client_uuid`.
   Sem isso, digitar `200` sobre `179,70` virava R$ 17.970,00 — e um troco de R$ 9.999.820,29.
 - **Template aninhado no web**: `html` precisa devolver valor marcado como cru, senão
   `html\`<ul>${itens.map(...)}\`` escapa a lista inteira e a tela mostra as tags como texto.
+- **Cliente de WebSocket que cai é rotina, não erro**: a task que lê do socket morre com
+  `WebSocketDisconnect`, e `await` numa task morta RELANÇA a exceção dela. Escapando do endpoint,
+  o uvicorn escreve ~2 KB de traceback a cada celular que fecha o app. Some com log do Docker sem
+  teto (o padrão) e o disco enche sozinho — disco cheio para o Postgres, e a loja "para e não
+  volta" sem nada de errado no log da aplicação. Por isso `docker-compose.yml` fixa
+  `max-size: 10m, max-file: 3` em todo serviço.
 - **Foco no PDV web**: ninguém clica antes de bipar. `manterFoco` devolve o cursor ao campo de
   leitura, mas sai de cena com modal aberto ou enquanto a pessoa digita em outro campo.

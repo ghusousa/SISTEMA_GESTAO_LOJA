@@ -38,3 +38,7 @@ docker/certificados/*.crt
 
 # Backups gerados pelo desinstalador
 loja-backup-*.dump
+
+# Coletas do ./diagnostico.sh — ficam na pasta do servidor, nunca no repositório.
+# (Sem isto, o arquivo vira "alteração local" e o PRÓXIMO ./atualizar.sh se recusa a rodar.)
+diagnostico-*.txt

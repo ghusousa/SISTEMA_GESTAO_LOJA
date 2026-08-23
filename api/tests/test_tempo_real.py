@@ -238,3 +238,62 @@ async def test_leitura_nao_gera_aviso(client, auth_admin) -> None:
         assert (await client.get("/produtos", headers=auth_admin)).status_code == 200
         assert (await client.get("/estoque/saldos", headers=auth_admin)).status_code == 200
         assert fila.empty()
+
+
+# ------------------------------------------------------- o cliente que some
+
+
+class CanalQueCai:
+    """Um WebSocket que aceita, fala, e cuja outra ponta some no primeiro `receive_text`.
+
+    É o celular fechando o app: acontece dezenas de vezes por dia, em toda loja.
+    """
+
+    def __init__(self) -> None:
+        from starlette.websockets import WebSocketState
+
+        self.client_state = WebSocketState.CONNECTED
+        self.enviados: list[dict] = []
+        self.fechado: tuple[int, str] | None = None
+
+    async def accept(self) -> None: ...
+
+    async def send_json(self, dados: dict) -> None:
+        self.enviados.append(dados)
+
+    async def receive_text(self) -> str:
+        from starlette.websockets import WebSocketDisconnect
+
+        raise WebSocketDisconnect(1005, None)
+
+    async def close(self, code: int = 1000, reason: str = "") -> None:
+        from starlette.websockets import WebSocketState
+
+        self.fechado = (code, reason)
+        self.client_state = WebSocketState.DISCONNECTED
+
+
+async def test_cliente_que_cai_nao_vira_erro_no_log(monkeypatch) -> None:
+    """Queda de cliente é rotina — não pode subir como exceção.
+
+    Escapando daqui, a `WebSocketDisconnect` chega ao uvicorn, que escreve um traceback
+    inteiro no log a cada aparelho que fecha o app. O log do Docker não tinha teto: em
+    dias de loja isso enche o disco, o Postgres para de aceitar escrita e o sistema
+    "para e não volta" — sem nada de errado aparecer no log da aplicação.
+    """
+    from types import SimpleNamespace
+
+    from app.modules.tempo_real import router as tr
+
+    async def _fingir_autenticar(_ws):
+        return SimpleNamespace(id=1, email="dona@loja.com")
+
+    monkeypatch.setattr(tr, "_autenticar", _fingir_autenticar)
+    monkeypatch.setattr(tr, "INTERVALO_PING", 0.05)
+
+    canal = CanalQueCai()
+    await tr.tempo_real(canal)  # type: ignore[arg-type]  # não pode levantar nada
+
+    assert canal.enviados[0]["assunto"] == "conectado"
+    assert canal.fechado is not None and canal.fechado[0] == 1000
+    assert central.ouvintes == 0, "o ouvinte tem de sair da lista quando o cliente cai"

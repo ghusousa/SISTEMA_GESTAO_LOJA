@@ -217,6 +217,31 @@ trocar a pasta não perde venda nenhuma.
 
 Depois de atualizar: no balcão, **Ctrl+F5** no navegador; no celular, feche e abra o app.
 
+### Quando o sistema parar
+
+Na pasta do sistema:
+
+```bash
+./diagnostico.sh
+```
+
+Ele **só lê** — não reinicia, não muda, não apaga nada; dá para rodar com a loja aberta. Confere
+memória, disco, cada contêiner, se a API responde por dentro, se o banco responde, se a porta
+responde de fora, e recorta do log só as linhas de erro. Termina dizendo o que tentar, na ordem, e
+salva tudo num `diagnostico-<data>.txt` para mandar por WhatsApp.
+
+Se você prefere ir direto ao ponto, a ordem que ele sugere é esta:
+
+```bash
+docker compose up -d       # religa o que caiu
+docker compose restart     # reinicia tudo
+./instalar.sh              # reconstrói e sobe — não apaga os dados
+```
+
+**A causa mais comum é a menos óbvia: disco cheio.** Perto de 100% o Postgres para de aceitar
+escrita e a loja trava sem que nada de errado apareça no log da aplicação. `df -h /` mostra; o
+diagnóstico avisa sozinho a partir de 90%.
+
 ### Dados de demonstração
 
 Para ver o sistema cheio antes de cadastrar o seu, informando a conta de administrador que você
