@@ -1,8 +1,19 @@
+/**
+ * Entrada do sistema.
+ *
+ * A engrenagem no canto abre a configuração do servidor. Ela fica aqui, e não numa tela
+ * obrigatória antes do login, porque quase sempre o endereço já está certo — veio do build
+ * ou de uma instalação anterior — e quem precisa trocar é a exceção, não a regra.
+ */
+
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Controller, useForm } from 'react-hook-form';
 import {
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -12,9 +23,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useState } from 'react';
 import { z } from 'zod';
 
-import { mensagemDoErro } from '@/api/client';
+import { baseAtual, mensagemDoErro } from '@/api/client';
 import { Botao, Campo } from '@/components/ui';
-import { cores, espaco, fonte } from '@/lib/tema';
+import { ALVO_TOQUE, cores, espaco, fonte, raio } from '@/lib/tema';
+import { useServidorStore } from '@/stores/servidorStore';
 import { useAuthStore } from '@/stores/authStore';
 
 const esquema = z.object({
@@ -25,9 +37,14 @@ const esquema = z.object({
 type Formulario = z.infer<typeof esquema>;
 
 export default function Login() {
+  const router = useRouter();
   const entrar = useAuthStore((e) => e.entrar);
   const [erroServidor, setErroServidor] = useState<string | null>(null);
   const insets = useSafeAreaInsets();
+  // Lido do store para a linha do rodapé reagir na hora em que o endereço muda; sem isso,
+  // quem acabou de configurar o servidor voltaria para o login vendo o endereço antigo.
+  useServidorStore((e) => e.endereco);
+  const servidor = baseAtual();
 
   const {
     control,
@@ -40,6 +57,12 @@ export default function Login() {
 
   async function aoEnviar(dados: Formulario) {
     setErroServidor(null);
+    if (!servidor) {
+      // Sem endereço, a requisição sairia relativa e morreria com um erro de rede que não
+      // explica nada. Melhor apontar a engrenagem do que deixar a pessoa culpar a senha.
+      setErroServidor('Configure o servidor da loja na engrenagem, aqui em cima.');
+      return;
+    }
     try {
       await entrar(dados.email, dados.senha);
     } catch (erro) {
@@ -52,6 +75,16 @@ export default function Login() {
       style={s.tela}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
+      <Pressable
+        onPress={() => router.push('/servidor')}
+        style={[s.engrenagem, { top: insets.top + espaco.sm }]}
+        hitSlop={12}
+        accessibilityRole="button"
+        accessibilityLabel="Configurar o servidor da loja"
+      >
+        <MaterialCommunityIcons name="cog-outline" size={24} color={cores.textoSuave} />
+      </Pressable>
+
       <ScrollView
         contentContainerStyle={[s.conteudo, { paddingTop: insets.top + espaco.xxl }]}
         keyboardShouldPersistTaps="handled"
@@ -107,6 +140,17 @@ export default function Login() {
           carregando={isSubmitting}
           onPress={handleSubmit(aoEnviar)}
         />
+
+        <Pressable onPress={() => router.push('/servidor')} style={s.rodape} hitSlop={8}>
+          <MaterialCommunityIcons
+            name={servidor ? 'server-network' : 'server-network-off'}
+            size={14}
+            color={servidor ? cores.textoFraco : cores.alerta}
+          />
+          <Text style={[s.rodapeTexto, !servidor && s.rodapeAviso]}>
+            {servidor ? servidor : 'Nenhum servidor configurado — toque para configurar'}
+          </Text>
+        </Pressable>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -114,6 +158,26 @@ export default function Login() {
 
 const s = StyleSheet.create({
   tela: { flex: 1, backgroundColor: cores.fundo },
+  engrenagem: {
+    position: 'absolute',
+    right: espaco.md,
+    zIndex: 1,
+    width: ALVO_TOQUE,
+    height: ALVO_TOQUE,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: raio.redondo,
+  },
+  rodape: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: espaco.xs,
+    marginTop: espaco.xl,
+    paddingVertical: espaco.sm,
+  },
+  rodapeTexto: { fontSize: fonte.pequena, color: cores.textoFraco },
+  rodapeAviso: { color: cores.alerta, fontWeight: '700' },
   conteudo: { padding: espaco.xl, flexGrow: 1, justifyContent: 'center' },
   cabecalho: { marginBottom: espaco.xxl, alignItems: 'center' },
   titulo: { fontSize: fonte.titulo, fontWeight: '800', color: cores.primaria },

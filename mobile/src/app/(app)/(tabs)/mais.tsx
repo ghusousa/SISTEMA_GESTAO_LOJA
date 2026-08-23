@@ -51,7 +51,6 @@ export default function Mais() {
   const router = useRouter();
   const usuario = useAuthStore((e) => e.usuario);
   const sair = useAuthStore((e) => e.sair);
-  const esquecerServidor = useServidorStore((e) => e.esquecer);
   const ehDono = usuario?.papel === 'ADMIN';
 
   return (
@@ -112,17 +111,18 @@ export default function Mais() {
           Alert.alert(
             'Trocar de servidor',
             `Este celular fala com ${baseAtual()}.\n\n` +
-              'Trocar desconecta você e pede o endereço de novo. Use se a loja mudou de ' +
-              'servidor ou se você configurou o endereço errado.',
+              'Trocar desconecta você e abre a tela do endereço. Use se a loja mudou de ' +
+              'servidor ou se o endereço está errado.',
             [
               { text: 'Ficar como está', style: 'cancel' },
               {
                 text: 'Trocar',
                 style: 'destructive',
                 onPress: () => {
-                  // A ordem importa: sair primeiro revoga a sessão no servidor ANTIGO,
-                  // que é justamente quem ainda a reconhece.
-                  void sair().then(() => esquecerServidor());
+                  // Sai primeiro: é o servidor ANTIGO quem ainda reconhece esta sessão e
+                  // pode revogá-la. O endereço fica gravado até a pessoa confirmar outro,
+                  // para ela editar o que está lá em vez de digitar tudo de novo.
+                  void sair().then(() => router.push('/servidor'));
                 },
               },
             ],

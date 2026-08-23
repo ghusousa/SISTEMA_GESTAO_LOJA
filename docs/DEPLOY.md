@@ -253,12 +253,12 @@ o ADMIN — quem corta é o servidor.
 
 ### Um instalador serve para todos
 
-O endereço do servidor **não** é fixado na hora de compilar: o app pergunta na primeira abertura
-e guarda no aparelho. Isso muda a operação inteira:
+O endereço do servidor **não** é fixado na hora de compilar: fica gravado no aparelho e se
+edita pela engrenagem do login. Isso muda a operação inteira:
 
 - o mesmo arquivo `.apk` vai para todos os celulares, sem gerar um por loja;
-- se o servidor mudar de IP, ninguém reinstala nada — é só "Mais → Conectado em…" e informar o
-  novo endereço;
+- se o servidor mudar de IP, ninguém reinstala nada — é só "Mais → Conectado em…", ou a
+  engrenagem do login, e informar o novo endereço;
 - o vendedor faz isso uma vez; depois é só e-mail e senha.
 
 Se quiser adiantar o preenchimento, defina `EXPO_PUBLIC_API_URL` no build: o endereço aparece já
@@ -295,9 +295,10 @@ Antes do primeiro build, ajuste em `mobile/app.json` o que identifica o seu app:
 
 1. Mande o `.apk` para o aparelho (WhatsApp, link, cabo — tanto faz).
 2. Abra o arquivo. O Android vai avisar que é de "fonte desconhecida": autorize só desta vez.
-3. Na primeira abertura o app pede o **endereço do servidor**. Informe o mesmo que aparece no
-   navegador do computador do balcão, sem o final — o app aceita colar o endereço inteiro e
-   aproveita só o que interessa.
+3. O app abre no login. Se o endereço do servidor ainda não estiver gravado, o rodapé avisa:
+   toque na **engrenagem** no canto superior direito e informe o mesmo endereço que aparece no
+   navegador do computador do balcão — pode colar inteiro, o app aproveita só o que interessa.
+   Definindo `EXPO_PUBLIC_API_URL` no build, ele já vem preenchido e ninguém digita nada.
 4. O vendedor entra com o e-mail e a senha que você criou em **Usuários**.
 5. Na primeira leitura o Android pede permissão de câmera. Autorize.
 

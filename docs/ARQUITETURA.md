@@ -254,15 +254,20 @@ roubado e derrubariam a família inteira.
 **ADR-13 — O endereço do servidor mora no aparelho, não no instalador.**
 O caminho óbvio seria assar `EXPO_PUBLIC_API_URL` no build, e ele quebra na primeira mudança de
 IP: seria preciso gerar um instalador novo e reinstalar em cada celular da equipe — justamente no
-dia em que o sistema está fora do ar. Então o app pergunta o endereço na primeira abertura e o
-guarda no `SecureStore` (`api/servidor.ts`), e o cliente HTTP resolve a base a cada requisição
-(`baseAtual()`), e não na criação do axios — assim trocar de servidor com o app aberto funciona.
+dia em que o sistema está fora do ar. Então o endereço fica no aparelho, no `SecureStore`
+(`api/servidor.ts`), e o cliente HTTP resolve a base a cada requisição (`baseAtual()`), e não
+na criação do axios — assim trocar de servidor com o app aberto funciona. A tela que edita o
+endereço abre pela **engrenagem do login**, e não como pedágio antes da senha: quem recebe o
+`.apk` quase sempre já tem o endereço certo (do build ou de instalação anterior), e obrigar
+todo mundo a passar por uma tela de IP para depois digitar e-mail e senha era uma parede na
+primeira abertura. Sem endereço, o login diz isso no rodapé e o botão Entrar recusa com um
+aviso que aponta a engrenagem, em vez de deixar a requisição morrer num erro de rede que a
+pessoa leria como senha errada.
 O endereço é testado contra `/health` antes de ser aceito, porque um dígito errado no IP
 apareceria depois como "não foi possível entrar" e a pessoa culparia a senha; e é normalizado
 antes de gravar, porque o que a pessoa tem à mão é a barra do navegador do balcão
 (`http://ip/app/#/pdv`), não o endereço da API. `EXPO_PUBLIC_API_URL` sobrevive como sugestão
-inicial. O custo é uma tela a mais no primeiro uso; o ganho é um instalador único para toda a
-equipe.
+inicial. O ganho é um instalador único para toda a equipe.
 
 **ADR-14 — O app fica no Expo SDK 54, e o teto é da Apple, não nosso.**
 O SDK 57 é o estável atual e o app rodava nele. Mesmo assim ficamos no 54, porque **54 é a última

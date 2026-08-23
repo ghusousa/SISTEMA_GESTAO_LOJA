@@ -18,7 +18,6 @@ export default function RootLayout() {
   const carregando = useAuthStore((e) => e.carregando);
   const restaurar = useAuthStore((e) => e.restaurar);
   const encerrarPorTokenInvalido = useAuthStore((e) => e.encerrarPorTokenInvalido);
-  const endereco = useServidorStore((e) => e.endereco);
   const servidorCarregando = useServidorStore((e) => e.carregando);
   const restaurarServidor = useServidorStore((e) => e.restaurar);
 
@@ -44,12 +43,14 @@ export default function RootLayout() {
               <BannerConexao />
               <Stack screenOptions={{ headerShown: false }}>
                 {/* Stack.Protected troca de área sozinho quando a sessão cai. */}
-                {/* Sem servidor configurado não há o que mostrar do app: a área de
-                    autenticação cuida da conexão antes do login. */}
-                <Stack.Protected guard={!!usuario && !!endereco}>
+                {/* Quem manda aqui é só a sessão. O endereço do servidor não entra na
+                    conta: ninguém consegue estar logado sem ter falado com um servidor,
+                    e prender a navegação nele fazia a primeira abertura começar numa
+                    tela de IP em vez do login. */}
+                <Stack.Protected guard={!!usuario}>
                   <Stack.Screen name="(app)" />
                 </Stack.Protected>
-                <Stack.Protected guard={!usuario || !endereco}>
+                <Stack.Protected guard={!usuario}>
                   <Stack.Screen name="(auth)" />
                 </Stack.Protected>
               </Stack>

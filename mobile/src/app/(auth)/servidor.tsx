@@ -1,15 +1,21 @@
 /**
- * Primeira tela de um celular novo: onde fica o servidor da loja.
+ * Onde fica o servidor da loja. Abre pela engrenagem do login.
  *
- * Aparece uma vez por aparelho, antes do login. O endereço é testado antes de ser aceito —
- * um dígito errado no IP viraria "não foi possível entrar" na tela de senha, e a pessoa
- * culparia a senha.
+ * Já foi obrigatória na primeira abertura, e era uma parede: quem recebe o `.apk` pronto
+ * quase sempre já tem o endereço certo, e ainda assim tinha de passar por uma tela de IP
+ * antes de digitar a senha. Agora é uma tela que se procura quando o servidor muda de
+ * endereço — o que acontece uma vez a cada muito tempo.
+ *
+ * O endereço é testado antes de ser aceito: um dígito errado no IP viraria "não foi
+ * possível entrar" na tela de senha, e a pessoa culparia a senha.
  */
 
+import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -18,13 +24,19 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { enderecoSugerido, normalizarEndereco, testarServidor } from '@/api/servidor';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+
 import { Botao, Campo } from '@/components/ui';
-import { cores, espaco, fonte, raio } from '@/lib/tema';
+import { ALVO_TOQUE, cores, espaco, fonte, raio } from '@/lib/tema';
 import { useServidorStore } from '@/stores/servidorStore';
 
 export default function ConfigurarServidor() {
+  const router = useRouter();
   const definir = useServidorStore((e) => e.definir);
-  const [texto, setTexto] = useState(enderecoSugerido());
+  const atual = useServidorStore((e) => e.endereco);
+  // Quem já tem servidor vem corrigir o que está lá; quem não tem recebe o palpite (o
+  // endereço do build, ou o computador que serve o Expo).
+  const [texto, setTexto] = useState(atual ?? enderecoSugerido());
   const [erro, setErro] = useState<string | null>(null);
   const [testando, setTestando] = useState(false);
   const insets = useSafeAreaInsets();
@@ -47,9 +59,17 @@ export default function ConfigurarServidor() {
       }
       // Guarda já limpo: o que a pessoa digitou pode ter vindo da barra do navegador.
       await definir(endereco);
+      voltar();
     } finally {
       setTestando(false);
     }
+  }
+
+  function voltar() {
+    // Aberta pela engrenagem, tem para onde voltar. Aberta por um link direto (ou depois
+    // de o app recarregar em desenvolvimento), não tem — e aí o login é o destino.
+    if (router.canGoBack()) router.back();
+    else router.replace('/login');
   }
 
   return (
@@ -57,6 +77,15 @@ export default function ConfigurarServidor() {
       style={s.tela}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
+      <Pressable
+        onPress={voltar}
+        style={[s.voltar, { top: insets.top + espaco.sm }]}
+        hitSlop={12}
+        accessibilityRole="button"
+        accessibilityLabel="Voltar"
+      >
+        <MaterialCommunityIcons name="arrow-left" size={24} color={cores.textoSuave} />
+      </Pressable>
       <ScrollView
         contentContainerStyle={[s.conteudo, { paddingTop: insets.top + espaco.xxl }]}
         keyboardShouldPersistTaps="handled"
@@ -64,7 +93,7 @@ export default function ConfigurarServidor() {
         <View style={s.cabecalho}>
           <Text style={s.titulo}>Conectar à loja</Text>
           <Text style={s.subtitulo}>
-            Só desta vez. Depois é só entrar com seu e-mail e senha.
+            O endereço que este celular usa para falar com o sistema da loja.
           </Text>
         </View>
 
@@ -92,6 +121,12 @@ export default function ConfigurarServidor() {
 
         <Botao titulo="Conectar" grande carregando={testando} onPress={conectar} />
 
+        {!!atual && (
+          <Pressable onPress={voltar} style={s.cancelar} hitSlop={8}>
+            <Text style={s.cancelarTexto}>Deixar como está</Text>
+          </Pressable>
+        )}
+
         <Text style={s.rodape}>
           Pode colar o endereço inteiro do navegador — o app aproveita só a parte que
           interessa.
@@ -103,6 +138,18 @@ export default function ConfigurarServidor() {
 
 const s = StyleSheet.create({
   tela: { flex: 1, backgroundColor: cores.fundo },
+  voltar: {
+    position: 'absolute',
+    left: espaco.md,
+    zIndex: 1,
+    width: ALVO_TOQUE,
+    height: ALVO_TOQUE,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: raio.redondo,
+  },
+  cancelar: { alignItems: 'center', paddingVertical: espaco.md, marginTop: espaco.xs },
+  cancelarTexto: { fontSize: fonte.base, color: cores.textoSuave, fontWeight: '600' },
   conteudo: { padding: espaco.xl, flexGrow: 1, justifyContent: 'center' },
   cabecalho: { marginBottom: espaco.xl, alignItems: 'center' },
   titulo: { fontSize: fonte.titulo, fontWeight: '800', color: cores.primaria },

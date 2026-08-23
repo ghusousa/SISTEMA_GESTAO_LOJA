@@ -1,22 +1,19 @@
 import { Stack } from 'expo-router';
 
-import { useServidorStore } from '@/stores/servidorStore';
-
 /**
- * Antes de pedir e-mail e senha, o app precisa saber COM QUEM falar. Num celular novo o
- * endereço ainda não existe, e a tela de conexão vem primeiro.
+ * A área de quem ainda não entrou.
+ *
+ * O login vem primeiro, sempre — mesmo num celular recém-instalado. A configuração do
+ * servidor virou uma tela que se abre pela engrenagem, e não um pedágio antes da senha:
+ * quem recebe o `.apk` pronto costuma já ter o endereço certo (do build ou de uma
+ * instalação anterior), e obrigar todo mundo a passar por uma tela de IP para depois
+ * digitar e-mail e senha era uma parede na primeira abertura.
  */
 export default function AuthLayout() {
-  const endereco = useServidorStore((e) => e.endereco);
-
   return (
-    <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Protected guard={!endereco}>
-        <Stack.Screen name="servidor" />
-      </Stack.Protected>
-      <Stack.Protected guard={!!endereco}>
-        <Stack.Screen name="login" />
-      </Stack.Protected>
+    <Stack screenOptions={{ headerShown: false }} initialRouteName="login">
+      <Stack.Screen name="login" />
+      <Stack.Screen name="servidor" options={{ presentation: 'modal' }} />
     </Stack>
   );
 }

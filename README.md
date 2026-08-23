@@ -339,8 +339,9 @@ o servidor de desenvolvimento e o terminal fica assim:
 2. Deixe o celular na **mesma rede Wi-Fi** do computador.
 3. **Android:** abra o Expo Go e toque em *Scan QR code*.
    **iPhone:** abra a câmera normal e aponte para o QR.
-4. O app abre e pede o **endereço do servidor da loja** — o mesmo que você digita no navegador do
-   balcão. Pode colar o endereço inteiro; o app aproveita só a parte que interessa.
+4. O app abre no login. Se ele ainda não souber o endereço do servidor, o rodapé avisa: toque
+   na **engrenagem** no canto superior direito e informe o mesmo endereço que você digita no
+   navegador do balcão. Pode colar o endereço inteiro; o app aproveita só a parte que interessa.
 5. Entre com um login de **vendedor**, criado em *Usuários* no sistema web.
 
 ### Teclas úteis enquanto roda
