@@ -21,6 +21,14 @@ let accessToken = null;
 let renovacaoEmCurso = null;
 let aoPerderSessao = () => {};
 
+/**
+ * O access token de agora, para o canal de tempo real se identificar.
+ *
+ * Continua só na memória — ler daqui não é o mesmo que guardar em `localStorage`, que é
+ * onde ele viraria alvo de qualquer script que entre na página.
+ */
+export const acessoAtual = () => accessToken;
+
 export function definirTratadorDeSessaoPerdida(fn) {
   aoPerderSessao = fn;
 }

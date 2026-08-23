@@ -18,6 +18,9 @@ contratos, ADRs). Mudou algo? Atualize o doc no mesmo commit.**
 ## Comandos
 
 ```bash
+# Atualizar o servidor com o que está no GitHub (raiz do repo)
+./atualizar.sh                                            # backup, pull, build, migra e confere
+
 # API (dentro de api/)
 .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0    # servidor
 .venv/bin/alembic upgrade head                            # migrations
@@ -59,6 +62,10 @@ npm run bundle       # expo export: pega erro de import que o tsc não vê
 - Saldo de estoque: só muda junto com uma linha em `stock_movements`, na mesma transação
   (`UPDATE stock_balances SET quantity = quantity + :delta ... RETURNING`). `CHECK quantity >= 0`
   é a rede de segurança. Escrita multi-variante sempre ordenada por `variant_id`.
+- Tempo real: `WS /api/v1/tempo-real`. Quem avisa é o commit do SQLAlchemy
+  (`core/eventos.py`), não os services — mudou tabela, sai aviso. O que trafega é o
+  ASSUNTO ("estoque"), nunca o dado: a tela refaz a consulta pela rota REST, e o filtro
+  por papel continua inteiro. Token vai no primeiro quadro, nunca na URL.
 - Mutações idempotentes por `client_uuid`: `POST /vendas` e `POST /estoque/entradas` (replay → 200
   com o registro existente).
 
@@ -116,6 +123,9 @@ estoque, concorrência do último item, idempotência por `client_uuid`.
   mesma etiqueta por baixo e, passada a trava de 1,5 s, empilha outro alerta igual. Antes de
   abrir diálogo sobre o scanner, `pausar()`; ao fechar, `retomar()`. As regras de tempo
   moram em `mobile/src/lib/leitura.ts`, com teste.
+- **Aviso de tempo real não carrega dado**: mandar o objeto pelo WebSocket furaria o
+  filtro por papel — a vendedora receberia custo por um caminho que não passa pelos
+  schemas de resposta. O aviso diz só o assunto; quem busca é a rota REST.
 - **Campo de dinheiro preenchido**: valor sugerido (o que falta pagar, o esperado no caixa) é
   substituído pelo primeiro dígito depois de focar; do segundo em diante empurra pela direita.
   Sem isso, digitar `200` sobre `179,70` virava R$ 17.970,00 — e um troco de R$ 9.999.820,29.

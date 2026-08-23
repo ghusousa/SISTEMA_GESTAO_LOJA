@@ -2,6 +2,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
+import { AppState } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
@@ -11,6 +12,7 @@ import { Carregando } from '@/components/ui';
 import { queryClient } from '@/lib/queryClient';
 import { cores } from '@/lib/tema';
 import { useAuthStore } from '@/stores/authStore';
+import { acordarTempoReal } from '@/lib/tempoReal';
 import { useServidorStore } from '@/stores/servidorStore';
 
 export default function RootLayout() {
@@ -29,6 +31,14 @@ export default function RootLayout() {
     });
     void restaurarServidor();
     void restaurar();
+
+    // Celular dorme no bolso, entra no elevador, troca Wi-Fi por 4G. Enquanto esteve
+    // fora, o servidor avisou de mudanças que este aparelho não ouviu — voltar ao ativo
+    // reconecta e recarrega, senão a pessoa olharia dados de horas atrás sem saber.
+    const assinatura = AppState.addEventListener('change', (estado) => {
+      if (estado === 'active') acordarTempoReal();
+    });
+    return () => assinatura.remove();
   }, [restaurar, restaurarServidor, encerrarPorTokenInvalido]);
 
   return (

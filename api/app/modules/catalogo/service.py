@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import Duplicado, NaoEncontrado, OperacaoInvalida, Validacao
 from app.core.pagination import Pagina, Paginacao
-from app.modules.catalogo.barcode import montar_codigo_interno
+from app.modules.catalogo.barcode import eh_codigo_interno, montar_codigo_interno
 from app.modules.catalogo.models import Category, Product, ProductVariant, TipoCodigo
 from app.modules.catalogo.repository import CatalogoRepository
 from app.modules.catalogo.schemas import (
@@ -26,6 +26,13 @@ from app.modules.estoque import movimentos
 from app.modules.estoque.models import TipoMovimento
 from app.core.permissoes import Pode, pode
 from app.modules.usuarios.models import User
+
+
+def _tipo_do_codigo(codigo: str | None) -> str:
+    """Sem código, geramos um interno. Com código, o número diz de onde ele veio."""
+    if not codigo or eh_codigo_interno(codigo):
+        return TipoCodigo.INTERNO
+    return TipoCodigo.EAN
 
 
 class CatalogoService:
@@ -157,9 +164,7 @@ class CatalogoService:
                 size=entrada.tamanho,
                 color=entrada.cor,
                 barcode=codigo,
-                barcode_type=(
-                    TipoCodigo.EAN if entrada.codigo_barras else TipoCodigo.INTERNO
-                ),
+                barcode_type=_tipo_do_codigo(entrada.codigo_barras),
                 cost_price=entrada.preco_custo,
                 sale_price=entrada.preco_venda,
                 min_stock=entrada.estoque_minimo,
@@ -249,7 +254,7 @@ class CatalogoService:
             size=dados.tamanho,
             color=dados.cor,
             barcode=codigo,
-            barcode_type=TipoCodigo.EAN if dados.codigo_barras else TipoCodigo.INTERNO,
+            barcode_type=_tipo_do_codigo(dados.codigo_barras),
             cost_price=dados.preco_custo,
             sale_price=dados.preco_venda,
             min_stock=dados.estoque_minimo,
@@ -281,7 +286,7 @@ class CatalogoService:
             if await self.repo.variante_por_codigo(dados.codigo_barras) is not None:
                 raise Duplicado("Código de barras já cadastrado em outra peça.")
             variante.barcode = dados.codigo_barras.strip()
-            variante.barcode_type = TipoCodigo.EAN
+            variante.barcode_type = _tipo_do_codigo(variante.barcode)
         for campo, valor in (
             ("size", dados.tamanho),
             ("color", dados.cor),

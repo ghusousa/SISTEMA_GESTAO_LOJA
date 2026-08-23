@@ -7,8 +7,9 @@
 
 import { restaurarSessao, sair, definirTratadorDeSessaoPerdida } from './api.js';
 import { iniciarRoteador, rota, ir, caminhoAtual } from './router.js';
-import { limparCarrinho } from './store.js';
+import { limparCarrinho, sessao } from './store.js';
 import { PODE, pode, titulo } from './permissoes.js';
+import { conectarTempoReal, desconectarTempoReal } from './tempo-real.js';
 import { html, confirmar, cru, aviso } from './ui.js';
 
 /* ------------------------------------------------------------------------- telas */
@@ -176,6 +177,7 @@ function areaDeConteudo(caminho, usuario) {
         if (!confirmou) return;
         // O carrinho é de quem estava vendendo: não pode sobrar para o próximo turno.
         limparCarrinho();
+        desconectarTempoReal();
         await sair();
         ir('/entrar', true);
       });
@@ -191,7 +193,15 @@ document.addEventListener('rota-trocada', marcarItemAtivo);
 /* ------------------------------------------------------------------------ boot */
 
 definirTratadorDeSessaoPerdida(() => {
+  desconectarTempoReal();
   aviso('Sua sessão expirou. Entre de novo para continuar.', 'alerta');
+});
+
+// O canal acompanha a sessão: nasce com ela e morre com ela, sem cada tela ter de saber
+// que ele existe.
+sessao.inscrever(({ usuario }) => {
+  if (usuario) conectarTempoReal();
+  else desconectarTempoReal();
 });
 
 iniciarRoteador(areaDeConteudo);

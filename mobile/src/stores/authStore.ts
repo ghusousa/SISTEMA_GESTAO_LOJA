@@ -16,6 +16,7 @@ import {
 } from '@/api/sessao';
 import type { Usuario } from '@/api/tipos';
 import { pode, type Capacidade } from '@/lib/permissoes';
+import { conectarTempoReal, desconectarTempoReal } from '@/lib/tempoReal';
 
 interface AuthState {
   usuario: Usuario | null;
@@ -48,6 +49,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const tokens = await auth.login(email.trim().toLowerCase(), senha);
     await salvarSessao(tokens.access_token, tokens.refresh_token, tokens.usuario);
     set({ usuario: tokens.usuario, carregando: false });
+    conectarTempoReal();
   },
 
   async sair() {
@@ -57,6 +59,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       // a sessão local some do mesmo jeito.
       await auth.logout(refresh).catch(() => undefined);
     }
+    // Antes de limpar: o canal fala com o servidor que ainda reconhece esta sessão.
+    desconectarTempoReal();
     await limparSessao();
     limparEstadoDaSessao();
     set({ usuario: null, carregando: false });
@@ -73,6 +77,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     // Mostra o app imediatamente com o usuário salvo e confirma com o servidor em seguida:
     // abrir o PDV não pode depender de uma ida à rede.
     set({ usuario: salvo, carregando: false });
+    conectarTempoReal();
     try {
       const atual = await auth.eu();
       set({ usuario: atual });
@@ -82,6 +87,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   encerrarPorTokenInvalido() {
+    desconectarTempoReal();
     limparEstadoDaSessao();
     set({ usuario: null, carregando: false });
   },

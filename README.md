@@ -26,6 +26,10 @@ fecha o caixa. Mesma API, mesmas regras, mesmos papéis.
 | **Trabalhar sem celular** | O sistema web faz tudo pelo computador: o leitor USB de balcão digita o código como se fosse teclado, e o PDV entende. `F2` cobra, `F4` desconta, `Esc` limpa. |
 | **Vender pelo celular** | Cada vendedor entra com o próprio login no app e usa a câmera como leitor: bipa a etiqueta, vê o preço e fecha a venda andando pela loja. Um mesmo instalador serve para todos os aparelhos. |
 
+**Tudo em tempo real.** Cadastrou uma peça no computador do balcão e ela aparece no celular da
+vendedora na hora, sem fechar o app. Vendeu pelo celular e o saldo muda na tela do balcão. Vale
+para catálogo, estoque, vendas, despesas e caixa.
+
 **Quatro cargos**, cada um somando ao anterior:
 
 | Cargo | Faz | Não alcança |
@@ -185,19 +189,33 @@ Windows, isso depende do Docker Desktop estar marcado para iniciar com o sistema
 
 ### Atualizar
 
-**Linux / Mac**
+Na pasta do sistema, um comando só:
 
 ```bash
-git pull
-./instalar.sh                # reconstrói a imagem; as migrations rodam sozinhas ao subir
+./atualizar.sh
 ```
 
-**Windows** — se você clonou com git, é `git pull` e depois `instalar.bat`. Se baixou o ZIP,
-baixe o ZIP novo, extraia por cima **preservando o arquivo `.env`** (é ele que guarda as senhas
-desta instalação) e rode `instalar.bat`. Os dados ficam nos volumes do Docker, não na pasta, então
+Ele guarda uma cópia do banco, baixa o código novo do GitHub, reconstrói, aplica as migrations e
+confere se a loja voltou — mostrando cada passo. **Se a versão nova não subir, ele volta sozinho
+para a anterior** e confirma que voltou. É para isso que existe, em vez de um `git pull` decorado:
+quem atualiza às 8h50 de um sábado precisa que um erro se desfaça sozinho, e não de descobrir o
+comando certo com fila no caixa.
+
+Rodar sem novidade nenhuma é seguro: ele confere, avisa que já está na versão mais nova e sai sem
+tocar em nada.
+
+| Opção | Para quê |
+|---|---|
+| `--sim` | não pergunta nada (para deixar num agendamento) |
+| `--sem-backup` | pula a cópia do banco, se você acabou de fazer uma |
+| `--forcar` | atualiza descartando alterações feitas direto no servidor |
+
+**Windows** — se você clonou com git: `git pull` e depois `instalar.bat`. Se baixou o ZIP, baixe o
+novo, extraia por cima **preservando o arquivo `.env`** (é ele que guarda as senhas desta
+instalação) e rode `instalar.bat`. Os dados ficam nos volumes do Docker, não na pasta, então
 trocar a pasta não perde venda nenhuma.
 
-Faça um backup antes (comando na seção de desinstalação) quando a atualização trouxer migration.
+Depois de atualizar: no balcão, **Ctrl+F5** no navegador; no celular, feche e abra o app.
 
 ### Dados de demonstração
 

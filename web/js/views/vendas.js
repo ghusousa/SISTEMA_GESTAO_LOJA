@@ -5,6 +5,7 @@
  * Aqui o filtro de vendedor nem aparece para ele.
  */
 
+import { ouvir } from '../tempo-real.js';
 import { api } from '../api.js';
 import { formatar, paraCentavos, somar } from '../dinheiro.js';
 import { ir, trocarConsulta } from '../router.js';
@@ -198,4 +199,9 @@ export async function render(raiz, _params, consulta) {
   });
 
   await carregar();
+
+  // Alguém mexeu nisto de outro aparelho: a tela se refaz sozinha. O roteador
+  // chama a função devolvida ao trocar de tela, e é ela que cancela a inscrição —
+  // sem isso, telas antigas continuariam mandando recarregar o que saiu de cena.
+  return ouvir(['vendas', 'reconectado'], () => void carregar());
 }

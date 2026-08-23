@@ -6,6 +6,7 @@
  * ganhou tela no computador antes de qualquer outra coisa.
  */
 
+import { ouvir } from '../tempo-real.js';
 import { api } from '../api.js';
 import { svgEan13 } from '../codigo-barras.js';
 import { TIPOS_ACEITOS, enviarFoto } from '../foto.js';
@@ -481,4 +482,9 @@ export async function render(raiz, { id }) {
   }
 
   await carregar();
+
+  // Alguém mexeu nisto de outro aparelho: a tela se refaz sozinha. O roteador
+  // chama a função devolvida ao trocar de tela, e é ela que cancela a inscrição —
+  // sem isso, telas antigas continuariam mandando recarregar o que saiu de cena.
+  return ouvir(['catalogo', 'estoque', 'reconectado'], () => void carregar());
 }

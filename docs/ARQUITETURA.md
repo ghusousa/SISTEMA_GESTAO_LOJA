@@ -301,6 +301,27 @@ menos, nunca um dado vazado — o dado nem sai da API. Os valores gravados conti
 de `TITULO`.
 
 
+**ADR-16 — Tempo real por aviso, não por dado.**
+Cada tela vivia da própria cópia: cadastrava-se uma peça no balcão e o celular só a via
+depois de fechar e abrir o app. O canal é um WebSocket (`/api/v1/tempo-real`) e o que
+trafega nele é o ASSUNTO do que mudou (`estoque`, `catalogo`, `vendas`…), nunca o
+registro. Mandar o objeto seria mais rápido e furaria o filtro por papel: os schemas de
+resposta que escondem custo da vendedora vivem nas rotas REST, e um empurrão pelo socket
+passaria por fora deles. Assim o aviso é minúsculo, não depende de tela nenhuma, e quem
+busca continua sendo a rota de sempre.
+Quem publica é o **commit do SQLAlchemy** (`after_flush` anota as tabelas, `after_commit`
+publica), e não os services: seriam mais de vinte pontos de commit, e o esquecido não
+quebra teste nenhum — só deixa uma tela velha, o que ninguém liga a um commit específico.
+O saldo de estoque é escrito por SQL direto e não passa pelo ORM, mas toda mudança de
+saldo vem com uma linha em `stock_movements` na mesma transação, então ouvir o ORM basta.
+Autenticação pelo **primeiro quadro**, não por query string: o navegador não manda
+cabeçalho no handshake, e `?token=` acabaria no log de acesso do servidor, no do proxy e
+no histórico de todo intermediário. Entrega é melhor esforço — ouvinte lento perde aviso
+(fila de 32) e se acerta ao reconectar, quando o cliente invalida tudo. A central é em
+memória e por processo: a loja roda um servidor, e empilhar Redis seria mais uma peça
+para quebrar num sábado cheio.
+
+
 ## 4. Contratos de API
 
 Prefixo `/api/v1`. Auth: `Authorization: Bearer <access_token>`.

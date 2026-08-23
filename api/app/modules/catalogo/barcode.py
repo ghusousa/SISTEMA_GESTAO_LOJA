@@ -30,3 +30,18 @@ def ean13_valido(codigo: str) -> bool:
     if len(codigo) != TAMANHO_PAYLOAD + 1 or not codigo.isdigit():
         return False
     return digito_verificador_ean13(codigo[:TAMANHO_PAYLOAD]) == codigo[-1]
+
+
+def eh_codigo_interno(codigo: str | None) -> bool:
+    """Diz se um código de barras foi gerado por esta loja.
+
+    O prefixo 2 é a faixa que o GS1 reserva para uso interno: nenhum produto do mundo
+    circula com ele, então quem começa com 2 e fecha o verificador saiu daqui.
+
+    Existe porque o cliente devolve o código no formulário. Quem pede um código interno
+    pela tela recebe o número, ele preenche o campo, e o cadastro chega ao servidor com
+    `codigo_barras` preenchido — indistinguível de uma etiqueta digitada do fornecedor.
+    A peça acabava rotulada "etiqueta do fornecedor" na tela do produto, o oposto do que
+    era. Olhar o número resolve sem depender de o cliente avisar de onde ele veio.
+    """
+    return bool(codigo) and ean13_valido(codigo) and codigo.startswith(PREFIXO_INTERNO)

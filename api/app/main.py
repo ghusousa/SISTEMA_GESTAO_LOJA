@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from app.core.config import settings
+from app.core.eventos import registrar_avisos_automaticos
 from app.core.db import engine
 from app.core.exceptions import registrar_handlers
 
@@ -49,6 +50,7 @@ def _montar_rotas() -> None:
     from app.modules.despesas.router import router as despesas_router
     from app.modules.estoque.router import router as estoque_router
     from app.modules.relatorios.router import router as relatorios_router
+    from app.modules.tempo_real.router import router as tempo_real_router
     from app.modules.usuarios.router import router as usuarios_router
     from app.modules.vendas.router import router as vendas_router
 
@@ -61,11 +63,15 @@ def _montar_rotas() -> None:
         despesas_router,
         caixa_router,
         relatorios_router,
+        tempo_real_router,
     ):
         app.include_router(r, prefix="/api/v1")
 
 
 _montar_rotas()
+
+# Toda escrita que passa pelo ORM vira aviso para as telas abertas (ver core/eventos.py).
+registrar_avisos_automaticos()
 
 # Fotos de produto. Em produção o Nginx serve /media direto do disco.
 _media = Path(settings.media_dir)
