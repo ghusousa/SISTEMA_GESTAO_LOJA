@@ -19,9 +19,11 @@
 # esperando no caixa.
 #
 # Opções:
-#   --sem-backup   pula o backup (mais rápido; só se você acabou de fazer um)
-#   --forcar       atualiza mesmo com alterações locais não salvas (elas se perdem)
-#   --sim          não pergunta nada
+#   --sem-backup     pula o backup (mais rápido; só se você acabou de fazer um)
+#   --forcar         desfaz edições feitas nos arquivos DO SISTEMA neste servidor
+#   --sim            não pergunta nada
+#   --automatico [N] liga a atualização sozinha, de N em N minutos (padrão 10)
+#   --sem-automatico desliga a atualização sozinha
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -38,15 +40,27 @@ erro()   { printf '\n%s✗ %s%s\n' "$VERMELHO" "$1" "$NORMAL" >&2; }
 SEM_BACKUP=0
 FORCAR=0
 INTERATIVO=1
-for arg in "$@"; do
-    case "$arg" in
-        --sem-backup) SEM_BACKUP=1 ;;
-        --forcar)     FORCAR=1 ;;
-        --sim)        INTERATIVO=0 ;;
-        -h|--help)    sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-        *)            erro "Opção desconhecida: $arg"; exit 1 ;;
+AUTOMATICO=""
+MINUTOS=10
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --sem-backup)     SEM_BACKUP=1 ;;
+        --forcar)         FORCAR=1 ;;
+        --sim)            INTERATIVO=0 ;;
+        --automatico)
+            AUTOMATICO="ligar"
+            case "${2:-}" in [0-9]*) MINUTOS="$2"; shift ;; esac
+            ;;
+        --sem-automatico) AUTOMATICO="desligar" ;;
+        -h|--help)        sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *)                erro "Opção desconhecida: $1"; exit 1 ;;
     esac
+    shift
 done
+
+# Rodando sozinho, ninguém responde a prompt: o git ficaria pendurado para sempre
+# esperando uma senha que não vem, e a atualização nunca mais aconteceria.
+[ "$INTERATIVO" -eq 0 ] && export GIT_TERMINAL_PROMPT=0
 
 # ------------------------------------------------------------------ ferramentas
 
@@ -69,6 +83,111 @@ else
 fi
 
 [ -f docker-compose.yml ] || { erro "Rode este script de dentro da pasta do sistema."; exit 1; }
+
+# ------------------------------------------------------ atualização sozinha
+
+# Um timer do systemd, não uma linha no cron: o systemd já guarda o log de cada execução
+# (`journalctl -u loja-atualizar`), sabe que não deve rodar duas ao mesmo tempo, e recupera
+# o horário perdido se a máquina estava desligada. Cron não faz nada disso, e "por que não
+# atualizou ontem?" vira adivinhação.
+PASTA="$(pwd)"
+SERVICO=/etc/systemd/system/loja-atualizar.service
+TIMER=/etc/systemd/system/loja-atualizar.timer
+
+sudo_se_preciso() {
+    if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo "$@"; fi
+}
+
+ligar_automatico() {
+    titulo "Ligando a atualização sozinha"
+
+    command -v systemctl >/dev/null 2>&1 || {
+        erro "Este servidor não usa systemd; não sei agendar aqui."
+        exit 1
+    }
+    # Prova de vida ANTES de escrever qualquer coisa: dentro de contêiner o systemctl
+    # existe mas não responde, e aí o script deixaria dois arquivos órfãos em /etc e
+    # morreria com um recado de systemd que não diz o que fazer.
+    if ! sudo_se_preciso systemctl daemon-reload >/dev/null 2>&1; then
+        erro "O systemd não responde neste servidor; não dá para agendar por aqui."
+        printf '  Alternativa, no cron do root (%scrontab -e%s):\n\n' "$FORTE" "$NORMAL"
+        printf '    */%s * * * * cd %s && ./atualizar.sh --sim >> /var/log/loja-atualizar.log 2>&1\n\n' \
+            "$MINUTOS" "$PASTA"
+        exit 1
+    fi
+
+    # Sem credencial gravada, o timer travaria pedindo senha do GitHub a ninguém. Melhor
+    # descobrir agora, com alguém olhando, do que numa madrugada.
+    if ! GIT_TERMINAL_PROMPT=0 git ls-remote --exit-code origin HEAD >/dev/null 2>&1; then
+        erro "O git pede senha do GitHub e, sozinho, não há quem responda."
+        printf '  Grave a credencial uma vez e tudo passa a funcionar sem perguntar:\n\n'
+        printf '    %sgit remote set-url origin https://x-access-token:SEU_TOKEN@github.com/%s.git%s\n\n' \
+            "$FORTE" "ghusousa/SISTEMA_GESTAO_LOJA" "$NORMAL"
+        printf '  O token se cria em github.com/settings/tokens (acesso de leitura ao repositório).\n\n'
+        exit 1
+    fi
+    ok "o git fala com o GitHub sem pedir senha"
+
+    sudo_se_preciso tee "$SERVICO" >/dev/null <<UNIDADE
+[Unit]
+Description=Atualiza o sistema da loja com o que está no GitHub
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=$PASTA
+ExecStart=$PASTA/atualizar.sh --sim
+# Atualização que travou não pode segurar a próxima para sempre.
+TimeoutStartSec=900
+UNIDADE
+
+    sudo_se_preciso tee "$TIMER" >/dev/null <<UNIDADE
+[Unit]
+Description=Confere de $MINUTOS em $MINUTOS minutos se há versão nova da loja
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=${MINUTOS}min
+# Se o servidor estava desligado na hora, roda assim que voltar em vez de esperar a próxima.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIDADE
+
+    if ! sudo_se_preciso systemctl daemon-reload \
+        || ! sudo_se_preciso systemctl enable --now loja-atualizar.timer >/dev/null 2>&1; then
+        erro "Não consegui ligar o agendamento."
+        sudo_se_preciso rm -f "$TIMER" "$SERVICO"
+        printf '  Veja o motivo com: %ssystemctl status loja-atualizar.timer%s\n\n' "$FORTE" "$NORMAL"
+        exit 1
+    fi
+    ok "de $MINUTOS em $MINUTOS minutos, sem comando nenhum"
+
+    printf '\n  Próxima conferida: %s\n' \
+        "$(systemctl list-timers loja-atualizar.timer --no-pager 2>/dev/null | sed -n '2p' | awk '{print $1, $2, $3}')"
+    printf '  Ver o que aconteceu: %sjournalctl -u loja-atualizar -n 40%s\n' "$FORTE" "$NORMAL"
+    printf '  Desligar: %s./atualizar.sh --sem-automatico%s\n\n' "$FORTE" "$NORMAL"
+    exit 0
+}
+
+desligar_automatico() {
+    titulo "Desligando a atualização sozinha"
+    sudo_se_preciso systemctl disable --now loja-atualizar.timer >/dev/null 2>&1
+    sudo_se_preciso rm -f "$TIMER" "$SERVICO"
+    sudo_se_preciso systemctl daemon-reload
+    ok "desligada. A loja só atualiza quando você rodar ./atualizar.sh"
+    printf '\n'
+    exit 0
+}
+
+case "$AUTOMATICO" in
+    ligar)    ligar_automatico ;;
+    desligar) desligar_automatico ;;
+esac
+
+
 [ -f .env ] || { erro "Não achei o .env. Este servidor já foi instalado com ./instalar.sh?"; exit 1; }
 
 # ------------------------------------------------------------------ o que vem por aí
@@ -80,15 +199,18 @@ git rev-parse --git-dir >/dev/null 2>&1 || { erro "Esta pasta não é um clone d
 RAMO="$(git rev-parse --abbrev-ref HEAD)"
 ANTES="$(git rev-parse HEAD)"
 
-# Alteração local não commitada some no `git reset` lá embaixo. Melhor parar aqui e
-# avisar do que fazer alguém perder uma correção feita direto no servidor.
-if [ -n "$(git status --porcelain)" ]; then
+# Só o que o `git reset --hard` lá embaixo REALMENTE apagaria: arquivo rastreado que foi
+# editado aqui no servidor. Arquivo não rastreado (uma pasta solta, um .txt esquecido, um
+# clone dentro do clone) sobrevive ao reset intacto — barrar por causa dele era exigir um
+# `--forcar` para proteger algo que nunca esteve em risco, e deixar a loja sem atualizar
+# por causa de um arquivo que ninguém ia perder.
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
     if [ "$FORCAR" -eq 1 ]; then
-        aviso "Há alterações locais; --forcar foi passado e elas serão descartadas."
+        aviso "Há arquivos do sistema editados aqui; --forcar foi passado e eles voltam ao original."
     else
-        erro "Há alterações locais nesta pasta que seriam perdidas."
-        printf '  Veja com: %sgit status%s\n' "$FORTE" "$NORMAL"
-        printf '  Para descartar mesmo assim: %s./atualizar.sh --forcar%s\n\n' "$FORTE" "$NORMAL"
+        erro "Há arquivos do SISTEMA editados neste servidor, que seriam desfeitos."
+        git status --porcelain --untracked-files=no | sed 's/^/    /'
+        printf '  Para desfazer e atualizar: %s./atualizar.sh --forcar%s\n\n' "$FORTE" "$NORMAL"
         exit 1
     fi
 fi
@@ -238,6 +360,20 @@ ok "a API respondeu: $SAUDE"
 # `image prune -f` sem `-a` só apaga imagem órfã: nada em uso, nenhum dado, nada de volume.
 LIXO="$(dk image prune -f 2>/dev/null | grep -i 'reclaimed' | sed 's/.*: *//')"
 [ -n "$LIXO" ] && [ "$LIXO" != "0B" ] && ok "disco liberado das imagens antigas: $LIXO"
+
+# Backup a cada atualização é o certo; guardar TODOS eles não é. Com a atualização sozinha
+# ligada isso vira um dump por versão nova, para sempre, até o disco encher — e disco cheio
+# derruba o Postgres. Ficam os 5 últimos, que cobrem qualquer volta atrás plausível.
+GUARDAR=5
+# O padrão é o nome COMPLETO que este script usa: `loja-backup-*.dump` pegaria também os
+# backups do desinstalador, que são de quem os fez, não meus para apagar.
+SOBRANDO="$(ls -1t loja-backup-antes-de-atualizar-*.dump 2>/dev/null | tail -n +$((GUARDAR + 1)))"
+if [ -n "$SOBRANDO" ]; then
+    printf '%s\n' "$SOBRANDO" | xargs -r rm -f
+    ok "backups antigos apagados (ficam os $GUARDAR mais novos)"
+fi
+# O mesmo para os logs guardados antes de cada reconstrução.
+ls -1t loja-backup-log-antes-de-atualizar-*.txt 2>/dev/null | tail -n +$((GUARDAR + 1)) | xargs -r rm -f
 
 # ------------------------------------------------------------------ pronto
 

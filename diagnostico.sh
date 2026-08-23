@@ -223,6 +223,22 @@ for id in $(dk compose ps -aq 2>/dev/null); do
     printf '  %s: %s\n' "$nome" "${tamanho:-?}"
 done
 
+titulo "Atualização sozinha"
+# Timer parado ou falhando é a diferença entre "o sistema está velho" e "o sistema não
+# consegue mais se atualizar" — e as duas se parecem: nada acontece.
+if systemctl list-unit-files loja-atualizar.timer >/dev/null 2>&1 \
+    && systemctl is-enabled loja-atualizar.timer >/dev/null 2>&1; then
+    ok "ligada — $(systemctl list-timers loja-atualizar.timer --no-pager 2>/dev/null | sed -n '2p' | awk '{print "próxima em", $3, $4}')"
+    ULTIMA="$(systemctl show loja-atualizar.service -p Result --value 2>/dev/null)"
+    if [ -n "$ULTIMA" ] && [ "$ULTIMA" != "success" ]; then
+        mal "a última tentativa falhou ($ULTIMA):"
+        journalctl -u loja-atualizar -n 12 --no-pager 2>/dev/null | tail -8 | sed 's/^/    /'
+    fi
+else
+    nota "desligada — a loja só atualiza quando alguém rodar ./atualizar.sh"
+    printf '    Para ligar: %s./atualizar.sh --automatico%s\n' "$FORTE" "$NORMAL"
+fi
+
 titulo "Versão instalada"
 if git rev-parse --git-dir >/dev/null 2>&1; then
     printf '  %s\n' "$(git --no-pager log --oneline -1 2>/dev/null)"
