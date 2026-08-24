@@ -1321,13 +1321,12 @@ kbd {
  */
 .folha {
   display: grid;
-  grid-template-columns: repeat(4, 50mm);
+  /* `grid-template-columns` vem de `#folha-formato`. */
   justify-content: center;
   background: #fff;
 }
 .etiqueta-peca {
-  width: 50mm;
-  height: 30mm;
+  /* `width` e `height` vêm de `#folha-formato`, injetado pela tela conforme o formato. */
   padding: 1.5mm 1mm;
   box-sizing: border-box;
   display: flex;
@@ -1365,10 +1364,10 @@ kbd {
 }
 
 @media print {
-  @page {
-    size: A4 portrait;
-    margin: 5mm;
-  }
+  /* O tamanho do papel NÃO fica aqui: quem manda é a regra `@page` que a tela de etiquetas
+     injeta em `#folha-formato` (ver `js/views/etiquetas.js`), porque ele muda conforme o
+     formato escolhido — A4 para folha adesiva, 50 × 30 mm para rolo térmico. Fixar A4
+     neste arquivo mandaria A4 para uma impressora cujo papel tem 5 cm. */
   body {
     background: #fff;
   }
