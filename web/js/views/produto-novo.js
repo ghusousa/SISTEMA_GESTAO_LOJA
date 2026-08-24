@@ -34,7 +34,12 @@ export async function render(raiz, _params, consulta) {
         <div>
           <a class="botao botao--fantasma botao--pequeno" href="#/produtos">← Produtos</a>
           <h1>Novo produto</h1>
-          <p class="texto-suave">Preencha os dados, monte a grade e confira os códigos.</p>
+          <p class="texto-suave">
+              Preencha os dados, monte a grade e confira os códigos. É aqui que a peça nasce
+              e ganha código de barras — o estoque inicial já entra junto. Se a peça já
+              existe e só chegou mais, o lugar é
+              <a href="#/estoque/entrada">Estoque &gt; Entrada</a>.
+            </p>
         </div>
       </div>
 

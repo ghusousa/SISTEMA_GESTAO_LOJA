@@ -12,6 +12,7 @@
 import { api, ErroApi } from '../api.js';
 import { ligarBuscaDePeca } from '../busca-peca.js';
 import { criarLeitor, manterFoco } from '../leitor.js';
+import { ir } from '../router.js';
 import {
   aviso,
   avisarErro,
@@ -47,7 +48,12 @@ export function render(raiz) {
       <aside class="pdv__resumo">
         <h2 style="margin-bottom:6px">Contagem física</h2>
         <p class="texto-fraco">
-          Só as peças bipadas são conferidas. O que você não contar fica exatamente como está.
+          A contagem <strong>substitui</strong> o saldo pelo número que você contar — ela não
+          soma. Só as peças bipadas são conferidas; o que você não contar fica como está.
+        </p>
+        <p class="texto-fraco" style="margin-top:6px">
+          Chegou mercadoria do fornecedor? O lugar é
+          <a href="#/estoque/entrada">Estoque &gt; Entrada</a>.
         </p>
 
         <div class="pdv__linha">
@@ -203,9 +209,43 @@ export function render(raiz) {
     pintar();
   }
 
+  /**
+   * O inventário SUBSTITUI o saldo pelo que foi contado — ele não soma. Quem usa esta tela
+   * para dar entrada de mercadoria APAGA o que já estava na arara: tinha 5, chegaram 20,
+   * digita 20, e o sistema entende "contei e tem 20". As 5 antigas somem, e o extrato ainda
+   * registra "acerto por contagem física", escondendo o que aconteceu.
+   *
+   * O sinal desse engano é característico: várias peças contadas com MAIS do que o sistema
+   * tem, e nenhuma com menos. Contagem de verdade erra para os dois lados — some peça,
+   * aparece peça trocada de lugar. Só sobrando é mercadoria nova entrando pela porta errada.
+   */
+  function pareceEntradaDisfarcada() {
+    const divergentes = contagens.filter((c) => c.contado !== c.saldo);
+    if (divergentes.length < 2) return false;
+    const sobrando = divergentes.filter((c) => c.contado > c.saldo);
+    return sobrando.length === divergentes.length;
+  }
+
   async function fecharContagem() {
     if (enviando || !contagens.length) return;
     const divergentes = contagens.filter((c) => c.contado !== c.saldo);
+
+    if (pareceEntradaDisfarcada()) {
+      const seguir = await confirmar({
+        titulo: 'Isto parece mercadoria que chegou',
+        mensagem:
+          `Todas as ${divergentes.length} peças com diferença foram contadas com MAIS do que ` +
+          'o sistema tem. Se chegou mercadoria do fornecedor, o lugar é Estoque > Entrada, ' +
+          'que SOMA ao que já existe e guarda o fornecedor. O inventário SUBSTITUI o saldo: ' +
+          'seguir aqui vai apagar o que estava na arara antes.',
+        confirmarTexto: 'Foi contagem mesmo, seguir',
+        perigo: true,
+      });
+      if (!seguir) {
+        ir('/estoque/entrada');
+        return;
+      }
+    }
 
     const certeza = await confirmar({
       titulo: 'Fechar a contagem',

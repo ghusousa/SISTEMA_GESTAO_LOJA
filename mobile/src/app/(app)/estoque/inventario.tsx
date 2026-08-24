@@ -33,6 +33,45 @@ interface Contagem {
 export default function Inventario() {
   const router = useRouter();
   const [contagens, setContagens] = useState<Contagem[]>([]);
+
+  /**
+   * O inventário SUBSTITUI o saldo, não soma. Quem usa esta tela para dar entrada de
+   * mercadoria apaga o que já estava na arara: tinha 5, chegaram 20, digita 20, e as 5
+   * antigas somem — com o extrato dizendo "acerto por contagem física".
+   *
+   * A assinatura do engano é característica: várias peças contadas com MAIS do que o
+   * sistema tem, e nenhuma com menos. Contagem de verdade erra para os dois lados.
+   */
+  function pareceEntradaDisfarcada(lista: Contagem[]): boolean {
+    const divergentes = lista.filter((c) => c.contado !== c.saldoSistema);
+    if (divergentes.length < 2) return false;
+    return divergentes.every((c) => c.contado > c.saldoSistema);
+  }
+
+  function confirmarLancamento() {
+    const divergentes = contagens.filter((c) => c.contado !== c.saldoSistema);
+    if (pareceEntradaDisfarcada(contagens)) {
+      Alert.alert(
+        'Isto parece mercadoria que chegou',
+        `Todas as ${divergentes.length} peças com diferença foram contadas com MAIS do que o ` +
+          'sistema tem. Se chegou mercadoria do fornecedor, o lugar é Estoque > Entrada, que ' +
+          'SOMA ao que já existe e guarda o fornecedor. O inventário SUBSTITUI o saldo.',
+        [
+          { text: 'Ir para Entrada', onPress: () => router.replace('/estoque/entrada') },
+          { text: 'Foi contagem mesmo', style: 'destructive', onPress: () => enviar.mutate() },
+        ],
+      );
+      return;
+    }
+    Alert.alert(
+      'Lançar inventário?',
+      'O saldo das peças contadas passa a ser o que você contou.',
+      [
+        { text: 'Voltar', style: 'cancel' },
+        { text: 'Lançar', onPress: () => enviar.mutate() },
+      ],
+    );
+  }
   const [aviso, setAviso] = useState<string | null>(null);
   const [consultando, setConsultando] = useState(false);
   const buscando = useRef(false);
@@ -193,16 +232,7 @@ export default function Inventario() {
           grande
           desabilitado={contagens.length === 0}
           carregando={enviar.isPending}
-          onPress={() =>
-            Alert.alert(
-              'Lançar inventário?',
-              'O saldo das peças contadas passa a ser o que você contou.',
-              [
-                { text: 'Voltar', style: 'cancel' },
-                { text: 'Lançar', onPress: () => enviar.mutate() },
-              ],
-            )
-          }
+          onPress={confirmarLancamento}
         />
       </View>
     </View>

@@ -49,7 +49,12 @@ export function render(raiz) {
       </div>
 
       <aside class="pdv__resumo">
-        <h2 style="margin-bottom:12px">Entrada de mercadoria</h2>
+        <h2 style="margin-bottom:6px">Entrada de mercadoria</h2>
+        <p class="texto-fraco" style="margin-bottom:12px">
+          <strong>Soma</strong> ao que já existe. É aqui que entra o que chegou do
+          fornecedor. Peça que a loja nunca teve nasce em
+          <a href="#/produtos/novo">Produtos &gt; Nova peça</a>.
+        </p>
         <label class="campo">
           <span>Fornecedor <span class="campo__dica">opcional</span></span>
           <input data-fornecedor maxlength="120" placeholder="Ex.: Malharia São Bento" />

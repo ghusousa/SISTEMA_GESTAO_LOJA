@@ -154,6 +154,13 @@ estoque, concorrência do último item, idempotência por `client_uuid`.
   'CONCLUIDA'` antes de estornar. Checar em memória deixa dois cliques estornarem duas vezes.
 - **Carrinho, conferência e cache são globais**: logout limpa tudo (`limparTudoDaSessao`),
   senão o próximo usuário herda a venda e a sacola do anterior.
+- **Três telas mexem no estoque, e uma delas SUBSTITUI**: Cadastro (peça nasce, com estoque
+  inicial), Entrada (SOMA, guarda fornecedor e atualiza custo) e Inventário
+  (**substitui** o saldo pelo contado). Usar o Inventário para receber mercadoria APAGA o que
+  estava na arara — tinha 5, chegaram 20, digita 20, e o saldo vira 20 em vez de 25, com o
+  extrato dizendo "acerto por contagem física". As duas pontas travam isso: contagem em que
+  TODAS as divergências são para mais (≥2 peças, nenhuma para menos) é a assinatura do engano,
+  e a tela pergunta antes de gravar, oferecendo ir para a Entrada.
 - **Peça nova não entra pela Entrada**: ela nasce no cadastro, que já tem estoque inicial. A
   Entrada é da segunda vez em diante — e aí a mercadoria chega SEM a nossa etiqueta, porque o
   código interno nasceu aqui. Por isso a busca por nome não é conveniência: sem ela a reposição
