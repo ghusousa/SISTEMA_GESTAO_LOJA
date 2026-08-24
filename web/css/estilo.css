@@ -154,11 +154,10 @@ a {
   height: 100vh;
 }
 
+/* Só o nome da loja — sem logo. O bloco deixou de ser "ícone + texto" e virou texto,
+   então saiu o flex: alinhar duas colunas onde só existe uma empurrava o nome. */
 .lateral__marca {
   padding: 20px 18px 16px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.12);
 }
 
@@ -174,16 +173,6 @@ a {
   color: rgba(255, 255, 255, 0.66);
 }
 
-.lateral__logo {
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.14);
-  display: grid;
-  place-items: center;
-  font-size: 17px;
-  flex: none;
-}
 
 .lateral__menu {
   flex: 1;
@@ -866,22 +855,9 @@ tfoot td {
 }
 
 .entrada__marca {
-  display: flex;
-  align-items: center;
-  gap: 12px;
   margin-bottom: 22px;
 }
 
-.entrada__logo {
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-  background: var(--primaria);
-  color: #fff;
-  display: grid;
-  place-items: center;
-  font-size: 21px;
-}
 
 .entrada__erro {
   background: var(--perigo-fraco);

@@ -10,7 +10,6 @@ export function render(raiz) {
     <div class="entrada">
       <div class="entrada__caixa">
         <div class="entrada__marca">
-          <span class="entrada__logo" aria-hidden="true">${loja().vocabulario?.icone ?? '🏪'}</span>
           <span>
             <h1 data-nome-loja>${loja().nome}</h1>
             <span class="texto-suave">Estoque, vendas e financeiro</span>

@@ -131,11 +131,8 @@ function molduraHtml(usuario) {
     <div class="aplicacao">
       <nav class="lateral" aria-label="Navegação principal">
         <div class="lateral__marca">
-          <span class="lateral__logo" aria-hidden="true">${loja().vocabulario?.icone ?? '🏪'}</span>
-          <span>
-            <strong data-nome-loja>${loja().nome}</strong>
-            <span>Estoque · PDV · Caixa</span>
-          </span>
+          <strong data-nome-loja>${loja().nome}</strong>
+          <span>Estoque · PDV · Caixa</span>
         </div>
         <div class="lateral__menu">${cru(menuHtml())}</div>
         <div class="lateral__rodape">

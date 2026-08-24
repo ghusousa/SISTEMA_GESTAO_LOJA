@@ -128,15 +128,10 @@ export default function Mais() {
         {/* De que loja é este aparelho. Vem do servidor, não do build: um `.apk` serve
             todas as lojas (ADR-13), então quem se apresenta é a instalação. */}
         <View style={s.loja}>
-          <Text style={s.lojaIcone}>{loja.vocabulario.icone}</Text>
-          <View style={{ flex: 1 }}>
-            <Text style={s.lojaNome} numberOfLines={2}>
-              {loja.nome}
-            </Text>
-            <Text style={s.lojaRamo}>
-              {ROTULOS[loja.segmento as Segmento] ?? 'Loja'}
-            </Text>
-          </View>
+          <Text style={s.lojaNome} numberOfLines={2}>
+            {loja.nome}
+          </Text>
+          <Text style={s.lojaRamo}>{ROTULOS[loja.segmento as Segmento] ?? 'Loja'}</Text>
         </View>
 
         <View style={s.perfil}>
@@ -264,15 +259,11 @@ const s = StyleSheet.create({
   },
 
   loja: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: espaco.md,
     paddingBottom: espaco.md,
     marginBottom: espaco.md,
     borderBottomWidth: 1,
     borderBottomColor: cores.borda,
   },
-  lojaIcone: { fontSize: 30 },
   lojaNome: { fontSize: fonte.media, fontWeight: '800', color: cores.texto },
   lojaRamo: { fontSize: fonte.pequena, color: cores.textoSuave, marginTop: 1 },
 
