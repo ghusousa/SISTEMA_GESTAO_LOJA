@@ -10,6 +10,8 @@ import { PODE, pode, titulo, type Capacidade } from '@/lib/permissoes';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
 import { useAuthStore } from '@/stores/authStore';
 import { useServidorStore } from '@/stores/servidorStore';
+import { useLoja } from '@/hooks/useLoja';
+import { ROTULOS, type Segmento } from '@/lib/segmento';
 
 interface Opcao {
   rotulo: string;
@@ -116,12 +118,27 @@ function SeloDeVersao() {
 export default function Mais() {
   const router = useRouter();
   const usuario = useAuthStore((e) => e.usuario);
+  const loja = useLoja();
   const sair = useAuthStore((e) => e.sair);
   const ehDono = usuario?.papel === 'ADMIN';
 
   return (
     <ScrollView contentContainerStyle={s.conteudo}>
       <Cartao>
+        {/* De que loja é este aparelho. Vem do servidor, não do build: um `.apk` serve
+            todas as lojas (ADR-13), então quem se apresenta é a instalação. */}
+        <View style={s.loja}>
+          <Text style={s.lojaIcone}>{loja.vocabulario.icone}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={s.lojaNome} numberOfLines={2}>
+              {loja.nome}
+            </Text>
+            <Text style={s.lojaRamo}>
+              {ROTULOS[loja.segmento as Segmento] ?? 'Loja'}
+            </Text>
+          </View>
+        </View>
+
         <View style={s.perfil}>
           <View style={s.avatar}>
             <Text style={s.avatarTexto}>
@@ -228,6 +245,19 @@ const s = StyleSheet.create({
     marginTop: espaco.xl,
     padding: espaco.sm,
   },
+
+  loja: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: espaco.md,
+    paddingBottom: espaco.md,
+    marginBottom: espaco.md,
+    borderBottomWidth: 1,
+    borderBottomColor: cores.borda,
+  },
+  lojaIcone: { fontSize: 30 },
+  lojaNome: { fontSize: fonte.media, fontWeight: '800', color: cores.texto },
+  lojaRamo: { fontSize: fonte.pequena, color: cores.textoSuave, marginTop: 1 },
 
   perfil: { flexDirection: 'row', gap: espaco.lg, alignItems: 'center' },
   avatar: {
