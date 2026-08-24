@@ -24,6 +24,7 @@ export const PODE = {
   GERIR_USUARIOS: 'GERIR_USUARIOS',
   VER_AUDITORIA: 'VER_AUDITORIA',
   CONFIGURAR_LOJA: 'CONFIGURAR_LOJA',
+  GERIR_BACKUP: 'GERIR_BACKUP',
 };
 
 const VENDEDORA = [];
@@ -86,6 +87,7 @@ const EM_PORTUGUES = {
   [PODE.GERIR_USUARIOS]: 'administrar os logins da equipe',
   [PODE.VER_AUDITORIA]: 'ver o diário de auditoria',
   [PODE.CONFIGURAR_LOJA]: 'mudar o nome e o ramo da loja',
+  [PODE.GERIR_BACKUP]: 'ligar e configurar o backup na nuvem',
 };
 
 /** Sempre aberto a quem entrou: é disto que o balcão vive. */

@@ -48,6 +48,7 @@ rota('/clientes', () => import('./views/clientes.js'), { pode: PODE.GERIR_CREDIA
 rota('/usuarios', () => import('./views/usuarios.js'), { pode: PODE.GERIR_USUARIOS });
 rota('/auditoria', () => import('./views/auditoria.js'), { pode: PODE.VER_AUDITORIA });
 rota('/configuracao', () => import('./views/configuracao.js'), { pode: PODE.CONFIGURAR_LOJA });
+rota('/backup', () => import('./views/backup.js'), { pode: PODE.GERIR_BACKUP });
 rota('/conta', () => import('./views/conta.js'));
 
 /* ------------------------------------------------------------------------ menu */
@@ -92,6 +93,7 @@ const MENU = [
       { href: '/usuarios', icone: '👥', texto: 'Usuários', pode: PODE.GERIR_USUARIOS },
       { href: '/auditoria', icone: '🔎', texto: 'Auditoria', pode: PODE.VER_AUDITORIA },
       { href: '/configuracao', icone: '🏪', texto: 'A loja', pode: PODE.CONFIGURAR_LOJA },
+      { href: '/backup', icone: '☁️', texto: 'Backup', pode: PODE.GERIR_BACKUP },
       { href: '/conta', icone: '⚙️', texto: 'Minha conta' },
     ],
   },

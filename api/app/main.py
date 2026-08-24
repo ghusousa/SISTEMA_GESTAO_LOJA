@@ -70,6 +70,7 @@ async def health() -> dict[str, str]:
 
 def _montar_rotas() -> None:
     from app.modules.auditoria.router import router as auditoria_router
+    from app.modules.backup.router import router as backup_router
     from app.modules.configuracao.router import router as configuracao_router
     from app.modules.auth.router import router as auth_router
     from app.modules.caixa.router import router as caixa_router
@@ -97,6 +98,7 @@ def _montar_rotas() -> None:
         clientes_router,
         auditoria_router,
         configuracao_router,
+        backup_router,
     ):
         app.include_router(r, prefix="/api/v1")
 

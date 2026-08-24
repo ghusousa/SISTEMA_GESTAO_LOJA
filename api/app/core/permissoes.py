@@ -46,6 +46,9 @@ class Pode(StrEnum):
     #: Mudar o nome e o ramo da loja. Só o dono: é a identidade do negócio, aparece no
     #: recibo que vai para a mão do cliente, e não é decisão de quem toma conta do turno.
     CONFIGURAR_LOJA = "CONFIGURAR_LOJA"
+    #: Ligar o backup na nuvem e conectar a conta do Drive. Só o dono: quem tem essa
+    #: conta tem a cópia inteira da loja — vendas, custos, clientes e dívidas.
+    GERIR_BACKUP = "GERIR_BACKUP"
 
 
 VENDEDORA: frozenset[Pode] = frozenset()

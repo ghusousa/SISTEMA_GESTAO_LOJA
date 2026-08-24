@@ -53,6 +53,9 @@ while [ $# -gt 0 ]; do
             case "${2:-}" in [0-9]*:[0-9]*) HORA="$2"; shift ;; esac
             ;;
         --sem-automatico) ACAO="desligar" ;;
+        --nuvem)          ACAO="nuvem" ;;
+        --nuvem-timer)    ACAO="nuvem-timer" ;;
+        --nuvem-automatico) ACAO="nuvem-ligar" ;;
         --listar)         ACAO="listar" ;;
         --restaurar)      ACAO="restaurar"; ARQUIVO_ALVO="${2:-}"; shift ;;
         --sim)            INTERATIVO=0 ;;
@@ -167,6 +170,181 @@ copiar() {
     printf '\n'
 }
 
+
+# ============================================================ backup na nuvem (Drive)
+#
+# O que muda deste bloco para o `copiar()` de cima: aqui a configuração NÃO vem do `.env`,
+# vem do BANCO — da tabela `backup_config`, que o dono preenche na tela do sistema
+# (Sistema > Backup). É o que permite ligar o backup sem abrir terminal no servidor.
+#
+# A credencial do Google fica no banco e é lida AQUI, na máquina. Ela nunca entra no
+# contêiner da API, pela mesma razão do token do GitHub no `atualizar.sh`: quem serve a
+# loja não precisa da chave que apaga a cópia dela.
+
+CONF_RCLONE="$HOME/.config/rclone/loja.conf"
+
+# Lê um campo da configuração direto do Postgres. `-tA` = sem cabeçalho, sem alinhamento.
+conf_backup() {
+    dk compose exec -T db psql -U loja -d loja -tA \
+        -c "SELECT COALESCE($1::text, '') FROM backup_config WHERE id = 1" 2>/dev/null \
+        | tr -d '\r' | head -1
+}
+
+# Escreve de volta como foi. É isto que a tela mostra — sem este retorno, "ligado" e
+# "ligado e quebrado" ficariam idênticos na tela, que é o pior jeito de ter backup.
+anotar_backup() {  # anotar_backup <ok true|false> <bytes> <copias|NULL> <erro>
+    local ok="$1" bytes="${2:-NULL}" copias="${3:-NULL}" erro="${4:-}"
+    local erro_sql="NULL"
+    [ -n "$erro" ] && erro_sql="'$(printf '%s' "$erro" | sed "s/'/''/g")'"
+    dk compose exec -T db psql -U loja -d loja -q -c "
+        UPDATE backup_config SET
+            ultimo_em = now(), ultimo_ok = $ok,
+            ultimo_bytes = $bytes, copias_na_nuvem = $copias,
+            ultimo_erro = $erro_sql, updated_at = now()
+        WHERE id = 1" >/dev/null 2>&1 || true
+}
+
+# Monta o .conf do rclone a partir do token guardado no banco.
+#
+# `rclone authorize \"drive\"` roda no COMPUTADOR do dono (que tem navegador) e imprime um
+# JSON; ele cola esse JSON na tela. O servidor nunca precisa abrir navegador — que é o que
+# torna possível configurar backup em VPS pelo sistema.
+preparar_rclone() {
+    local token="$1"
+    mkdir -p "$(dirname "$CONF_RCLONE")"
+    # 600: é uma credencial que dá acesso de escrita ao Drive da loja.
+    umask 177
+    cat > "$CONF_RCLONE" <<FIM
+[loja]
+type = drive
+scope = drive.file
+token = $token
+FIM
+    umask 022
+}
+
+# Apaga as mais velhas até sobrarem `$1`. Devolve quantas ficaram.
+#
+# A ordenação é por NOME, e é de propósito: o nome carrega a data
+# (`loja-AAAAMMDD-HHMMSS.dump`), que é estável. Ordenar por data de modificação do Drive
+# entregaria a decisão a um relógio que não é o nosso.
+rotacionar_nuvem() {
+    local manter="$1" pasta="$2" nomes total sobrando
+    nomes="$(rclone --config "$CONF_RCLONE" lsf "loja:$pasta" --include 'loja-*.dump' 2>/dev/null \
+        | sort || true)"
+    total="$(printf '%s\n' "$nomes" | grep -c . || true)"
+    if [ "$total" -gt "$manter" ]; then
+        printf '%s\n' "$nomes" | grep . | head -n "$((total - manter))" | while read -r velho; do
+            rclone --config "$CONF_RCLONE" deletefile "loja:$pasta/$velho" >/dev/null 2>&1 \
+                && printf '  apagada do Drive: %s\n' "$velho"
+        done
+        sobrando="$manter"
+    else
+        sobrando="$total"
+    fi
+    printf '%s' "$sobrando"
+}
+
+# Já passou o intervalo configurado desde a última cópia?
+#
+# É isto que faz o INTERVALO morar na tela e não no systemd. O timer bate de 5 em 5
+# minutos e pergunta aqui; quem responde é a tabela. Mudar de 30 para 60 minutos na tela
+# passa a valer na hora seguinte, sem `systemctl`, sem SSH, sem reinstalar nada.
+esta_na_hora() {
+    local intervalo passou
+    intervalo="$(conf_backup intervalo_min)"
+    [ -n "$intervalo" ] || intervalo=30
+    passou="$(dk compose exec -T db psql -U loja -d loja -tA -c "
+        SELECT CASE
+            WHEN ultimo_em IS NULL THEN 1
+            WHEN now() - ultimo_em >= ($intervalo || ' minutes')::interval THEN 1
+            ELSE 0 END
+        FROM backup_config WHERE id = 1" 2>/dev/null | tr -d '\r' | head -1)"
+    [ "$passou" = "1" ]
+}
+
+copiar_para_nuvem() {
+    titulo "Backup para o Google Drive"
+
+    if ! dk compose exec -T db psql -U loja -d loja -tAc \
+            "SELECT 1 FROM backup_config WHERE id = 1" >/dev/null 2>&1; then
+        erro "Ainda não há configuração de backup. Ligue em Sistema > Backup, na tela."
+        exit 1
+    fi
+
+    local ativo token pasta manter
+    ativo="$(conf_backup ativo)"
+    if [ "$ativo" != "t" ]; then
+        aviso "O backup na nuvem está DESLIGADO na tela do sistema. Nada a fazer."
+        exit 0
+    fi
+
+    token="$(conf_backup rclone_token)"
+    pasta="$(conf_backup pasta)"
+    manter="$(conf_backup manter)"
+    [ -n "$pasta" ] || pasta="backups-loja"
+    [ -n "$manter" ] || manter=10
+
+    if [ -z "$token" ]; then
+        anotar_backup false NULL NULL "Sem conta do Google conectada."
+        erro "Sem token do Google. Conecte a conta em Sistema > Backup."
+        exit 1
+    fi
+    if ! command -v rclone >/dev/null 2>&1; then
+        anotar_backup false NULL NULL "O rclone não está instalado neste servidor."
+        erro "O rclone não está instalado. Instale com:"
+        printf '    %scurl https://rclone.org/install.sh | sudo bash%s\n' "$FORTE" "$NORMAL"
+        exit 1
+    fi
+
+    preparar_rclone "$token"
+
+    # ---------------------------------------------------------------- o dump
+    mkdir -p "$DESTINO"
+    local arquivo="$DESTINO/loja-$(date +%Y%m%d-%H%M%S).dump"
+    if ! dk compose exec -T db pg_dump -U loja -d loja -Fc -f /tmp/backup.dump 2>/dev/null; then
+        anotar_backup false NULL NULL "O pg_dump falhou — o banco respondeu?"
+        erro "O pg_dump falhou. O banco está no ar?"
+        exit 1
+    fi
+    dk compose cp db:/tmp/backup.dump "$arquivo" >/dev/null 2>&1
+    dk compose exec -T db rm -f /tmp/backup.dump >/dev/null 2>&1 || true
+
+    # Dump que não abre não é backup, e só se descobre na hora de restaurar — a pior hora.
+    dk compose cp "$arquivo" db:/tmp/conferir.dump >/dev/null 2>&1
+    if ! dk compose exec -T db pg_restore -l /tmp/conferir.dump >/dev/null 2>&1; then
+        rm -f "$arquivo"
+        anotar_backup false NULL NULL "A cópia saiu ilegível e foi descartada."
+        erro "A cópia saiu ilegível e foi descartada."
+        exit 1
+    fi
+    dk compose exec -T db rm -f /tmp/conferir.dump >/dev/null 2>&1 || true
+
+    local bytes
+    bytes="$(stat -c %s "$arquivo" 2>/dev/null || echo 0)"
+    ok "cópia gerada ($(du -h "$arquivo" | cut -f1)) — e ela abre"
+
+    # ---------------------------------------------------------------- para o Drive
+    if ! rclone --config "$CONF_RCLONE" copy "$arquivo" "loja:$pasta" 2>/tmp/rclone.err; then
+        local motivo; motivo="$(tail -2 /tmp/rclone.err 2>/dev/null | tr '\n' ' ')"
+        anotar_backup false "$bytes" NULL "Não subiu para o Drive: ${motivo:-erro do rclone}"
+        erro "NÃO consegui enviar para o Drive. A cópia só existe neste servidor."
+        printf '  %s\n' "$motivo"
+        exit 1
+    fi
+    ok "enviada para o Drive, em $pasta/"
+
+    local sobrando; sobrando="$(rotacionar_nuvem "$manter" "$pasta")"
+    ok "$sobrando cópias no Drive (o teto é $manter)"
+
+    # No disco local guardamos poucas: o Drive é a cópia que vale, e o disco de um VPS
+    # pequeno não pode virar cemitério de dump a cada 30 minutos.
+    find "$DESTINO" -name 'loja-*.dump' -mmin +720 -delete 2>/dev/null || true
+
+    anotar_backup true "$bytes" "$sobrando" ""
+    printf '\n'
+}
+
 # ------------------------------------------------------------------ restaurar
 
 restaurar() {
@@ -248,6 +426,52 @@ SERVICO=/etc/systemd/system/loja-backup.service
 TIMER=/etc/systemd/system/loja-backup.timer
 PASTA="$(pwd)"
 
+SERVICO_NUVEM=/etc/systemd/system/loja-backup-nuvem.service
+TIMER_NUVEM=/etc/systemd/system/loja-backup-nuvem.timer
+
+ligar_nuvem_automatico() {
+    titulo "Ligando o backup automático para o Drive"
+    command -v systemctl >/dev/null 2>&1 || { erro "Este servidor não usa systemd."; exit 1; }
+
+    sudo_se_preciso tee "$SERVICO_NUVEM" >/dev/null <<UNIDADE
+[Unit]
+Description=Backup do banco da loja para o Google Drive
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=$PASTA
+ExecStart=$PASTA/backup.sh --nuvem-timer --sim
+TimeoutStartSec=1800
+UNIDADE
+
+    # De 5 em 5 minutos, e quem decide se COPIA é a tabela `backup_config` (ver
+    # `esta_na_hora`). O timer é só o despertador; o horário mora na tela.
+    sudo_se_preciso tee "$TIMER_NUVEM" >/dev/null <<UNIDADE
+[Unit]
+Description=Confere de 5 em 5 min se esta na hora do backup
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+# Servidor desligado na hora: copia assim que voltar, em vez de pular a janela.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIDADE
+
+    if ! sudo_se_preciso systemctl daemon-reload \
+        || ! sudo_se_preciso systemctl enable --now loja-backup-nuvem.timer >/dev/null 2>&1; then
+        erro "Não consegui ligar o agendamento."
+        sudo_se_preciso rm -f "$TIMER_NUVEM" "$SERVICO_NUVEM"
+        exit 1
+    fi
+    ok "ligado — o sistema confere sozinho e copia no intervalo que estiver na tela"
+    printf '\n  Configure a conta do Drive em: %sSistema > Backup%s\n' "$FORTE" "$NORMAL"
+    printf '  Ver o que aconteceu: %sjournalctl -u loja-backup-nuvem -n 30%s\n\n' "$FORTE" "$NORMAL"
+}
+
 ligar_automatico() {
     titulo "Ligando a cópia diária"
 
@@ -310,8 +534,17 @@ desligar_automatico() {
 
 case "$ACAO" in
     copiar)    copiar ;;
+    nuvem)     copiar_para_nuvem ;;
+    nuvem-timer)
+        # Chamado pelo timer. Sai calado quando não é a hora: o journal da máquina não
+        # pode virar um log de "ainda não" a cada 5 minutos.
+        if [ "$(conf_backup ativo 2>/dev/null)" != "t" ]; then exit 0; fi
+        if ! esta_na_hora; then exit 0; fi
+        copiar_para_nuvem
+        ;;
     listar)    listar ;;
     restaurar) restaurar ;;
     ligar)     ligar_automatico ;;
+    nuvem-ligar) ligar_nuvem_automatico ;;
     desligar)  desligar_automatico ;;
 esac

@@ -92,6 +92,13 @@ npm run bundle       # expo export: pega erro de import que o tsc não vê
   `product_variants.size/color` são dois eixos genéricos, e `app/core/segmentos.py` diz como
   chamá-los (Tamanho/Cor em roupas, Aplicação/Posição em autopeças). Trocar de ramo não move
   um dado. `web/js/loja.js` e `mobile/src/lib/segmento.ts` são espelhos — mudou um, mude os três.
+- **Backup na nuvem (ADR-28)**: configurado na TELA (`backup_config`, singleton), não no `.env`
+  nem no instalador. Quem copia é o `backup.sh --nuvem` na máquina — `pg_dump` + `rclone` para o
+  Drive, faxina mantendo `manter` cópias (a 11ª apaga a 1ª, ordenando por NOME, que carrega a
+  data). **A API nunca vê a credencial**: `rclone_token` entra por `PUT /backup` e não sai por
+  rota nenhuma, nem para o dono — mesma separação do token do GitHub no `atualizar.sh`.
+  O timer do systemd bate de 5 em 5 min e o script pergunta ao banco se já passou
+  `intervalo_min`; assim mudar o intervalo na tela vale sem `systemctl`.
 - Versão: `GET /versao` diz o commit instalado E se é o mais novo. Quem sabe disso é o
   `atualizar.sh` (tem a credencial do GitHub), que grava `docker/estado/versao.json`; a API
   só lê o arquivo montado. **A API nunca fala com o GitHub** — token do código-fonte não

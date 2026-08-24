@@ -23,6 +23,7 @@ export const PODE = {
   GERIR_USUARIOS: 'GERIR_USUARIOS',
   VER_AUDITORIA: 'VER_AUDITORIA',
   CONFIGURAR_LOJA: 'CONFIGURAR_LOJA',
+  GERIR_BACKUP: 'GERIR_BACKUP',
 } as const;
 
 export type Capacidade = (typeof PODE)[keyof typeof PODE];

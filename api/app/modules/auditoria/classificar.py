@@ -62,6 +62,7 @@ _REGRAS: list[tuple[str, re.Pattern[str], str, str, str | None]] = [
     ("DELETE", re.compile(r"^/usuarios/(\d+)$"), "USUARIO_EXCLUIDO", "Excluiu o usuário #{id}", "usuario"),
     # identidade da loja
     ("PATCH", re.compile(r"^/configuracao$"), "LOJA_CONFIGURADA", "Mudou o nome ou o ramo da loja", "loja"),
+    ("PUT", re.compile(r"^/backup$"), "BACKUP_CONFIGURADO", "Mexeu na configuração do backup", "backup"),
     # sessão
     ("POST", re.compile(r"^/auth/logout$"), "LOGOUT", "Saiu do sistema", None),
 ]

@@ -589,6 +589,24 @@ E `GET /configuracao` passou a devolver `timezone`, porque a ponta também preci
 formatava o dia em UTC e a hora no fuso do navegador, e imprimia no recibo "24/08 22:43" —
 um instante que nunca existiu.
 
+**ADR-28 — Backup se configura na tela, mas quem copia é a máquina.**
+Backup que só liga por SSH é backup que a loja não liga: o `--automatico` existia e o servidor
+estava havia meses sem uma cópia sequer. Então a configuração virou tela (`Sistema > Backup`,
+capacidade `GERIR_BACKUP`, só do dono) e mora em `backup_config`, uma linha com `CHECK (id = 1)`.
+Mas **a API não faz backup**: quem tem `pg_dump`, `rclone` e o disco é o `backup.sh`, que lê essa
+linha pelo banco e escreve o resultado de volta nela. É a separação do ADR-18 — a credencial do
+Google não entra no contêiner que serve a loja, do mesmo jeito que o token do GitHub não entra.
+O `rclone_token` **não tem rota de leitura**, nem para o dono: uma rota que devolvesse a
+credencial seria uma porta a mais para a mesma chave, sem nada em troca.
+A autorização do Google acontece no COMPUTADOR do dono (`rclone authorize "drive"`), porque VPS
+não tem navegador; ele cola o JSON na tela, uma vez.
+A rotação mantém `manter` cópias ordenando por NOME (`loja-AAAAMMDD-HHMMSS.dump`) e não por data
+do Drive: o nome é nosso, o relógio do Drive não. E o timer bate de 5 em 5 min só para PERGUNTAR
+ao banco se já passou `intervalo_min` — assim o horário mora na tela, e trocar 30 por 60 minutos
+não exige `systemctl` nem SSH.
+Os campos `ultimo_*` existem porque "ligado" e "ligado e quebrado" são a mesma tela sem eles: o
+que dá confiança é "há 12 minutos, 4,2 MB, 10 cópias no Drive".
+
 ## 4. Contratos de API
 
 Prefixo `/api/v1`. Auth: `Authorization: Bearer <access_token>`.
@@ -714,6 +732,15 @@ congelados (ADR-23). `inicio`/`fim` recortam pelo dia no fuso da loja. Nem o ger
 `vocabulario` traz `item`/`itens`/`artigo`, `eixo1`/`eixo2` (os rótulos das duas variações),
 `eixo1_rapidos` (atalhos do cadastro em grade, vazio quando o ramo não tem valores previsíveis),
 `icone` e `exemplo_produto`. Vem pronto do servidor para web e app não divergirem.
+
+### 4.12 `backup` (GERIR_BACKUP: só o dono)
+| método | rota | notas |
+|---|---|---|
+| GET | `/backup` | situação + configuração. **Nunca** devolve o token; devolve `configurado: bool` |
+| PUT | `/backup` | `{ativo?, rclone_token?, pasta?, manter?, intervalo_min?}`; token ausente NÃO apaga o gravado |
+
+Ligar com `ativo: true` sem token gravado é `409 OPERACAO_INVALIDA` — tela dizendo "ativo" sem
+backup acontecendo é pior do que não ter tela.
 
 ---
 
