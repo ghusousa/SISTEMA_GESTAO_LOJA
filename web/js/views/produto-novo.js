@@ -13,7 +13,7 @@ import { TIPOS_ACEITOS, enviarFoto } from '../foto.js';
 import { paraDecimalString } from '../dinheiro.js';
 import { ir } from '../router.js';
 import { conferencia } from '../store.js';
-import { aviso, avisarErro, cru, html, ligarCampoDinheiro, modal } from '../ui.js';
+import { ajuda, aviso, avisarErro, cru, html, ligarCampoDinheiro, modal } from '../ui.js';
 
 // Os atalhos da grade vêm do ramo da loja (`vocab().eixo1_rapidos`): 'PP, P, M, G' só faz
 // sentido em roupa. Ramo sem valores previsíveis não mostra atalho nenhum — e aí o botão
@@ -94,7 +94,10 @@ export async function render(raiz, _params, consulta) {
 
       <div class="cartao" style="margin-bottom:16px">
         <div class="cartao__topo">
-          <h2>Valores padrão da grade</h2>
+          <h2>
+            Valores padrão da grade
+            ${ajuda('Cada linha nova da grade nasce com estes valores. "Aplicar a todas" reescreve o que já foi digitado nas linhas.')}
+          </h2>
           <button class="botao botao--neutro botao--pequeno" data-aplicar type="button">Aplicar a todas</button>
         </div>
         <div class="cartao__corpo">
@@ -106,13 +109,13 @@ export async function render(raiz, _params, consulta) {
             ${veDinheiro
               ? cru(html`
                   <label class="campo">
-                    <span>Preço de custo</span>
+                    <span>Preço de custo ${ajuda('O que você paga ao fornecedor. Vendedora e supervisora não veem este valor, e é ele que dá o lucro de cada peça.')}</span>
                     <input data-padrao-custo inputmode="numeric" />
                   </label>
                 `)
               : ''}
             <label class="campo">
-              <span>Estoque mínimo</span>
+              <span>Estoque mínimo ${ajuda('Quando o saldo da peça chegar neste número, ela entra no relatório de estoque baixo. É o aviso de repor.')}</span>
               <input data-padrao-minimo type="number" min="0" step="1" value="2" />
             </label>
           </div>
@@ -135,7 +138,7 @@ export async function render(raiz, _params, consulta) {
               <tr>
                 <th>${vocab().eixo1}</th>
                 <th>${vocab().eixo2}</th>
-                <th>Código de barras</th>
+                <th>Código de barras ${ajuda('Bipe a etiqueta que veio do fornecedor. Peça sem etiqueta ganha um código nosso: use o # ou deixe em branco, que o sistema gera ao salvar.')}</th>
                 <th class="direita">Venda</th>
                 ${veDinheiro ? cru('<th class="direita">Custo</th>') : ''}
                 <th class="direita">Mínimo</th>

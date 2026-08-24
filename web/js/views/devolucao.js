@@ -22,6 +22,7 @@ import { criarLeitor, manterFoco } from '../leitor.js';
 import { ir } from '../router.js';
 import { novoClientUuid } from '../store.js';
 import {
+  ajuda,
   aviso,
   avisarErro,
   confirmar,
@@ -177,7 +178,11 @@ export function render(raiz, _params, consulta) {
                     <th class="centro">Levou</th>
                     <th class="centro">Já voltou</th>
                     <th class="centro">Devolver agora</th>
-                    <th class="centro">Volta ao estoque?</th>
+                    <th class="centro">
+                      Volta ao estoque? ${ajuda('Marcada, a peça volta para a arara e pode ser ' +
+                        'vendida de novo. Peça com defeito fica desmarcada: a cliente recebe o valor, ' +
+                        'e a peça não volta para a venda.')}
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -217,6 +222,8 @@ export function render(raiz, _params, consulta) {
                 <p class="texto-fraco" style="margin-top:8px">
                   O valor volta pela mesma forma que entrou. O que não puder voltar em
                   dinheiro sai como vale de troca.
+                  ${ajuda('Se a venda teve desconto, volta o que a cliente pagou por esta peça, ' +
+                    'não o preço da etiqueta. Confirmada, a devolução não se desfaz.')}
                 </p>
               </div>
             `)
@@ -290,7 +297,9 @@ export function render(raiz, _params, consulta) {
       <div class="cartao">
         <div class="cartao__topo"><h2>Devolução registrada</h2></div>
         <div class="cartao__corpo">
-          <p><strong class="dinheiro">${formatar(paraCentavos(devolucao.total))}</strong> voltaram para a cliente:</p>
+          <p><strong class="dinheiro">${formatar(paraCentavos(devolucao.total))}</strong> voltaram para a
+            cliente: ${ajuda('Dinheiro e PIX saem da gaveta agora. Débito e crédito voltam pela ' +
+              'maquininha e caem na conta dela em alguns dias — não tire esse valor do caixa.')}</p>
           <ul>
             ${devolucao.pagamentos.map(
               (p) => html`
@@ -307,6 +316,8 @@ export function render(raiz, _params, consulta) {
                   Anote o vale <strong>${vale.codigo_vale}</strong> no papel e entregue à
                   cliente. Ele é aceito como forma de pagamento na próxima compra — é assim
                   que a troca acontece.
+                  ${ajuda('O vale é ao portador e pode ser gasto em partes, em compras ' +
+                    'diferentes. Ele não é dinheiro da gaveta: não entra na conferência do caixa.')}
                 </p>
               `)
             : ''}

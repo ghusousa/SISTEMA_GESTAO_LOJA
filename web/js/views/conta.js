@@ -3,7 +3,7 @@
 import { api } from '../api.js';
 import { sessao } from '../store.js';
 import { resumoDoPapel, titulo } from '../permissoes.js';
-import { aviso, avisarErro, cru, data as formatarData, etiqueta, html } from '../ui.js';
+import { ajuda, aviso, avisarErro, cru, data as formatarData, etiqueta, html } from '../ui.js';
 
 export async function render(raiz) {
   const usuario = sessao.get().usuario;
@@ -31,7 +31,7 @@ export async function render(raiz) {
               <span>${usuario.email}</span>
             </div>
             <div class="pagamento-linha">
-              <strong>Papel</strong>
+              <strong>Papel ${ajuda('Decide o que você vê e faz no sistema. O seu próprio papel você não troca: quem mexe nisso é quem cuida da equipe, em Usuários.')}</strong>
               <span>${cru(etiqueta(titulo(usuario.papel), usuario.papel === 'ADMIN' ? 'info' : 'neutro'))}</span>
             </div>
             <div class="pagamento-linha">

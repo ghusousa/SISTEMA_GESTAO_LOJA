@@ -6,6 +6,7 @@ import { formatar, paraCentavos, somar } from '../dinheiro.js';
 import { ir, trocarConsulta } from '../router.js';
 import { PODE, pode } from '../permissoes.js';
 import {
+  ajuda,
   carregando,
   comAtraso,
   cru,
@@ -106,7 +107,7 @@ export async function render(raiz, _params, consulta) {
         ${veDinheiro
           ? cru(html`
               <div class="indicador">
-                <div class="indicador__rotulo">Valor em custo</div>
+                <div class="indicador__rotulo">Valor em custo ${ajuda('Saldo vezes o custo de cada peça: o dinheiro parado na arara. Soma só as peças desta página, não a loja inteira.')}</div>
                 <div class="indicador__valor dinheiro">${formatar(emCusto)}</div>
                 <div class="indicador__nota">o que está parado nesta página</div>
               </div>
@@ -140,7 +141,7 @@ export async function render(raiz, _params, consulta) {
               <th class="direita">Preço</th>
               ${veDinheiro ? cru('<th class="direita">Custo parado</th>') : ''}
               <th class="direita">Mínimo</th>
-              <th class="direita">Saldo</th>
+              <th class="direita">Saldo ${ajuda('"Zerado" é peça que acabou. "Repor" é peça que chegou no estoque mínimo que você definiu no cadastro.')}</th>
               ${veDinheiro ? cru('<th class="direita">Ajustar</th>') : ''}
             </tr>
           </thead>

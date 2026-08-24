@@ -13,6 +13,7 @@ import { api } from '../api.js';
 import { formatar, paraCentavos, paraDecimalString } from '../dinheiro.js';
 import {
   FORMAS,
+  ajuda,
   aviso,
   avisarErro,
   carregando,
@@ -70,7 +71,7 @@ export async function render(raiz, _params, consulta) {
     area.innerHTML = html`
       <div class="grade-cartoes">
         <div class="indicador indicador--destaque">
-          <div class="indicador__rotulo">Esperado no caixa</div>
+          <div class="indicador__rotulo">Esperado no caixa ${ajuda('As vendas do dia, mais o fiado recebido hoje, menos as devoluções pagas em dinheiro ou PIX. Devolução no cartão volta pela maquininha e não sai daqui.')}</div>
           <div class="indicador__valor dinheiro">${formatar(esperadoTotal)}</div>
           <div class="indicador__nota">${formatarData(resumo.data)}</div>
         </div>
@@ -103,10 +104,10 @@ export async function render(raiz, _params, consulta) {
           <table>
             <thead>
               <tr>
-                <th>Forma de pagamento</th>
+                <th>Forma de pagamento ${ajuda('Vale e fiado não aparecem aqui: nenhum dos dois é dinheiro que passou pela gaveta hoje.')}</th>
                 <th class="direita">Sistema esperava</th>
                 <th class="direita">Contado</th>
-                <th class="direita">Diferença</th>
+                <th class="direita">Diferença ${ajuda('Positivo é sobra, negativo é falta. A diferença fica registrada com a sua observação e não trava venda nenhuma.')}</th>
               </tr>
             </thead>
             <tbody>

@@ -11,7 +11,7 @@
  */
 
 import { api } from '../api.js';
-import { carregando, cru, erroBloco, avisarErro, aviso, html } from '../ui.js';
+import { ajuda, carregando, cru, erroBloco, avisarErro, aviso, html } from '../ui.js';
 import { definirLoja, loja } from '../loja.js';
 
 export async function render(raiz) {
@@ -70,7 +70,7 @@ export async function render(raiz) {
               <p class="texto-fraco" data-previa>${previa(config.segmento, segmentos)}</p>
 
               <label class="campo">
-                <span>CNPJ ou CPF <span class="campo__dica">opcional, sai no recibo</span></span>
+                <span>CNPJ ou CPF ${ajuda('Sai impresso no recibo do cliente. Preencher não vira nota fiscal: o recibo continua sendo um comprovante da loja.')} <span class="campo__dica">opcional, sai no recibo</span></span>
                 <input name="documento" value="${config.documento ?? ''}" maxlength="24" />
               </label>
               <label class="campo">

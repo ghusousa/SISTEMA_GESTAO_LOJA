@@ -15,6 +15,7 @@ import { formatar, paraCentavos, paraDecimalString } from '../dinheiro.js';
 import { novoClientUuid } from '../store.js';
 import { trocarConsulta } from '../router.js';
 import {
+  ajuda,
   aviso,
   avisarErro,
   confirmar,
@@ -100,7 +101,7 @@ export async function render(raiz, _params, consulta) {
           : ''}
         <table>
           <thead>
-            <tr><th>Cliente</th><th>Telefone</th><th class="direita">Deve</th><th></th></tr>
+            <tr><th>Cliente</th><th>Telefone</th><th class="direita">Deve ${ajuda('O que ela ainda deve: o que levou no fiado, menos o que já pagou e menos o que devolveu. A conta é refeita toda vez que a tela abre.')}</th><th></th></tr>
           </thead>
           <tbody>
             ${items.map(
@@ -151,7 +152,7 @@ export async function render(raiz, _params, consulta) {
           <label class="campo"><span>Telefone</span><input data-telefone maxlength="20" placeholder="(11) 99999-8888" /></label>
           <label class="campo"><span>Documento <span class="campo__dica">opcional</span></span><input data-documento maxlength="20" /></label>
           <label class="campo">
-            <span>Limite combinado <span class="campo__dica">só avisa, não bloqueia</span></span>
+            <span>Limite combinado <span class="campo__dica">só avisa, não bloqueia</span> ${ajuda('Quanto você aceita deixar essa cliente dever. Passando disso a tela avisa e a venda continua: quem decide na hora é você.')}</span>
             <input data-limite inputmode="numeric" />
           </label>
         <button class="botao botao--acao botao--largo" data-ok>Cadastrar</button>
@@ -251,9 +252,9 @@ export async function render(raiz, _params, consulta) {
       titulo: `Receber de ${cliente.nome}`,
       render: () => html`
           <p class="texto-suave">Deve <strong class="dinheiro">${formatar(paraCentavos(cliente.deve))}</strong>.</p>
-          <label class="campo"><span>Valor recebido</span><input data-valor inputmode="numeric" /></label>
+          <label class="campo"><span>Valor recebido ${ajuda('Pode receber em partes. O sistema não aceita mais do que ela deve hoje, senão a loja é que ficaria devendo a ela.')}</span><input data-valor inputmode="numeric" /></label>
           <label class="campo">
-            <span>Forma</span>
+            <span>Forma ${ajuda('Como o dinheiro entrou. O que você receber hoje entra na conferência da gaveta do dia por essa forma.')}</span>
             <select data-forma>
               <option value="DINHEIRO">Dinheiro</option>
               <option value="PIX">PIX</option>

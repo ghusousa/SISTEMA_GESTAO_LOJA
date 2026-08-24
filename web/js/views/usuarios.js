@@ -10,6 +10,7 @@ import { api } from '../api.js';
 import { trocarConsulta } from '../router.js';
 import { sessao } from '../store.js';
 import {
+  ajuda,
   aviso,
   avisarErro,
   carregando,
@@ -230,7 +231,7 @@ export async function render(raiz, _params, consulta) {
           <input data-nome value="${usuario.nome}" maxlength="120" />
         </label>
         <label class="campo">
-          <span>Papel</span>
+          <span>Papel ${ajuda('Decide o que a pessoa enxerga: vendedora e supervisora não veem custo, lucro nem despesa. Cancelar venda é do dono e do gerente; auditoria e backup, só do dono.')}</span>
           <select data-papel ${cru(eu ? 'disabled' : '')}>
             ${PAPEIS.filter((p) => papeisQuePossoDar.includes(p) || p === usuario.papel).map(
               (p) => html`<option value="${p}" ${cru(usuario.papel === p ? 'selected' : '')}>${titulo(p)}</option>`,
@@ -240,7 +241,7 @@ export async function render(raiz, _params, consulta) {
         </label>
         <label class="marcador">
           <input type="checkbox" data-ativo ${cru(usuario.ativo ? 'checked' : '')} ${cru(eu ? 'disabled' : '')} />
-          <span>Pode entrar no sistema</span>
+          <span>Pode entrar no sistema ${ajuda('Desmarcado, o acesso dela para na hora, inclusive no celular. As vendas que ela fez continuam no histórico e na auditoria.')}</span>
         </label>
         ${eu ? cru('<p class="campo__dica">você não pode desativar a própria conta</p>') : ''}
         <div class="modal__acoes">

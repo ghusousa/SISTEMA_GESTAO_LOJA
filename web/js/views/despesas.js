@@ -9,6 +9,7 @@ import { api } from '../api.js';
 import { formatar, paraCentavos, paraDecimalString, somar } from '../dinheiro.js';
 import { trocarConsulta } from '../router.js';
 import {
+  ajuda,
   aviso,
   avisarErro,
   carregando,
@@ -119,7 +120,7 @@ export async function render(raiz, _params, consulta) {
     areaResumo.innerHTML = html`
       <div class="grade-cartoes">
         <div class="indicador indicador--destaque">
-          <div class="indicador__rotulo">Total nesta página</div>
+          <div class="indicador__rotulo">Total nesta página ${ajuda('Soma só as despesas que aparecem nesta página. O total do período inteiro está na tela de Relatórios.')}</div>
           <div class="indicador__valor dinheiro">${formatar(total)}</div>
           <div class="indicador__nota">${plural(pagina.total, 'lançamento no filtro', 'lançamentos no filtro')}</div>
         </div>
@@ -219,7 +220,7 @@ export async function render(raiz, _params, consulta) {
             <input data-valor inputmode="numeric" />
           </label>
           <label class="campo">
-            <span>Data</span>
+            <span>Data ${ajuda('O dia que você põe aqui decide em qual período a despesa entra no relatório.')}</span>
             <input data-data type="date" value="${despesa?.data || hojeISO()}" />
           </label>
         </div>
@@ -233,7 +234,7 @@ export async function render(raiz, _params, consulta) {
         </label>
         <label class="marcador" style="margin-bottom:14px">
           <input type="checkbox" data-recorrente ${cru(despesa?.recorrente ? 'checked' : '')} />
-          <span>É conta fixa <span class="campo__dica">entra na replicação mensal</span></span>
+          <span>É conta fixa <span class="campo__dica">entra na replicação mensal</span> ${ajuda('Conta que se repete todo mês, como aluguel e energia. Marcada assim, ela pode ser trazida de uma vez para o mês seguinte pelo botão Trazer contas fixas.')}</span>
         </label>
         <label class="campo">
           <span>Observação <span class="campo__dica">opcional</span></span>
@@ -308,7 +309,7 @@ export async function render(raiz, _params, consulta) {
           mesma data do mês. Repetir a operação não duplica nada.
         </p>
         <label class="campo">
-          <span>Competência</span>
+          <span>Competência ${ajuda('O mês para onde as contas fixas vão. Cada uma mantém o seu dia: aluguel do dia 5 entra no dia 5.')}</span>
           <input data-mes type="month" value="${hojeISO().slice(0, 7)}" />
         </label>
         <div class="modal__acoes">

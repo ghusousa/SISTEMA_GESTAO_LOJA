@@ -127,14 +127,20 @@ export function desconectarTempoReal() {
 
 // Aba que estava em segundo plano perde avisos quando o navegador congela o timer da
 // reconexão. Voltar ao foco é a hora de tentar de novo, sem esperar a espera crescente.
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState !== 'visible' || !ligado) return;
-  if (socket && socket.readyState === WebSocket.OPEN) {
-    distribuir('reconectado');
-    return;
-  }
-  clearTimeout(religar);
-  religar = null;
-  tentativas = 0;
-  abrir();
-});
+//
+// A guarda de `document` deixa este módulo importável fora do navegador — sem ela, quatro
+// telas que dependem dele não davam para conferir por linha de comando, e o erro que
+// aparecia era "document is not defined", que não diz nada sobre a tela.
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible' || !ligado) return;
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      distribuir('reconectado');
+      return;
+    }
+    clearTimeout(religar);
+    religar = null;
+    tentativas = 0;
+    abrir();
+  });
+}

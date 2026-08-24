@@ -19,7 +19,7 @@ import { api } from '../api.js';
 import { svgEan13, ean13Valido } from '../codigo-barras.js';
 import { formatar, paraCentavos } from '../dinheiro.js';
 import { conferencia } from '../store.js';
-import { avisarErro, cru, html, plural } from '../ui.js';
+import { ajuda, avisarErro, cru, html, plural } from '../ui.js';
 
 /**
  * Os formatos de impressão. A diferença não é estética: uma folha adesiva A4 sai numa
@@ -144,7 +144,7 @@ export async function render(raiz, params) {
           </div>
           <div class="pagina__acoes">
             <label class="campo" style="margin:0;min-width:280px">
-              <span>Formato</span>
+              <span>Formato ${ajuda('Folha A4 é papel adesivo em impressora comum, várias etiquetas por página. Rolo é a etiquetadora térmica, uma por vez. Trocado, sai encavalado.')}</span>
               <select data-formato>
                 ${Object.entries(FORMATOS).map(
                   ([chave, f]) => html`<option value="${chave}">${f.rotulo}</option>`,
@@ -169,7 +169,12 @@ export async function render(raiz, params) {
         ${comCodigo.length
           ? cru(html`
               <div class="cartao" style="margin:12px 0">
-                <div class="cartao__topo"><h2>Quantas de cada</h2></div>
+                <div class="cartao__topo">
+                  <h2>
+                    Quantas de cada
+                    ${ajuda('Sai uma etiqueta por unidade, no máximo 50 de cada peça. O número já vem preenchido: confira, para não colar etiqueta em peça que já tem.')}
+                  </h2>
+                </div>
                 <div class="cartao__corpo">
                   <div class="linha-campos" data-quantidades>
                     ${comCodigo.map(

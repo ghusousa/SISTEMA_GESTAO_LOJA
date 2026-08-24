@@ -7,7 +7,7 @@
  */
 
 import { api } from '../api.js';
-import { aviso, avisarErro, cru, grade, html, modal, numero, plural } from '../ui.js';
+import { ajuda, aviso, avisarErro, cru, grade, html, modal, numero, plural } from '../ui.js';
 
 const MOTIVOS = [
   'Contagem na arara',
@@ -34,7 +34,7 @@ export async function ajustarEstoque(peca) {
       </div>
 
       <label class="campo">
-        <span>Quantas peças existem de verdade?</span>
+        <span>Quantas peças existem de verdade? ${ajuda('Escreva o que existe de verdade na arara; o sistema grava só a diferença. Ajuste é para perda, quebra ou furto — mercadoria que chegou entra por Estoque > Entrada.')}</span>
         <input data-contado type="number" min="0" step="1" value="${saldoAtual}" />
       </label>
 

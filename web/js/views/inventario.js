@@ -14,6 +14,7 @@ import { ligarBuscaDePeca } from '../busca-peca.js';
 import { criarLeitor, manterFoco } from '../leitor.js';
 import { ir } from '../router.js';
 import {
+  ajuda,
   aviso,
   avisarErro,
   confirmar,
@@ -61,16 +62,16 @@ export function render(raiz) {
           <strong data-contadas>0</strong>
         </div>
         <div class="pdv__linha">
-          <span class="texto-suave">Itens conferidos</span>
+          <span class="texto-suave">Itens conferidos ${ajuda('Quantas peças diferentes já passaram pela contagem. Cinco camisetas iguais contam como 1 item conferido e 5 peças contadas.')}</span>
           <strong data-itens-conferidos>0</strong>
         </div>
         <div class="pdv__linha">
-          <span class="texto-suave">Divergências</span>
+          <span class="texto-suave">Divergências ${ajuda('Peças em que o contado não bate com o sistema. Só essas mudam de saldo no fechamento; o resto da loja fica como está.')}</span>
           <strong data-divergencias>0</strong>
         </div>
 
         <label class="campo" style="margin-top:12px">
-          <span>Observação <span class="campo__dica">fica no extrato</span></span>
+          <span>Observação ${ajuda('O que você escrever vira o motivo de cada acerto no extrato. Sem nada, fica "Acerto por contagem física".')} <span class="campo__dica">fica no extrato</span></span>
           <input data-observacao maxlength="500" placeholder="Ex.: contagem da arara do fundo" />
         </label>
 

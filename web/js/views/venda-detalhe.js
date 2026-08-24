@@ -11,6 +11,7 @@ import { recarregarRota } from '../router.js';
 import { PODE, pode } from '../permissoes.js';
 import {
   FORMAS,
+  ajuda,
   aviso,
   avisarErro,
   carregando,
@@ -59,10 +60,10 @@ export async function render(raiz, { id }) {
         <div class="pagina__acoes">
           <a class="botao botao--fantasma" href="#/vendas/${venda.id}/recibo">Recibo</a>
           ${!cancelada && pode(PODE.DEVOLVER_VENDA)
-            ? cru(html`<a class="botao" href="#/vendas/devolucao?venda=${venda.id}">Devolver peça</a>`)
+            ? cru(html`<a class="botao" href="#/vendas/devolucao?venda=${venda.id}">Devolver peça</a>${ajuda('O valor volta pelas mesmas formas em que a cliente pagou, e o que não couber vira vale. Troca é isto mais uma venda nova.')}`)
             : ''}
           ${!cancelada && pode(PODE.CANCELAR_VENDA)
-            ? cru('<button class="botao botao--perigo" data-cancelar>Cancelar venda</button>')
+            ? cru(html`<button class="botao botao--perigo" data-cancelar>Cancelar venda</button>${ajuda('Desfaz a venda inteira: as peças voltam ao estoque e o motivo fica guardado. Se alguma peça já foi devolvida, devolva o resto em vez de cancelar.')}`)
             : ''}
         </div>
       </div>
@@ -86,12 +87,12 @@ export async function render(raiz, { id }) {
         ${veDinheiro
           ? cru(html`
               <div class="indicador">
-                <div class="indicador__rotulo">Custo das peças</div>
+                <div class="indicador__rotulo">Custo das peças ${ajuda('O que a loja pagou ao fornecedor por estas peças. Fica congelado: mudar o custo amanhã não altera esta venda. Vendedora e supervisora não veem este número.')}</div>
                 <div class="indicador__valor dinheiro">${formatar(custo)}</div>
                 <div class="indicador__nota">congelado no momento da venda</div>
               </div>
               <div class="indicador">
-                <div class="indicador__rotulo">Lucro bruto</div>
+                <div class="indicador__rotulo">Lucro bruto ${ajuda('Total da venda menos o custo das peças. Ainda não desconta as despesas da loja nem a taxa da maquininha.')}</div>
                 <div class="indicador__valor dinheiro ${cru(lucro < 0 ? 'negativo' : 'positivo')}">${formatar(lucro)}</div>
                 <div class="indicador__nota">
                   ${total > 0 ? `${numero(Math.round((lucro / total) * 100))}% do total` : '—'}

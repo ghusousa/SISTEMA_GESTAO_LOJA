@@ -6,6 +6,7 @@ import { formatar, paraCentavos } from '../dinheiro.js';
 import { ir, trocarConsulta } from '../router.js';
 import { PODE, pode } from '../permissoes.js';
 import {
+  ajuda,
   carregando,
   comAtraso,
   cru,
@@ -102,8 +103,14 @@ export async function render(raiz, _params, consulta) {
               <th>Produto</th>
               <th>Categoria</th>
               <th>Grade</th>
-              <th class="direita">Preço</th>
-              <th class="direita">Em estoque</th>
+              <th class="direita">
+                Preço
+                ${ajuda('Quando as peças da grade têm preços diferentes, aparece do mais barato ao mais caro.')}
+              </th>
+              <th class="direita">
+                Em estoque
+                ${ajuda('Soma as unidades de todas as peças da grade. "Repor" aparece quando alguma peça chegou no estoque mínimo; "Sem estoque", quando a grade inteira zerou.')}
+              </th>
             </tr>
           </thead>
           <tbody>

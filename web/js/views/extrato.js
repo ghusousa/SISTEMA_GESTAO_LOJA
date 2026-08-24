@@ -9,6 +9,7 @@ import { api } from '../api.js';
 import { trocarConsulta } from '../router.js';
 import {
   TIPOS_MOVIMENTO,
+  ajuda,
   carregando,
   cru,
   dataHora,
@@ -62,7 +63,7 @@ export async function render(raiz, _params, consulta) {
           <input data-fim type="date" value="${filtros.fim}" />
         </label>
         <label class="campo">
-          <span>Tipo</span>
+          <span>Tipo ${ajuda('Venda é a baixa do PDV; Entrada é o que chegou do fornecedor; Ajuste e Inventário são acertos de contagem; Estorno é venda cancelada; Devolução é peça que a cliente trouxe de volta.')}</span>
           <select data-tipo>
             <option value="">Todos</option>
             ${Object.entries(TIPOS_MOVIMENTO).map(
@@ -105,7 +106,7 @@ export async function render(raiz, _params, consulta) {
               <th>Peça</th>
               <th>Tipo</th>
               <th class="direita">Movimento</th>
-              <th class="direita">Saldo depois</th>
+              <th class="direita">Saldo depois ${ajuda('Quanto tinha daquela peça logo depois desse movimento. Não é o saldo de hoje: para o de agora, veja Estoque > Saldos.')}</th>
               <th>Quem / motivo</th>
             </tr>
           </thead>

@@ -12,6 +12,7 @@ import { ir, trocarConsulta } from '../router.js';
 import { PODE, pode } from '../permissoes.js';
 import {
   FORMAS,
+  ajuda,
   carregando,
   cru,
   dataHora,
@@ -63,11 +64,11 @@ export async function render(raiz, _params, consulta) {
           <input data-inicio type="date" value="${filtros.inicio}" />
         </label>
         <label class="campo">
-          <span>Até</span>
+          <span>Até ${ajuda('O período conta dias inteiros no fuso da loja. O dia escolhido aqui entra completo, com as vendas da noite.')}</span>
           <input data-fim type="date" value="${filtros.fim}" />
         </label>
         <label class="campo">
-          <span>Situação</span>
+          <span>Situação ${ajuda('Cancelada é a venda desfeita pelo dono ou pelo gerente: as peças voltaram ao estoque e o motivo ficou registrado. Não soma no faturamento.')}</span>
           <select data-status>
             <option value="">Todas</option>
             <option value="CONCLUIDA" ${cru(filtros.status === 'CONCLUIDA' ? 'selected' : '')}>Concluídas</option>
@@ -128,7 +129,7 @@ export async function render(raiz, _params, consulta) {
           <div class="indicador__nota">de ${numero(pagina.total)} no período</div>
         </div>
         <div class="indicador">
-          <div class="indicador__rotulo">Somam</div>
+          <div class="indicador__rotulo">Somam ${ajuda('Soma só as vendas concluídas desta página, não do período inteiro. O total do período está em Relatórios.')}</div>
           <div class="indicador__valor dinheiro">${formatar(faturado)}</div>
           <div class="indicador__nota">só as concluídas desta página</div>
         </div>

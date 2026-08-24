@@ -2,6 +2,7 @@
 
 import { api } from '../api.js';
 import {
+  ajuda,
   aviso,
   avisarErro,
   carregando,
@@ -57,7 +58,10 @@ export async function render(raiz) {
             <tr>
               <th>Categoria</th>
               <th>Criada em</th>
-              <th class="direita">Ações</th>
+              <th class="direita">
+                Ações
+                ${ajuda('Renomear troca o nome em todas as peças de uma vez. Excluir só funciona se a categoria estiver vazia: mova as peças para outra antes.')}
+              </th>
             </tr>
           </thead>
           <tbody>

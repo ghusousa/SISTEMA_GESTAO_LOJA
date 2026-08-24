@@ -24,7 +24,7 @@ import { ir } from '../router.js';
 import { conferencia, limparConferencia, novoClientUuid } from '../store.js';
 import { PODE, pode } from '../permissoes.js';
 import { MAX_POR_PECA, pintarConferencia } from '../tabela-conferencia.js';
-import { aviso, avisarErro, confirmar, cru, html, ligarCampoDinheiro, plural } from '../ui.js';
+import { ajuda, aviso, avisarErro, confirmar, cru, html, ligarCampoDinheiro, plural } from '../ui.js';
 
 export function render(raiz) {
   const veDinheiro = pode(PODE.VER_DINHEIRO);
@@ -56,7 +56,7 @@ export function render(raiz) {
           <a href="#/produtos/novo">Produtos &gt; Nova peça</a>.
         </p>
         <label class="campo">
-          <span>Fornecedor <span class="campo__dica">opcional</span></span>
+          <span>Fornecedor ${ajuda('De quem veio a mercadoria. Fica guardado no extrato de cada peça, e é o que responde "quem me vendeu esta calça" quando ela volta com defeito.')} <span class="campo__dica">opcional</span></span>
           <input data-fornecedor maxlength="120" placeholder="Ex.: Malharia São Bento" />
         </label>
         <label class="campo">
@@ -68,7 +68,11 @@ export function render(raiz) {
           <span class="texto-suave">Peças</span>
           <strong data-contagem>0</strong>
         </div>
-        ${veDinheiro ? cru('<div class="pdv__linha"><span class="texto-suave">Custo total</span><span class="dinheiro" data-custo>R$ 0,00</span></div>') : ''}
+        ${veDinheiro
+          ? html`<div class="pdv__linha"><span class="texto-suave">Custo total
+              ${ajuda('Soma do que você vai pagar ao fornecedor. O custo que digitar aqui passa a valer para a peça daqui em diante; o lucro das vendas já feitas não muda.')}</span><span
+              class="dinheiro" data-custo>R$ 0,00</span></div>`
+          : ''}
 
         <button class="botao botao--acao botao--largo botao--grande" data-salvar style="margin-top:14px" disabled>
           Registrar entrada

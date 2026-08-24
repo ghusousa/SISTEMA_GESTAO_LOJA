@@ -15,7 +15,7 @@
  */
 
 import { api } from '../api.js';
-import { aviso, avisarErro, carregando, cru, dataHora, erroBloco, etiqueta, html } from '../ui.js';
+import { ajuda, aviso, avisarErro, carregando, cru, dataHora, erroBloco, etiqueta, html } from '../ui.js';
 
 const COMANDO = 'rclone authorize "drive"';
 
@@ -135,13 +135,14 @@ export async function render(raiz) {
           <div class="cartao__corpo">
             <form data-form>
               <label class="campo">
-                <span>Pasta no Drive</span>
+                <span>Pasta no Drive ${ajuda('A pasta do seu Drive onde as cópias ficam. Trocar de pasta deixa as cópias antigas para trás: a limpeza automática só cuida da pasta de agora.')}</span>
                 <input name="pasta" value="${c.pasta}" maxlength="120" />
               </label>
 
               <label class="campo">
                 <span>
                   De quantos em quantos minutos
+                  ${ajuda('Se o servidor pifar, você perde no máximo o que foi vendido desde a última cópia. Intervalo mais curto guarda mais, e custa quase nada.')}
                   <span class="campo__dica">30 é o recomendado</span>
                 </span>
                 <input name="intervalo_min" type="number" min="5" max="1440" value="${c.intervalo_min}" />
@@ -159,7 +160,7 @@ export async function render(raiz) {
 
               <label class="campo" style="flex-direction:row;align-items:center;gap:10px">
                 <input type="checkbox" name="ativo" ${cru(c.ativo ? 'checked' : '')} style="width:18px;height:18px" />
-                <span style="margin:0">Backup ligado</span>
+                <span style="margin:0">Backup ligado ${ajuda('Sem a conta do Google conectada ele não liga. Ligado, a cópia sobe sozinha no horário — ninguém precisa deixar esta tela aberta.')}</span>
               </label>
 
               <button class="botao botao--largo" type="submit">Salvar</button>

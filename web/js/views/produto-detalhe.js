@@ -15,6 +15,7 @@ import { formatar, paraCentavos, paraDecimalString } from '../dinheiro.js';
 import { ir } from '../router.js';
 import { PODE, pode } from '../permissoes.js';
 import {
+  ajuda,
   aviso,
   avisarErro,
   carregando,
@@ -93,10 +94,21 @@ export async function render(raiz, { id }) {
             <thead>
               <tr>
                 <th>Peça</th>
-                <th>Código de barras</th>
-                <th class="direita">Preço de venda</th>
-                ${veDinheiro ? cru('<th class="direita">Custo</th><th class="direita">Margem</th>') : ''}
-                <th class="direita">Estoque</th>
+                <th>Código de barras ${ajuda('"Etiqueta do fornecedor" é o código que já veio na peça. "Código interno" é o que a loja gerou para peça que chegou sem etiqueta.')}</th>
+                <th class="direita">
+                  Preço de venda
+                  ${ajuda('Mudar o preço vale das próximas vendas em diante. As vendas já feitas guardam o preço do dia, então o lucro de ontem não muda.')}
+                </th>
+                ${veDinheiro
+                  ? cru(
+                      '<th class="direita">Custo</th>' +
+                        `<th class="direita">Margem ${ajuda('Quanto sobra do preço de venda depois de tirar o custo. Aparece em vermelho abaixo de 30%.')}</th>`,
+                    )
+                  : ''}
+                <th class="direita">
+                  Estoque
+                  ${ajuda('O botão de balança ajusta o saldo para perda, quebra ou furto, e pede motivo. Mercadoria que chegou entra por Estoque > Entrada.')}
+                </th>
                 <th class="direita">Ações</th>
               </tr>
             </thead>
@@ -336,10 +348,6 @@ export async function render(raiz, { id }) {
         </div>
         <div class="linha-campos">
           <label class="campo">
-            <span>Estoque inicial</span>
-            <input data-inicial type="number" min="0" step="1" value="0" />
-          </label>
-          <label class="campo">
             <span>Estoque mínimo</span>
             <input data-minimo type="number" min="0" step="1" value="0" />
           </label>
@@ -382,9 +390,8 @@ export async function render(raiz, { id }) {
               preco_venda: paraDecimalString(dinheiroVenda.valor()),
               preco_custo: paraDecimalString(dinheiroCusto.valor()),
               estoque_minimo: Number(corpo.querySelector('[data-minimo]').value) || 0,
-              estoque_inicial: Number(corpo.querySelector('[data-inicial]').value) || 0,
             });
-            aviso('Peça adicionada à grade.');
+            aviso('Peça adicionada. Ela nasce zerada — dê entrada para pôr estoque.');
             fechar(true);
           } catch (erro) {
             avisarErro(erro);

@@ -14,6 +14,7 @@ import { PODE, pode } from '../permissoes.js';
 import { formatar, paraCentavos, paraDecimalString, somar } from '../dinheiro.js';
 import {
   FORMAS,
+  ajuda,
   avisarErro,
   cru,
   dataHora,
@@ -29,6 +30,12 @@ import {
 const ICONES = { DINHEIRO: '💵', PIX: '📱', DEBITO: '💳', CREDITO: '🧾', VALE: '🎟️', FIADO: '🤝' };
 // Vale e fiado no fim: são a exceção, e a mão vai primeiro no que acontece o dia todo.
 const ORDEM = ['DINHEIRO', 'PIX', 'DEBITO', 'CREDITO', 'VALE', 'FIADO'];
+// As duas formas que não são dinheiro entrando: é aqui que a dúvida aparece, com a
+// cliente na frente. As outras quatro se explicam sozinhas.
+const DICAS = {
+  VALE: 'Crédito de uma devolução anterior, no papel que a cliente trouxe. Não é dinheiro na gaveta: não entra na conferência do caixa.',
+  FIADO: 'A cliente leva agora e paga depois. O limite dela avisa, mas não impede a venda. Fiado não entra na conferência da gaveta.',
+};
 
 /**
  * Fiado só aparece para quem cuida do crediário.
@@ -154,7 +161,7 @@ function ligarCobranca(corpo, fechar, { total, desconto, itens, clientUuid }) {
         (p, i) => html`
           <div class="pagamento-linha">
             <span aria-hidden="true">${ICONES[p.forma]}</span>
-            <strong>${FORMAS[p.forma]}</strong>
+            <strong>${FORMAS[p.forma]} ${DICAS[p.forma] ? ajuda(DICAS[p.forma]) : ''}</strong>
             <input data-pagamento="${i}" style="width:120px;text-align:right" aria-label="Valor em ${FORMAS[p.forma]}" />
             <button class="botao-icone botao-icone--perigo" data-remover="${i}" aria-label="Tirar ${FORMAS[p.forma]}">✕</button>
           </div>
@@ -196,7 +203,7 @@ function ligarCobranca(corpo, fechar, { total, desconto, itens, clientUuid }) {
     }
     areaDinheiro.innerHTML = html`
       <label class="campo">
-        <span>Dinheiro recebido <span class="campo__dica">para calcular o troco</span></span>
+        <span>Dinheiro recebido <span class="campo__dica">para calcular o troco</span>${ajuda('Quanto a cliente entregou em mãos, só para calcular o troco. Na venda entra a parte em dinheiro acima, nunca este valor.')}</span>
         <input data-recebido inputmode="numeric" />
       </label>
     `;

@@ -13,6 +13,7 @@
 import { api } from '../api.js';
 import { trocarConsulta } from '../router.js';
 import {
+  ajuda,
   carregando,
   cru,
   dataHora,
@@ -103,7 +104,7 @@ export async function render(raiz, _params, consulta) {
           <input type="date" data-inicio value="${filtros.inicio}" />
         </label>
         <label class="campo">
-          <span>Até</span>
+          <span>Até ${ajuda('O dia escolhido entra inteiro, contado pelo relógio da loja: o que foi feito às 23h fica no dia dele, não no seguinte.')}</span>
           <input type="date" data-fim value="${filtros.fim}" />
         </label>
         <label class="campo">
@@ -172,7 +173,12 @@ export async function render(raiz, _params, consulta) {
       <p class="texto-fraco">${plural(pagina.total, 'registro', 'registros')} no período.</p>
       <table class="tabela-auditoria">
         <thead>
-          <tr><th>Quando</th><th>Quem</th><th>O que fez</th><th>Origem</th></tr>
+          <tr>
+            <th>Quando</th>
+            <th>Quem ${ajuda('O nome e o cargo ficam gravados como eram na hora. Trocar o cargo de alguém, ou até apagar a conta, não muda o que já está aqui.')}</th>
+            <th>O que fez</th>
+            <th>Origem ${ajuda('O endereço de internet de onde a ação partiu. Serve para notar acesso de fora da loja. Um traço quer dizer que não deu para saber.')}</th>
+          </tr>
         </thead>
         <tbody>
           ${pagina.items.map((e) => {

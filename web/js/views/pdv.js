@@ -23,6 +23,7 @@ import {
 } from '../store.js';
 import { formatar, paraCentavos } from '../dinheiro.js';
 import {
+  ajuda,
   aviso,
   avisarErro,
   confirmar,
@@ -58,7 +59,7 @@ const LAYOUT = html`
 
     <aside class="pdv__resumo">
       <div class="pdv__linha">
-        <span class="texto-suave">Itens</span>
+        <span class="texto-suave">Itens ${ajuda('O que já foi bipado fica guardado se você sair para consultar um preço em outra tela. Some ao limpar a venda, ao sair do sistema ou se a página for recarregada.')}</span>
         <strong data-contagem>0 peças</strong>
       </div>
       <div class="pdv__linha">
@@ -264,7 +265,7 @@ export function render(raiz) {
       render: () => html`
         <p class="texto-suave">Subtotal de ${formatar(subtotal)}.</p>
         <label class="campo">
-          <span>Valor do desconto <span class="campo__dica">(digite só os números)</span></span>
+          <span>Valor do desconto <span class="campo__dica">(digite só os números)</span>${ajuda('O desconto vale para a venda inteira, não para uma peça. Numa devolução volta o que a cliente pagou com o desconto, não o preço da etiqueta.')}</span>
           <input data-valor inputmode="numeric" />
         </label>
         <div class="pagina__acoes">
