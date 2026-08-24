@@ -124,10 +124,12 @@ class VendaRepository:
             )
         if cliente_id:
             stmt = stmt.where(Sale.customer_id == cliente_id)
-        if inicio:
+        if inicio is not None:
             stmt = stmt.where(Sale.sold_at >= inicio)
-        if fim:
-            stmt = stmt.where(Sale.sold_at <= fim)
+        if fim is not None:
+            # `<` porque `fim` é 00:00 do dia SEGUINTE (app/core/datas.py). Intervalo
+            # meio-aberto: o último instante do dia entra, o primeiro de amanhã não.
+            stmt = stmt.where(Sale.sold_at < fim)
         if status:
             stmt = stmt.where(Sale.status == status)
         if vendedor_id:

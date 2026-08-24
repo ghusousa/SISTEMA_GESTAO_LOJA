@@ -1,8 +1,9 @@
-from datetime import datetime
+from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
 
+from app.core.datas import fim_exclusivo_do_dia, inicio_do_dia
 from app.core.deps import CurrentUser, ExigeCancelarVenda, ExigeDevolucao, SessionDep
 from app.core.pagination import Pagina, Paginacao, paginacao
 from app.modules.vendas.models import StatusVenda
@@ -43,8 +44,10 @@ async def listar(
     session: SessionDep,
     usuario: CurrentUser,
     p: Annotated[Paginacao, Depends(paginacao)],
-    inicio: datetime | None = None,
-    fim: datetime | None = None,
+    # DIA, não instante: a tela manda "2026-08-23" e quem sabe o que isso significa em
+    # horas é o servidor, o único que conhece o fuso da loja (app/core/datas.py).
+    inicio: Annotated[date | None, Query(description="Primeiro dia (inclusive)")] = None,
+    fim: Annotated[date | None, Query(description="Último dia (inclusive)")] = None,
     situacao: Annotated[StatusVenda | None, Query(alias="status")] = None,
     vendedor_id: int | None = None,
     variante_id: Annotated[
@@ -53,7 +56,14 @@ async def listar(
     cliente_id: int | None = None,
 ) -> Pagina[VendaResumoOut]:
     return await VendaService(session).listar(
-        p, inicio, fim, situacao, vendedor_id, usuario, variante_id, cliente_id
+        p,
+        inicio_do_dia(inicio),
+        fim_exclusivo_do_dia(fim),
+        situacao,
+        vendedor_id,
+        usuario,
+        variante_id,
+        cliente_id,
     )
 
 

@@ -5,27 +5,13 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 
-from app.core.config import settings
+from app.core.datas import fim_exclusivo_do_dia, inicio_do_dia
 from app.core.deps import ExigeAuditoria, SessionDep
 from app.core.pagination import Pagina, Paginacao, paginacao
 from app.modules.auditoria.schemas import AuditoriaOut
 from app.modules.auditoria.service import AuditoriaService
 
 router = APIRouter(prefix="/auditoria", tags=["auditoria"])
-
-
-def _inicio_do_dia(dia: date | None) -> datetime | None:
-    """00:00 do dia no fuso da loja, em UTC — o mesmo 'dia' do resto do sistema."""
-    if dia is None:
-        return None
-    return datetime.combine(dia, time.min, tzinfo=settings.tz_loja)
-
-
-def _fim_do_dia(dia: date | None) -> datetime | None:
-    """00:00 do dia SEGUINTE (fim exclusivo): pega o dia inteiro sem cair na virada."""
-    if dia is None:
-        return None
-    return datetime.combine(dia, time.max, tzinfo=settings.tz_loja)
 
 
 @router.get("", response_model=Pagina[AuditoriaOut], summary="Diário de auditoria (só o dono)")
@@ -42,6 +28,6 @@ async def listar(
         p,
         usuario_id=usuario_id,
         acao=acao,
-        inicio=_inicio_do_dia(inicio),
-        fim=_fim_do_dia(fim),
+        inicio=inicio_do_dia(inicio),
+        fim=fim_exclusivo_do_dia(fim),
     )

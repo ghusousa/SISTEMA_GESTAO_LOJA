@@ -94,10 +94,11 @@ class EstoqueRepository:
             stmt = stmt.where(StockMovement.variant_id == variante_id)
         if tipo:
             stmt = stmt.where(StockMovement.movement_type == tipo)
-        if inicio:
+        if inicio is not None:
             stmt = stmt.where(StockMovement.created_at >= inicio)
-        if fim:
-            stmt = stmt.where(StockMovement.created_at <= fim)
+        if fim is not None:
+            # `<`: `fim` é 00:00 do dia seguinte no fuso da loja (app/core/datas.py).
+            stmt = stmt.where(StockMovement.created_at < fim)
         total = await self.session.scalar(select(func.count()).select_from(stmt.subquery()))
         stmt = stmt.order_by(StockMovement.id.desc()).offset(p.offset).limit(p.limit)
         return list((await self.session.execute(stmt)).all()), int(total or 0)

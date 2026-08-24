@@ -51,12 +51,50 @@ export function data(valor) {
   return ano && mes && dia ? `${dia}/${mes}/${ano}` : texto;
 }
 
-/** ISO com hora -> "22/08/2026 14:35". */
+/**
+ * O fuso da LOJA, mandado pelo servidor em `GET /configuracao` (ver `loja.js`).
+ *
+ * Nunca use o fuso do navegador para hora de venda: o computador do balcão pode estar com
+ * o relógio de outro lugar, e o dono abre o sistema de casa, do celular, de onde estiver.
+ * O que aconteceu na loja aconteceu no fuso da loja.
+ */
+let fusoDaLoja = 'America/Sao_Paulo';
+export const definirFusoDaLoja = (tz) => {
+  if (tz) fusoDaLoja = tz;
+};
+
+/**
+ * ISO com hora -> "22/08/2026 14:35", no fuso da loja.
+ *
+ * **Já custou um chamado.** A versão antiga montava a data fatiando a string ISO (ou seja,
+ * o dia em UTC) e a hora com `getHours()` (o fuso do navegador). Para a venda das 22h43 de
+ * 23/08 em São Paulo — que em UTC é 01h43 de 24/08 — ela imprimia "24/08/2026 22:43": um
+ * instante que nunca existiu, com o dia de um fuso e a hora de outro. E isso saía no
+ * RECIBO, que é o papel que vale numa troca.
+ *
+ * Agora as duas metades saem da MESMA formatação, no MESMO fuso.
+ */
 export function dataHora(valor) {
   if (!valor) return '—';
   const d = new Date(valor);
   if (Number.isNaN(d.getTime())) return String(valor);
-  return `${data(valor)} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  try {
+    return new Intl.DateTimeFormat('pt-BR', {
+      timeZone: fusoDaLoja,
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+      .format(d)
+      .replace(',', '');
+  } catch {
+    // Fuso desconhecido (linha estranha na configuração) não pode apagar a data da tela.
+    return new Intl.DateTimeFormat('pt-BR', {
+      day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+    }).format(d).replace(',', '');
+  }
 }
 
 /** "2026-08" -> "agosto de 2026". */
@@ -70,17 +108,34 @@ export function competencia(valor) {
   return `${nomes[Number(mes) - 1] ?? mes} de ${ano}`;
 }
 
-export const hojeISO = () => {
-  const agora = new Date();
-  const local = new Date(agora.getTime() - agora.getTimezoneOffset() * 60000);
-  return local.toISOString().slice(0, 10);
-};
+/** O dia de hoje NA LOJA (`2026-08-23`), que é o que os filtros esperam. */
+export const hojeISO = () => diaDaLojaISO(new Date());
 
 export function diasAtrasISO(dias) {
   const d = new Date();
   d.setDate(d.getDate() - dias);
-  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
-  return local.toISOString().slice(0, 10);
+  return diaDaLojaISO(d);
+}
+
+/**
+ * Um instante -> o DIA dele no fuso da loja, em `YYYY-MM-DD`.
+ *
+ * `en-CA` porque é a localidade cujo formato de data já é ISO — mais confiável do que
+ * remontar a string à mão a partir de `toISOString()`, que responde em UTC e às 22h de
+ * São Paulo já devolve o dia seguinte.
+ */
+function diaDaLojaISO(d) {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: fusoDaLoja,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(d);
+  } catch {
+    const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+    return local.toISOString().slice(0, 10);
+  }
 }
 
 export const numero = (n) => Number(n || 0).toLocaleString('pt-BR');

@@ -8,6 +8,7 @@ público de qualquer forma.
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.core.config import settings
 from app.core.segmentos import Segmento, vocabulario
 
 
@@ -40,6 +41,10 @@ class ConfiguracaoOut(BaseModel):
 
     nome: str
     segmento: str
+    #: O fuso da loja atravessa o fio porque as telas precisam dele para formatar hora.
+    #: Sem isto, o navegador formata no fuso de quem OLHA — e a venda das 22h43 de 23/08
+    #: era impressa como "24/08 22:43", um instante que nunca existiu.
+    timezone: str
     documento: str | None = None
     telefone: str | None = None
     endereco: str | None = None
@@ -52,6 +57,7 @@ class ConfiguracaoOut(BaseModel):
         return cls(
             nome=config.nome,
             segmento=config.segmento,
+            timezone=settings.timezone_loja,
             documento=config.documento,
             telefone=config.telefone,
             endereco=config.endereco,

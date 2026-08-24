@@ -1,8 +1,9 @@
-from datetime import datetime
+from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
 
+from app.core.datas import fim_exclusivo_do_dia, inicio_do_dia
 from app.core.deps import CurrentUser, ExigeCorrigirEstoque, SessionDep
 from app.core.pagination import Pagina, Paginacao, paginacao
 from app.modules.estoque.models import TipoMovimento
@@ -80,7 +81,9 @@ async def listar_movimentos(
     p: Annotated[Paginacao, Depends(paginacao)],
     variante_id: int | None = None,
     tipo: TipoMovimento | None = None,
-    inicio: datetime | None = None,
-    fim: datetime | None = None,
+    inicio: Annotated[date | None, Query(description="Primeiro dia (inclusive)")] = None,
+    fim: Annotated[date | None, Query(description="Último dia (inclusive)")] = None,
 ) -> Pagina[MovimentoOut]:
-    return await EstoqueService(session).listar_movimentos(p, variante_id, tipo, inicio, fim)
+    return await EstoqueService(session).listar_movimentos(
+        p, variante_id, tipo, inicio_do_dia(inicio), fim_exclusivo_do_dia(fim)
+    )

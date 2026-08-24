@@ -6,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.config import settings
+from app.core.datas import dia_da_loja, hoje_na_loja
 from app.core.exceptions import NaoEncontrado, Validacao
 from app.core.pagination import Pagina, Paginacao
 from app.modules.caixa.models import CashClosing, CashClosingLine
@@ -30,11 +30,6 @@ from app.modules.vendas.models import (
 )
 
 ZERO = Decimal("0.00")
-
-
-def dia_da_loja(coluna):
-    """Converte o instante UTC gravado no banco no 'dia' do comércio, no fuso da loja."""
-    return func.date(func.timezone(settings.timezone_loja, coluna))
 
 
 class CaixaService:
@@ -153,7 +148,7 @@ class CaixaService:
         O fechamento não trava nada: é conferência, não bloqueio. Uma venda lançada
         depois simplesmente muda o esperado, e o dia pode ser refechado.
         """
-        hoje_loja = datetime.now(UTC).astimezone(settings.tz_loja).date()
+        hoje_loja = hoje_na_loja()
         if dados.data > hoje_loja:
             raise Validacao("Não dá para fechar o caixa de um dia que ainda não aconteceu.")
 

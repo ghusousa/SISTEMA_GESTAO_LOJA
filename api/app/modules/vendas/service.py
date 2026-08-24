@@ -294,11 +294,6 @@ class VendaService:
         assert atualizada is not None
         return await self._montar_venda(atualizada, usuario)
 
-    @staticmethod
-    def _dia_da_loja(momento: datetime) -> object:
-        """O 'dia' do comércio é o do fuso da loja, não o do UTC."""
-        return momento.astimezone(settings.tz_loja).date()
-
     # ------------------------------------------------------------ leitura
     async def obter(self, venda_id: int, usuario: User) -> VendaOut:
         venda = await self.repo.por_id(venda_id)

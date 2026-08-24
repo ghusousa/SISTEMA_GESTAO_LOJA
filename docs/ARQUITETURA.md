@@ -569,6 +569,26 @@ impresso no papel que o cliente leva. A migration semeia a linha para a loja que
 ela, um `GET` aberto teria de ESCREVER no banco para a tela se desenhar. Espelhos obrigatórios:
 `web/js/loja.js` e `mobile/src/lib/segmento.ts`.
 
+**ADR-27 — Filtro por período é sempre por DIA no fuso da loja, em intervalo meio-aberto.**
+Toda tela manda `inicio`/`fim` como DIA (`YYYY-MM-DD`), nunca como instante: quem conhece
+`settings.tz_loja` é o servidor, e é o único que pode. O router traduz com `app/core/datas.py`
+— `inicio_do_dia` (00:00 do dia, com fuso) e `fim_exclusivo_do_dia` (00:00 do dia SEGUINTE) — e
+o repositório compara `>= inicio AND < fim` contra a coluna crua, que é o que mantém em uso
+`ix_sales_sold_at` e `ix_stock_movements_created_at`. Para agregar POR dia (caixa, relatórios)
+vale o outro lado: `dia_da_loja(coluna)` = `AT TIME ZONE`, casando com os índices funcionais
+`ix_sales_business_date` / `ix_sale_returns_business_date`. Nenhum dos dois se aplica a coluna
+`Date` (`expenses.expense_date`): dia de calendário digitado por gente não tem fuso, e
+convertê-lo empurraria toda despesa um dia para trás.
+O intervalo é meio-aberto de propósito. A alternativa (23:59:59.999999 com `<=`) funciona
+enquanto a coluna guardar microssegundo; um valor arredondado ao segundo transforma esse
+instante na meia-noite seguinte, e o filtro passa a incluir o começo do dia de amanhã.
+O ADR nasceu de um chamado real: às 22h43 de 23/08, "De 16/08 Até 23/08" na tela de Vendas
+mostrava ZERO vendas, porque o parâmetro era `datetime` (meia-noite do COMEÇO do dia) e
+ingênuo (lido como UTC) — 25 horas de erro somadas. O mesmo bug estava no extrato de estoque.
+E `GET /configuracao` passou a devolver `timezone`, porque a ponta também precisa dele: o web
+formatava o dia em UTC e a hora no fuso do navegador, e imprimia no recibo "24/08 22:43" —
+um instante que nunca existiu.
+
 ## 4. Contratos de API
 
 Prefixo `/api/v1`. Auth: `Authorization: Bearer <access_token>`.
@@ -624,13 +644,13 @@ Desativar = `PATCH {ativo:false}`. Bootstrap do primeiro admin: `python -m app.c
 | POST | `/estoque/ajustes` | A | `{variante_id, quantidade(±), motivo}` — motivo obrigatório |
 | POST | `/estoque/inventarios` | A | `{observacao?, contagens:[{variante_id, quantidade_contada}]}` → movimentações das diferenças + resumo |
 | GET | `/estoque/saldos` | A/V | `?q=&categoria_id=&somente_baixo=` |
-| GET | `/estoque/movimentacoes` | A/V | extrato `?variante_id=&tipo=&inicio=&fim=` |
+| GET | `/estoque/movimentacoes` | A/V | extrato `?variante_id=&tipo=&inicio=YYYY-MM-DD&fim=YYYY-MM-DD` (dias no fuso da loja, ADR-27) |
 
 ### 4.5 `vendas`
 | método | rota | papel | notas |
 |---|---|---|---|
 | POST | `/vendas` | A/V | `{client_uuid, desconto?, observacao?, cliente_id?, itens:[{variante_id, quantidade}], pagamentos:[{forma, valor, codigo_vale?}]}` → venda completa. Atômico. Replay → 200 |
-| GET | `/vendas` | todos | `?inicio=&fim=&status=&vendedor_id=&variante_id=&cliente_id=`; sem VER_VENDAS_DE_TODOS, o service força as próprias |
+| GET | `/vendas` | todos | `?inicio=YYYY-MM-DD&fim=YYYY-MM-DD` (dias no fuso da loja, ADR-27) `&status=&vendedor_id=&variante_id=&cliente_id=`; sem VER_VENDAS_DE_TODOS, o service força as próprias |
 | GET | `/vendas/{id}` | A/V | idem escopo |
 | POST | `/vendas/{id}/cancelamento` | CANCELAR_VENDA | `{motivo}`; dono e gerente — quem vende não desfaz |
 | POST | `/vendas/{id}/devolucoes` | DEVOLVER_VENDA | `{client_uuid, motivo?, itens:[{item_id, quantidade, voltar_ao_estoque?}]}` → devolução com os valores decididos pelo servidor. Replay → 200 |
@@ -690,6 +710,7 @@ congelados (ADR-23). `inicio`/`fim` recortam pelo dia no fuso da loja. Nem o ger
 | GET | `/configuracao/segmentos` | **aberto** | os ramos que o sistema conhece, para a tela montar o seletor |
 | PATCH | `/configuracao` | CONFIGURAR_LOJA | só o dono; campos opcionais (mudar o telefone não reenvia o nome) |
 
+`timezone` é o fuso da loja, que as telas usam para formatar hora (ADR-27).
 `vocabulario` traz `item`/`itens`/`artigo`, `eixo1`/`eixo2` (os rótulos das duas variações),
 `eixo1_rapidos` (atalhos do cadastro em grade, vazio quando o ramo não tem valores previsíveis),
 `icone` e `exemplo_produto`. Vem pronto do servidor para web e app não divergirem.

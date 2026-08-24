@@ -12,7 +12,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import Validacao
-from app.modules.caixa.service import dia_da_loja
+from app.core.datas import dia_da_loja
 from app.modules.catalogo.models import Product, ProductVariant
 from app.modules.despesas.models import Expense, ExpenseCategory
 from app.modules.estoque.models import StockBalance

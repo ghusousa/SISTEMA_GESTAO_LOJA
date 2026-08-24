@@ -138,7 +138,11 @@ estoque, concorrência do último item, idempotência por `client_uuid`.
 - **Dinheiro digitado**: `paraCentavos` precisa distinguir `"2.500,00"` (milhar) de `"149.90"`
   (decimal da API). O último separador manda. Já custou um aluguel virar R$ 2,50.
 - **Fuso**: "hoje" é o dia no fuso da loja, nunca `date.today()` do servidor. Às 23h de São Paulo
-  o UTC já virou e a consulta devolve um caixa vazio.
+  o UTC já virou e a consulta devolve um caixa vazio. **Filtro de período usa `app/core/datas.py`
+  (ADR-27)**: o parâmetro é `date`, o router traduz com `inicio_do_dia`/`fim_exclusivo_do_dia` e o
+  repositório compara `>= inicio AND < fim`. `fim: datetime` era o bug — `fim=2026-08-23` virava
+  meia-noite do COMEÇO do dia e escondia o dia inteiro. No navegador, hora sai por `dataHora` do
+  `ui.js`, que formata no fuso vindo de `GET /configuracao` — nunca no do aparelho de quem olha.
 - **Estado que muda de status**: cancelar venda troca o status com `UPDATE ... WHERE status =
   'CONCLUIDA'` antes de estornar. Checar em memória deixa dois cliques estornarem duas vezes.
 - **Carrinho, conferência e cache são globais**: logout limpa tudo (`limparTudoDaSessao`),

@@ -3,7 +3,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.core.config import settings
+from app.core.datas import hoje_na_loja
 from app.core.deps import ExigeCaixa, SessionDep
 from app.core.pagination import Pagina, Paginacao, paginacao
 from app.modules.caixa.schemas import DiaCaixaOut, FechamentoIn, FechamentoOut
@@ -18,7 +18,7 @@ async def dia(
     _: ExigeCaixa,
     data: Annotated[date | None, Query(description="Padrão: hoje no fuso da loja")] = None,
 ) -> DiaCaixaOut:
-    dia_pedido = data or datetime.now(UTC).astimezone(settings.tz_loja).date()
+    dia_pedido = data or hoje_na_loja()
     return await CaixaService(session).dia(dia_pedido)
 
 

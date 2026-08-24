@@ -11,6 +11,7 @@
  */
 
 import { api } from './api.js';
+import { definirFusoDaLoja } from './ui.js';
 
 /** O neutro, usado enquanto a resposta não chega e quando o ramo é desconhecido. */
 const NEUTRO = {
@@ -61,6 +62,8 @@ export function aoMudarLoja(fn) {
 
 function aplicar(config) {
   atual = { ...config, vocabulario: config.vocabulario ?? NEUTRO };
+  // Antes de qualquer tela desenhar hora: quem manda no relógio é a loja, não o navegador.
+  definirFusoDaLoja(config.timezone);
   // O nome da aba do navegador é a primeira coisa que identifica o sistema quando a
   // pessoa tem cinco abas abertas.
   document.title = `${atual.nome} · Gestão`;
