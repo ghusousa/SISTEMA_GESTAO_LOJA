@@ -283,9 +283,22 @@ if [ "${APLICACAO_OK:-0}" = "1" ] && [ "$CODIGO" = "200" ]; then
     printf '    · veja se o domínio ainda aponta para este servidor\n'
 else
     printf '  Tente nesta ordem, parando quando voltar:\n\n'
-    printf '    1. %sdocker compose up -d%s          religa o que caiu\n' "$FORTE" "$NORMAL"
-    printf '    2. %sdocker compose restart%s        reinicia tudo\n' "$FORTE" "$NORMAL"
-    printf '    3. %s./instalar.sh%s                 reconstrói e sobe (não apaga dados)\n' "$FORTE" "$NORMAL"
+    # Órfão de recriação interrompida: o Docker renomeia o contêiner antigo para
+    # `<hash>_loja-api-1` antes de trocá-lo, e se a troca morre no meio esse renomeado
+    # fica para trás e trava o `up -d` seguinte. Quando ele existe, removê-lo é o
+    # primeiro passo — e sem isso o "1." abaixo não resolve, o que faz a pessoa achar
+    # que o conselho não serve e partir para o `./instalar.sh` à toa.
+    ORFAOS="$(docker ps -a --filter 'name=_loja-api-1' --format '{{.Names}}' 2>/dev/null \
+        | grep -E '^[0-9a-f]{8,}_' || true)"
+    PASSO=1
+    if [ -n "$ORFAOS" ]; then
+        printf '    %d. %sdocker rm -f %s%s\n' "$PASSO" "$FORTE" "$(printf '%s' "$ORFAOS" | tr '\n' ' ')" "$NORMAL"
+        printf '       remove o contêiner que sobrou de uma atualização interrompida\n'
+        PASSO=$((PASSO + 1))
+    fi
+    printf '    %d. %sdocker compose up -d --remove-orphans%s   religa o que caiu\n' "$PASSO" "$FORTE" "$NORMAL"
+    printf '    %d. %sdocker compose restart%s        reinicia tudo\n' "$((PASSO + 1))" "$FORTE" "$NORMAL"
+    printf '    %d. %s./instalar.sh%s                 reconstrói e sobe (não apaga dados)\n' "$((PASSO + 2))" "$FORTE" "$NORMAL"
     printf '\n  Se nada resolver, mande o arquivo abaixo para quem cuida do sistema.\n'
 fi
 

@@ -308,13 +308,36 @@ except Exception:
     return 1
 }
 
+# Contêiner órfão de uma recriação interrompida.
+#
+# Quando o Docker vai substituir um contêiner, ele primeiro RENOMEIA o antigo para
+# `<hash>_loja-api-1`, para liberar o nome. Se a recriação morre no meio (build lento,
+# máquina ocupada, SIGKILL no desligamento), esse renomeado fica para trás em estado
+# `created` — e o `up -d` seguinte tropeça nele. O sintoma na loja é 502: o Caddy fica de
+# pé, mas não acha `api` no DNS interno, porque contêiner nenhum atende por esse nome.
+#
+# Já aconteceu de verdade, e o dono só descobriu pelo diagnóstico.
+limpar_orfaos() {
+    local orfaos
+    orfaos="$(dk ps -a --filter "name=_loja-api-1" --format '{{.Names}}' 2>/dev/null \
+        | grep -E '^[0-9a-f]{8,}_' || true)"
+    [ -z "$orfaos" ] && return 0
+    alerta "Sobrou contêiner de uma atualização interrompida. Removendo:"
+    printf '%s\n' "$orfaos" | while read -r nome; do
+        [ -n "$nome" ] || continue
+        printf '    %s\n' "$nome"
+        dk rm -f "$nome" >/dev/null 2>&1 || true
+    done
+}
+
 voltar_atras() {
     erro "A atualização falhou. Voltando para a versão anterior."
     git reset --hard --quiet "$ANTES"
     # Agora a instalada é a velha e existe uma nova parada no GitHub: a tela precisa dizer
     # isso, senão ninguém descobre que a loja ficou para trás numa madrugada.
     anotar_versao false
-    dk compose up -d --build 2>&1 | tail -3
+    limpar_orfaos
+    dk compose up -d --build --remove-orphans 2>&1 | tail -3
 
     # Esperar aqui também, e não só no caminho feliz: dizer "voltou" enquanto o
     # contêiner ainda sobe faz a pessoa abrir o site, ver erro e achar que perdeu a loja.
@@ -355,7 +378,8 @@ titulo "Reconstruindo e subindo"
 # `up -d --build` em vez de `restart`: dependência nova no requirements só entra na
 # imagem se ela for reconstruída, e uma imagem velha com código novo quebra de um jeito
 # difícil de entender.
-if ! dk compose up -d --build; then
+limpar_orfaos
+if ! dk compose up -d --build --remove-orphans; then
     voltar_atras
 fi
 

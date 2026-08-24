@@ -47,4 +47,11 @@ USER loja
 EXPOSE 8000
 
 ENTRYPOINT ["/usr/local/bin/entrada.sh"]
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# `--timeout-graceful-shutdown`: o celular de cada vendedora deixa um WebSocket aberto
+# (tempo real). No desligamento o uvicorn espera TODOS fecharem, e um celular com a tela
+# apagada nao fecha nada — ele fica em "Waiting for background tasks to complete" para
+# sempre, o Docker perde a paciencia em 10 s e mata com SIGKILL (saida 137). Foi assim que
+# uma atualizacao deixou a loja fora do ar. Dez segundos e mais que suficiente para
+# terminar uma venda em curso; o que passar disso e conexao morta, e vai junto.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", \
+     "--timeout-graceful-shutdown", "10"]

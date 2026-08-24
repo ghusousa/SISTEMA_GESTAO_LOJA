@@ -41,6 +41,9 @@ services:
       dockerfile: Dockerfile
     image: loja-api:local
     restart: unless-stopped
+    # Maior que o `--timeout-graceful-shutdown` do uvicorn (10 s), senao o Docker mata
+    # antes de ele conseguir desistir sozinho — e sai 137, com a atualizacao pela metade.
+    stop_grace_period: 25s
     logging: *log
     depends_on:
       db:

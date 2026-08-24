@@ -178,6 +178,14 @@ estoque, concorrência do último item, idempotência por `client_uuid`.
   Sem isso, digitar `200` sobre `179,70` virava R$ 17.970,00 — e um troco de R$ 9.999.820,29.
 - **Template aninhado no web**: `html` precisa devolver valor marcado como cru, senão
   `html\`<ul>${itens.map(...)}\`` escapa a lista inteira e a tela mostra as tags como texto.
+- **Desligar o contêiner esperava WebSocket que nunca fecha**: o celular de cada vendedora
+  deixa um WS aberto; no shutdown o uvicorn espera TODOS fecharem, e celular de tela apagada
+  não fecha. Ficava em "Waiting for background tasks to complete", o Docker matava em 10 s
+  (SIGKILL, saída **137**) e a atualização parava no meio — com o antigo já renomeado para
+  `<hash>_loja-api-1` e o novo em `created`. A loja dava **502**: o Caddy de pé, sem achar
+  `api` no DNS interno. Por isso `--timeout-graceful-shutdown 10` no Dockerfile,
+  `stop_grace_period: 25s` no compose (tem de ser MAIOR), e `limpar_orfaos` no
+  `atualizar.sh`, que roda antes de todo `up -d --remove-orphans`.
 - **Cliente de WebSocket que cai é rotina, não erro**: a task que lê do socket morre com
   `WebSocketDisconnect`, e `await` numa task morta RELANÇA a exceção dela. Escapando do endpoint,
   o uvicorn escreve ~2 KB de traceback a cada celular que fecha o app. Some com log do Docker sem
