@@ -8,17 +8,13 @@
     "scheme": "gestaoloja",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
-    "splash": {
-      "backgroundColor": "#1E3A5F",
-      "resizeMode": "contain",
-      "image": "./assets/splash-icon.png"
-    },
     "ios": {
-      "supportsTablet": true,
+      "supportsTablet": false,
       "bundleIdentifier": "com.gestaoloja.app",
       "infoPlist": {
+        "NSLocalNetworkUsageDescription": "O aplicativo se conecta ao servidor da sua loja para consultar o estoque e registrar as vendas.",
         "NSAppTransportSecurity": {
-          "NSAllowsArbitraryLoads": true
+          "NSAllowsLocalNetworking": true
         }
       }
     },
@@ -37,18 +33,26 @@
     },
     "plugins": [
       "expo-router",
-      "expo-secure-store",
+      [
+        "expo-secure-store",
+        {
+          "faceIDPermission": "O aplicativo usa a proteção do aparelho para guardar sua sessão com segurança."
+        }
+      ],
       [
         "expo-camera",
         {
-          "cameraPermission": "O app usa a câmera para ler o código de barras das peças na venda e no cadastro."
+          "cameraPermission": "O aplicativo usa a câmera para ler o código de barras das peças na venda e no cadastro.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
         }
       ],
       [
         "expo-image-picker",
         {
-          "photosPermission": "O app acessa suas fotos para você escolher a imagem da peça no catálogo.",
-          "cameraPermission": "O app usa a câmera para você fotografar a peça na hora de cadastrar."
+          "photosPermission": "O aplicativo acessa suas fotos para você escolher a imagem da peça.",
+          "cameraPermission": "O aplicativo usa a câmera para você fotografar a peça no cadastro.",
+          "microphonePermission": false
         }
       ],
       [
@@ -58,12 +62,15 @@
             "usesCleartextTraffic": true
           }
         }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#1E3A5F"
+        }
       ]
-    ],
-    "extra": {
-      "eas": {
-        "projectId": "00000000-0000-0000-0000-000000000000"
-      }
-    }
+    ]
   }
 }

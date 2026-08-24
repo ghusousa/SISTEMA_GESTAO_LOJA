@@ -1,7 +1,7 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { baseAtual } from '@/api/client';
 import { sistema } from '@/api/endpoints';
@@ -174,6 +174,23 @@ export default function Mais() {
           <MaterialCommunityIcons name="chevron-right" size={22} color={cores.textoFraco} />
         </Pressable>
       ))}
+
+      {/* As duas lojas de app exigem que a política de privacidade seja alcançável de
+          dentro do aplicativo. Abre no navegador do aparelho, no servidor da própria loja. */}
+      <Pressable
+        style={s.opcao}
+        onPress={() => {
+          const base = baseAtual().replace(/\/api\/v1\/?$/, '');
+          void Linking.openURL(`${base}/privacidade`);
+        }}
+      >
+        <MaterialCommunityIcons name="shield-lock-outline" size={24} color={cores.primaria} />
+        <View style={s.opcaoTexto}>
+          <Text style={s.opcaoRotulo}>Privacidade</Text>
+          <Text style={s.opcaoDescricao}>Como seus dados são tratados</Text>
+        </View>
+        <MaterialCommunityIcons name="open-in-new" size={18} color={cores.textoFraco} />
+      </Pressable>
 
       <Pressable
         style={[s.opcao, s.opcaoSair]}

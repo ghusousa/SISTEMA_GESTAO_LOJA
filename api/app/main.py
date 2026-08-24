@@ -1,9 +1,9 @@
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
@@ -117,6 +117,27 @@ app.mount("/media", StaticFiles(directory=str(_media)), name="media")
 _web = Path(__file__).resolve().parent.parent.parent / "web"
 if _web.is_dir():
     app.mount("/app", StaticFiles(directory=str(_web), html=True), name="web")
+
+    # Páginas legais em URL própria e SEM login. As duas lojas de app exigem que a política
+    # de privacidade e a página de exclusão de dados abram para qualquer pessoa — inclusive
+    # para o robô que valida a ficha, que não faz login em lugar nenhum. Ficam fora de /app
+    # de propósito: /app é uma SPA por hash, e um endereço com # não serve para essa
+    # validação nem para colar no formulário da loja.
+    _legal = _web / "legal"
+
+    def _pagina_legal(arquivo: str):
+        async def _servir() -> FileResponse:
+            caminho = _legal / arquivo
+            if not caminho.is_file():
+                raise HTTPException(status_code=404, detail="Página não encontrada.")
+            return FileResponse(caminho, media_type="text/html")
+
+        return _servir
+
+    if _legal.is_dir():
+        app.mount("/legal", StaticFiles(directory=str(_legal)), name="legal")
+        app.get("/privacidade", include_in_schema=False)(_pagina_legal("privacidade.html"))
+        app.get("/exclusao-de-dados", include_in_schema=False)(_pagina_legal("exclusao-de-dados.html"))
 
     @app.get("/", include_in_schema=False)
     async def _abrir_sistema() -> RedirectResponse:

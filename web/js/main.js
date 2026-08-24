@@ -148,6 +148,7 @@ function molduraHtml(usuario) {
             <button class="lateral__sair" data-sair title="Sair do sistema" aria-label="Sair do sistema">⏻</button>
           </div>
           <div class="lateral__versao" data-versao hidden></div>
+          <a class="lateral__privacidade" href="/privacidade" target="_blank" rel="noopener">Privacidade</a>
         </div>
       </nav>
       <main class="conteudo" id="conteudo"></main>

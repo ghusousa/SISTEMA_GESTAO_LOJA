@@ -108,6 +108,40 @@ class UsuarioService:
         await self.session.refresh(user)
         return user
 
+    async def excluir(self, user_id: int, ator: User) -> None:
+        """Apaga a conta de verdade — não é desativar.
+
+        As lojas de app exigem um caminho de exclusão para quem tem conta, e "desativar" não
+        é excluir: o nome e o e-mail continuariam guardados. Aqui a linha some da tabela.
+
+        **O histórico da loja NÃO some junto, e isso é de propósito.** A venda que a pessoa
+        registrou é documento contábil da loja, não dado dela para levar embora; a linha de
+        auditoria é a prestação de contas que o dono precisa guardar. O modelo já foi feito
+        para isso: `audit_log.user_id` é `ON DELETE SET NULL` e o nome/papel de quem agiu
+        ficam CONGELADOS na linha (ADR-23), então apagar a conta remove o vínculo sem
+        reescrever o passado nem furar a contabilidade.
+
+        Duas travas: ninguém apaga a própria conta (seria perder o acesso no meio do
+        expediente, sem quem desfizesse), e a loja nunca fica sem um dono ativo.
+        """
+        user = await self.obter(user_id)
+        # Mexer em dono é só do dono — a mesma regra de editar e redefinir senha.
+        self._barrar_escalada(ator, None, alvo=user)
+
+        if user.id == ator.id:
+            raise OperacaoInvalida(
+                "Você não pode excluir a sua própria conta. Peça a outro administrador."
+            )
+        if user.role == Papel.ADMIN and user.is_active:
+            if await self.repo.contar_admins_ativos(excluindo_id=user.id) == 0:
+                raise OperacaoInvalida("A loja precisa de pelo menos um dono ativo.")
+
+        # Sessão aberta com refresh token válido sobreviveria à exclusão da linha se os
+        # tokens não caíssem antes: o FK deles é para o usuário que está indo embora.
+        await self._derrubar_sessoes(user.id)
+        await self.session.delete(user)
+        await self.session.commit()
+
     async def redefinir_senha(self, user_id: int, nova_senha: str, ator: User) -> None:
         user = await self.obter(user_id)
         # Redefinir a senha do dono daria a chave da casa: é entrar como ele.

@@ -1670,3 +1670,14 @@ kbd {
 .tabela-auditoria .etiqueta {
   vertical-align: middle;
 }
+
+/* Link da política de privacidade no rodapé do menu. Fica fora do roteador por hash de
+   propósito: é uma URL pública que as lojas de app precisam abrir sem login. */
+.lateral__privacidade {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.45);
+  text-decoration: none;
+}
+.lateral__privacidade:hover { color: rgba(255, 255, 255, 0.8); text-decoration: underline; }

@@ -57,6 +57,15 @@ async def atualizar(
     return UsuarioOut.model_validate(await UsuarioService(session).atualizar(user_id, dados, ator))
 
 
+@router.delete(
+    "/{user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Exclui um usuário e os dados de acesso dele",
+)
+async def excluir(session: SessionDep, ator: ExigeUsuarios, user_id: int) -> None:
+    await UsuarioService(session).excluir(user_id, ator)
+
+
 @router.patch(
     "/{user_id}/senha",
     status_code=status.HTTP_204_NO_CONTENT,
