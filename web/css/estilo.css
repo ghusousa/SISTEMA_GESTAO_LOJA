@@ -1627,10 +1627,16 @@ kbd {
   .folha-topo {
     display: none !important;
   }
+  /* O recibo NÃO estica para a folha. `width: 100%` fazia o texto atravessar a A4 de
+     ponta a ponta — e numa bobina térmica de 80 mm o lado direito simplesmente some.
+     A largura é a da bobina; em A4 o recibo sai numa coluna estreita, que é o formato
+     de recibo que a cliente reconhece. */
   .recibo {
     border: 0;
     border-radius: 0;
-    width: 100%;
+    width: 80mm;
+    max-width: 80mm;
+    margin: 0;
     padding: 0;
   }
 }
