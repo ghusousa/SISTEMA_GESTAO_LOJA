@@ -36,7 +36,6 @@ class VarianteIn(BaseModel):
     preco_custo: Decimal = Field(ge=0, decimal_places=2)
     preco_venda: Decimal = Field(gt=0, decimal_places=2)
     estoque_minimo: int = Field(default=0, ge=0)
-    estoque_inicial: int = Field(default=0, ge=0)
 
     @field_validator("tamanho", "cor")
     @classmethod

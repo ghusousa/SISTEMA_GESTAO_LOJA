@@ -3,6 +3,8 @@ from httpx import AsyncClient
 
 from app.modules.catalogo.barcode import ean13_valido, montar_codigo_interno
 
+from conftest import criar_produto, dar_entrada
+
 
 @pytest.fixture
 async def categoria(client: AsyncClient, auth_admin: dict[str, str]) -> int:
@@ -99,9 +101,7 @@ async def test_cadastro_gera_codigo_interno_para_peca_sem_etiqueta(
 async def test_estoque_inicial_vira_saldo_e_movimentacao(
     client: AsyncClient, auth_admin: dict[str, str], categoria: int
 ) -> None:
-    corpo = (
-        await client.post("/produtos", headers=auth_admin, json=_produto_payload(categoria))
-    ).json()
+    corpo = await criar_produto(client, auth_admin, _produto_payload(categoria))
     por_tamanho = {v["tamanho"]: v for v in corpo["variantes"]}
     assert por_tamanho["P"]["saldo"] == 5
     assert por_tamanho["M"]["saldo"] == 3
@@ -115,9 +115,7 @@ async def test_admin_ve_preco_de_custo_e_vendedor_nao(
     auth_vendedor: dict[str, str],
     categoria: int,
 ) -> None:
-    produto_id = (
-        await client.post("/produtos", headers=auth_admin, json=_produto_payload(categoria))
-    ).json()["id"]
+    produto_id = (await criar_produto(client, auth_admin, _produto_payload(categoria)))["id"]
 
     visao_admin = (await client.get(f"/produtos/{produto_id}", headers=auth_admin)).json()
     assert "preco_custo" in visao_admin["variantes"][0]
@@ -181,9 +179,7 @@ async def test_vendedor_pode_cadastrar_produto(
 async def test_produto_com_estoque_nao_pode_ser_excluido(
     client: AsyncClient, auth_admin: dict[str, str], categoria: int
 ) -> None:
-    produto_id = (
-        await client.post("/produtos", headers=auth_admin, json=_produto_payload(categoria))
-    ).json()["id"]
+    produto_id = (await criar_produto(client, auth_admin, _produto_payload(categoria)))["id"]
     resp = await client.delete(f"/produtos/{produto_id}", headers=auth_admin)
     assert resp.status_code == 409
 
@@ -192,7 +188,7 @@ async def test_produto_com_estoque_nao_pode_ser_excluido(
 async def test_lookup_por_codigo_devolve_tudo_que_o_pdv_precisa(
     client: AsyncClient, auth_vendedor: dict[str, str], auth_admin: dict[str, str], categoria: int
 ) -> None:
-    await client.post("/produtos", headers=auth_admin, json=_produto_payload(categoria))
+    await criar_produto(client, auth_admin, _produto_payload(categoria))
     resp = await client.get("/variantes/codigo-barras/7891234567895", headers=auth_vendedor)
     assert resp.status_code == 200
     corpo = resp.json()
@@ -225,9 +221,7 @@ async def test_gerar_codigo_interno_nunca_repete(
 async def test_adiciona_peca_a_grade_existente(
     client: AsyncClient, auth_admin: dict[str, str], categoria: int
 ) -> None:
-    produto_id = (
-        await client.post("/produtos", headers=auth_admin, json=_produto_payload(categoria))
-    ).json()["id"]
+    produto_id = (await criar_produto(client, auth_admin, _produto_payload(categoria)))["id"]
     resp = await client.post(
         f"/produtos/{produto_id}/variantes",
         headers=auth_admin,
@@ -236,13 +230,19 @@ async def test_adiciona_peca_a_grade_existente(
             "cor": "Preta",
             "preco_custo": "24.00",
             "preco_venda": "64.90",
-            "estoque_inicial": 2,
         },
     )
     assert resp.status_code == 201
     tamanhos = {v["tamanho"] for v in resp.json()["variantes"]}
     assert tamanhos == {"P", "M", "G", "GG"}
-    assert resp.json()["saldo_total"] == 10
+    # A peça acrescentada nasce ZERADA (ADR-29): o total é o das outras três.
+    assert resp.json()["saldo_total"] == 8
+
+    # E o estoque dela entra pela mesma porta de sempre.
+    nova = next(v for v in resp.json()["variantes"] if v["tamanho"] == "GG")
+    await dar_entrada(client, auth_admin, **{str(nova["id"]): 2})
+    depois = await client.get(f"/produtos/{produto_id}", headers=auth_admin)
+    assert depois.json()["saldo_total"] == 10
 
 
 async def test_busca_produto_por_codigo_de_barras(
@@ -259,10 +259,10 @@ async def test_busca_produto_por_codigo_de_barras(
 
 
 async def _peca(client, auth_admin, categoria_id: int, nome: str, cor: str, codigo: str) -> int:
-    resposta = await client.post(
-        "/produtos",
-        headers=auth_admin,
-        json={
+    resposta = await criar_produto(
+        client,
+        auth_admin,
+        {
             "categoria_id": categoria_id,
             "nome": nome,
             "variantes": [
@@ -277,8 +277,7 @@ async def _peca(client, auth_admin, categoria_id: int, nome: str, cor: str, codi
             ],
         },
     )
-    assert resposta.status_code == 201, resposta.text
-    return resposta.json()["variantes"][0]["id"]
+    return resposta["variantes"][0]["id"]
 
 
 async def test_busca_peca_pelo_nome_do_produto(client, auth_admin) -> None:

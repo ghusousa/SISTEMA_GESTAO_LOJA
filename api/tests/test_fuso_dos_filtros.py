@@ -19,6 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.datas import fim_exclusivo_do_dia, hoje_na_loja, inicio_do_dia
 
+from conftest import criar_produto
+
 pytestmark = pytest.mark.anyio
 
 
@@ -69,20 +71,14 @@ async def _venda_as(client: AsyncClient, auth: dict, session: AsyncSession, quan
     import uuid
 
     cat = (await client.post("/categorias", headers=auth, json={"nome": f"C{uuid.uuid4().hex[:6]}"})).json()
-    prod = (
-        await client.post(
-            "/produtos",
-            headers=auth,
-            json={
+    prod = await criar_produto(client, auth, {
                 "categoria_id": cat["id"],
                 "nome": f"P{uuid.uuid4().hex[:6]}",
                 "variantes": [
                     {"tamanho": "U", "cor": "Unica", "preco_custo": "10.00",
                      "preco_venda": "50.00", "estoque_inicial": 5}
                 ],
-            },
-        )
-    ).json()
+            })
     venda = (
         await client.post(
             "/vendas",

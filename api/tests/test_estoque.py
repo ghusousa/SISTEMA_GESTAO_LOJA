@@ -3,6 +3,8 @@ import uuid
 import pytest
 from httpx import AsyncClient
 
+from conftest import criar_produto
+
 
 @pytest.fixture
 async def grade(client: AsyncClient, auth_admin: dict[str, str]) -> dict:
@@ -10,11 +12,7 @@ async def grade(client: AsyncClient, auth_admin: dict[str, str]) -> dict:
     categoria_id = (
         await client.post("/categorias", headers=auth_admin, json={"nome": "Camisetas"})
     ).json()["id"]
-    produto = (
-        await client.post(
-            "/produtos",
-            headers=auth_admin,
-            json={
+    produto = await criar_produto(client, auth_admin, {
                 "categoria_id": categoria_id,
                 "nome": "Camiseta Lisa",
                 "variantes": [
@@ -36,9 +34,7 @@ async def grade(client: AsyncClient, auth_admin: dict[str, str]) -> dict:
                         "estoque_minimo": 1,
                     },
                 ],
-            },
-        )
-    ).json()
+            })
     por_tamanho = {v["tamanho"]: v["id"] for v in produto["variantes"]}
     return {"produto_id": produto["id"], "categoria_id": categoria_id, **por_tamanho}
 

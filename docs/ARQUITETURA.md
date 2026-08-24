@@ -607,6 +607,23 @@ não exige `systemctl` nem SSH.
 Os campos `ultimo_*` existem porque "ligado" e "ligado e quebrado" são a mesma tela sem eles: o
 que dá confiança é "há 12 minutos, 4,2 MB, 10 cópias no Drive".
 
+**ADR-29 — Mercadoria entra por uma porta só; o cadastro não põe estoque.**
+O cadastro tinha `estoque_inicial` e existia a Entrada: duas portas para o mesmo efeito. O dono
+perguntou, duas vezes, onde registrar a compra do fornecedor — e tinha razão em achar redundante.
+Nos ERPs de referência (Bling, Tiny) o cadastro de produto é CATÁLOGO: diz o que a peça é, não
+quanto tem. Estoque entra por nota/entrada, sempre.
+Agora é assim: `POST /produtos` cria a peça com saldo zero, e `POST /estoque/entradas` é o único
+caminho de entrada. O ganho não é só de clareza — antes, a PRIMEIRA compra de cada peça não
+guardava fornecedor nem custo de compra e não aparecia no extrato como entrada; era um buraco no
+histórico bem no momento em que a peça nasce.
+Para não custar um passo, o cadastro leva a grade recém-criada para a Entrada, com quantidade
+zero. Zero de propósito: quem diz quanto chegou é quem conferiu a caixa; sugerir 1 seria um número
+inventado entrando no estoque. No celular as duas chamadas acontecem juntas, porque o cadastro de
+lá costuma ser o cadastro rápido do PDV, com a cliente esperando no balcão — mas o estoque entra
+pelo mesmo endpoint, com o mesmo rastro.
+Sobram então DUAS telas que mexem em saldo, com verbos opostos e inconfundíveis: Entrada SOMA,
+Inventário SUBSTITUI.
+
 ## 4. Contratos de API
 
 Prefixo `/api/v1`. Auth: `Authorization: Bearer <access_token>`.

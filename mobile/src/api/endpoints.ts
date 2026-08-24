@@ -221,7 +221,6 @@ export interface VariantePayload {
   preco_custo: string;
   preco_venda: string;
   estoque_minimo?: number;
-  estoque_inicial?: number;
 }
 
 // ------------------------------------------------------------------ estoque

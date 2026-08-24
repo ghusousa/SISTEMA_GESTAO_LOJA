@@ -13,6 +13,8 @@ from app.core.permissoes import Pode, pode
 from app.core.segmentos import Segmento, vocabulario
 from app.modules.usuarios.models import Papel
 
+from conftest import criar_produto
+
 pytestmark = pytest.mark.anyio
 
 
@@ -84,9 +86,10 @@ async def test_trocar_de_ramo_nao_encosta_nos_dados(
     """Mudar o ramo é trocar rótulo, não migrar banco. Uma peça cadastrada como roupa
     continua exatamente a mesma peça depois que a loja vira autopeças."""
     cat = await client.post("/categorias", json={"nome": "Geral"}, headers=auth_admin)
-    produto = await client.post(
-        "/produtos",
-        json={
+    produto = await criar_produto(
+        client,
+        auth_admin,
+        {
             "categoria_id": cat.json()["id"],
             "nome": "Item de teste",
             "variantes": [
@@ -99,14 +102,12 @@ async def test_trocar_de_ramo_nao_encosta_nos_dados(
                 }
             ],
         },
-        headers=auth_admin,
     )
-    assert produto.status_code == 201, produto.text
-    antes = produto.json()["variantes"][0]
+    antes = produto["variantes"][0]
 
     await client.patch("/configuracao", json={"segmento": "AUTOPECAS"}, headers=auth_admin)
 
-    depois = (await client.get(f"/produtos/{produto.json()['id']}", headers=auth_admin)).json()
+    depois = (await client.get(f"/produtos/{produto['id']}", headers=auth_admin)).json()
     assert depois["variantes"][0]["tamanho"] == antes["tamanho"]
     assert depois["variantes"][0]["codigo_barras"] == antes["codigo_barras"]
 

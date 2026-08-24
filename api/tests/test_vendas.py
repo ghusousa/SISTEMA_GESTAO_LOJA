@@ -6,6 +6,8 @@ from httpx import ASGITransport, AsyncClient
 
 from app.main import app
 
+from conftest import criar_produto
+
 
 @pytest.fixture
 async def loja(client: AsyncClient, auth_admin: dict[str, str]) -> dict:
@@ -17,11 +19,7 @@ async def loja(client: AsyncClient, auth_admin: dict[str, str]) -> dict:
         await client.post("/categorias", headers=auth_admin, json={"nome": "Calças"})
     ).json()["id"]
 
-    camiseta = (
-        await client.post(
-            "/produtos",
-            headers=auth_admin,
-            json={
+    camiseta = await criar_produto(client, auth_admin, {
                 "categoria_id": cat_camisa,
                 "nome": "Camiseta Lisa",
                 "variantes": [
@@ -34,14 +32,8 @@ async def loja(client: AsyncClient, auth_admin: dict[str, str]) -> dict:
                         "estoque_inicial": 10,
                     }
                 ],
-            },
-        )
-    ).json()
-    calca = (
-        await client.post(
-            "/produtos",
-            headers=auth_admin,
-            json={
+            })
+    calca = await criar_produto(client, auth_admin, {
                 "categoria_id": cat_calca,
                 "nome": "Calça Jeans",
                 "variantes": [
@@ -54,9 +46,7 @@ async def loja(client: AsyncClient, auth_admin: dict[str, str]) -> dict:
                         "estoque_inicial": 1,
                     }
                 ],
-            },
-        )
-    ).json()
+            })
     return {
         "camiseta": camiseta["variantes"][0]["id"],
         "calca": calca["variantes"][0]["id"],

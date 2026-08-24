@@ -11,6 +11,8 @@ from decimal import Decimal
 
 import pytest
 
+from conftest import criar_produto
+
 pytestmark = pytest.mark.anyio
 
 
@@ -18,11 +20,7 @@ async def _peca(client, auth_admin, nome: str, preco: str, custo: str, estoque: 
     categoria = (
         await client.post("/categorias", headers=auth_admin, json={"nome": f"Cat {nome}"})
     ).json()
-    produto = (
-        await client.post(
-            "/produtos",
-            headers=auth_admin,
-            json={
+    produto = await criar_produto(client, auth_admin, {
                 "categoria_id": categoria["id"],
                 "nome": nome,
                 "variantes": [
@@ -34,9 +32,7 @@ async def _peca(client, auth_admin, nome: str, preco: str, custo: str, estoque: 
                         "estoque_inicial": estoque,
                     }
                 ],
-            },
-        )
-    ).json()
+            })
     return produto["variantes"][0]["id"]
 
 

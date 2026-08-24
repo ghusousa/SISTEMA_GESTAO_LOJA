@@ -10,25 +10,21 @@ import uuid
 import pytest
 from httpx import AsyncClient
 
+from conftest import criar_produto
+
 pytestmark = pytest.mark.anyio
 
 
 async def _peca(client, auth, nome, preco="50.00"):
     cat = (await client.post("/categorias", headers=auth, json={"nome": f"Cat {nome}"})).json()
-    prod = (
-        await client.post(
-            "/produtos",
-            headers=auth,
-            json={
+    prod = await criar_produto(client, auth, {
                 "categoria_id": cat["id"],
                 "nome": nome,
                 "variantes": [
                     {"tamanho": "U", "cor": "Unica", "preco_custo": "20.00",
                      "preco_venda": preco, "estoque_inicial": 10}
                 ],
-            },
-        )
-    ).json()
+            })
     return prod["variantes"][0]["id"]
 
 

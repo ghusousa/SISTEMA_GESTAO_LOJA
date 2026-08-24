@@ -154,8 +154,12 @@ estoque, concorrência do último item, idempotência por `client_uuid`.
   'CONCLUIDA'` antes de estornar. Checar em memória deixa dois cliques estornarem duas vezes.
 - **Carrinho, conferência e cache são globais**: logout limpa tudo (`limparTudoDaSessao`),
   senão o próximo usuário herda a venda e a sacola do anterior.
-- **Três telas mexem no estoque, e uma delas SUBSTITUI**: Cadastro (peça nasce, com estoque
-  inicial), Entrada (SOMA, guarda fornecedor e atualiza custo) e Inventário
+- **Uma porta só para mercadoria entrar (ADR-29)**: o cadastro cria a peça com saldo ZERO e
+  manda para a Entrada com a grade já carregada. Estoque entra por `POST /estoque/entradas`,
+  sempre — assim a PRIMEIRA compra também guarda fornecedor e custo, e fica no extrato. É o
+  modelo do Bling e do Tiny; ter estoque nas duas telas era a redundância que confundia.
+- **Duas telas mexem no estoque, e uma delas SUBSTITUI**: Entrada (SOMA, guarda fornecedor e
+  atualiza custo) e Inventário
   (**substitui** o saldo pelo contado). Usar o Inventário para receber mercadoria APAGA o que
   estava na arara — tinha 5, chegaram 20, digita 20, e o saldo vira 20 em vez de 25, com o
   extrato dizendo "acerto por contagem física". As duas pontas travam isso: contagem em que

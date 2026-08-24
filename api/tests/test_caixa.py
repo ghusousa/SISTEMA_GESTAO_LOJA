@@ -6,6 +6,8 @@ from httpx import AsyncClient
 
 from app.core.config import settings
 
+from conftest import criar_produto
+
 
 def _hoje_loja():
     return datetime.now(UTC).astimezone(settings.tz_loja).date()
@@ -17,11 +19,7 @@ async def vendas_do_dia(client: AsyncClient, auth_admin: dict[str, str]) -> dict
     categoria = (
         await client.post("/categorias", headers=auth_admin, json={"nome": "Roupas"})
     ).json()["id"]
-    produto = (
-        await client.post(
-            "/produtos",
-            headers=auth_admin,
-            json={
+    produto = await criar_produto(client, auth_admin, {
                 "categoria_id": categoria,
                 "nome": "Camiseta",
                 "variantes": [
@@ -34,9 +32,7 @@ async def vendas_do_dia(client: AsyncClient, auth_admin: dict[str, str]) -> dict
                         "estoque_inicial": 20,
                     }
                 ],
-            },
-        )
-    ).json()
+            })
     variante = produto["variantes"][0]["id"]
 
     await client.post(

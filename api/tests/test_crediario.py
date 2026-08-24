@@ -17,6 +17,8 @@ import pytest
 from app.core.config import settings
 from app.modules.usuarios.models import User
 
+from conftest import criar_produto
+
 pytestmark = pytest.mark.anyio
 
 
@@ -24,11 +26,7 @@ async def _peca(client, auth_admin, nome: str, preco: str, custo: str = "20.00")
     categoria = (
         await client.post("/categorias", headers=auth_admin, json={"nome": f"Cat {nome}"})
     ).json()
-    produto = (
-        await client.post(
-            "/produtos",
-            headers=auth_admin,
-            json={
+    produto = await criar_produto(client, auth_admin, {
                 "categoria_id": categoria["id"],
                 "nome": nome,
                 "variantes": [
@@ -40,9 +38,7 @@ async def _peca(client, auth_admin, nome: str, preco: str, custo: str = "20.00")
                         "estoque_inicial": 20,
                     }
                 ],
-            },
-        )
-    ).json()
+            })
     return produto["variantes"][0]["id"]
 
 

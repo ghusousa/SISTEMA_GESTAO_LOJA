@@ -35,10 +35,10 @@ export async function render(raiz, _params, consulta) {
           <a class="botao botao--fantasma botao--pequeno" href="#/produtos">← Produtos</a>
           <h1>Novo produto</h1>
           <p class="texto-suave">
-              Preencha os dados, monte a grade e confira os códigos. É aqui que a peça nasce
-              e ganha código de barras — o estoque inicial já entra junto. Se a peça já
-              existe e só chegou mais, o lugar é
-              <a href="#/estoque/entrada">Estoque &gt; Entrada</a>.
+              É aqui que a peça nasce e ganha código de barras. Ela começa com
+              <strong>estoque zero</strong>: ao salvar, você cai na Entrada para dizer
+              quanto chegou e de qual fornecedor. Se a peça já existe e só chegou mais,
+              vá direto para <a href="#/estoque/entrada">Estoque &gt; Entrada</a>.
             </p>
         </div>
       </div>
@@ -138,7 +138,6 @@ export async function render(raiz, _params, consulta) {
                 <th>Código de barras</th>
                 <th class="direita">Venda</th>
                 ${veDinheiro ? cru('<th class="direita">Custo</th>') : ''}
-                <th class="direita">Entrada</th>
                 <th class="direita">Mínimo</th>
                 <th></th>
               </tr>
@@ -237,7 +236,6 @@ export async function render(raiz, _params, consulta) {
       ${veDinheiro
         ? cru('<td><input data-cu inputmode="numeric" style="width:96px;text-align:right" /></td>')
         : ''}
-      <td><input data-e type="number" min="0" step="1" value="0" style="width:80px;text-align:right" /></td>
       <td><input data-m type="number" min="0" step="1" style="width:80px;text-align:right" /></td>
       <td class="direita">
         <button class="botao-icone botao-icone--perigo" data-remover type="button" aria-label="Tirar esta peça">✕</button>
@@ -339,30 +337,32 @@ export async function render(raiz, _params, consulta) {
    * mandar a pessoa cadastrar e depois se virar para achar a peça de novo é o tipo de
    * volta que faz a conferência ser abandonada pela metade.
    */
+  /**
+   * Leva a grade recém-cadastrada para a Entrada, com quantidade zero, pronta para a
+   * pessoa dizer quanto chegou de cada.
+   *
+   * É a segunda metade do fluxo desde o ADR-29: o cadastro diz o que a peça É, a Entrada
+   * diz quanto CHEGOU e de qual fornecedor. Como a etiqueta ainda não foi impressa, não
+   * há o que bipar — por isso a grade vai junto, em vez de mandar a pessoa procurar na
+   * busca o que ela acabou de cadastrar.
+   */
   function voltarParaEntrada(produto) {
-    const nova =
-      produto.variantes.find((v) => v.codigo_barras === codigoInicial) || produto.variantes[0];
-    if (nova) {
-      const itens = conferencia.get().itens;
-      const jaEsta = itens.some((i) => i.variante_id === nova.id);
-      if (!jaEsta) {
-        conferencia.set({
-          itens: [
-            ...itens,
-            {
-              variante_id: nova.id,
-              produto: produto.nome,
-              tamanho: nova.tamanho,
-              cor: nova.cor,
-              codigo_barras: nova.codigo_barras,
-              preco_venda: nova.preco_venda,
-              quantidade: 1,
-              custo: 0,
-            },
-          ],
-        });
-      }
-    }
+    const itens = conferencia.get().itens;
+    const novos = produto.variantes
+      .filter((v) => !itens.some((i) => i.variante_id === v.id))
+      .map((v) => ({
+        variante_id: v.id,
+        produto: produto.nome,
+        tamanho: v.tamanho,
+        cor: v.cor,
+        codigo_barras: v.codigo_barras,
+        preco_venda: v.preco_venda,
+        // Zero de propósito: quem digita quanto chegou é quem conferiu a caixa. Chutar 1
+        // seria um número inventado entrando no estoque sem ninguém conferir.
+        quantidade: 0,
+        custo: 0,
+      }));
+    conferencia.set({ itens: [...itens, ...novos] });
     ir('/estoque/entrada');
   }
 
@@ -381,7 +381,6 @@ export async function render(raiz, _params, consulta) {
       codigo_barras: l.tr.querySelector('[data-cod]').value.trim() || null,
       preco_venda: paraDecimalString(l.venda.valor()),
       preco_custo: paraDecimalString(l.custo.valor()),
-      estoque_inicial: Number(l.tr.querySelector('[data-e]').value) || 0,
       estoque_minimo: Number(l.tr.querySelector('[data-m]').value) || 0,
     }));
 
@@ -408,12 +407,11 @@ export async function render(raiz, _params, consulta) {
           aviso(`Peça cadastrada, mas a foto não subiu: ${erroFoto.message}`, 'alerta');
         }
       }
-      aviso(`"${produto.nome}" cadastrado com ${produto.variantes.length} peças.`);
-      if (consulta.voltar === 'entrada') {
-        voltarParaEntrada(produto);
-        return;
-      }
-      ir(`/produtos/${produto.id}`);
+      aviso(
+        `"${produto.nome}" cadastrado. Agora diga quanto chegou de cada peça.`,
+      );
+      // Sempre para a Entrada: a peça nasce zerada e a mercadoria entra por uma porta só.
+      voltarParaEntrada(produto);
     } catch (erro) {
       avisarErro(erro);
       botao.disabled = false;

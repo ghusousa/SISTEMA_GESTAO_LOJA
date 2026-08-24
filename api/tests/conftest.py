@@ -157,3 +157,61 @@ def _override_session() -> AsyncGenerator[None, None]:
     app.dependency_overrides[get_session] = _get_session
     yield
     app.dependency_overrides.clear()
+
+
+async def criar_produto(client: AsyncClient, auth: dict[str, str], payload: dict) -> dict:
+    """Cria o produto e, se o payload pedir estoque, dá a entrada — pelo caminho de verdade.
+
+    O cadastro deixou de criar estoque (ADR-29): mercadoria entra por UMA porta, a Entrada.
+    Este helper existe para os testes continuarem legíveis (`"estoque_inicial": 5` no
+    payload diz o que o cenário precisa) sem mentir sobre o fluxo: por baixo ele faz as
+    DUAS chamadas que a loja faz, e é a Entrada de verdade que põe o saldo. Se ela quebrar,
+    quebra aqui — que é o ponto.
+    """
+    import uuid as _uuid
+
+    pedido = {**payload, "variantes": [dict(v) for v in payload.get("variantes", [])]}
+    quantidades = [v.pop("estoque_inicial", 0) for v in pedido["variantes"]]
+
+    resp = await client.post("/produtos", headers=auth, json=pedido)
+    assert resp.status_code == 201, resp.text
+    produto = resp.json()
+
+    itens = [
+        {"variante_id": variante["id"], "quantidade": qtd}
+        for variante, qtd in zip(produto["variantes"], quantidades, strict=False)
+        if qtd > 0
+    ]
+    if itens:
+        entrada = await client.post(
+            "/estoque/entradas",
+            headers=auth,
+            json={
+                "client_uuid": str(_uuid.uuid4()),
+                "fornecedor": "Fornecedor de teste",
+                "itens": itens,
+            },
+        )
+        assert entrada.status_code in (200, 201), entrada.text
+        produto = (await client.get(f"/produtos/{produto['id']}", headers=auth)).json()
+    return produto
+
+
+async def dar_entrada(client: AsyncClient, auth: dict[str, str], **quantidades: int) -> None:
+    """Põe estoque numa peça pela porta de verdade. Chave = id da variante, em texto."""
+    import uuid as _uuid
+
+    resp = await client.post(
+        "/estoque/entradas",
+        headers=auth,
+        json={
+            "client_uuid": str(_uuid.uuid4()),
+            "fornecedor": "Fornecedor de teste",
+            "itens": [
+                {"variante_id": int(vid), "quantidade": qtd}
+                for vid, qtd in quantidades.items()
+                if qtd > 0
+            ],
+        },
+    )
+    assert resp.status_code in (200, 201), resp.text

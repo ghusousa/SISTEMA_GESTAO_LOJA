@@ -13,6 +13,8 @@ from fastapi.testclient import TestClient
 from app.core.eventos import Assunto, central
 from app.main import app
 
+from conftest import criar_produto
+
 pytestmark = pytest.mark.anyio
 
 CODIGO_NAO_AUTENTICADO = 4401
@@ -186,16 +188,17 @@ async def test_produto_novo_avisa_o_catalogo(client, auth_admin) -> None:
             recebidos.add((await fila.get()).assunto)
 
     assert Assunto.CATALOGO in recebidos, "o celular não saberia da peça nova"
-    # Estoque inicial é movimento de estoque: quem está na tela de saldos também precisa.
-    assert Assunto.ESTOQUE in recebidos
+    # E SÓ o catálogo: desde o ADR-29 a peça nasce zerada, então cadastrar não é movimento
+    # de estoque. Quem avisa a tela de saldos é a Entrada, que é por onde a mercadoria entra.
+    assert Assunto.ESTOQUE not in recebidos
 
 
 async def test_venda_avisa_estoque_e_vendas(client, auth_admin) -> None:
     categoria = await client.post("/categorias", headers=auth_admin, json={"nome": "Calças"})
-    produto = await client.post(
-        "/produtos",
-        headers=auth_admin,
-        json={
+    produto = await criar_produto(
+        client,
+        auth_admin,
+        {
             "categoria_id": categoria.json()["id"],
             "nome": "Calça Jeans",
             "variantes": [
@@ -209,7 +212,7 @@ async def test_venda_avisa_estoque_e_vendas(client, auth_admin) -> None:
             ],
         },
     )
-    variante_id = produto.json()["variantes"][0]["id"]
+    variante_id = produto["variantes"][0]["id"]
 
     async with central.inscrever() as fila:
         venda = await client.post(

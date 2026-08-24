@@ -172,7 +172,7 @@ class CatalogoService:
         self.session.add(produto)
         await self.session.flush()
 
-        criadas: list[tuple[ProductVariant, int]] = []
+        criadas: list[ProductVariant] = []
         for entrada, codigo in zip(dados.variantes, codigos, strict=True):
             variante = ProductVariant(
                 product_id=produto.id,
@@ -185,19 +185,13 @@ class CatalogoService:
                 min_stock=entrada.estoque_minimo,
             )
             self.session.add(variante)
-            criadas.append((variante, entrada.estoque_inicial))
+            criadas.append(variante)
         await self.session.flush()
 
-        for variante, inicial in criadas:
-            if inicial > 0:
-                await movimentos.aplicar_movimento(
-                    self.session,
-                    variante_id=variante.id,
-                    delta=inicial,
-                    tipo=TipoMovimento.ENTRADA,
-                    user_id=usuario.id,
-                    observacao="Estoque inicial do cadastro",
-                )
+        # A peça nasce com saldo ZERO, de propósito (ADR-29). Mercadoria entra por UMA
+        # porta só: `POST /estoque/entradas`, que guarda fornecedor e custo e deixa rastro
+        # no extrato. Ter estoque também aqui era a segunda porta — a que confundia quem
+        # usa e a que fazia a PRIMEIRA compra de cada peça não ter fornecedor nenhum.
 
         try:
             await self.session.commit()
@@ -281,15 +275,7 @@ class CatalogoService:
             await self.session.rollback()
             raise Duplicado("Esta combinação de tamanho e cor já existe no produto.") from exc
 
-        if dados.estoque_inicial > 0:
-            await movimentos.aplicar_movimento(
-                self.session,
-                variante_id=variante.id,
-                delta=dados.estoque_inicial,
-                tipo=TipoMovimento.ENTRADA,
-                user_id=usuario.id,
-                observacao="Estoque inicial da peça",
-            )
+        # Sem estoque aqui: a peça nasce zerada e a mercadoria entra pela Entrada (ADR-29).
         await self.session.commit()
         return await self.obter_produto(produto_id, usuario)
 

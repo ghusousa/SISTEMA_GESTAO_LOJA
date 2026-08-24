@@ -24,8 +24,9 @@ import {
 } from 'react-native';
 
 import { mensagemDoErro } from '@/api/client';
-import { catalogo, type VariantePayload } from '@/api/endpoints';
+import { catalogo, estoque, type VariantePayload } from '@/api/endpoints';
 import { Scanner } from '@/components/Scanner';
+import { gerarUuid } from '@/lib/uuid';
 import { Botao, Campo, Carregando, Etiqueta } from '@/components/ui';
 import { formatarSemSimbolo, paraCentavos, paraDecimalString } from '@/lib/money';
 import { chaves, invalidarAposMovimentoEstoque, queryClient } from '@/lib/queryClient';
@@ -154,13 +155,29 @@ export default function NovoProduto() {
         preco_custo: paraDecimalString(paraCentavos(precoCusto)),
         preco_venda: paraDecimalString(paraCentavos(precoVenda)),
         estoque_minimo: Number(estoqueMinimo) || 0,
-        estoque_inicial: Number(linha.estoque) || 0,
       }));
       const produto = await catalogo.criarProduto({
         categoria_id: categoriaId!,
         nome: nome.trim(),
         variantes,
       });
+
+      // A peça nasce ZERADA (ADR-29): mercadoria entra por uma porta só, a Entrada. Aqui
+      // as duas chamadas acontecem juntas porque o cadastro do celular costuma ser o
+      // cadastro rápido do PDV — a cliente está no balcão esperando, e mandar a vendedora
+      // para outra tela no meio da venda seria pior do que a redundância que isto evita.
+      // Mesmo assim o estoque entra pelo caminho de verdade, com rastro no extrato.
+      const itensParaEntrada = produto.variantes
+        .map((v, i) => ({ variante_id: v.id, quantidade: Number(grade[i]?.estoque) || 0 }))
+        .filter((i) => i.quantidade > 0);
+      if (itensParaEntrada.length) {
+        await estoque.registrarEntrada({
+          client_uuid: gerarUuid(),
+          fornecedor: null,
+          observacao: 'Primeira compra, no cadastro da peça',
+          itens: itensParaEntrada,
+        });
+      }
 
       if (foto) {
         // A peça já está cadastrada e vendável. Se a foto falhar (rede caindo, arquivo

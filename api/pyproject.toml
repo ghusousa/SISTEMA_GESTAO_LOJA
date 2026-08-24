@@ -25,6 +25,10 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
+# Deixa `from conftest import ...` funcionar nos testes: os helpers compartilhados
+# (`criar_produto`) moram lá, e sem isto cada arquivo teria a sua cópia — que é como
+# helper de teste se desatualiza em silêncio.
+pythonpath = ["tests", "."]
 filterwarnings = ["ignore::DeprecationWarning"]
 
 [tool.ruff]

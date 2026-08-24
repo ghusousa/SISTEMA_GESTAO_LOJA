@@ -27,6 +27,8 @@ from httpx import AsyncClient
 from app.core.permissoes import PERMISSOES, Pode, pode
 from app.modules.usuarios.models import Papel
 
+from conftest import criar_produto
+
 pytestmark = pytest.mark.anyio
 
 
@@ -82,10 +84,10 @@ async def _catalogo(client: AsyncClient, auth: dict[str, str]) -> tuple[int, int
     """Uma categoria e um produto com uma variante, para ter no que esbarrar."""
     cat = await client.post("/categorias", headers=auth, json={"nome": "Camisetas"})
     assert cat.status_code == 201, cat.text
-    prod = await client.post(
-        "/produtos",
-        headers=auth,
-        json={
+    prod = await criar_produto(
+        client,
+        auth,
+        {
             "categoria_id": cat.json()["id"],
             "nome": "Camiseta Básica",
             "variantes": [
@@ -99,8 +101,7 @@ async def _catalogo(client: AsyncClient, auth: dict[str, str]) -> tuple[int, int
             ],
         },
     )
-    assert prod.status_code == 201, prod.text
-    return prod.json()["id"], prod.json()["variantes"][0]["id"]
+    return prod["id"], prod["variantes"][0]["id"]
 
 
 @pytest.fixture
@@ -217,10 +218,7 @@ async def test_todo_mundo_cadastra_peca_e_da_entrada(
     categoria_id = categoria.json()["id"]
 
     for indice, (papel, auth) in enumerate(cada_papel.items()):
-        criado = await client.post(
-            "/produtos",
-            headers=auth,
-            json={
+        criado = await criar_produto(client, auth, {
                 "categoria_id": categoria_id,
                 "nome": f"Blusa de {papel}",
                 "variantes": [
@@ -232,9 +230,7 @@ async def test_todo_mundo_cadastra_peca_e_da_entrada(
                         "estoque_inicial": 3,
                     }
                 ],
-            },
-        )
-        assert criado.status_code == 201, f"{papel} não cadastrou: {criado.text}"
+            })
 
         entrada = await client.post(
             "/estoque/entradas",
@@ -243,7 +239,7 @@ async def test_todo_mundo_cadastra_peca_e_da_entrada(
                 "client_uuid": f"00000000-0000-4000-8000-00000000000{indice}",
                 "fornecedor": "Malharia Nova",
                 "itens": [
-                    {"variante_id": criado.json()["variantes"][0]["id"], "quantidade": 5}
+                    {"variante_id": criado["variantes"][0]["id"], "quantidade": 5}
                 ],
             },
         )
@@ -424,11 +420,7 @@ async def test_editar_peca_nao_devolve_custo_para_quem_nao_ve_dinheiro(
     categoria = (
         await client.post("/categorias", headers=auth_admin, json={"nome": "Cat Custo"})
     ).json()
-    produto = (
-        await client.post(
-            "/produtos",
-            headers=auth_admin,
-            json={
+    produto = await criar_produto(client, auth_admin, {
                 "categoria_id": categoria["id"],
                 "nome": "Peca Do Custo",
                 "variantes": [
@@ -440,9 +432,7 @@ async def test_editar_peca_nao_devolve_custo_para_quem_nao_ve_dinheiro(
                         "estoque_inicial": 3,
                     }
                 ],
-            },
-        )
-    ).json()
+            })
     variante_id = produto["variantes"][0]["id"]
 
     resposta = await client.patch(
@@ -472,10 +462,7 @@ async def test_vendedora_cadastra_peca_mas_nao_grava_custo(
     categoria = (
         await client.post("/categorias", headers=auth_admin, json={"nome": "Cat Vendedora"})
     ).json()
-    resposta = await client.post(
-        "/produtos",
-        headers=auth_vendedor,
-        json={
+    resposta = await criar_produto(client, auth_vendedor, {
             "categoria_id": categoria["id"],
             "nome": "Peca Da Vendedora",
             "variantes": [
@@ -487,13 +474,11 @@ async def test_vendedora_cadastra_peca_mas_nao_grava_custo(
                     "estoque_inicial": 2,
                 }
             ],
-        },
-    )
-    assert resposta.status_code == 201, resposta.text
-    assert "preco_custo" not in resposta.json()["variantes"][0]
+        })
+    assert "preco_custo" not in resposta["variantes"][0]
 
     visto_pela_dona = (
-        await client.get(f"/produtos/{resposta.json()['id']}", headers=auth_admin)
+        await client.get(f"/produtos/{resposta['id']}", headers=auth_admin)
     ).json()["variantes"][0]
     assert Decimal(visto_pela_dona["preco_custo"]) == Decimal("0.00"), (
         "o custo digitado pela vendedora foi gravado"
