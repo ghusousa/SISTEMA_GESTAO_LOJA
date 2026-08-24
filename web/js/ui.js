@@ -142,6 +142,115 @@ export const numero = (n) => Number(n || 0).toLocaleString('pt-BR');
 
 export const plural = (n, singular, plural_) => `${numero(n)} ${n === 1 ? singular : plural_}`;
 
+/* ------------------------------------------------------------------ ajuda em bolha */
+
+/**
+ * O "!" que explica: `${ajuda('O que é isso')}` dentro de qualquer template.
+ *
+ * **Por que uma bolha única, presa ao `<body>`, e não uma dentro de cada botão:** as telas
+ * são cheias de painéis com `overflow` — tabela que rola, coluna do PDV, cartão. Uma bolha
+ * posicionada dentro do painel seria CORTADA na borda dele, e a explicação sumiria justo
+ * onde ela é mais precisa. Presa ao body e posicionada por `position: fixed`, ela aparece
+ * inteira em qualquer lugar da tela.
+ *
+ * **Por que um `<button>` e não um `<span>`:** quem usa teclado precisa alcançar; quem usa
+ * leitor de tela precisa ouvir que ali existe algo. E no balcão com tela sensível ao toque
+ * não existe "passar o cursor" — então o toque abre e fecha, e é por isso que o gatilho é
+ * clicável de verdade.
+ *
+ * O texto é escapado: explicação é conteúdo, não HTML.
+ */
+export function ajuda(texto) {
+  return cru(
+    `<button type="button" class="ajuda" data-ajuda="${escapar(texto)}"` +
+      ` aria-label="Ajuda: ${escapar(texto)}">!</button>`,
+  );
+}
+
+let balaoDeAjuda = null;
+let gatilhoAberto = null;
+
+function balao() {
+  if (!balaoDeAjuda) {
+    balaoDeAjuda = document.createElement('div');
+    balaoDeAjuda.className = 'ajuda__balao';
+    balaoDeAjuda.setAttribute('role', 'tooltip');
+    balaoDeAjuda.hidden = true;
+    document.body.appendChild(balaoDeAjuda);
+  }
+  return balaoDeAjuda;
+}
+
+function mostrarAjuda(gatilho) {
+  const b = balao();
+  b.textContent = gatilho.dataset.ajuda || '';
+  b.hidden = false;
+  gatilhoAberto = gatilho;
+
+  // Medir depois de visível: escondido, o balão tem tamanho zero e a conta sairia errada.
+  const alvo = gatilho.getBoundingClientRect();
+  const caixa = b.getBoundingClientRect();
+  const margem = 8;
+
+  // Cabe acima? Senão, abre para baixo — perto do rodapé, acima ficaria fora da tela.
+  const acima = alvo.top - caixa.height - margem;
+  const topo = acima >= margem ? acima : alvo.bottom + margem;
+
+  // E não deixa passar da borda lateral, que é o que corta o fim da frase.
+  const centrado = alvo.left + alvo.width / 2 - caixa.width / 2;
+  const esquerda = Math.max(
+    margem,
+    Math.min(centrado, window.innerWidth - caixa.width - margem),
+  );
+
+  b.style.top = `${topo}px`;
+  b.style.left = `${esquerda}px`;
+}
+
+function esconderAjuda() {
+  if (balaoDeAjuda) balaoDeAjuda.hidden = true;
+  gatilhoAberto = null;
+}
+
+// Delegação no documento: as telas são redesenhadas o tempo todo, e um listener por botão
+// morreria junto com o `innerHTML` da view seguinte.
+//
+// A guarda de `document` existe para o arquivo continuar importável fora do navegador —
+// é assim que dá para conferir o módulo por linha de comando sem subir uma página.
+if (typeof document !== 'undefined') {
+  document.addEventListener('mouseover', (e) => {
+    const g = e.target.closest?.('[data-ajuda]');
+    if (g) mostrarAjuda(g);
+  });
+  document.addEventListener('mouseout', (e) => {
+    if (e.target.closest?.('[data-ajuda]') && !gatilhoAberto?.dataset.fixado) esconderAjuda();
+  });
+  document.addEventListener('focusin', (e) => {
+    const g = e.target.closest?.('[data-ajuda]');
+    if (g) mostrarAjuda(g);
+  });
+  document.addEventListener('focusout', (e) => {
+    if (e.target.closest?.('[data-ajuda]')) esconderAjuda();
+  });
+  document.addEventListener('click', (e) => {
+    const g = e.target.closest?.('[data-ajuda]');
+    if (!g) {
+      esconderAjuda();
+      return;
+    }
+    // No toque não existe "passar o cursor": o clique é o que abre. Clicar de novo fecha.
+    e.preventDefault();
+    if (gatilhoAberto === g && !balaoDeAjuda?.hidden) esconderAjuda();
+    else mostrarAjuda(g);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') esconderAjuda();
+  });
+  // Rolar move o alvo e deixaria a bolha apontando para o nada.
+  window.addEventListener('scroll', esconderAjuda, true);
+  window.addEventListener('resize', esconderAjuda);
+}
+
 /* ---------------------------------------------------------------- avisos e diálogos */
 
 let areaAvisos = null;

@@ -1662,3 +1662,63 @@ kbd {
   text-decoration: none;
 }
 .lateral__privacidade:hover { color: rgba(255, 255, 255, 0.8); text-decoration: underline; }
+
+/* ------------------------------------------------------------------ ajuda em bolha
+   O "!" que explica cada coisa da tela (ver `ajuda()` em `js/ui.js`).
+
+   Discreto por padrão e forte no hover: quem já sabe usar o sistema não pode ter a tela
+   pipocando de avisos, e quem não sabe precisa achar o botão sem procurar. */
+.ajuda {
+  appearance: none;
+  border: 1px solid var(--borda-forte);
+  background: var(--superficie);
+  color: var(--texto-suave);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border-radius: 50%;
+  cursor: help;
+  display: inline-grid;
+  place-items: center;
+  vertical-align: middle;
+  margin-left: 5px;
+  flex: none;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.ajuda:hover,
+.ajuda:focus-visible {
+  background: var(--primaria);
+  border-color: var(--primaria);
+  color: #fff;
+}
+
+/* Presa ao <body> e `fixed`: dentro de um painel com overflow ela seria cortada na borda,
+   e a explicação sumiria justo onde é mais precisa. */
+.ajuda__balao {
+  position: fixed;
+  z-index: 90;
+  max-width: 320px;
+  background: #16202c;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.45;
+  padding: 9px 12px;
+  border-radius: var(--raio-sm);
+  box-shadow: var(--sombra-alta);
+  pointer-events: none; /* a bolha não rouba o hover do próprio botão */
+}
+.ajuda__balao[hidden] {
+  display: none;
+}
+
+@media print {
+  .ajuda,
+  .ajuda__balao {
+    display: none !important;
+  }
+}
