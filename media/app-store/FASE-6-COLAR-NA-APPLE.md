@@ -1,5 +1,10 @@
 # Fase 6 — tudo para colar no App Store Connect
 
+> **Atalho: isso aqui virou UM comando.** `mobile/publicar/` faz esta página inteira
+> sozinho — ficha, capturas, revisão, preço e envio (`npm run publicar -- --enviar`).
+> Leia `mobile/publicar/README.md`. Este documento continua valendo como referência
+> e para preencher a ficha de Privacidade, que a Apple obriga a ser manual.
+
 As capturas estão em `media/app-store/iphone-6.5/` (1242 × 2688, o tamanho exato do
 iPhone 6,5"). Suba **na ordem dos números** — as 3 primeiras aparecem na busca da App Store.
 Só existe tela de iPhone porque o app declara `supportsTablet: false`: a Apple não pede iPad.

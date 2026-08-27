@@ -1,0 +1,17 @@
+{
+  "_leia": "Copie este arquivo para config.json (mesma pasta) e preencha. O config.json e o .p8 NUNCA vão para o git — já estão no .gitignore.",
+  "_onde_gerar_a_chave": "appstoreconnect.apple.com > Users and Access > Integrations > App Store Connect API > Team Keys > +. Papel: App Manager. Baixe o .p8 (só dá uma vez) e ponha nesta pasta. Renomeie o arquivo baixado para chave-apple.p8.",
+  "key_id": "COLE_AQUI o Key ID da chave",
+  "issuer_id": "COLE_AQUI o Issuer ID (aparece no topo da mesma tela)",
+  "arquivo_p8": "chave-apple.p8",
+  "email_suporte": "voce@exemplo.com",
+  "url_suporte": "https://sistemaobras.com.br",
+  "nome_contato": "Nome Sobrenome",
+  "telefone_contato": "+55 11 90000-0000",
+  "titular_copyright": "Seu nome ou o da sua empresa",
+  "_conta_demo": "Crie no servidor de demonstração um usuário de perfil DONO só para o revisor da Apple.",
+  "email_demo": "revisao@exemplo.com",
+  "senha_demo": "senha-da-conta-demo",
+  "codigo_demo": "um código de barras que exista no servidor de demonstração",
+  "url_etiquetas_demo": ""
+}

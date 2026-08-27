@@ -1,0 +1,42 @@
+IMPORTANTE — LEIA ANTES DE BAIXAR
+
+Este é o aplicativo de um sistema de gestão que roda em um SERVIDOR PRÓPRIO DA LOJA. Sem esse servidor instalado, e sem um login criado por quem administra a loja, o app não funciona: não existe cadastro nem conta de teste dentro do app. Se a sua loja ainda não tem o sistema instalado, fale com quem cuida dele antes de baixar.
+
+O QUE O APP FAZ
+
+Gestão de loja de balcão, do estoque ao resultado do mês, na palma da mão:
+
+• Vender bipando — a câmera lê o código de barras da etiqueta e a peça entra no carrinho com preço e saldo. Etiqueta rasgada? Ache pelo nome ou digite o código.
+• Pagamento misto — dinheiro, PIX, débito, crédito, vale de troca e fiado na mesma venda, com desconto e troco.
+• Estoque de verdade — cada tamanho e cor tem o seu saldo. Entrada, ajuste, venda e devolução viram movimentação: o saldo nunca é editado à mão e nunca fica negativo.
+• Entrada de mercadoria e inventário — registrar o que chegou e conferir o que existe na prateleira.
+• Devolução com regra — o valor volta pelas mesmas formas em que entrou; o que não couber vira vale de troca. Peça com defeito não volta ao estoque.
+• Crediário (fiado) — quem está devendo, quanto deve, e receber em um toque.
+• Despesas e relatórios — faturamento, custo da mercadoria vendida, lucro, despesas e resultado do período, mais vendidos e peças abaixo do estoque mínimo.
+• Fechamento de caixa — o esperado por forma de pagamento contra o que foi contado na gaveta.
+• Recibo para a cliente — sai pelo compartilhamento do iPhone (WhatsApp, e-mail). Não é documento fiscal.
+
+CADA UM VÊ O QUE É DO SEU CARGO
+
+Vendedora, supervisora, gerente e dono. A vendedora vende e consulta preço, mas não recebe custo, lucro nem despesa — quem recusa é o servidor, não a tela. O diário de auditoria, que guarda o que cada login fez, é só do dono.
+
+SERVE A MAIS DE UM RAMO
+
+Roupas, calçados, autopeças, informática, cosméticos, alimentos e material de construção. O sistema troca as palavras conforme o ramo: onde a loja de roupas lê "Tamanho e Cor", a autopeças lê "Aplicação e Posição".
+
+TAMBÉM NO COMPUTADOR DO BALCÃO
+
+O mesmo sistema abre no navegador, com leitor USB e teclado. Celular e computador enxergam os mesmos dados, na mesma hora.
+
+OS DADOS FICAM NA SUA LOJA
+
+Sem anúncios, sem rastreamento, sem analytics, sem venda de dados. As informações ficam no servidor da própria loja: quem publica o app fornece o software, e a loja é a controladora dos dados (LGPD). A câmera serve só para ler código de barras e fotografar a peça. A sessão fica guardada no cofre do sistema.
+
+O QUE VOCÊ PRECISA TER
+
+• Um servidor com o sistema instalado e alcançável pelo celular.
+• Um login criado pelo dono ou pelo gerente da loja.
+• Internet, ou a rede local da loja.
+
+Suporte: {{EMAIL_SUPORTE}}
+Privacidade: privacidade@sistemaobras.com.br

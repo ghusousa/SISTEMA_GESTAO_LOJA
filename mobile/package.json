@@ -11,7 +11,10 @@
     "bundle": "expo export --platform android --output-dir .expo-export",
     "web": "expo start --web",
     "web:build": "expo export --platform web --output-dir dist-web",
-    "web:servir": "node servir-web.mjs dist-web 8090"
+    "web:servir": "node servir-web.mjs dist-web 8090",
+    "publicar": "node publicar/publicar.mjs",
+    "publicar:simular": "node publicar/publicar.mjs --simular",
+    "publicar:build": "node publicar/enviar-build.mjs"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",
