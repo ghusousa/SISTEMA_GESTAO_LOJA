@@ -1,7 +1,7 @@
 # Fase 6 — tudo para colar no App Store Connect
 
-As capturas estão em `media/app-store/iphone-6.7/` (1290 × 2796, o tamanho exato do
-iPhone 6,7"). Suba **na ordem dos números** — as 3 primeiras aparecem na busca da App Store.
+As capturas estão em `media/app-store/iphone-6.5/` (1242 × 2688, o tamanho exato do
+iPhone 6,5"). Suba **na ordem dos números** — as 3 primeiras aparecem na busca da App Store.
 Só existe tela de iPhone porque o app declara `supportsTablet: false`: a Apple não pede iPad.
 
 | Ordem | Arquivo | O que mostra |
