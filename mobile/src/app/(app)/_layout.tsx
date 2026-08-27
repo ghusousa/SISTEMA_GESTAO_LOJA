@@ -37,6 +37,7 @@ export default function AppLayout() {
       <Stack.Screen name="financeiro/despesa-nova" options={{ title: 'Nova despesa' }} />
       <Stack.Screen name="financeiro/relatorios" options={{ title: 'Relatórios' }} />
       <Stack.Screen name="financeiro/caixa" options={{ title: 'Fechamento de caixa' }} />
+      <Stack.Screen name="mais/vendas" options={{ title: 'Vendas' }} />
       <Stack.Screen name="mais/usuarios" options={{ title: 'Usuários' }} />
       <Stack.Screen name="mais/auditoria" options={{ title: 'Auditoria' }} />
       <Stack.Screen name="mais/loja" options={{ title: 'A loja' }} />
