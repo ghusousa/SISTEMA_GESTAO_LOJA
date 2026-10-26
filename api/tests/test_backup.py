@@ -5,7 +5,6 @@ conta conectada é recusado — porque uma tela dizendo "ativo" sem backup acont
 pior do que não ter tela.
 """
 
-import pytest
 from httpx import AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.permissoes import Pode, pode
 from app.modules.usuarios.models import Papel
 
-pytestmark = pytest.mark.anyio
 
 TOKEN = '{"access_token":"aa","refresh_token":"bb","expiry":"2030-01-01T00:00:00Z"}'
 

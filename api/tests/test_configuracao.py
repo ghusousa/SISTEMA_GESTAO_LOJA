@@ -4,7 +4,6 @@ O que não pode quebrar: a tela de login precisa do nome SEM sessão; só o dono
 trocar o ramo não pode encostar em nenhum dado.
 """
 
-import pytest
 from httpx import AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,7 +14,6 @@ from app.modules.usuarios.models import Papel
 
 from conftest import criar_produto
 
-pytestmark = pytest.mark.anyio
 
 
 async def test_nome_da_loja_e_lido_sem_login(client: AsyncClient) -> None:

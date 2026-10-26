@@ -29,7 +29,6 @@ from app.modules.usuarios.models import Papel
 
 from conftest import criar_produto
 
-pytestmark = pytest.mark.anyio
 
 
 # --------------------------------------------------------------- a tabela, sem HTTP

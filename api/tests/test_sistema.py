@@ -8,9 +8,7 @@ testes prendem.
 import json
 from datetime import UTC, datetime, timedelta
 
-import pytest
 
-pytestmark = pytest.mark.anyio
 
 
 def _escrever(tmp_path, monkeypatch, **campos) -> None:

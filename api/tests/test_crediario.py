@@ -12,14 +12,12 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-import pytest
 
 from app.core.config import settings
 from app.modules.usuarios.models import User
 
 from conftest import criar_produto
 
-pytestmark = pytest.mark.anyio
 
 
 async def _peca(client, auth_admin, nome: str, preco: str, custo: str = "20.00"):

@@ -197,7 +197,6 @@ def main() -> int:
                         "preco_custo": custo,
                         "preco_venda": venda,
                         "estoque_minimo": 2,
-                        "estoque_inicial": random.randint(4, 14),
                     }
                 )
             criado = c.post(
@@ -206,6 +205,19 @@ def main() -> int:
                 json={"categoria_id": categorias[cat], "nome": nome, "variantes": grade},
             )
             criado.raise_for_status()
+            # Cadastro nasce com saldo zero (ADR-29): a mercadoria entra pela Entrada.
+            c.post(
+                "/estoque/entradas",
+                headers=admin,
+                json={
+                    "client_uuid": str(uuid.uuid4()),
+                    "fornecedor": "Fornecedor demo",
+                    "itens": [
+                        {"variante_id": v["id"], "quantidade": random.randint(4, 14)}
+                        for v in criado.json()["variantes"]
+                    ],
+                },
+            ).raise_for_status()
             for v in criado.json()["variantes"]:
                 variantes.append({"id": v["id"], "preco": v["preco_venda"], "nome": nome})
         print(f"catálogo: {len(CATALOGO)} produtos, {len(variantes)} peças")

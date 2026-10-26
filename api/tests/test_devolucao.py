@@ -9,11 +9,9 @@ que já teve peça devolvida, e o vale pagar duas vendas ao mesmo tempo.
 import uuid
 from decimal import Decimal
 
-import pytest
 
 from conftest import criar_produto
 
-pytestmark = pytest.mark.anyio
 
 
 async def _peca(client, auth_admin, nome: str, preco: str, custo: str, estoque: int = 10):

@@ -4,12 +4,10 @@ A promessa: a linha do usuário some de verdade (não é desativar), mas a venda
 registrou e a linha de auditoria continuam de pé, porque são a contabilidade da loja.
 """
 
-import pytest
 from httpx import AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-pytestmark = pytest.mark.anyio
 
 
 async def test_dono_exclui_e_a_linha_some_de_verdade(

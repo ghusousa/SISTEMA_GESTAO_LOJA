@@ -11,7 +11,6 @@ Estes testes fixam o contrato: `inicio`/`fim` são DIAS no fuso da loja, e o int
 
 from datetime import date, datetime, time, timedelta
 
-import pytest
 from httpx import AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,7 +20,6 @@ from app.core.datas import fim_exclusivo_do_dia, hoje_na_loja, inicio_do_dia
 
 from conftest import criar_produto
 
-pytestmark = pytest.mark.anyio
 
 
 # ─────────────────────────────────────────────────────── os helpers, sem banco

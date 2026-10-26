@@ -4,15 +4,11 @@ A promessa: o dono — e só o dono — vê tudo que cada pessoa fez no login de
 testa senha à vontade. Estes testes guardam essas duas frases.
 """
 
-import asyncio
 import uuid
 
-import pytest
-from httpx import AsyncClient
 
 from conftest import criar_produto
 
-pytestmark = pytest.mark.anyio
 
 
 async def _peca(client, auth, nome, preco="50.00"):

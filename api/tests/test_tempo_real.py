@@ -15,7 +15,6 @@ from app.main import app
 
 from conftest import criar_produto
 
-pytestmark = pytest.mark.anyio
 
 CODIGO_NAO_AUTENTICADO = 4401
 

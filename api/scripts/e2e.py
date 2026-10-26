@@ -75,11 +75,11 @@ with httpx.Client(base_url=BASE, timeout=30) as c:
         "variantes": [
             {"tamanho": "P", "cor": "Preta", "codigo_barras": "7891234567895",
              "preco_custo": "20.00", "preco_venda": "50.00",
-             "estoque_minimo": 2, "estoque_inicial": 10},
+             "estoque_minimo": 2},
             {"tamanho": "M", "cor": "Preta", "preco_custo": "20.00",
-             "preco_venda": "50.00", "estoque_minimo": 2, "estoque_inicial": 5},
+             "preco_venda": "50.00", "estoque_minimo": 2},
             {"tamanho": "G", "cor": "Preta", "preco_custo": "20.00",
-             "preco_venda": "50.00", "estoque_minimo": 2, "estoque_inicial": 1},
+             "preco_venda": "50.00", "estoque_minimo": 2},
         ],
     })
     checar(r.status_code == 201, "cadastra produto com grade P/M/G", str(r.status_code))
@@ -88,7 +88,17 @@ with httpx.Client(base_url=BASE, timeout=30) as c:
     checar(por_tamanho["P"]["tipo_codigo"] == "EAN", "peça com etiqueta mantém o EAN")
     checar(por_tamanho["M"]["tipo_codigo"] == "INTERNO", "peça sem etiqueta ganha código interno")
     checar(len(por_tamanho["M"]["codigo_barras"]) == 13, "código interno é EAN-13")
-    checar(produto["saldo_total"] == 16, "estoque inicial virou saldo", str(produto["saldo_total"]))
+    checar(produto["saldo_total"] == 0, "cadastro nasce com saldo zero (ADR-29)")
+
+    # A primeira compra entra pela mesma porta das outras: a Entrada, com fornecedor.
+    r = c.post("/estoque/entradas", headers=admin, json={
+        "client_uuid": str(uuid.uuid4()), "fornecedor": "Malharia Inicial",
+        "itens": [{"variante_id": por_tamanho[t]["id"], "quantidade": q}
+                  for t, q in (("P", 10), ("M", 5), ("G", 1))],
+    })
+    checar(r.status_code == 201, "primeira entrada registrada", str(r.status_code))
+    produto = c.get(f"/produtos/{produto['id']}", headers=admin).json()
+    checar(produto["saldo_total"] == 16, "entrada inicial virou saldo", str(produto["saldo_total"]))
 
     secao("5. Visibilidade por papel")
     visao_admin = c.get(f"/produtos/{produto['id']}", headers=admin).text

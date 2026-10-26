@@ -18,6 +18,11 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "httpx>=0.27"]
 
+# Sem isto o `pip install -e .` do CI morre: a descoberta automática acha `app` E `alembic`
+# (e `media`/`estado` na máquina de quem já rodou) como pacotes de topo e se recusa a escolher.
+[tool.setuptools.packages.find]
+include = ["app*"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 # Fixtures e testes precisam do MESMO loop: a engine async e suas conexões ficam presas ao
