@@ -4,7 +4,7 @@ from decimal import Decimal
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import EstoqueInsuficiente, NaoEncontrado, Validacao
+from app.core.exceptions import Duplicado, EstoqueInsuficiente, NaoEncontrado, Validacao
 from app.core.pagination import Pagina, Paginacao
 from app.modules.estoque import movimentos
 from app.modules.estoque.models import StockEntry, TipoMovimento
@@ -29,6 +29,9 @@ class EstoqueService:
     def __init__(self, session: AsyncSession):
         self.session = session
         self.repo = EstoqueRepository(session)
+        #: A última `registrar_entrada` devolveu uma entrada que já existia (ADR-2). É o
+        #: router que lê, para responder 200 em vez de 201.
+        self.replay = False
 
     # ------------------------------------------------------------ entradas
     async def registrar_entrada(self, dados: EntradaIn, usuario: User) -> EntradaOut:
@@ -37,9 +40,12 @@ class EstoqueService:
         Idempotente por client_uuid: o app pode reenviar depois de um timeout sem medo
         de somar o estoque duas vezes.
         """
+        # Lido já: o ramo do IntegrityError faz rollback, que expira o `usuario`, e tocar
+        # `usuario.role` depois estoura MissingGreenlet.
+        grava_custo = pode(usuario.role, Pode.VER_DINHEIRO)
         existente = await self.repo.entrada_por_client_uuid(dados.client_uuid)
         if existente is not None:
-            return await self._montar_entrada(existente)
+            return await self._replay(existente, dados, grava_custo)
 
         variantes = await self.repo.variantes_por_ids([i.variante_id for i in dados.itens])
         desconhecidas = [i.variante_id for i in dados.itens if i.variante_id not in variantes]
@@ -61,14 +67,13 @@ class EstoqueService:
             existente = await self.repo.entrada_por_client_uuid(dados.client_uuid)
             if existente is None:
                 raise
-            return await self._montar_entrada(existente)
+            return await self._replay(existente, dados, grava_custo)
 
         # Custo só é gravado por quem vê dinheiro — a mesma tranca do catálogo
         # (`_custo_permitido`, `atualizar_variante`). A vendedora dá entrada de mercadoria,
         # mas não recebe o custo em resposta nenhuma: um `custo_unitario` vindo dela
         # reescreveria a margem da loja sem ela nunca poder conferir o número. A tela já
         # não mostra o campo; isto aqui é para a requisição que vier por outro caminho.
-        grava_custo = pode(usuario.role, Pode.VER_DINHEIRO)
         itens_por_variante = {i.variante_id: i for i in dados.itens}
         for variante_id in movimentos.ordenar_para_evitar_deadlock(list(itens_por_variante)):
             item = itens_por_variante[variante_id]
@@ -84,6 +89,54 @@ class EstoqueService:
                 observacao=f"Fornecedor: {dados.fornecedor}" if dados.fornecedor else None,
             )
         await self.session.commit()
+        return await self._montar_entrada(entrada)
+
+    async def _replay(
+        self, entrada: StockEntry, dados: EntradaIn, grava_custo: bool
+    ) -> EntradaOut:
+        """Devolve a entrada que este `client_uuid` já gravou — se o pedido for o MESMO.
+
+        A resposta se perde, a pessoa bipa mais sete peças M e reenvia: a tela guarda o
+        uuid até dar certo, então o reenvio leva a chave da entrada que JÁ foi gravada.
+        Devolver a antiga como sucesso descartava as sete em silêncio — e a tela ainda
+        oferecia etiqueta para elas, como se tivessem entrado. O 409 diz que a entrada
+        existe e qual é; o reenvio idêntico continua sendo atendido (ADR-2).
+
+        Confere peças, quantidades e fornecedor. O custo não fica gravado por item na
+        entrada: o que ela gravou foi para a PEÇA, então a peça é quem diz se o custo
+        pedido agora é o mesmo. (De quem não grava custo, o custo nem é conferido: seria
+        ignorado de qualquer jeito.)
+        """
+        movs = await self.repo.movimentos_da_entrada(entrada.id)
+        pedido = sorted((i.variante_id, i.quantidade) for i in dados.itens)
+        gravado = sorted((m.variant_id, m.quantity) for m in movs)
+        mesmo_fornecedor = (dados.fornecedor or "").strip() == (entrada.supplier or "").strip()
+        mesmo_pedido = pedido == gravado and mesmo_fornecedor
+        custos = {
+            i.variante_id: i.custo_unitario for i in dados.itens if i.custo_unitario is not None
+        }
+        if mesmo_pedido and grava_custo and custos:
+            pecas = await self.repo.variantes_por_ids(list(custos))
+            mesmo_pedido = all(
+                pecas[vid].cost_price == custo for vid, custo in custos.items() if vid in pecas
+            )
+        if not mesmo_pedido:
+            pecas = sum(m.quantity for m in movs)
+            # `itens` vai junto para a tela tirar da lista o que JÁ entrou antes de trocar a
+            # chave: só trocar a chave e reenviar a lista inteira somaria de novo as peças
+            # da entrada gravada (10 P + 7 M viravam +20 P em vez de +10).
+            raise Duplicado(
+                f"Esta entrada já foi gravada (entrada #{entrada.id}, {pecas} "
+                f"{'peça' if pecas == 1 else 'peças'}), com outras peças ou outro "
+                "fornecedor.",
+                {
+                    "entrada_id": entrada.id,
+                    "itens": [
+                        {"variante_id": m.variant_id, "quantidade": m.quantity} for m in movs
+                    ],
+                },
+            )
+        self.replay = True
         return await self._montar_entrada(entrada)
 
     async def _montar_entrada(self, entrada: StockEntry) -> EntradaOut:
@@ -131,12 +184,18 @@ class EstoqueService:
         não a rotina de conferir.
         """
         ids = [c.variante_id for c in dados.contagens]
-        variantes = await self.repo.variantes_por_ids(ids)
+        # Peças e saldos TRAVADOS antes de calcular a diferença, nessa ordem e por id.
+        # O inventário SUBSTITUI o saldo pelo contado, mas escreve por soma (delta): lendo
+        # solto, duas contagens iguais (toque duplo, dois aparelhos) liam o mesmo saldo e
+        # aplicavam a diferença duas vezes, e uma venda entre a leitura e a escrita deixava
+        # o saldo e o extrato errados. A trava da peça cobre a que ainda não tem linha de
+        # saldo, onde `FOR UPDATE` não teria o que travar.
+        variantes = await self.repo.variantes_por_ids(ids, travar=True)
         desconhecidas = [i for i in ids if i not in variantes]
         if desconhecidas:
             raise NaoEncontrado("Peça não encontrada.", {"variantes": desconhecidas})
 
-        saldos = await movimentos.saldos_de(self.session, ids)
+        saldos = await movimentos.travar_saldos(self.session, ids)
         contagens: dict[int, ContagemIn] = {c.variante_id: c for c in dados.contagens}
 
         diferencas: list[DiferencaInventario] = []

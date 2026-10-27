@@ -222,10 +222,16 @@ class CatalogoService:
 
     async def excluir_produto(self, produto_id: int) -> None:
         """Soft delete: o produto some do catálogo mas continua explicando vendas antigas."""
+        # Trava a grade e os saldos ANTES de conferir (ADR-30). Conferir solto deixava uma
+        # Entrada do mesmo instante somar estoque numa peça que estava saindo do catálogo
+        # — peças que nenhuma tela alcança mais. Com a trava, quem chega depois espera e
+        # enxerga o que o outro gravou: a exclusão vê o saldo novo e recusa, ou a Entrada
+        # vê a peça excluída e recusa.
+        await self.repo.travar_grade(produto_id)
         produto = await self.repo.produto_por_id(produto_id)
         if produto is None:
             raise NaoEncontrado("Produto não encontrado.")
-        saldos = await movimentos.saldos_de(self.session, [v.id for v in produto.variants])
+        saldos = await movimentos.travar_saldos(self.session, [v.id for v in produto.variants])
         if any(qtd > 0 for qtd in saldos.values()):
             raise OperacaoInvalida(
                 "Este produto ainda tem peças em estoque. Zere o estoque antes de excluir."
@@ -310,8 +316,11 @@ class CatalogoService:
         return variante
 
     async def excluir_variante(self, variante_id: int) -> None:
+        # Peça e saldo travados antes de conferir, como em `excluir_produto` (ADR-30).
+        await self.repo.travar_peca(variante_id)
         variante = await self.obter_variante(variante_id)
-        if await movimentos.saldo_atual(self.session, variante_id) > 0:
+        saldos = await movimentos.travar_saldos(self.session, [variante_id])
+        if saldos.get(variante_id, 0) > 0:
             raise OperacaoInvalida("Esta peça ainda tem estoque. Zere antes de excluir.")
         variante.deleted_at = datetime.now(UTC)
         await self.session.commit()
@@ -355,3 +364,56 @@ class CatalogoService:
             saldo=await movimentos.saldo_atual(self.session, variante.id),
             foto_url=produto.photo_url,
         )
+
+
+# ------------------------------------------------------------ peça que volta (ADR-30)
+async def peca_que_recebe(
+    session: AsyncSession, variante_id: int, *, devolucao: bool
+) -> tuple[int, str | None]:
+    """Em qual peça ATIVA mora a mercadoria que está entrando — e trava essa peça.
+
+    `movimentos.aplicar_movimento` pergunta isto antes de todo movimento POSITIVO.
+    Devolve `(variante_id, nota)`: a peça que recebe e, quando não é a pedida, o porquê,
+    que vai para a observação do extrato.
+
+    Peça excluída do catálogo é invisível e invendável: saldo dela é mercadoria presa no
+    banco que nenhuma tela alcança. A exclusão só vale com saldo zero, mas uma venda feita
+    ANTES dela pode ser cancelada ou devolvida DEPOIS — a peça esgota, a dona tira do
+    catálogo, a cliente traz de volta. Essa peça está de volta na arara, então:
+
+    - outra peça ATIVA com a mesma etiqueta (a dona recadastrou) recebe: mesma etiqueta é
+      a mesma peça, e é ela que o bipe acha;
+    - senão, outra ativa no mesmo produto, tamanho e cor — o UNIQUE da grade diz que é a
+      mesma peça, e reativar a antiga estouraria esse UNIQUE;
+    - senão, a peça (e o produto, se saiu junto) volta ao catálogo.
+
+    Entrada, ajuste e inventário recusam peça excluída na própria tela; se chegam aqui com
+    uma, ela foi excluída enquanto a mercadoria era conferida, e o certo é recusar também.
+    """
+    repo = CatalogoRepository(session)
+    peca = await repo.travar_peca(variante_id)
+    if peca is None:
+        raise NaoEncontrado("Peça não encontrada.", {"variante_id": variante_id})
+    if peca.deleted_at is None:
+        return variante_id, None
+    if not devolucao:
+        raise NaoEncontrado(
+            "Esta peça acabou de ser excluída do catálogo.", {"variante_id": variante_id}
+        )
+
+    mesma_etiqueta = await repo.travar_ativa_por_codigo(peca.barcode)
+    if mesma_etiqueta is not None:
+        return mesma_etiqueta, (
+            f"A peça vendida (#{variante_id}) foi excluída do catálogo; voltou para esta, "
+            f"que tem a mesma etiqueta {peca.barcode}."
+        )
+    mesma_grade = await repo.travar_ativa_da_grade(peca.product_id, peca.size, peca.color)
+    if mesma_grade is not None:
+        return mesma_grade, (
+            f"A peça vendida (#{variante_id}) foi excluída do catálogo; voltou para esta, "
+            "do mesmo produto, tamanho e cor."
+        )
+    await repo.reativar_peca(variante_id, peca.product_id)
+    return variante_id, (
+        "A peça estava excluída do catálogo e voltou para ele: está de volta na arara."
+    )

@@ -347,8 +347,8 @@ export const clientes = {
     const { data } = await api.get<Cliente>(`/clientes/${id}`);
     return data;
   },
-  async extrato(id: number) {
-    const { data } = await api.get<ExtratoCliente>(`/clientes/${id}/extrato`);
+  async extrato(id: number, params: Paginado = {}) {
+    const { data } = await api.get<ExtratoCliente>(`/clientes/${id}/extrato`, { params });
     return data;
   },
   async receber(

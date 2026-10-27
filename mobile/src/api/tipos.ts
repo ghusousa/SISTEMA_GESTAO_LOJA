@@ -410,8 +410,12 @@ export interface VendaEmAberto {
 
 export interface ExtratoCliente {
   cliente: Cliente;
-  vendas: VendaEmAberto[];
-  pagamentos: PagamentoCliente[];
+  /**
+   * As duas listas andam juntas pelo mesmo `?page=&size=`: a página seguinte traz a próxima
+   * leva das duas. Os totais abaixo são da conta inteira, nunca da página.
+   */
+  vendas: Pagina<VendaEmAberto>;
+  pagamentos: Pagina<PagamentoCliente>;
   total_fiado: string;
   total_pago: string;
   total_devolvido: string;

@@ -1,7 +1,7 @@
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Response, status
 
 from app.core.datas import fim_exclusivo_do_dia, inicio_do_dia
 from app.core.deps import CurrentUser, ExigeCancelarVenda, ExigeDevolucao, SessionDep
@@ -31,8 +31,16 @@ router = APIRouter(prefix="/vendas", tags=["vendas"])
     status_code=status.HTTP_201_CREATED,
     summary="Registra uma venda do PDV (atômica e idempotente)",
 )
-async def registrar(session: SessionDep, usuario: CurrentUser, dados: VendaIn) -> VendaOut:
-    return await VendaService(session).registrar(dados, usuario)
+async def registrar(
+    session: SessionDep, usuario: CurrentUser, dados: VendaIn, resposta: Response
+) -> VendaOut:
+    servico = VendaService(session)
+    venda = await servico.registrar(dados, usuario)
+    if servico.replay:
+        # ADR-2: o reenvio responde 200 com a venda que já existia, não 201. É o que deixa
+        # o app (e quem lê o log) distinguir "registrei agora" de "isto já estava lá".
+        resposta.status_code = status.HTTP_200_OK
+    return venda
 
 
 @router.get(
@@ -85,9 +93,17 @@ async def consultar_vale(session: SessionDep, _: CurrentUser, codigo: str) -> Va
     summary="Receber peça de volta (devolução parcial)",
 )
 async def devolver(
-    session: SessionDep, usuario: ExigeDevolucao, venda_id: int, dados: DevolucaoIn
+    session: SessionDep,
+    usuario: ExigeDevolucao,
+    venda_id: int,
+    dados: DevolucaoIn,
+    resposta: Response,
 ) -> DevolucaoOut:
-    return await DevolucaoService(session).devolver(venda_id, dados, usuario)
+    servico = DevolucaoService(session)
+    devolucao = await servico.devolver(venda_id, dados, usuario)
+    if servico.replay:
+        resposta.status_code = status.HTTP_200_OK  # ADR-2, como na venda
+    return devolucao
 
 
 @router.get(

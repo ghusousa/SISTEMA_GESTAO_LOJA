@@ -36,6 +36,10 @@ class AuthService:
         )
 
     async def login(self, email: str, senha: str, ip: str | None = None) -> TokenOut:
+        # Uma tentativa por vez para o mesmo e-mail, até o commit: contar, conferir e gravar
+        # viram um passo só. Sem a fila, uma rajada simultânea passava inteira pela contagem
+        # antes de a primeira falha ser gravada, e o teto de 10 virava 30 (ADR-24).
+        await self.repo.travar_email(email)
         # Antes de conferir a senha, checa a trava: erros demais recentes → 429 sem nem
         # olhar a senha, que é o que torna a força bruta inviável.
         bloqueio = await self.repo.segundos_de_bloqueio(email, ip)
@@ -75,6 +79,11 @@ class AuthService:
             ip=ip,
             status_http=200,
         )
+        # Faxina oportunista: login certo é raro (alguns por dia) e já está escrevendo, então
+        # sai barato aproveitar. Sem ela, tentativas e refresh tokens viravam linha para sempre.
+        agora = datetime.now(UTC)
+        await self.repo.limpar_tentativas_antigas(agora)
+        await self.repo.limpar_expirados(agora)
         tokens = await self._emitir(user, family_id=uuid.uuid4())
         await self.session.commit()
         return tokens
@@ -84,7 +93,9 @@ class AuthService:
         jti = uuid.UUID(payload["jti"])
         family_id = uuid.UUID(payload["fam"])
 
-        armazenado = await self.repo.por_jti(jti)
+        # Trava a linha até o commit: duas renovações com o mesmo token entram em fila, e a
+        # segunda vê o token já revogado pela primeira — é reuso, e a família cai (ADR-12).
+        armazenado = await self.repo.por_jti_travado(jti)
         if armazenado is None:
             raise TokenInvalido()
 

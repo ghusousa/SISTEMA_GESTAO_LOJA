@@ -19,7 +19,7 @@ from decimal import Decimal
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import NaoEncontrado, OperacaoInvalida, Validacao
+from app.core.exceptions import Duplicado, NaoEncontrado, OperacaoInvalida, Validacao
 from app.core.pagination import Pagina, Paginacao
 from app.modules.clientes.models import Customer, CustomerPayment
 from app.modules.clientes.schemas import (
@@ -95,6 +95,9 @@ def _deve_expr():
 class ClienteService:
     def __init__(self, session: AsyncSession):
         self.session = session
+        #: O último `receber` respondeu com um pagamento que já existia (ADR-2): o router
+        #: devolve 200 em vez de 201.
+        self.replay = False
 
     # ------------------------------------------------------------- cadastro
     async def _obter(self, cliente_id: int) -> Customer:
@@ -248,29 +251,50 @@ class ClienteService:
         return await self._com_saldo(await self._obter(cliente_id))
 
     # -------------------------------------------------------------- extrato
-    async def extrato(self, cliente_id: int) -> ExtratoClienteOut:
+    async def _contar(self, stmt: Select) -> int:
+        return int(
+            await self.session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+        )
+
+    async def extrato(self, cliente_id: int, p: Paginacao) -> ExtratoClienteOut:
+        """A conta da cliente: as duas listas paginadas, os totais sobre a vida inteira.
+
+        A freguesa de caderneta antiga tem anos de compras e pagamentos, e mandar tudo numa
+        resposta só pesava mais a cada mês — toda listagem é paginada (CLAUDE.md). As duas
+        listas andam juntas pelo mesmo `?page=&size=`: a tela mostra as mais recentes de
+        cada uma e o "carregar mais" traz a próxima leva das duas. Os totais NÃO saem da
+        página: vêm dos mesmos agregados do `quanto_deve`, senão a conta mudaria conforme o
+        tamanho da página e deixaria de fechar com o "deve" da lista de clientes.
+        """
         cliente = await self._obter(cliente_id)
 
+        vendas = (
+            select(Sale.id, Sale.sold_at, Sale.total, func.sum(SalePayment.amount))
+            .join(SalePayment, SalePayment.sale_id == Sale.id)
+            .where(
+                Sale.customer_id == cliente_id,
+                Sale.status == StatusVenda.CONCLUIDA,
+                SalePayment.method == FormaPagamento.FIADO,
+            )
+            .group_by(Sale.id, Sale.sold_at, Sale.total)
+        )
+        # `id` desempata: duas linhas no mesmo instante trocariam de página entre um
+        # "carregar mais" e outro, e uma apareceria duas vezes enquanto a outra sumia.
         linhas = (
             await self.session.execute(
-                select(Sale.id, Sale.sold_at, Sale.total, func.sum(SalePayment.amount))
-                .join(SalePayment, SalePayment.sale_id == Sale.id)
-                .where(
-                    Sale.customer_id == cliente_id,
-                    Sale.status == StatusVenda.CONCLUIDA,
-                    SalePayment.method == FormaPagamento.FIADO,
-                )
-                .group_by(Sale.id, Sale.sold_at, Sale.total)
-                .order_by(Sale.sold_at.desc())
+                vendas.order_by(Sale.sold_at.desc(), Sale.id.desc())
+                .offset(p.offset)
+                .limit(p.limit)
             )
         ).all()
 
+        pagos = select(CustomerPayment).where(CustomerPayment.customer_id == cliente_id)
         pagamentos = list(
             (
                 await self.session.execute(
-                    select(CustomerPayment)
-                    .where(CustomerPayment.customer_id == cliente_id)
-                    .order_by(CustomerPayment.paid_at.desc())
+                    pagos.order_by(CustomerPayment.paid_at.desc(), CustomerPayment.id.desc())
+                    .offset(p.offset)
+                    .limit(p.limit)
                 )
             )
             .scalars()
@@ -283,13 +307,21 @@ class ClienteService:
 
         return ExtratoClienteOut(
             cliente=await self._com_saldo(cliente),
-            vendas=[
-                VendaEmAbertoOut(
-                    venda_id=vid, vendida_em=quando, total_da_venda=total, no_fiado=fiado
-                )
-                for vid, quando, total, fiado in linhas
-            ],
-            pagamentos=[PagamentoClienteOut.model_validate(p) for p in pagamentos],
+            vendas=Pagina.montar(
+                [
+                    VendaEmAbertoOut(
+                        venda_id=vid, vendida_em=quando, total_da_venda=total, no_fiado=fiado
+                    )
+                    for vid, quando, total, fiado in linhas
+                ],
+                await self._contar(vendas),
+                p,
+            ),
+            pagamentos=Pagina.montar(
+                [PagamentoClienteOut.model_validate(pg) for pg in pagamentos],
+                await self._contar(pagos),
+                p,
+            ),
             total_fiado=total_fiado,
             total_pago=total_pago,
             total_devolvido=devolvido,
@@ -304,6 +336,29 @@ class ClienteService:
             )
         ).scalar_one_or_none()
 
+    def _replay(
+        self, pagamento: CustomerPayment, cliente_id: int, dados: PagamentoClienteIn
+    ) -> PagamentoClienteOut:
+        """Responde o recebimento que este `client_uuid` já gravou — se for o MESMO.
+
+        O uuid é de UM recebimento: desta cliente, deste valor, por esta forma. Responder o
+        gravado para outro pedido com a chave reaproveitada dizia "R$ 50 recebidos" quando
+        entraram R$ 30 — a tela mostra a quitação que a cliente pediu, e a dívida continua
+        do tamanho de antes. Ou dizia PIX quando entrou dinheiro, e a gaveta não fecha.
+        """
+        if (pagamento.customer_id, pagamento.method, pagamento.amount) != (
+            cliente_id,
+            dados.forma,
+            dados.valor,
+        ):
+            raise Duplicado(
+                "Este recebimento já foi gravado com outro valor, forma ou cliente "
+                f"(recebimento #{pagamento.id}). Confira o extrato antes de receber de novo.",
+                {"pagamento_id": pagamento.id},
+            )
+        self.replay = True
+        return PagamentoClienteOut.model_validate(pagamento)
+
     async def receber(
         self, cliente_id: int, dados: PagamentoClienteIn, usuario: User
     ) -> PagamentoClienteOut:
@@ -311,7 +366,7 @@ class ClienteService:
         # reenviada (sinal ruim no meio da rua), e reenviar aqui perdoaria uma dívida.
         ja = await self._recebimento_por_client_uuid(dados.client_uuid)
         if ja is not None:
-            return PagamentoClienteOut.model_validate(ja)
+            return self._replay(ja, cliente_id, dados)
 
         cliente = await self._obter(cliente_id)
         deve = await self.quanto_deve(cliente_id, travar=True)
@@ -323,7 +378,7 @@ class ClienteService:
         # um recebimento que entrou — e quem está no balcão, vendo erro, cobrava de novo.
         ja = await self._recebimento_por_client_uuid(dados.client_uuid)
         if ja is not None:
-            return PagamentoClienteOut.model_validate(ja)
+            return self._replay(ja, cliente_id, dados)
 
         if deve <= ZERO:
             raise OperacaoInvalida("Este cliente não está devendo nada.")

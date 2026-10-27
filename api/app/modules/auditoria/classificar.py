@@ -51,6 +51,7 @@ _REGRAS: list[tuple[str, re.Pattern[str], str, str, str | None]] = [
     ("DELETE", re.compile(r"^/despesas/(\d+)$"), "DESPESA_EXCLUIDA", "Excluiu a despesa #{id}", "despesa"),
     ("POST", re.compile(r"^/despesas/replicar-recorrentes$"), "DESPESAS_REPLICADAS", "Trouxe as contas fixas do mês", "despesa"),
     ("POST", re.compile(r"^/despesas/categorias$"), "CATEGORIA_DESPESA", "Criou uma categoria de despesa", "despesa"),
+    ("PATCH", re.compile(r"^/despesas/categorias/(\d+)$"), "CATEGORIA_DESPESA_EDITADA", "Renomeou a categoria de despesa #{id}", "despesa"),
     ("DELETE", re.compile(r"^/despesas/categorias/(\d+)$"), "CATEGORIA_DESPESA_EXCLUIDA", "Excluiu uma categoria de despesa", "despesa"),
     # caixa
     ("POST", re.compile(r"^/caixa/fechamentos$"), "CAIXA_FECHADO", "Fechou o caixa do dia", "caixa"),
@@ -71,6 +72,9 @@ _REGRAS: list[tuple[str, re.Pattern[str], str, str, str | None]] = [
 _IGNORAR = [
     ("POST", re.compile(r"^/auth/login$")),  # login tem tratamento próprio (sucesso/falha)
     ("POST", re.compile(r"^/auth/refresh$")),  # renovar sessão acontece toda hora, sozinho
+    # Só reserva o próximo número de etiqueta (a sequência anda, nada mais muda). O ato é o
+    # cadastro que vem depois, e esse já tem frase; aqui seria um "OUTRO" a cada peça nova.
+    ("POST", re.compile(r"^/variantes/gerar-codigo-interno$")),
 ]
 
 

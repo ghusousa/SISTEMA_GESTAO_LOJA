@@ -1,33 +1,16 @@
-from sqlalchemy import Select, case, delete, func, or_, select
+from sqlalchemy import Select, case, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.pagination import Paginacao
+from app.modules.catalogo.busca import achatar as _achatar
+from app.modules.catalogo.busca import achatar_termo
 from app.modules.catalogo.models import Category, Product, ProductVariant
 from app.modules.estoque.models import StockBalance
 
-
-#: Acentos que o teclado da loja produz e o dedo apressado não digita. Quem procura a
-#: peça escreve "calca jeans", não "calça jeans" — e sem isto a busca não acha nada, o que
-#: na prática significa cadastrar a mesma peça duas vezes.
-#:
-#: `translate()` do Postgres em vez da extensão `unaccent`: a extensão precisa de
-#: `CREATE EXTENSION` (mais uma migration, mais um privilégio, mais uma coisa para faltar
-#: num servidor novo), e para o alfabeto do português esta tabela resolve igual.
-_COM_ACENTO = "áàâãäéèêëíìîïóòôõöúùûüçñ"
-_SEM_ACENTO = "aaaaaeeeeiiiiooooouuuucn"
-assert len(_COM_ACENTO) == len(_SEM_ACENTO)
-
-
-def _achatar(coluna):
-    """Minúsculas e sem acento, do lado do banco."""
-    return func.translate(func.lower(coluna), _COM_ACENTO, _SEM_ACENTO)
-
-
-def achatar_termo(termo: str) -> str:
-    """O mesmo achatamento do lado de cá, para os dois lados baterem."""
-    tabela = str.maketrans(_COM_ACENTO, _SEM_ACENTO)
-    return termo.strip().lower().translate(tabela)
+# O achatamento sem acento mora em `catalogo/busca.py` (o estoque busca o mesmo nome de
+# produto); fica importado aqui com o nome de sempre para quem já o usava daqui.
+__all__ = ["CatalogoRepository", "_achatar", "achatar_termo"]
 
 
 class CatalogoRepository:
@@ -86,14 +69,15 @@ class CatalogoRepository:
         if categoria_id:
             stmt = stmt.where(Product.category_id == categoria_id)
         if q:
-            termo = f"%{q.strip().lower()}%"
+            # Sem acento, como `/variantes?q=`: "calca" acha a "Calça Jeans".
+            termo = f"%{achatar_termo(q)}%"
             # Busca pelo nome do produto ou por um código de barras da grade — no balcão
             # o vendedor tanto digita o nome quanto tem o código na mão.
             sub = select(ProductVariant.product_id).where(
                 ProductVariant.barcode.like(f"%{q.strip()}%"),
                 ProductVariant.deleted_at.is_(None),
             )
-            stmt = stmt.where(or_(func.lower(Product.name).like(termo), Product.id.in_(sub)))
+            stmt = stmt.where(or_(_achatar(Product.name).like(termo), Product.id.in_(sub)))
         total = await self.session.scalar(select(func.count()).select_from(stmt.subquery()))
         # Product.id como desempate: nome não é único e o OFFSET repetiria registros.
         stmt = stmt.order_by(Product.name, Product.id).offset(p.offset).limit(p.limit)
@@ -182,4 +166,75 @@ class CatalogoRepository:
     async def remover_saldo_zerado(self, variante_id: int) -> None:
         await self.session.execute(
             delete(StockBalance).where(StockBalance.variant_id == variante_id)
+        )
+
+    # ------------------------------------------------------------ travas (ADR-30)
+    # Quem decide "esta peça existe?" e depois escreve no saldo dela trava a LINHA DA PEÇA
+    # primeiro, e só então o saldo — sempre nessa ordem e por id, como o saldo (ADR-1).
+    # `FOR NO KEY UPDATE` (e não `FOR UPDATE`): não briga com o `FOR KEY SHARE` que a FK
+    # de cada venda tira da peça, então vender continua sem esperar ninguém.
+    #
+    # Consulta de COLUNAS, não de objeto: a sessão roda com `autoflush=False`, e recarregar
+    # o objeto apagaria o custo que a Entrada acabou de pôr nele e ainda não gravou.
+
+    async def travar_peca(self, variante_id: int):
+        """Trava a peça (ativa ou excluída) e devolve o que se decide com ela, ou None."""
+        stmt = (
+            select(
+                ProductVariant.id,
+                ProductVariant.product_id,
+                ProductVariant.size,
+                ProductVariant.color,
+                ProductVariant.barcode,
+                ProductVariant.deleted_at,
+            )
+            .where(ProductVariant.id == variante_id)
+            .with_for_update(key_share=True)
+        )
+        return (await self.session.execute(stmt)).one_or_none()
+
+    async def travar_grade(self, produto_id: int) -> None:
+        """Trava TODAS as peças do produto, inclusive as já excluídas.
+
+        As excluídas também: uma devolução pode estar reativando uma delas agora mesmo, e a
+        exclusão do produto precisa esperar para enxergá-la de volta com estoque.
+        """
+        await self.session.execute(
+            select(ProductVariant.id)
+            .where(ProductVariant.product_id == produto_id)
+            .order_by(ProductVariant.id)
+            .with_for_update(key_share=True)
+        )
+
+    async def travar_ativa_por_codigo(self, codigo: str) -> int | None:
+        """Id da peça ATIVA com este código, travada. O filtro é reconferido depois da espera:
+        se ela foi excluída enquanto esperávamos, volta None."""
+        return await self.session.scalar(
+            select(ProductVariant.id)
+            .where(ProductVariant.barcode == codigo, ProductVariant.deleted_at.is_(None))
+            .with_for_update(key_share=True)
+        )
+
+    async def travar_ativa_da_grade(self, produto_id: int, tamanho: str, cor: str) -> int | None:
+        """Id da peça ATIVA com o mesmo produto, tamanho e cor (o UNIQUE da grade), travada."""
+        return await self.session.scalar(
+            select(ProductVariant.id)
+            .where(
+                ProductVariant.product_id == produto_id,
+                ProductVariant.size == tamanho,
+                ProductVariant.color == cor,
+                ProductVariant.deleted_at.is_(None),
+            )
+            .with_for_update(key_share=True)
+        )
+
+    async def reativar_peca(self, variante_id: int, produto_id: int) -> None:
+        """Desfaz a exclusão da peça e, se o produto também saiu, a dele."""
+        await self.session.execute(
+            update(ProductVariant).where(ProductVariant.id == variante_id).values(deleted_at=None)
+        )
+        await self.session.execute(
+            update(Product)
+            .where(Product.id == produto_id, Product.deleted_at.is_not(None))
+            .values(deleted_at=None)
         )

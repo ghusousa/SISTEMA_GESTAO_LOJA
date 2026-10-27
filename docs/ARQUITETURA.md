@@ -242,7 +242,10 @@ cash_closing_lines(id, closing_id FK→cash_closings CASCADE, method CHECK(...),
 ```
 
 Refechar o mesmo dia é um UPDATE do registro (com novo snapshot do esperado). O fechamento é
-conferência: **não bloqueia** vendas nem cancelamentos.
+conferência: **não bloqueia** vendas. Bloqueia uma coisa só: o **cancelamento** de venda do
+dia fechado, que reescreveria o que foi contado — essa venda se desfaz por devolução (ADR-19).
+O snapshot gravado é o MESMO esperado que validou as contagens: uma leitura só, porque com duas
+uma venda no meio delas gravava como falta uma forma que ninguém precisou contar.
 
 ### 2.8 Auditoria e segurança do login
 
@@ -264,8 +267,11 @@ login_attempts(id BIGINT, email, ip, sucesso BOOL, created_at)
 `audit_log` é append-only e nunca é lido por vendedora — só por quem tem `VER_AUDITORIA`
 (ADR-23). `user_id` fica nulo em falha de login (não há usuário) e vira nulo se a conta for
 apagada; o nome/papel congelados preservam o histórico. `login_attempts` alimenta a trava de
-força bruta (ADR-24): a contagem é por janela de 15 min, e uma limpeza periódica descarta o
-que saiu da janela.
+força bruta (ADR-24): a contagem é por janela de 15 min. A faxina é oportunista, no login
+bem-sucedido (raro, e já escrevendo): apaga as tentativas com mais de um dia e os
+`refresh_tokens` **vencidos** há mais de um dia. O revogado ainda dentro da validade fica — é a
+linha dele que denuncia o reuso de uma cópia roubada (ADR-12); vencido, o próprio JWT já é
+recusado pelo `exp` antes de qualquer consulta.
 
 ### 2.9 Identidade da loja
 
@@ -303,6 +309,20 @@ depois de travar a venda (devolução) ou a cliente (recebimento). O retry que c
 primeira tentativa ainda não fez commit passa pela primeira busca sem ver nada e fica parado na
 trava; sem a segunda, ele seguia com a dívida já abatida ("o valor é maior do que a dívida") ou
 batia no UNIQUE (500) — erro na tela para uma operação que aconteceu.
+**O replay confere o pedido.** O `client_uuid` é a chave de UM pedido; a mesma chave com outro
+conteúdo não é retry. A venda confere peças e pagamentos (forma e valor); a devolução, a venda e
+as peças (item, quantidade, volta ao estoque); o recebimento, cliente, forma e valor. Divergiu →
+`409 DUPLICADO` com o id do que já existe (`detail.venda_id`, `devolucao_id`, `pagamento_id`).
+Responder o antigo como sucesso mostrava o recibo de uma cobrança que não aconteceu: a peça
+bipada depois da resposta perdida saía sem baixa, a gaveta esperava PIX onde entrou dinheiro, a
+devolução de outra venda aparecia no comprovante. O reenvio idêntico continua `200`.
+**A entrada de mercadoria confere peças, quantidades, fornecedor e custo** — o custo contra o
+da peça, porque a entrada não o guarda por item: ela o grava na variante. Divergiu →
+`409 DUPLICADO` com `detail.entrada_id`. Antes, a resposta perdida seguida de mais sete peças
+bipadas devolvia `201` com a entrada antiga: as sete não entravam, e a tela ainda oferecia
+etiqueta para elas. Web e celular mantêm a conferência e trocam só a chave, que é da entrada
+que já existe (com ela, todo reenvio cairia no mesmo 409); a mensagem manda conferir o extrato
+e tirar o que já entrou antes de registrar de novo.
 
 **ADR-3 — Desconto só no total da venda.**
 Desconto por item multiplicaria os caminhos de arredondamento (rateio, soma que não fecha, margem por
@@ -373,7 +393,11 @@ recarregar a página reergue a sessão chamando `/auth/refresh` sem corpo nenhum
 sozinho. `/auth/refresh` e `/auth/logout` aceitam o token **no corpo ou no cookie**, então o app do
 celular continua funcionando sem alteração. Um 401 dispara uma renovação compartilhada por todas as
 requisições em voo (mutex): duas rotações simultâneas com o mesmo refresh seriam lidas como token
-roubado e derrubariam a família inteira.
+roubado e derrubariam a família inteira. No servidor isso vale sob concorrência de verdade: o
+`/auth/refresh` lê o token com `SELECT ... FOR UPDATE`, então a segunda renovação espera a
+primeira confirmar e enxerga o token já revogado — é reuso. Sem a trava as duas liam
+`revoked=false`, as duas rotacionavam, e uma cópia roubada que ganhasse a corrida do dono saía
+com sessão própria sem disparar o alarme.
 
 **ADR-13 — O endereço do servidor mora no aparelho, não no instalador.**
 O caminho óbvio seria assar `EXPO_PUBLIC_API_URL` no build, e ele quebra na primeira mudança de
@@ -489,6 +513,13 @@ que "atualizada" quer dizer.
 Duas datas, não uma: "atualizada" de três dias atrás não tranquiliza ninguém, porque o
 timer pode ter morrido ontem. Passadas 24h sem conferir, a tela diz isso em vez de repetir
 uma resposta velha com cara de nova.
+**"Instalada" é o que subiu, não o que está no disco.** O `git reset` troca o código minutos
+antes de o contêiner novo existir; uma morte nesse meio (o `TimeoutStartSec` matando um build
+lento, queda de luz) deixava o HEAD igual ao GitHub com a imagem velha no ar, e toda conferida
+seguinte dizia "nada a fazer" para sempre. O script grava em `docker/estado/implantado` o
+commit que respondeu ao `/health` — o de antes, antes do reset; o novo, só depois do `/health`
+— e compara o GitHub com ele. A execução seguinte a uma morte reconstrói, e a volta atrás
+mira esse commit. Sem o arquivo (instalação nova), vale o HEAD, e o primeiro reset já o cria.
 
 **ADR-19 — Não existe "modo troca": troca é devolução que vira vale, mais uma venda nova.**
 A troca parece uma operação só, e virou muitas telas em muitos sistemas: escolher o que
@@ -501,6 +532,16 @@ código, em `vouchers`, que a próxima venda consome.
 **A devolução é reconhecida no dia em que acontece, não no dia da venda.** Refazer o
 faturamento de terça porque a cliente voltou na sexta é reescrever um caixa que já foi
 conferido e fechado. O relatório mostra bruto e líquido lado a lado.
+**Pelo mesmo motivo, venda de dia com caixa fechado não se cancela — devolve-se.** O caixa e
+o relatório leem a venda pelo dia em que ela aconteceu e só somam as concluídas: cancelar na
+sexta a venda de R$ 100 em dinheiro de terça tirava os R$ 100 do esperado de terça (o dia que
+fechou certinho passava a mostrar sobra) e não punha nada no de sexta (que fechava com a falta
+dos R$ 100 que saíram da gaveta). `POST /vendas/{id}/cancelamento` responde
+`409 OPERACAO_INVALIDA` quando existe fechamento para o dia da venda no fuso da loja, e a
+mensagem manda para a Devolução, que entra no caixa de hoje. A régua é o fechamento, não a
+data: dia que ninguém conferiu ainda pode ser acertado pelo cancelamento. (Cancelar no mesmo
+instante em que alguém fecha aquele dia ainda passa: o fechamento não trava a venda. A janela é
+de milissegundos, e o dia pode ser refechado.)
 **O que volta por cada forma respeita o que entrou por ela.** Uma venda de R$ 200 paga
 metade em dinheiro e metade no cartão devolve metade e metade — devolver tudo em espécie
 tiraria da gaveta um dinheiro que nunca entrou nela. Cartão fica fora do esperado do caixa
@@ -562,6 +603,10 @@ a anterior não sobe, restaura a cópia tirada antes da atualização (o `--rest
 migrado antes, com o que se vendeu no meio tempo). Quem migra é só o `entrada.sh`, ao subir: o
 `atualizar.sh` espera o `/health` em vez de rodar outro `alembic upgrade head`, que corria junto
 com o do contêiner (o alembic não tem trava) e transformava atualização boa em volta atrás.
+Essa cópia de antes passa pelo mesmo `pg_restore -l` do `backup.sh`, com o `pg_restore` do
+contêiner (o da máquina pode ser de outra versão). Sem uma cópia que abra, o `--sim` (o timer)
+**não atualiza**: segue na versão de antes, a tela passa a dizer que há uma nova esperando, e
+só `--sem-backup` explícito pula a cópia. Interativo, o script pergunta.
 
 **ADR-23 — Auditoria na borda, com nome e papel congelados na linha.**
 Quem cuida da loja precisa saber o que cada pessoa fez com o login dela — não para
@@ -572,7 +617,9 @@ vira uma linha em `audit_log`. Um classificador (`classificar.py`) traduz métod
 frase de gente ("Cancelou uma venda", "Deu entrada de mercadoria"); rota que ninguém mapeou
 ainda entra como `OUTRO`, então o diário nunca tem buraco. A linha **congela** o nome e o
 papel de quem agiu (`user_nome`, `user_papel`): renomear ou rebaixar alguém amanhã não pode
-reescrever o que o histórico diz que aconteceu. Ler o diário é a capacidade `VER_AUDITORIA`,
+reescrever o que o histórico diz que aconteceu. O papel congelado é o do **banco** na hora do
+ato, o mesmo que a autorização usou — não o claim do token, que pode ter até 30 min e ainda
+dizer GERENTE de quem já foi rebaixada. Ler o diário é a capacidade `VER_AUDITORIA`,
 que só o dono tem (ADR-15) — nem o gerente entra. Por que na borda e não no service: um
 lugar só, impossível de esquecer ao criar rota nova, e o texto sai do próprio contrato REST.
 A gravação é embrulhada em `try/except` largo: auditoria **nunca** derruba a requisição que
@@ -588,7 +635,15 @@ de **10 falhas para o mesmo e-mail** ou **30 para o mesmo IP**. Dois limites por
 ataque focado numa conta e o outro a varredura de muitas contas do mesmo lugar. A trava é a
 mesma quer o e-mail exista ou não — errar a senha de `admin@loja.com` e bater num e-mail
 inventado dão a mesma resposta e o mesmo tempo, então a tela de login não vira um oráculo de
-"esse cliente é cadastrado?". O IP vem do `X-Forwarded-For` (a API serve atrás do Caddy);
+"esse cliente é cadastrado?". O mesmo tempo é de propósito: e-mail que não existe confere a
+senha contra `HASH_DE_MENTIRA` (`core/security.py`, mesmo custo bcrypt dos de verdade) — sem
+isso ele respondia em 10 ms e a senha errada em 300 ms. O teto vale sob concorrência:
+`pg_advisory_xact_lock` por e-mail põe contar, conferir e gravar a tentativa num passo só até o
+commit; sem a fila, 30 chutes simultâneos passavam todos pela contagem antes de a primeira falha
+ser gravada. E o bcrypt roda numa thread (`verificar_senha_async`/`hash_senha_async`): no event
+loop, cada conferência de ~0,3 s parava o servidor inteiro — PDV, bipagem, WebSocket — e uma
+rajada de logins errados, mesmo dentro da trava, travava o balcão. O IP vem do
+`X-Forwarded-For` (a API serve atrás do Caddy);
 falha de login também entra no diário de auditoria (ADR-23) como `LOGIN_FALHOU`, com
 `user_id` nulo. As mesmas contas de tentativa são a matéria-prima do pentest (`scripts/pentest.py`).
 
@@ -676,6 +731,37 @@ pelo mesmo endpoint, com o mesmo rastro.
 Sobram então DUAS telas que mexem em saldo, com verbos opostos e inconfundíveis: Entrada SOMA,
 Inventário SUBSTITUI.
 
+**ADR-30 — Quem decide pelo saldo trava a peça e o saldo; o que volta da cliente nunca cai
+em peça excluída.**
+Três defeitos com a mesma raiz: decidir com um número lido sem trava e escrever depois.
+O inventário lia o saldo solto e aplicava a diferença por soma — duas contagens de 8 sobre 10
+liam 10 as duas, aplicavam −2 cada uma, e o saldo ia a 6. A exclusão de peça/produto conferia
+"saldo zero" solto, e uma Entrada do mesmo instante somava estoque numa peça que saía do
+catálogo. E a terceira nem precisava de corrida: a peça esgota, a dona a exclui (saldo zero,
+permitido), a venda é cancelada ou devolvida — e as peças voltavam para uma variante excluída,
+fora da tela de Estoque, sem bipe (404) e recusada por Entrada, Ajuste e Inventário.
+**A ordem das travas é uma só: a linha da PEÇA (`product_variants`), depois a do saldo**, as
+duas por id. Inventário trava as peças contadas e os saldos (`movimentos.travar_saldos`, `FOR
+UPDATE`) antes de calcular; a exclusão trava a grade inteira — inclusive as peças já excluídas,
+que uma devolução pode estar reativando — e os saldos antes de conferir; e todo movimento
+**positivo** passa por `catalogo.service.peca_que_recebe`, que trava a peça antes do saldo. A
+trava da peça é `FOR NO KEY UPDATE`: não briga com o `FOR KEY SHARE` que a FK de cada venda tira
+dela, então vender não espera ninguém. É ela que cobre a peça sem linha de saldo (onde `FOR
+UPDATE` não teria o que travar). Quem chega depois enxerga o que o outro gravou: a exclusão vê o
+saldo novo e recusa, ou a Entrada vê a peça excluída e responde 404.
+**Peça que volta da cliente (ESTORNO, DEVOLUCAO) em peça excluída não é recusada** — está
+fisicamente na loja. Se outra peça ativa tem a mesma etiqueta (a dona recadastrou), é ela que
+recebe: mesma etiqueta é a mesma peça, e é ela que o bipe acha. Senão, a ativa do mesmo produto,
+tamanho e cor (o UNIQUE da grade diz que é a mesma peça; reativar a antiga estouraria esse
+UNIQUE). Senão, a peça volta ao catálogo, e o produto junto se saiu com ela. O extrato registra o
+desvio ou a reativação na observação do movimento. Tudo dentro de estoque/catálogo:
+`aplicar_movimento` pergunta ao catálogo (import tardia, porque o catálogo importa
+`movimentos`), e vendas não muda.
+Limites conhecidos: o desvio para a peça de mesma etiqueta pode travar fora da ordem de id —
+duas devoluções cruzadas de várias peças podem, em tese, cair num deadlock, que o Postgres
+desfaz abortando uma delas (que se refaz). A categoria excluída não volta junto com o produto:
+o produto reaparece com o nome da categoria, só fora do filtro por categoria.
+
 ## 4. Contratos de API
 
 Prefixo `/api/v1`. Auth: `Authorization: Bearer <access_token>`.
@@ -713,12 +799,12 @@ Desativar = `PATCH {ativo:false}`. Bootstrap do primeiro admin: `python -m app.c
 |---|---|---|---|
 | GET/POST | `/categorias` | A/V · A | |
 | PATCH/DELETE | `/categorias/{id}` | A | delete é soft; bloqueado se houver produto ativo |
-| GET | `/produtos` | todos | `?q=&categoria_id=`; custo só para quem tem VER_DINHEIRO |
+| GET | `/produtos` | todos | `?q=&categoria_id=` · `q` acha por nome (sem acento, como `/variantes`) ou código da grade; custo só para quem tem VER_DINHEIRO |
 | POST | `/produtos` | A/V | produto + `variantes[]` (com `estoque_inicial?` → gera ENTRADA na mesma transação) |
-| GET/PATCH/DELETE | `/produtos/{id}` | A/V · A · A | detalhe traz variantes com saldo |
+| GET/PATCH/DELETE | `/produtos/{id}` | A/V · A · A | detalhe traz variantes com saldo; DELETE só com saldo zero, conferido com grade e saldos travados (ADR-30) |
 | PUT | `/produtos/{id}/foto` | A/V | multipart, salva em `media/produtos/` |
 | POST | `/produtos/{id}/variantes` | A/V | adiciona variante a produto existente |
-| PATCH/DELETE | `/variantes/{id}` | A | |
+| PATCH/DELETE | `/variantes/{id}` | A | DELETE só com saldo zero, conferido com peça e saldo travados (ADR-30) |
 | GET | `/versao` | A/V | commit instalado, quando foi conferido e se há versão nova; lê `docker/estado/versao.json` |
 | GET | `/variantes` | A/V | `?produto_id=&q=` · `q` acha por **nome do produto, cor ou código** (sem acento, código exato primeiro); a resposta traz `produto` e `saldo` |
 | **GET** | **`/variantes/codigo-barras/{codigo}`** | A/V | lookup do PDV: produto + variante + preço + saldo. 404 → app oferece cadastro rápido |
@@ -727,20 +813,20 @@ Desativar = `PATCH {ativo:false}`. Bootstrap do primeiro admin: `python -m app.c
 ### 4.4 `estoque`
 | método | rota | papel | notas |
 |---|---|---|---|
-| POST | `/estoque/entradas` | A/V | `{client_uuid, fornecedor?, observacao?, itens:[{variante_id, quantidade, custo_unitario?}]}`; `custo_unitario` atualiza o custo da variante — só de quem tem VER_DINHEIRO; dos outros é ignorado, a mesma tranca do catálogo |
+| POST | `/estoque/entradas` | A/V | `{client_uuid, fornecedor?, observacao?, itens:[{variante_id, quantidade, custo_unitario?}]}`; `custo_unitario` atualiza o custo da variante — só de quem tem VER_DINHEIRO; dos outros é ignorado, a mesma tranca do catálogo. Replay → 200; mesma chave com outras peças, quantidades, fornecedor ou custo → 409 com `detail.entrada_id` (ADR-2) |
 | POST | `/estoque/ajustes` | A | `{variante_id, quantidade(±), motivo}` — motivo obrigatório |
-| POST | `/estoque/inventarios` | A | `{observacao?, contagens:[{variante_id, quantidade_contada}]}` → movimentações das diferenças + resumo |
-| GET | `/estoque/saldos` | A/V | `?q=&categoria_id=&somente_baixo=` |
+| POST | `/estoque/inventarios` | A | `{observacao?, contagens:[{variante_id, quantidade_contada}]}` → movimentações das diferenças + resumo. A diferença é calculada com peças e saldos travados (ADR-30) |
+| GET | `/estoque/saldos` | A/V | `?q=&categoria_id=&somente_baixo=` · `q` acha por nome do produto (sem acento, como `/variantes`) ou código |
 | GET | `/estoque/movimentacoes` | A/V | extrato `?variante_id=&tipo=&inicio=YYYY-MM-DD&fim=YYYY-MM-DD` (dias no fuso da loja, ADR-27) |
 
 ### 4.5 `vendas`
 | método | rota | papel | notas |
 |---|---|---|---|
-| POST | `/vendas` | A/V | `{client_uuid, desconto?, observacao?, cliente_id?, itens:[{variante_id, quantidade}], pagamentos:[{forma, valor, codigo_vale?}]}` → venda completa. Atômico. Replay → 200 |
+| POST | `/vendas` | A/V | `{client_uuid, desconto?, observacao?, cliente_id?, itens:[{variante_id, quantidade}], pagamentos:[{forma, valor, codigo_vale?}]}` → venda completa. Atômico. Replay → 200; mesma chave com outras peças ou pagamentos → 409 (ADR-2) |
 | GET | `/vendas` | todos | `?inicio=YYYY-MM-DD&fim=YYYY-MM-DD` (dias no fuso da loja, ADR-27) `&status=&vendedor_id=&variante_id=&cliente_id=`; sem VER_VENDAS_DE_TODOS, o service força as próprias |
 | GET | `/vendas/{id}` | A/V | idem escopo |
-| POST | `/vendas/{id}/cancelamento` | CANCELAR_VENDA | `{motivo}`; dono e gerente — quem vende não desfaz |
-| POST | `/vendas/{id}/devolucoes` | DEVOLVER_VENDA | `{client_uuid, motivo?, itens:[{item_id, quantidade, voltar_ao_estoque?}]}` → devolução com os valores decididos pelo servidor. Replay → 200 |
+| POST | `/vendas/{id}/cancelamento` | CANCELAR_VENDA | `{motivo}`; dono e gerente — quem vende não desfaz. Recusa (409) venda de dia com caixa fechado: devolve-se (ADR-19) |
+| POST | `/vendas/{id}/devolucoes` | DEVOLVER_VENDA | `{client_uuid, motivo?, itens:[{item_id, quantidade, voltar_ao_estoque?}]}` → devolução com os valores decididos pelo servidor. Replay → 200; mesma chave com outra venda ou outras peças → 409 (ADR-2) |
 | GET | `/vendas/{id}/devolucoes` | DEVOLVER_VENDA | o que já voltou desta venda |
 | GET | `/vendas/vales/{codigo}` | A/V | consulta o vale: `{codigo, valor, usado, saldo}` |
 
@@ -755,15 +841,17 @@ entregou R$ 50.
 o caminho começa na peça — "de quais vendas esta peça saiu?" — não no número da venda.
 A tela gera o `client_uuid` com a devolução e o troca quando ela é **gravada** ou quando a
 **venda muda** — reabrir a mesma venda depois de uma resposta perdida mantém o uuid, que é o
-retry. O replay responde pelo uuid sem olhar a venda, e o leitor segue ligado sob o
-comprovante: com um uuid por tela, a peça da próxima cliente bipada ali recebia o comprovante da
-anterior, e a devolução dela não era gravada.
+retry. O replay confere a venda e as peças do pedido (ADR-2) — a mesma chave noutra venda é
+409, não o comprovante da anterior —, e o leitor segue ligado sob o comprovante: com um uuid por
+tela, a peça da próxima cliente bipada ali recebia o comprovante da anterior, e a devolução dela
+não era gravada.
 
 Venda cancelada não pode ter devolução, e venda com devolução não pode ser cancelada: são
 dois caminhos para desfazer a mesma coisa, e deixar os dois abertos devolveria a peça duas
 vezes (ADR-9 diz como isso vale até com as duas chegando juntas). Venda no fiado cujo
 cancelamento deixaria o saldo da cliente negativo (porque ela já pagou) também não se cancela —
-devolve-se (ADR-21).
+devolve-se (ADR-21). E venda de um dia cujo caixa já foi fechado, idem: cancelar reescreveria a
+conferência feita, e a devolução entra no caixa de hoje (ADR-19).
 
 ### 4.6 `clientes` (GERIR_CREDIARIO: dono e gerente)
 | método | rota | notas |
@@ -772,8 +860,8 @@ devolve-se (ADR-21).
 | POST | `/clientes` | `{nome, telefone?, documento?, limite?}` |
 | GET/PATCH | `/clientes/{id}` | |
 | DELETE | `/clientes/{id}` | soft delete; recusa quem ainda deve |
-| GET | `/clientes/{id}/extrato` | compras no fiado, pagamentos, e os três totais que fecham a conta |
-| POST | `/clientes/{id}/pagamentos` | `{forma, valor, client_uuid, observacao?}`; só formas de gaveta, e não aceita mais do que a dívida |
+| GET | `/clientes/{id}/extrato` | `?page=&size=` pagina as DUAS listas juntas: `vendas` (compras no fiado) e `pagamentos` vêm cada uma em `{items, total, page, size}`, mais recentes primeiro; os três totais que fecham a conta (e o `deve`) são da conta inteira, nunca da página |
+| POST | `/clientes/{id}/pagamentos` | `{forma, valor, client_uuid, observacao?}`; só formas de gaveta, e não aceita mais do que a dívida. Replay → 200; mesma chave com outra cliente, forma ou valor → 409 (ADR-2) |
 
 ### 4.7 `despesas` (LANCAR_DESPESA: dono e gerente)
 `GET/POST /despesas/categorias`, `PATCH/DELETE /despesas/categorias/{id}`,
@@ -846,6 +934,9 @@ caixa do dia, sem o resumo do mês. Guarda por capacidade no `_layout`.
   `inventarioStore`. Estado do servidor fica no TanStack Query.
 - `components/BarcodeScanner.tsx`: `CameraView` com `ean13/ean8/code128`; ignora o mesmo código por
   1,5 s e qualquer código por 0,4 s (a câmera dispara vários frames do mesmo bipe); haptics + som.
+- `lib/caixa.ts`: na conferência de caixa, o contado nasce com o esperado e o **acompanha** nos
+  campos que ninguém digitou; a tela refaz a consulta ao focar e logo antes de gravar. Preenchido
+  uma vez só, quem confirmava direto gravava como falta as vendas feitas com a tela aberta.
 
 Fluxo do PDV: bipar → item no carrinho → (qtd/desconto) → cobrar → formas de pagamento (misto,
 com ajuste do centavo na última parcela) → confirma → `POST /vendas` com `client_uuid` → limpa
@@ -860,7 +951,7 @@ módulos ES em `js/`.
 
 | Arquivo | Papel |
 |---|---|
-| `js/api.js` | `fetch` com access token em memória, renovação sob mutex no 401, erros já traduzidos em `{code, message}` |
+| `js/api.js` | `fetch` com access token em memória, renovação sob mutex no 401, erros já traduzidos em `{code, message}`. Só 401/403 do refresh derruba a sessão (e o carrinho); rede caída ou 5xx falha como rede e a sessão fica — a regra de `mobile/src/lib/renovacao.ts` |
 | `js/router.js` | Roteador por hash (`#/produtos/12`), views carregadas sob demanda com `import()`, guarda por papel |
 | `js/store.js` | Sessão e carrinho do PDV — um objeto e quem quiser ser avisado se inscreve. Carrinho e conferência saem com a sessão (`limparTudoDaSessao`), no botão Sair **e** quando ela cai |
 | `js/ui.js` | Template `html` com escape automático, modal, avisos, paginação, formatação pt-BR, campo de dinheiro |
@@ -890,7 +981,8 @@ mesmo que mostrasse a tela, a API responderia 403.
 ## 7. Testes
 
 `pytest` contra Postgres real (`loja_test`), migrations aplicadas, transação por teste.
-Cenários obrigatórios: rotação de refresh e detecção de reuso · vendedor não recebe `preco_custo` e
+Cenários obrigatórios: rotação de refresh e detecção de reuso (também com duas renovações
+simultâneas) · trava de força bruta sob rajada simultânea · vendedor não recebe `preco_custo` e
 leva 403 em despesas/relatórios · venda atômica (falha em um item não grava nada) · estorno devolve
 estoque · duas vendas concorrentes do último item → uma falha `ESTOQUE_INSUFICIENTE` · replay de
 `client_uuid` não duplica · soma de pagamentos ≠ total → `PAGAMENTO_DIVERGENTE` · replicar recorrentes

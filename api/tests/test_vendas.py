@@ -250,9 +250,102 @@ async def test_reenvio_da_mesma_venda_nao_duplica(
     primeira = await client.post("/vendas", headers=auth_vendedor, json=payload)
     segunda = await client.post("/vendas", headers=auth_vendedor, json=payload)
 
+    # ADR-2: o reenvio responde 200 com a venda que já existia — 201 é só de quem criou.
+    assert (primeira.status_code, segunda.status_code) == (201, 200)
     assert primeira.json()["id"] == segunda.json()["id"]
     assert await _saldo(client, auth_vendedor, loja["camiseta"]) == 8
     assert (await client.get("/vendas", headers=auth_vendedor)).json()["total"] == 1
+
+
+async def test_reenvio_que_perde_a_corrida_devolve_a_vencedora_sem_500(
+    client: AsyncClient, auth_vendedor: dict[str, str], loja: dict, monkeypatch
+) -> None:
+    """Os dois POSTs da mesma venda passam juntos pela checagem do `client_uuid`.
+
+    O perdedor só descobre no INSERT (IntegrityError), faz rollback e responde a vencedora.
+    O rollback expira o `usuario` da sessão, e ler `usuario.role` depois dele em sessão
+    async é MissingGreenlet: o ramo que existe para a corrida dava 500 justo nela. Aqui a
+    corrida é forçada sem relógio: a primeira checagem "não vê" a venda que já existe.
+    """
+    from app.modules.vendas.repository import VendaRepository
+
+    payload = {
+        "client_uuid": str(uuid.uuid4()),
+        "itens": [{"variante_id": loja["camiseta"], "quantidade": 1}],
+        "pagamentos": [{"forma": "PIX", "valor": "49.90"}],
+    }
+    primeira = await client.post("/vendas", headers=auth_vendedor, json=payload)
+    assert primeira.status_code == 201, primeira.text
+
+    original = VendaRepository.por_client_uuid
+    chamadas = 0
+
+    async def cega_na_primeira(self, client_uuid):
+        nonlocal chamadas
+        chamadas += 1
+        return None if chamadas == 1 else await original(self, client_uuid)
+
+    monkeypatch.setattr(VendaRepository, "por_client_uuid", cega_na_primeira)
+    perdedora = await client.post("/vendas", headers=auth_vendedor, json=payload)
+
+    assert chamadas == 2, "a corrida tem de passar pelo ramo do IntegrityError"
+    assert perdedora.status_code == 200, perdedora.text
+    assert perdedora.json()["id"] == primeira.json()["id"]
+    assert await _saldo(client, auth_vendedor, loja["camiseta"]) == 9
+
+
+async def test_reenvio_com_outro_carrinho_e_recusado_e_nao_devolve_a_venda_antiga(
+    client: AsyncClient, auth_vendedor: dict[str, str], loja: dict
+) -> None:
+    """A resposta se perdeu e a moça mudou a cobrança antes de mandar de novo.
+
+    Com o mesmo `client_uuid`, o servidor devolvia a venda antiga como sucesso: a tela
+    mostrava o recibo de uma cobrança que não aconteceu — a peça a mais saía sem baixa de
+    estoque, e a gaveta esperava PIX onde entrou dinheiro. Agora é 409, com o número da
+    venda que já existe; o reenvio idêntico continua sendo replay.
+    """
+    chave = str(uuid.uuid4())
+    primeira = await client.post(
+        "/vendas",
+        headers=auth_vendedor,
+        json={
+            "client_uuid": chave,
+            "itens": [{"variante_id": loja["camiseta"], "quantidade": 1}],
+            "pagamentos": [{"forma": "PIX", "valor": "49.90"}],
+        },
+    )
+    assert primeira.status_code == 201, primeira.text
+
+    outra_forma = await client.post(
+        "/vendas",
+        headers=auth_vendedor,
+        json={
+            "client_uuid": chave,
+            "itens": [{"variante_id": loja["camiseta"], "quantidade": 1}],
+            "pagamentos": [{"forma": "DINHEIRO", "valor": "49.90"}],
+        },
+    )
+    mais_pecas = await client.post(
+        "/vendas",
+        headers=auth_vendedor,
+        json={
+            "client_uuid": chave,
+            "itens": [
+                {"variante_id": loja["camiseta"], "quantidade": 1},
+                {"variante_id": loja["calca"], "quantidade": 1},
+            ],
+            "pagamentos": [{"forma": "PIX", "valor": "199.80"}],
+        },
+    )
+    for resposta in (outra_forma, mais_pecas):
+        assert resposta.status_code == 409, resposta.text
+        assert resposta.json()["code"] == "DUPLICADO"
+        assert resposta.json()["detail"]["venda_id"] == primeira.json()["id"]
+
+    assert await _saldo(client, auth_vendedor, loja["camiseta"]) == 9
+    assert await _saldo(client, auth_vendedor, loja["calca"]) == 1
+    venda = (await client.get(f"/vendas/{primeira.json()['id']}", headers=auth_vendedor)).json()
+    assert venda["pagamentos"] == [{"forma": "PIX", "valor": "49.90"}]
 
 
 async def test_duas_vendas_simultaneas_da_ultima_peca_so_uma_passa(

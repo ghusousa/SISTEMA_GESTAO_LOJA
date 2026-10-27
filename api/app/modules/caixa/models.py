@@ -20,8 +20,9 @@ from app.core.db import Base, TimestampMixin
 class CashClosing(Base, TimestampMixin):
     """Conferência do dia: o que o sistema esperava por forma de pagamento x o que foi contado.
 
-    É registro de conferência — não bloqueia vendas nem cancelamentos. Refechar o mesmo dia
-    atualiza o registro com um novo snapshot do esperado.
+    É registro de conferência — não bloqueia vendas. Bloqueia só o cancelamento de venda do
+    dia fechado, que reescreveria o que foi contado; a devolução entra no caixa de hoje
+    (ADR-19). Refechar o mesmo dia atualiza o registro com um novo snapshot do esperado.
     """
 
     __tablename__ = "cash_closings"

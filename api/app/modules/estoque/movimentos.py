@@ -9,7 +9,10 @@ Invariantes garantidas aqui:
 - o UPDATE é atômico por linha (`quantity + delta` no próprio banco), então duas vendas
   simultâneas da última peça serializam sozinhas;
 - o CHECK `quantity >= 0` é a rede de segurança: quem perder a corrida recebe erro,
-  nunca estoque negativo.
+  nunca estoque negativo;
+- mercadoria que ENTRA (delta positivo) só entra em peça ativa: antes do saldo, o catálogo
+  trava a peça e diz qual a recebe (`catalogo.service.peca_que_recebe`, ADR-30). É a única
+  pergunta que este módulo faz ao catálogo, e por isso a import é tardia.
 """
 
 from sqlalchemy import select, update
@@ -39,6 +42,35 @@ async def saldos_de(session: AsyncSession, variante_ids: list[int]) -> dict[int,
     return {vid: qtd for vid, qtd in linhas.all()}
 
 
+async def travar_saldos(session: AsyncSession, variante_ids: list[int]) -> dict[int, int]:
+    """Os saldos lidos COM trava (`FOR UPDATE`), em ordem de variant_id.
+
+    Para quem decide pelo número antes de escrever: o inventário, que SUBSTITUI o saldo
+    pelo contado, e a exclusão, que só vale com saldo zero. Ler solto e escrever depois
+    deixava outra transação passar no meio: duas contagens de 8 sobre um saldo de 10 liam
+    10 as duas, aplicavam -2 cada uma, e o saldo ia a 6.
+
+    Peça que nunca movimentou não tem linha de saldo, e `FOR UPDATE` sem linha não trava
+    nada: por isso quem chama trava a PEÇA antes (ADR-30), e é essa trava que segura a
+    primeira entrada de uma peça sem saldo.
+    """
+    ids = ordenar_para_evitar_deadlock(variante_ids)
+    if not ids:
+        return {}
+    linhas = await session.execute(
+        select(StockBalance.variant_id, StockBalance.quantity)
+        .where(StockBalance.variant_id.in_(ids))
+        .order_by(StockBalance.variant_id)
+        .with_for_update()
+    )
+    return {vid: qtd for vid, qtd in linhas.all()}
+
+
+#: A mercadoria que volta da cliente. Se a peça saiu do catálogo depois da venda, ela não
+#: pode ser recusada — está fisicamente de volta na loja (ADR-30).
+_VOLTA_DA_CLIENTE = frozenset({TipoMovimento.ESTORNO, TipoMovimento.DEVOLUCAO})
+
+
 async def aplicar_movimento(
     session: AsyncSession,
     *,
@@ -58,6 +90,18 @@ async def aplicar_movimento(
     """
     if delta == 0:
         raise ValueError("Movimentação com quantidade zero não faz sentido.")
+
+    if delta > 0:
+        # Antes do saldo, a peça: travada, e ativa (ADR-30). Sem isto, a devolução de uma
+        # venda de produto já excluído punha as peças numa peça invisível e invendável.
+        # Import tardia: o catálogo importa este módulo.
+        from app.modules.catalogo.service import peca_que_recebe
+
+        variante_id, nota = await peca_que_recebe(
+            session, variante_id, devolucao=tipo in _VOLTA_DA_CLIENTE
+        )
+        if nota:
+            observacao = f"{observacao} — {nota}" if observacao else nota
 
     # UPDATE primeiro, INSERT só se a peça ainda não tem linha de saldo. Um
     # `INSERT ... ON CONFLICT DO UPDATE` não serve aqui: o Postgres avalia o CHECK do

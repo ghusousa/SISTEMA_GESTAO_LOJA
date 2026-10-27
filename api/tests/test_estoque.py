@@ -1,7 +1,14 @@
+import asyncio
+import time
 import uuid
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import text
+
+from app.core.db import SessionLocal, engine
+from app.modules.estoque import movimentos
+from app.modules.estoque.models import TipoMovimento
 
 from conftest import criar_produto
 
@@ -302,3 +309,152 @@ async def test_extrato_mostra_autor_e_produto(
     assert movimento["produto"] == "Camiseta Lisa"
     assert movimento["usuario"] == "Dona Maria"
     assert movimento["codigo_barras"] == "7891111111117"
+
+
+# ------------------------------------------------------------ idempotência (ADR-2)
+async def test_reenvio_identico_da_entrada_responde_200(
+    client: AsyncClient, auth_vendedor: dict[str, str], grade: dict
+) -> None:
+    """ADR-2: o replay devolve 200 com o que já existe. Com 201 nas duas, o app não tinha
+    como saber que foi replay."""
+    payload = {
+        "client_uuid": str(uuid.uuid4()),
+        "itens": [{"variante_id": grade["M"], "quantidade": 1}],
+    }
+    primeira = await client.post("/estoque/entradas", headers=auth_vendedor, json=payload)
+    segunda = await client.post("/estoque/entradas", headers=auth_vendedor, json=payload)
+    assert (primeira.status_code, segunda.status_code) == (201, 200)
+    assert segunda.json()["id"] == primeira.json()["id"]
+
+
+async def test_mesma_chave_com_outras_pecas_e_recusada_e_nao_some_em_silencio(
+    client: AsyncClient, auth_admin: dict[str, str], grade: dict
+) -> None:
+    """A resposta se perde, a pessoa bipa mais 7 peças M e reenvia com a mesma chave.
+
+    Antes: 201 com a entrada antiga, as 7 M não entravam e a tela oferecia etiqueta para
+    elas. Agora: 409 com o número da entrada que já existe; e o reenvio idêntico segue 200.
+    """
+    chave = str(uuid.uuid4())
+    primeira = await client.post(
+        "/estoque/entradas",
+        headers=auth_admin,
+        json={"client_uuid": chave, "itens": [{"variante_id": grade["P"], "quantidade": 2}]},
+    )
+    assert primeira.status_code == 201
+
+    divergentes = [
+        # mais uma peça na lista
+        {"itens": [
+            {"variante_id": grade["P"], "quantidade": 2},
+            {"variante_id": grade["M"], "quantidade": 7},
+        ]},
+        # outra quantidade
+        {"itens": [{"variante_id": grade["P"], "quantidade": 3}]},
+        # outro fornecedor
+        {"fornecedor": "Malharia Nova", "itens": [{"variante_id": grade["P"], "quantidade": 2}]},
+        # outro custo (a peça custa 20,00)
+        {"itens": [{"variante_id": grade["P"], "quantidade": 2, "custo_unitario": "26.00"}]},
+    ]
+    for corpo in divergentes:
+        resp = await client.post(
+            "/estoque/entradas", headers=auth_admin, json={"client_uuid": chave, **corpo}
+        )
+        assert resp.status_code == 409, (corpo, resp.status_code, resp.text)
+        assert resp.json()["code"] == "DUPLICADO"
+        assert resp.json()["detail"]["entrada_id"] == primeira.json()["id"]
+        # O que JÁ entrou vai junto: a tela tira da lista antes de trocar a chave, senão o
+        # reenvio somava de novo as 2 P gravadas.
+        assert resp.json()["detail"]["itens"] == [{"variante_id": grade["P"], "quantidade": 2}]
+
+    saldos = (await client.get("/estoque/saldos", headers=auth_admin)).json()
+    por_variante = {s["variante_id"]: s for s in saldos["items"]}
+    assert por_variante[grade["P"]]["saldo"] == 7  # 5 + 2, uma vez só
+    assert por_variante[grade["M"]]["saldo"] == 0
+    assert por_variante[grade["P"]]["preco_custo"] == "20.00"
+
+    identica = await client.post(
+        "/estoque/entradas",
+        headers=auth_admin,
+        json={"client_uuid": chave, "itens": [{"variante_id": grade["P"], "quantidade": 2}]},
+    )
+    assert identica.status_code == 200
+    assert identica.json()["id"] == primeira.json()["id"]
+
+
+# ------------------------------------------------------------ concorrência (ADR-30)
+async def _esperar_alguem_na_trava(tarefa: asyncio.Task, limite: float = 10.0) -> None:
+    """Espera a requisição ficar PARADA numa trava do banco (ou terminar sem parar).
+
+    A ordem é forçada pela trava, não por relógio: a outra sessão segura a linha e só
+    confirma depois de ver a requisição esperando por ela. Cada volta abre conexão nova
+    porque `pg_stat_activity` é uma foto por transação. Se a tarefa terminar antes, é o
+    defeito: ela não esperou ninguém.
+    """
+    prazo = time.monotonic() + limite
+    while not tarefa.done():
+        async with engine.connect() as observador:
+            esperando = await observador.scalar(
+                text(
+                    "SELECT count(*) FROM pg_stat_activity "
+                    "WHERE datname = current_database() AND wait_event_type = 'Lock'"
+                )
+            )
+        if esperando:
+            return
+        assert time.monotonic() < prazo, "a requisição nunca chegou à trava"
+        await asyncio.sleep(0.01)  # intervalo da consulta, não da ordem
+
+
+async def test_inventario_simultaneo_nao_aplica_a_diferenca_duas_vezes(
+    client: AsyncClient, auth_admin: dict[str, str], admin, grade: dict
+) -> None:
+    """Duas contagens iguais (toque duplo, dois aparelhos): P tem 5, as duas contaram 3.
+
+    A primeira já aplicou o seu -2 e ainda não confirmou. Antes, a segunda lia o saldo
+    sem trava (5), calculava -2 também e, quando a primeira soltava a linha, aplicava por
+    cima: saldo 1. O inventário SUBSTITUI — contou 3, o saldo é 3.
+    """
+    corpo = {"contagens": [{"variante_id": grade["P"], "quantidade_contada": 3}]}
+    async with SessionLocal() as primeira:
+        await movimentos.aplicar_movimento(
+            primeira,
+            variante_id=grade["P"],
+            delta=-2,
+            tipo=TipoMovimento.INVENTARIO,
+            user_id=admin.id,
+            observacao="Acerto por contagem física",
+        )
+        segunda = asyncio.create_task(
+            client.post("/estoque/inventarios", headers=auth_admin, json=corpo)
+        )
+        try:
+            await _esperar_alguem_na_trava(segunda)
+        finally:
+            await primeira.commit()
+    resp = await segunda
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["ajustadas"] == 0, resp.json()
+    saldos = (await client.get("/estoque/saldos", headers=auth_admin)).json()
+    por_variante = {s["variante_id"]: s["saldo"] for s in saldos["items"]}
+    assert por_variante[grade["P"]] == 3
+
+
+# ------------------------------------------------------------ busca
+async def test_busca_de_saldos_ignora_acento(
+    client: AsyncClient, auth_admin: dict[str, str], grade: dict
+) -> None:
+    """O mesmo achatamento de `/variantes?q=`: "calca" acha a "Calça" também no Estoque."""
+    await criar_produto(client, auth_admin, {
+        "categoria_id": grade["categoria_id"],
+        "nome": "Calça Jeans",
+        "variantes": [
+            {"tamanho": "38", "cor": "Índigo", "preco_custo": "50.00", "preco_venda": "129.90"},
+            {"tamanho": "40", "cor": "Índigo", "preco_custo": "50.00", "preco_venda": "129.90"},
+        ],
+    })
+    for termo in ("calca", "CALÇA", "Calca Jeans"):
+        resp = await client.get("/estoque/saldos", headers=auth_admin, params={"q": termo})
+        assert resp.status_code == 200
+        assert resp.json()["total"] == 2, f"'{termo}' não achou a calça"

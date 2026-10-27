@@ -188,9 +188,28 @@ export async function render(raiz, _params, consulta) {
 
   /* -------------------------------------------------------------- extrato */
 
+  // Compras e pagamentos vêm paginados juntos (o mesmo ?page=&size=): "Carregar mais" traz a
+  // próxima leva das duas listas. Os totais do topo são da conta inteira, nunca da página —
+  // a caderneta de anos não desce numa resposta só, e a conta continua fechando.
+  const linhaVenda = (v) => html`
+    <tr>
+      <td><a href="#/vendas/${v.venda_id}">Venda #${v.venda_id}</a></td>
+      <td>${formatarData(v.vendida_em)}</td>
+      <td class="direita dinheiro">${formatar(paraCentavos(v.no_fiado))}</td>
+    </tr>`;
+  const linhaPagamento = (p) => html`
+    <tr>
+      <td>${formatarData(p.pago_em)}</td>
+      <td>${p.forma.toLowerCase()}</td>
+      <td class="direita dinheiro">${formatar(paraCentavos(p.valor))}</td>
+    </tr>`;
+  const temMais = ({ vendas, pagamentos }) =>
+    vendas.page * vendas.size < Math.max(vendas.total, pagamentos.total);
+
   async function abrirExtrato(clienteId) {
+    const buscar = (page) => api.get(`/clientes/${clienteId}/extrato`, { page, size: 20 });
     try {
-      const extrato = await api.get(`/clientes/${clienteId}/extrato`);
+      const extrato = await buscar(1);
       modal({
         titulo: extrato.cliente.nome,
         largura: '620px',
@@ -201,43 +220,37 @@ export async function render(raiz, _params, consulta) {
             <div class="pdv__total"><span>Deve</span><strong class="dinheiro">${formatar(paraCentavos(extrato.deve))}</strong></div>
 
             <h3 style="margin-top:16px">Compras no fiado</h3>
-            ${extrato.vendas.length
-              ? cru(html`
-                  <table>
-                    <tbody>
-                      ${extrato.vendas.map(
-                        (v) => html`
-                          <tr>
-                            <td><a href="#/vendas/${v.venda_id}">Venda #${v.venda_id}</a></td>
-                            <td>${formatarData(v.vendida_em)}</td>
-                            <td class="direita dinheiro">${formatar(paraCentavos(v.no_fiado))}</td>
-                          </tr>
-                        `,
-                      )}
-                    </tbody>
-                  </table>
-                `)
+            ${extrato.vendas.total
+              ? cru(html`<table><tbody data-vendas>${extrato.vendas.items.map(linhaVenda)}</tbody></table>`)
               : cru('<p class="texto-suave">Nenhuma.</p>')}
 
             <h3 style="margin-top:16px">Pagamentos</h3>
-            ${extrato.pagamentos.length
-              ? cru(html`
-                  <table>
-                    <tbody>
-                      ${extrato.pagamentos.map(
-                        (p) => html`
-                          <tr>
-                            <td>${formatarData(p.pago_em)}</td>
-                            <td>${p.forma.toLowerCase()}</td>
-                            <td class="direita dinheiro">${formatar(paraCentavos(p.valor))}</td>
-                          </tr>
-                        `,
-                      )}
-                    </tbody>
-                  </table>
-                `)
+            ${extrato.pagamentos.total
+              ? cru(html`<table><tbody data-pagamentos>${extrato.pagamentos.items.map(linhaPagamento)}</tbody></table>`)
               : cru('<p class="texto-suave">Ainda não pagou nada.</p>')}
+            ${temMais(extrato)
+              ? cru('<button class="botao botao--neutro botao--largo" style="margin-top:12px" data-mais>Carregar mais</button>')
+              : ''}
         `,
+        aoAbrir: (corpo) => {
+          const mais = corpo.querySelector('[data-mais]');
+          let ultima = extrato;
+          mais?.addEventListener('click', async () => {
+            mais.disabled = true;
+            try {
+              ultima = await buscar(ultima.vendas.page + 1);
+              corpo.querySelector('[data-vendas]')
+                ?.insertAdjacentHTML('beforeend', ultima.vendas.items.map(linhaVenda).join(''));
+              corpo.querySelector('[data-pagamentos]')
+                ?.insertAdjacentHTML('beforeend', ultima.pagamentos.items.map(linhaPagamento).join(''));
+              if (!temMais(ultima)) mais.remove();
+            } catch (erro) {
+              avisarErro(erro);
+            } finally {
+              mais.disabled = false;
+            }
+          });
+        },
       });
     } catch (erro) {
       avisarErro(erro);

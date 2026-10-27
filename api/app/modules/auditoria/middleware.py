@@ -81,7 +81,11 @@ class AuditoriaMiddleware(BaseHTTPMiddleware):
                 AuditoriaRepository(sessao).registrar(
                     user_id=user_id,
                     user_nome=nome,
-                    user_papel=papel or (usuario.role if usuario else None),
+                    # O papel do BANCO, não o do token: o claim é de quando o token saiu (até
+                    # 30 min atrás) e a autorização já usa o do banco. Rebaixada de gerente a
+                    # vendedora, o ato seguinte dela não pode entrar no diário como GERENTE.
+                    # O claim só serve se a conta nem existir mais.
+                    user_papel=usuario.role if usuario else (papel or None),
                     acao=ato.acao,
                     descricao=ato.descricao,
                     metodo=request.method,

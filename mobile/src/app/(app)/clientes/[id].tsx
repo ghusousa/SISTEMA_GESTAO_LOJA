@@ -8,7 +8,7 @@
  * sai do lugar no dia em que alguém esquece de atualizar.
  */
 
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
@@ -50,9 +50,18 @@ export default function ClienteDetalhe() {
   const podeReceber = pode(useAuthStore((e) => e.usuario?.papel), PODE.GERIR_CREDIARIO);
   const [recebendo, setRecebendo] = useState(false);
 
-  const extrato = useQuery({
+  // Compras e pagamentos vêm paginados juntos (o mesmo ?page=&size=): "Carregar mais" traz
+  // a próxima leva das duas listas. A caderneta de anos não desce numa resposta só, e os
+  // totais continuam sendo da conta inteira — iguais em toda página.
+  const extrato = useInfiniteQuery({
     queryKey: chaves.extratoCliente(clienteId),
-    queryFn: () => clientes.extrato(clienteId),
+    initialPageParam: 1,
+    queryFn: ({ pageParam }) => clientes.extrato(clienteId, { page: pageParam, size: 20 }),
+    getNextPageParam: (ultima) =>
+      ultima.vendas.page * ultima.vendas.size <
+      Math.max(ultima.vendas.total, ultima.pagamentos.total)
+        ? ultima.vendas.page + 1
+        : undefined,
     enabled: Number.isFinite(clienteId),
   });
 
@@ -66,7 +75,9 @@ export default function ClienteDetalhe() {
     );
   }
 
-  const e = extrato.data;
+  const e = extrato.data.pages[0];
+  const comprasNoFiado = extrato.data.pages.flatMap((p) => p.vendas.items);
+  const pagamentosFeitos = extrato.data.pages.flatMap((p) => p.pagamentos.items);
   const deve = paraCentavos(e.deve);
 
   return (
@@ -75,7 +86,7 @@ export default function ClienteDetalhe() {
         contentContainerStyle={s.conteudo}
         refreshControl={
           <RefreshControl
-            refreshing={extrato.isRefetching}
+            refreshing={extrato.isRefetching && !extrato.isFetchingNextPage}
             onRefresh={() => void extrato.refetch()}
           />
         }
@@ -104,10 +115,10 @@ export default function ClienteDetalhe() {
         </Cartao>
 
         <Text style={s.secao}>Compras no fiado</Text>
-        {e.vendas.length === 0 ? (
+        {comprasNoFiado.length === 0 ? (
           <Text style={s.vazio}>Nenhuma.</Text>
         ) : (
-          e.vendas.map((v) => (
+          comprasNoFiado.map((v) => (
             <Pressable
               key={v.venda_id}
               style={({ pressed }) => [s.item, pressed && s.itemPressionado]}
@@ -128,10 +139,10 @@ export default function ClienteDetalhe() {
         )}
 
         <Text style={s.secao}>Pagamentos</Text>
-        {e.pagamentos.length === 0 ? (
+        {pagamentosFeitos.length === 0 ? (
           <Text style={s.vazio}>Ainda não pagou nada.</Text>
         ) : (
-          e.pagamentos.map((p) => (
+          pagamentosFeitos.map((p) => (
             <View key={p.id} style={s.item}>
               <View style={s.itemTexto}>
                 <Text style={s.itemNome}>{ROTULO_FORMA[p.forma] ?? p.forma}</Text>
@@ -144,6 +155,15 @@ export default function ClienteDetalhe() {
               </Text>
             </View>
           ))
+        )}
+
+        {extrato.hasNextPage && (
+          <Botao
+            titulo="Carregar mais"
+            variante="secundario"
+            carregando={extrato.isFetchingNextPage}
+            onPress={() => void extrato.fetchNextPage()}
+          />
         )}
       </ScrollView>
 

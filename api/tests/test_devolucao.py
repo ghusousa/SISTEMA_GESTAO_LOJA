@@ -279,8 +279,62 @@ async def test_devolucao_e_idempotente(client, auth_admin) -> None:
     primeira = await client.post(f"/vendas/{venda['id']}/devolucoes", headers=auth_admin, json=corpo)
     segunda = await client.post(f"/vendas/{venda['id']}/devolucoes", headers=auth_admin, json=corpo)
     assert primeira.status_code == 201
-    assert segunda.status_code in (200, 201)
+    assert segunda.status_code == 200, "ADR-2: o reenvio responde 200 com a que já existia"
     assert segunda.json()["id"] == primeira.json()["id"]
+
+
+async def test_uuid_de_devolucao_reaproveitado_em_outro_pedido_e_recusado(
+    client, auth_admin
+) -> None:
+    """O mesmo `client_uuid` para OUTRA venda (ou outras peças) não é replay.
+
+    Devolver a gravada sem conferir respondia sucesso com a devolução de outra venda: a tela
+    mostrava o comprovante alheio, e a peça que a cliente trouxe não voltava ao estoque nem
+    o dinheiro dela saía. Agora é 409, e nada muda nas duas vendas.
+    """
+    variante = await _peca(client, auth_admin, "Blusa Chave", "60.00", "20.00")
+    venda_a = await _vender(
+        client, auth_admin, variante, 2, [{"forma": "DINHEIRO", "valor": "120.00"}]
+    )
+    venda_b = await _vender(
+        client, auth_admin, variante, 2, [{"forma": "DINHEIRO", "valor": "120.00"}]
+    )
+    chave = str(uuid.uuid4())
+    primeira = await client.post(
+        f"/vendas/{venda_a['id']}/devolucoes",
+        headers=auth_admin,
+        json={
+            "client_uuid": chave,
+            "itens": [{"item_id": venda_a["itens"][0]["id"], "quantidade": 1}],
+        },
+    )
+    assert primeira.status_code == 201, primeira.text
+
+    outra_venda = await client.post(
+        f"/vendas/{venda_b['id']}/devolucoes",
+        headers=auth_admin,
+        json={
+            "client_uuid": chave,
+            "itens": [{"item_id": venda_b["itens"][0]["id"], "quantidade": 1}],
+        },
+    )
+    outra_quantidade = await client.post(
+        f"/vendas/{venda_a['id']}/devolucoes",
+        headers=auth_admin,
+        json={
+            "client_uuid": chave,
+            "itens": [{"item_id": venda_a["itens"][0]["id"], "quantidade": 2}],
+        },
+    )
+    for resposta in (outra_venda, outra_quantidade):
+        assert resposta.status_code == 409, resposta.text
+        assert resposta.json()["code"] == "DUPLICADO"
+        assert resposta.json()["detail"]["devolucao_id"] == primeira.json()["id"]
+
+    item_b = (await client.get(f"/vendas/{venda_b['id']}", headers=auth_admin)).json()["itens"][0]
+    assert item_b["quantidade_devolvida"] == 0
+    item_a = (await client.get(f"/vendas/{venda_a['id']}", headers=auth_admin)).json()["itens"][0]
+    assert item_a["quantidade_devolvida"] == 1
 
 
 # ------------------------------------------------ corridas com ordem forçada pela trava

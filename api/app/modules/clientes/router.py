@@ -6,7 +6,7 @@ receber — separar as três coisas daria a impressão de controle e só multipl
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Response, status
 
 from app.core.deps import ExigeCrediario, SessionDep
 from app.core.pagination import Pagina, Paginacao, paginacao
@@ -50,9 +50,12 @@ async def obter(session: SessionDep, _: ExigeCrediario, cliente_id: int) -> Clie
     summary="O que deve, o que já pagou",
 )
 async def extrato(
-    session: SessionDep, _: ExigeCrediario, cliente_id: int
+    session: SessionDep,
+    _: ExigeCrediario,
+    cliente_id: int,
+    p: Annotated[Paginacao, Depends(paginacao)],
 ) -> ExtratoClienteOut:
-    return await ClienteService(session).extrato(cliente_id)
+    return await ClienteService(session).extrato(cliente_id, p)
 
 
 @router.patch("/{cliente_id}", response_model=ClienteOut)
@@ -78,5 +81,11 @@ async def receber(
     usuario: ExigeCrediario,
     cliente_id: int,
     dados: PagamentoClienteIn,
+    resposta: Response,
 ) -> PagamentoClienteOut:
-    return await ClienteService(session).receber(cliente_id, dados, usuario)
+    servico = ClienteService(session)
+    pagamento = await servico.receber(cliente_id, dados, usuario)
+    if servico.replay:
+        # ADR-2: o reenvio responde 200 com o recebimento que já existia, não 201.
+        resposta.status_code = status.HTTP_200_OK
+    return pagamento

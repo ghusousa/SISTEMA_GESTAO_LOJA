@@ -221,3 +221,92 @@ async def test_volta_atras_depois_de_migration_volta_o_banco_junto(
     assert _psql(env, banco, "SELECT version_num FROM alembic_version") == "rev_a"
     assert subprocess.run([str(api)], cwd=servidor, env=env).returncode == 0  # a loja sobe
     assert list((servidor / "backups").glob("loja-antes-de-restaurar-*.dump"))
+
+
+# Morre como o systemd mata um build lento (TimeoutStartSec): SIGKILL no script, no meio do
+# `up`, com o `git reset` já feito. O resto vai para o docker de mentira do test_backup.
+DOCKER_QUE_MORRE_NO_UP = r"""#!/usr/bin/env bash
+if [ "$1 $2" = "compose up" ] && [ -f "$FAKE_CTR/morrer-no-up" ]; then
+    rm -f "$FAKE_CTR/morrer-no-up"
+    kill -9 "$PPID"
+    exit 137
+fi
+exec "$(dirname "$0")/docker-de-mentira" "$@"
+"""
+
+
+@precisa_do_git
+async def test_atualizacao_morta_depois_do_reset_e_refeita_na_proxima(tmp_path: Path) -> None:
+    """O "nada a fazer" olhava o HEAD: morto entre o `git reset` e o /health, o script deixava
+    o código novo no disco e a imagem velha no ar, e toda execução seguinte via HEAD =
+    GitHub e saía sem fazer nada — para sempre. Quem decide é o commit que SUBIU."""
+    env = _maquina(tmp_path, FAKE_API="echo ok") | GIT_ISOLADO
+    docker = tmp_path / "bin" / "docker"
+    docker.rename(tmp_path / "bin" / "docker-de-mentira")
+    docker.write_text(DOCKER_QUE_MORRE_NO_UP)
+    docker.chmod(0o755)
+    servidor = _servidor(tmp_path, env, antes={}, depois={"novidade.txt": "v2"})
+    log = tmp_path / "ctr" / "docker.log"
+    versao = servidor / "docker/estado/versao.json"
+
+    (tmp_path / "ctr" / "morrer-no-up").touch()
+    morta = _atualizar(servidor, env, "--sem-backup")
+    assert morta.returncode == -9, morta.stdout + morta.stderr
+    assert (servidor / "novidade.txt").exists()  # o código novo já estava no disco
+    # E a tela não diz "está na mais nova" com a velha no ar.
+    assert json.loads(versao.read_text())["atualizada"] is False
+
+    log.unlink(missing_ok=True)
+    r = _atualizar(servidor, env, "--sem-backup")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "Nada a fazer" not in r.stdout, r.stdout
+    assert "não chegou ao fim" in r.stdout, r.stdout
+    assert "docker compose up -d --build" in log.read_text()
+    assert "Atualizado." in r.stdout
+    assert json.loads(versao.read_text())["atualizada"] is True
+
+    # Subiu de verdade: agora sim, nada a fazer — e sem reconstruir a cada conferida.
+    log.unlink()
+    r = _atualizar(servidor, env, "--sem-backup")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "Nada a fazer" in r.stdout, r.stdout
+    assert "compose up" not in log.read_text()
+
+
+# Um pg_dump que "dá certo" e entrega lixo: disco cheio no meio, contêiner morrendo.
+PG_DUMP_ILEGIVEL = r"""#!/usr/bin/env bash
+while [ $# -gt 0 ]; do
+    [ "$1" = -f ] && { echo "isto não é um dump" > "$2"; exit 0; }
+    shift
+done
+"""
+
+
+@precisa_do_git
+@pytest.mark.parametrize("defeito", ["o banco não responde", "o dump sai ilegível"])
+async def test_sem_copia_que_abra_a_atualizacao_sozinha_nao_segue(
+    tmp_path: Path, defeito: str
+) -> None:
+    """Com --sim (o timer), um backup que falhava virava um aviso e a atualização seguia,
+    aplicando migrations de madrugada sem cópia nenhuma de antes. E o dump não passava pelo
+    `pg_restore -l`, então "backup feito" podia ser um arquivo que não abre."""
+    env = _maquina(tmp_path, FAKE_API="echo ok") | GIT_ISOLADO
+    if defeito == "o banco não responde":
+        env["FAKE_DB"] = "banco_que_nao_existe"
+    else:
+        falso = tmp_path / "bin" / "pg_dump"
+        falso.write_text(PG_DUMP_ILEGIVEL)
+        falso.chmod(0o755)
+    servidor = _servidor(tmp_path, env, antes={}, depois={"novidade.txt": "v2"})
+
+    r = _atualizar(servidor, env)
+
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "não segue" in r.stderr, r.stdout + r.stderr
+    assert "--sem-backup" in r.stdout
+    assert not (servidor / "novidade.txt").exists()  # nem o código mudou
+    assert "compose up" not in (tmp_path / "ctr" / "docker.log").read_text()
+    # Dump que não abre não fica parecendo backup.
+    assert not list(servidor.glob("loja-backup-antes-de-atualizar-*.dump"))
+    # A loja ficou para trás, e a tela precisa dizer.
+    assert json.loads((servidor / "docker/estado/versao.json").read_text())["atualizada"] is False

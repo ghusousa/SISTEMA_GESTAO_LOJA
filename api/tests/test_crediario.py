@@ -687,6 +687,106 @@ async def test_retry_simultaneo_do_recebimento_devolve_o_existente(
     assert Decimal(depois["deve"]) == Decimal("40.00")
 
 
+async def test_reenvio_do_recebimento_com_outro_valor_e_recusado(client, auth_admin) -> None:
+    """O mesmo `client_uuid` com outro valor (ou outra forma) não é o mesmo recebimento.
+
+    Responder o gravado como sucesso dizia "R$ 30 recebidos" quando entraram R$ 60 — ou
+    PIX quando entrou dinheiro, e a gaveta não fechava. O reenvio idêntico continua sendo
+    replay, agora com 200 (ADR-2), e a dívida cai uma vez só.
+    """
+    cliente = await _cliente(client, auth_admin, "Dona Mesma Chave")
+    variante = await _peca(client, auth_admin, "Peca Mesma Chave", "100.00")
+    await client.post(
+        "/vendas",
+        headers=auth_admin,
+        json={
+            "client_uuid": str(uuid.uuid4()),
+            "cliente_id": cliente["id"],
+            "itens": [{"variante_id": variante, "quantidade": 1}],
+            "pagamentos": [{"forma": "FIADO", "valor": "100.00"}],
+        },
+    )
+    chave = str(uuid.uuid4())
+    url = f"/clientes/{cliente['id']}/pagamentos"
+    primeira = await client.post(
+        url, headers=auth_admin, json={"forma": "DINHEIRO", "valor": "60.00", "client_uuid": chave}
+    )
+    assert primeira.status_code == 201, primeira.text
+
+    outro_valor = await client.post(
+        url, headers=auth_admin, json={"forma": "DINHEIRO", "valor": "30.00", "client_uuid": chave}
+    )
+    outra_forma = await client.post(
+        url, headers=auth_admin, json={"forma": "PIX", "valor": "60.00", "client_uuid": chave}
+    )
+    for resposta in (outro_valor, outra_forma):
+        assert resposta.status_code == 409, resposta.text
+        assert resposta.json()["code"] == "DUPLICADO"
+        assert resposta.json()["detail"]["pagamento_id"] == primeira.json()["id"]
+
+    mesma = await client.post(
+        url, headers=auth_admin, json={"forma": "DINHEIRO", "valor": "60.00", "client_uuid": chave}
+    )
+    assert mesma.status_code == 200, mesma.text
+    assert mesma.json()["id"] == primeira.json()["id"]
+    depois = (await client.get(f"/clientes/{cliente['id']}", headers=auth_admin)).json()
+    assert Decimal(depois["deve"]) == Decimal("40.00")
+
+
+async def test_extrato_pagina_as_listas_e_os_totais_sao_da_conta_inteira(
+    client, auth_admin
+) -> None:
+    """A caderneta antiga não vem inteira numa resposta só, e a conta continua fechando.
+
+    O extrato mandava todas as compras e todos os pagamentos da vida da cliente. As duas
+    listas agora vêm em `{items, total, page, size}`, pelo mesmo `?page=&size=`; os totais
+    (levou, pagou, devolveu, deve) são da conta inteira, não da página.
+    """
+    cliente = await _cliente(client, auth_admin, "Dona Caderneta")
+    variante = await _peca(client, auth_admin, "Peca Caderneta", "50.00")
+    vendas = []
+    for _ in range(3):
+        vendas.append(
+            (
+                await client.post(
+                    "/vendas",
+                    headers=auth_admin,
+                    json={
+                        "client_uuid": str(uuid.uuid4()),
+                        "cliente_id": cliente["id"],
+                        "itens": [{"variante_id": variante, "quantidade": 1}],
+                        "pagamentos": [{"forma": "FIADO", "valor": "50.00"}],
+                    },
+                )
+            ).json()["id"]
+        )
+    for valor in ("10.00", "20.00", "30.00"):
+        await client.post(
+            f"/clientes/{cliente['id']}/pagamentos",
+            headers=auth_admin,
+            json={"forma": "DINHEIRO", "valor": valor, "client_uuid": str(uuid.uuid4())},
+        )
+
+    url = f"/clientes/{cliente['id']}/extrato"
+    pagina1 = (await client.get(url, headers=auth_admin, params={"size": 2})).json()
+    pagina2 = (await client.get(url, headers=auth_admin, params={"size": 2, "page": 2})).json()
+
+    for pagina, quantas in ((pagina1, 2), (pagina2, 1)):
+        for lista in ("vendas", "pagamentos"):
+            assert pagina[lista]["total"] == 3
+            assert pagina[lista]["size"] == 2
+            assert len(pagina[lista]["items"]) == quantas
+        assert pagina["total_fiado"] == "150.00"
+        assert pagina["total_pago"] == "60.00"
+        assert pagina["deve"] == "90.00"
+
+    # Mais recente primeiro, e nenhuma linha repetida ou perdida entre as páginas.
+    ids = [v["venda_id"] for v in pagina1["vendas"]["items"] + pagina2["vendas"]["items"]]
+    assert ids == sorted(vendas, reverse=True)
+    valores = [p["valor"] for p in pagina1["pagamentos"]["items"] + pagina2["pagamentos"]["items"]]
+    assert valores == ["30.00", "20.00", "10.00"]
+
+
 # ----------------------------------------------------------------------- vale
 
 

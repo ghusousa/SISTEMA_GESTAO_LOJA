@@ -13,12 +13,13 @@ import * as Haptics from 'expo-haptics';
 import { useCallback, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { codigoDoErro, mensagemDoErro } from '@/api/client';
+import { codigoDoErro, detalheDoErro, mensagemDoErro } from '@/api/client';
 import { catalogo, estoque } from '@/api/endpoints';
 import { BuscarPeca } from '@/components/BuscarPeca';
 import { CodigoManual } from '@/components/CodigoManual';
 import { Scanner } from '@/components/Scanner';
 import { Botao, Campo } from '@/components/ui';
+import { type ItemGravado, tirarOQueJaEntrou } from '@/lib/entrada';
 import { gerarUuid } from '@/lib/uuid';
 import { invalidarAposMovimentoEstoque } from '@/lib/queryClient';
 import { ALVO_TOQUE, cores, espaco, fonte, raio } from '@/lib/tema';
@@ -106,7 +107,27 @@ export default function EntradaEstoque() {
         [{ text: 'Pronto', onPress: () => router.back() }],
       );
     },
-    onError: (erro) => Alert.alert('Não deu para registrar', mensagemDoErro(erro)),
+    onError: (erro) => {
+      if (codigoDoErro(erro) === 'DUPLICADO' && detalheDoErro(erro)?.entrada_id) {
+        // Esta chave já gravou OUTRA entrada (a resposta se perdeu e a lista mudou depois):
+        // o servidor recusa em vez de devolver a antiga como sucesso (ADR-2). O que ela
+        // gravou sai da lista ANTES de a chave ser trocada — só trocar a chave e reenviar
+        // tudo somaria de novo as peças que já entraram. Fica o que falta registrar.
+        const gravados = (detalheDoErro(erro)?.itens ?? []) as ItemGravado[];
+        setItens((atuais) => tirarOQueJaEntrou(atuais, gravados));
+        setClientUuid(gerarUuid());
+        Alert.alert(
+          'Esta entrada já foi gravada',
+          `${mensagemDoErro(erro)} Tirei da lista o que ela já gravou; confira e registre o que falta.`,
+          [
+            { text: 'Conferir a lista', style: 'cancel' },
+            { text: 'Ver extrato', onPress: () => router.push('/estoque/movimentacoes') },
+          ],
+        );
+        return;
+      }
+      Alert.alert('Não deu para registrar', mensagemDoErro(erro));
+    },
   });
 
   const totalPecas = itens.reduce((soma, i) => soma + i.quantidade, 0);

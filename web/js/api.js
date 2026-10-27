@@ -10,7 +10,9 @@
  *
  * 2. Um 401 dispara uma renovação e refaz a requisição. Se três telas levarem 401 juntas,
  *    todas esperam a MESMA renovação (`renovacaoEmCurso`): duas rotações simultâneas com o
- *    mesmo refresh derrubariam a família de tokens inteira por suspeita de roubo.
+ *    mesmo refresh derrubariam a família de tokens inteira por suspeita de roubo. E só o
+ *    servidor recusando o refresh derruba a sessão: renovação que cai na rede rejeita a
+ *    requisição com o erro de rede e deixa sessão e carrinho onde estavam.
  */
 
 import { sessao } from './store.js';
@@ -96,6 +98,15 @@ async function bruto(metodo, caminho, { corpo, formData, semAuth = false } = {})
   return dados;
 }
 
+/**
+ * Só o SERVIDOR recusando o refresh (401/403: vencido, revogado, conta desativada) encerra a
+ * sessão. Mesma regra de `mobile/src/lib/renovacao.ts`: tratar qualquer falha como recusa
+ * esvaziava o carrinho do PDV a cada oscilação da rede, e a vendedora remontava a venda.
+ */
+function refreshRecusado(erro) {
+  return erro instanceof ErroApi && (erro.status === 401 || erro.status === 403);
+}
+
 async function renovar() {
   // Sem corpo: o refresh viaja no cookie httpOnly.
   renovacaoEmCurso ??= bruto('POST', '/auth/refresh', { semAuth: true })
@@ -124,7 +135,11 @@ async function pedir(metodo, caminho, opcoes = {}) {
 
     try {
       await renovar();
-    } catch {
+    } catch (erroDoRefresh) {
+      // Queda do Wi-Fi ou 5xx (a API reiniciando no atualizar.sh) não diz nada sobre o
+      // token: a requisição falha como falha de rede e a sessão — com o carrinho do PDV —
+      // fica. A próxima tenta renovar de novo.
+      if (!refreshRecusado(erroDoRefresh)) throw erroDoRefresh;
       accessToken = null;
       sessao.set({ usuario: null, carregando: false });
       aoPerderSessao();

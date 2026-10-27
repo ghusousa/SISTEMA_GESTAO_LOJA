@@ -6,7 +6,7 @@
 #
 # Faz nesta ordem, e a ordem importa:
 #
-#   1. backup do banco ANTES de qualquer coisa (é o que permite voltar atrás);
+#   1. backup do banco ANTES de qualquer coisa, conferido (é o que permite voltar atrás);
 #   2. baixa o código novo;
 #   3. reconstrói e sobe;
 #   4. as migrations, quem aplica é o contêiner ao subir (docker/entrada.sh);
@@ -19,7 +19,8 @@
 # esperando no caixa.
 #
 # Opções:
-#   --sem-backup     pula o backup (mais rápido; só se você acabou de fazer um)
+#   --sem-backup     pula o backup (mais rápido; só se você acabou de fazer um). Sem esta
+#                    opção, backup que falha ou não abre faz o --sim desistir de atualizar
 #   --forcar         desfaz edições feitas nos arquivos DO SISTEMA neste servidor
 #   --sim            não pergunta nada
 #   --automatico [N] liga a atualização sozinha, de N em N minutos (padrão 10)
@@ -52,7 +53,7 @@ while [ $# -gt 0 ]; do
             case "${2:-}" in [0-9]*) MINUTOS="$2"; shift ;; esac
             ;;
         --sem-automatico) AUTOMATICO="desligar" ;;
-        -h|--help)        sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help)        sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *)                erro "Opção desconhecida: $1"; exit 1 ;;
     esac
     shift
@@ -77,15 +78,27 @@ command -v git >/dev/null 2>&1 || { erro "git não está instalado."; exit 1; }
 ESTADO=docker/estado
 anotar_versao() {
     local atualizada="$1"   # true = não havia nada novo na última conferida
+    local commit="${2:-HEAD}"   # o que está NO AR — no meio de uma atualização, não é o HEAD
     mkdir -p "$ESTADO"
     cat > "$ESTADO/versao.json" <<FIM
 {
-  "commit": "$(git rev-parse --short HEAD 2>/dev/null)",
-  "data": "$(git log -1 --format=%cI 2>/dev/null)",
+  "commit": "$(git rev-parse --short "$commit" 2>/dev/null)",
+  "data": "$(git log -1 --format=%cI "$commit" 2>/dev/null)",
   "conferido_em": "$(date -u +%Y-%m-%dT%H:%M:%S+00:00)",
   "atualizada": $atualizada
 }
 FIM
+}
+
+# O commit que SUBIU e respondeu ao /health por último. Não é o HEAD: o `git reset` lá
+# embaixo troca o disco minutos antes de o contêiner novo existir, e uma morte nesse meio
+# (o TimeoutStartSec matando um build lento, queda de luz) deixava o código novo no disco e
+# a imagem velha no ar. Comparando o GitHub com o HEAD, toda execução seguinte dizia "nada a
+# fazer" — para sempre. Comparando com o que subiu de verdade, a próxima reconstrói.
+IMPLANTADO="$ESTADO/implantado"
+gravar_implantado() {
+    mkdir -p "$ESTADO"
+    printf '%s\n' "$1" > "$IMPLANTADO.novo" && mv -f "$IMPLANTADO.novo" "$IMPLANTADO"
 }
 
 if docker info >/dev/null 2>&1; then
@@ -214,7 +227,14 @@ titulo "Conferindo o que há de novo"
 git rev-parse --git-dir >/dev/null 2>&1 || { erro "Esta pasta não é um clone do repositório."; exit 1; }
 
 RAMO="$(git rev-parse --abbrev-ref HEAD)"
-ANTES="$(git rev-parse HEAD)"
+CABECA="$(git rev-parse HEAD)"
+# ANTES é a versão que está no ar: a de onde se parte e para onde se volta se der errado.
+# Sem registro (servidor recém-instalado, ou atualizado pela versão antiga deste script)
+# vale o que sempre valeu: o que está no disco é o que está no ar.
+ANTES="$CABECA"
+if [ -s "$IMPLANTADO" ]; then
+    ANTES="$(git rev-parse --verify --quiet "$(head -1 "$IMPLANTADO")^{commit}" || echo "$CABECA")"
+fi
 
 # Só o que o `git reset --hard` lá embaixo REALMENTE apagaria: arquivo rastreado que foi
 # editado aqui no servidor. Arquivo não rastreado (uma pasta solta, um .txt esquecido, um
@@ -241,12 +261,17 @@ done
 
 DEPOIS="$(git rev-parse "origin/$RAMO")"
 
-if [ "$ANTES" = "$DEPOIS" ]; then
+if [ "$ANTES" = "$DEPOIS" ] && [ "$CABECA" = "$DEPOIS" ]; then
     # Registrar a conferida mesmo sem novidade é o ponto: é isto que deixa a tela dizer
     # "está em dia" com convicção, em vez de só mostrar um hash que ninguém sabe ler.
     anotar_versao true
     ok "Já está na versão mais nova. Nada a fazer."
     exit 0
+fi
+
+if [ "$ANTES" != "$CABECA" ]; then
+    aviso "A última atualização não chegou ao fim: o código de $(git rev-parse --short "$CABECA") está no disco,"
+    aviso "mas quem subiu por último foi $(git rev-parse --short "$ANTES"). Subindo de novo."
 fi
 
 printf '\n  %sNovidades (%s):%s\n' "$FORTE" "$RAMO" "$NORMAL"
@@ -264,6 +289,20 @@ fi
 
 # ------------------------------------------------------------------ backup
 
+# Dump que não abre não é backup — e só se descobre na hora de restaurar, que aqui é a volta
+# atrás de uma migration ruim. Mesma conferida do backup.sh, com o pg_restore DO CONTÊINER:
+# o da máquina pode ser de outra versão e recusar um dump bom ("unsupported version").
+dump_abre() {
+    local arquivo="$1" abre=1
+    [ -s "$arquivo" ] || return 1
+    if dk compose cp "$arquivo" db:/tmp/conferir.dump >/dev/null 2>&1 \
+        && dk compose exec -T db pg_restore -l /tmp/conferir.dump >/dev/null 2>&1; then
+        abre=0
+    fi
+    dk compose exec -T db rm -f /tmp/conferir.dump >/dev/null 2>&1 || true
+    return "$abre"
+}
+
 ARQUIVO_BACKUP=""
 if [ "$SEM_BACKUP" -eq 0 ]; then
     titulo "Guardando uma cópia do banco"
@@ -274,16 +313,29 @@ if [ "$SEM_BACKUP" -eq 0 ]; then
     # `pg_dump -Fc` dentro do contêiner e depois `cp` para fora: o formato comprimido do
     # Postgres restaura com pg_restore e não depende da versão do cliente na máquina.
     if dk compose exec -T db pg_dump -U loja -d loja -Fc -f /tmp/backup.dump 2>/dev/null \
-        && dk compose cp db:/tmp/backup.dump "$ARQUIVO_BACKUP" 2>/dev/null; then
-        ok "$ARQUIVO_BACKUP ($(du -h "$ARQUIVO_BACKUP" | cut -f1))"
+        && dk compose cp db:/tmp/backup.dump "$ARQUIVO_BACKUP" 2>/dev/null \
+        && dump_abre "$ARQUIVO_BACKUP"; then
+        ok "$ARQUIVO_BACKUP ($(du -h "$ARQUIVO_BACKUP" | cut -f1)) — e ela abre"
     else
-        aviso "Não consegui fazer o backup (o banco está no ar?)."
+        rm -f "$ARQUIVO_BACKUP"
+        ARQUIVO_BACKUP=""
+        aviso "Não consegui uma cópia do banco que abra (o banco está no ar?)."
         if [ "$INTERATIVO" -eq 1 ]; then
+            aviso "Sem ela, uma migration da versão nova que dê errado não tem volta."
             printf '  Continuar SEM backup? [s/N] '
             read -r resposta </dev/tty || resposta="n"
             case "${resposta:-n}" in [Ss]*) ;; *) printf '  Cancelado.\n'; exit 1 ;; esac
+        else
+            # Sozinho (o timer, de madrugada) ninguém responde "pode seguir sem cópia": seguir
+            # era aplicar migrations sem nada de antes para voltar. A loja fica na versão que
+            # já roda, e a tela passa a dizer que há uma nova esperando.
+            anotar_versao false "$ANTES"
+            erro "Sem uma cópia do banco que abra, a atualização sozinha não segue."
+            printf '  Nada foi mudado: a loja continua na versão de antes.\n'
+            printf '  Se você acabou de fazer uma cópia: %s./atualizar.sh --sem-backup%s\n\n' \
+                "$FORTE" "$NORMAL"
+            exit 1
         fi
-        ARQUIVO_BACKUP=""
     fi
 fi
 
@@ -380,8 +432,12 @@ voltar_atras() {
 }
 
 titulo "Baixando a versão nova"
+# Gravado ANTES de mexer no disco: daqui até o /health responder, quem está no ar é a de
+# antes, com uma nova esperando — e é isso que a tela diz e a próxima execução lê se esta
+# morrer no meio. No servidor que ainda não tinha registro, é esta linha que cria o primeiro.
+gravar_implantado "$ANTES"
+anotar_versao false "$ANTES"
 git reset --hard --quiet "$DEPOIS"
-anotar_versao true
 ok "código em $(git rev-parse --short HEAD)"
 
 titulo "Guardando o log de agora"
@@ -425,6 +481,9 @@ if ! SAUDE="$(esperar_saude 60)"; then
     voltar_atras
 fi
 ok "migrations aplicadas e a API respondeu: $SAUDE"
+# Só agora a versão nova é a que está no ar.
+gravar_implantado "$DEPOIS"
+anotar_versao true
 
 # Cada `--build` deixa a imagem antiga para trás, sem nome, ocupando disco. Vinte
 # atualizações depois são vários GB — e num servidor de loja o disco acaba antes.

@@ -596,6 +596,16 @@ done
 }
 certo "API no ar, banco migrado"
 
+# O commit que SUBIU, o mesmo registro que o ./atualizar.sh grava e usa como "a versão no
+# ar" (é para ela que ele volta se a próxima atualização falhar). Sem gravar aqui, um
+# `desinstalar --manter-dados` + `git pull` + `instalar` deixava valendo o registro da
+# instalação ANTERIOR, e a volta atrás iria para um código que não conhece as migrations
+# que este acabou de aplicar.
+if git rev-parse --git-dir >/dev/null 2>&1; then
+    mkdir -p docker/estado
+    git rev-parse HEAD > docker/estado/implantado.novo && mv -f docker/estado/implantado.novo docker/estado/implantado
+fi
+
 # A API estar saudável não garante que o proxy esteja publicando a porta. Antes de anunciar
 # o endereço, abre ele de verdade.
 if command -v curl >/dev/null 2>&1; then

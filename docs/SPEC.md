@@ -114,14 +114,19 @@ A loja consegue operar 100% sem celular.
 - A soma dos pagamentos é exatamente igual ao total da venda.
 - Preço e custo do item são congelados na venda — mudar o preço amanhã não altera o lucro de ontem.
 - Cancelar uma venda nunca apaga: marca como CANCELADA e devolve o estoque por movimentação.
+- Peça que volta da cliente (cancelamento ou devolução) volta para uma peça que se vê e se
+  vende: se ela foi excluída do catálogo depois da venda, volta ao catálogo — ou entra na peça
+  ativa com a mesma etiqueta, se a dona já a recadastrou.
 - Desconto existe apenas no total da venda (não por item).
 - Vendedor não recebe custo em nenhuma resposta da API.
 - Retry de rede não duplica venda, entrada, devolução nem recebimento de fiado
-  (idempotência por `client_uuid`).
+  (idempotência por `client_uuid`). E a mesma chave com outro pedido (outras peças, outro
+  pagamento, outra venda) é recusada — nunca respondida com o registro antigo como se fosse ela.
 - Nunca volta mais peça do que saiu na venda, nem em duas devoluções simultâneas.
 - O que a devolução paga respeita o que cada forma recebeu: não sai da gaveta dinheiro que
   nunca entrou nela.
 - Devolução é reconhecida no dia em que acontece — nunca reescreve o caixa de um dia fechado.
+  Pelo mesmo motivo, venda de um dia cujo caixa já foi fechado não se cancela: devolve-se.
 - Fiado e vale nunca contam como dinheiro na conferência do caixa; recebimento de fiado conta,
   separado do faturamento.
 - O saldo devedor de um cliente nunca fica negativo: o abatimento para onde a dívida acaba, e

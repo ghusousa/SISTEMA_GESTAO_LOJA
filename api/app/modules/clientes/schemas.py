@@ -4,6 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.core.pagination import Pagina
 from app.modules.vendas.models import FORMAS_DE_GAVETA, FormaPagamento
 
 
@@ -99,8 +100,10 @@ class VendaEmAbertoOut(BaseModel):
 
 class ExtratoClienteOut(BaseModel):
     cliente: ClienteOut
-    vendas: list[VendaEmAbertoOut]
-    pagamentos: list[PagamentoClienteOut]
+    #: As duas listas são paginadas pelo MESMO `?page=&size=` — "carregar mais" traz a
+    #: próxima leva das duas. Os totais abaixo são da conta inteira, nunca da página.
+    vendas: Pagina[VendaEmAbertoOut]
+    pagamentos: Pagina[PagamentoClienteOut]
     total_fiado: Decimal
     total_pago: Decimal
     total_devolvido: Decimal

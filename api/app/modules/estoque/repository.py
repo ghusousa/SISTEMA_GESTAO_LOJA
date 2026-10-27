@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.pagination import Paginacao
+from app.modules.catalogo.busca import achatar, achatar_termo
 from app.modules.catalogo.models import Category, Product, ProductVariant
 from app.modules.estoque.models import StockBalance, StockEntry, StockMovement
 from app.modules.usuarios.models import User
@@ -28,7 +29,15 @@ class EstoqueRepository:
     async def entrada_por_id(self, entrada_id: int) -> StockEntry | None:
         return await self.session.get(StockEntry, entrada_id)
 
-    async def variantes_por_ids(self, ids: list[int]) -> dict[int, ProductVariant]:
+    async def variantes_por_ids(
+        self, ids: list[int], *, travar: bool = False
+    ) -> dict[int, ProductVariant]:
+        """Peças ativas por id. `travar=True` trava as linhas, em ordem de id (ADR-30).
+
+        A trava vem antes da do saldo, sempre: é a ordem de todo mundo que mexe em peça e
+        saldo juntos, e quem trava em outra ordem se abraça com eles. `FOR NO KEY UPDATE`
+        não espera a FK das vendas (que só tira `FOR KEY SHARE` da peça).
+        """
         if not ids:
             return {}
         stmt = (
@@ -37,6 +46,8 @@ class EstoqueRepository:
             .options(selectinload(ProductVariant.product))
             .where(ProductVariant.id.in_(ids), ProductVariant.deleted_at.is_(None))
         )
+        if travar:
+            stmt = stmt.order_by(ProductVariant.id).with_for_update(key_share=True)
         return {v.id: v for v in (await self.session.execute(stmt)).scalars().all()}
 
     def _saldo_base(self) -> Select:
@@ -59,9 +70,11 @@ class EstoqueRepository:
         if categoria_id:
             stmt = stmt.where(Product.category_id == categoria_id)
         if q:
-            termo = f"%{q.strip().lower()}%"
+            # O mesmo achatamento de `/variantes?q=` (catalogo/busca.py): "calca" acha a
+            # "Calça". Sem ele, a tela de Estoque dizia que a peça não existia.
+            termo = f"%{achatar_termo(q)}%"
             stmt = stmt.where(
-                func.lower(Product.name).like(termo)
+                achatar(Product.name).like(termo)
                 | ProductVariant.barcode.like(f"%{q.strip()}%")
             )
         if somente_baixo:

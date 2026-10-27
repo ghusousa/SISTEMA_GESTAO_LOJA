@@ -19,6 +19,7 @@
 import { api, ErroApi } from '../api.js';
 import { ligarBuscaDePeca } from '../busca-peca.js';
 import { formatar, paraDecimalString, somar } from '../dinheiro.js';
+import { tirarOQueJaEntrou } from '../entrada-gravada.js';
 import { criarLeitor, manterFoco } from '../leitor.js';
 import { ir } from '../router.js';
 import { conferencia, limparConferencia, novoClientUuid } from '../store.js';
@@ -216,12 +217,35 @@ export function render(raiz) {
       await ofereceEtiquetas(entrada, registrados);
       campo.focus();
     } catch (erro) {
+      if (erro instanceof ErroApi && erro.status === 409 && erro.detail?.entrada_id) {
+        await avisarEntradaJaGravada(erro);
+        return;
+      }
       avisarErro(erro);
     } finally {
       enviando = false;
       botaoSalvar.textContent = 'Registrar entrada';
       pintar();
     }
+  }
+
+  /**
+   * A chave desta conferência já gravou OUTRA entrada (resposta perdida, lista mudada
+   * depois): o servidor recusa (ADR-2) e devolve os itens dela. O que ela gravou sai da
+   * lista ANTES de a chave sair — só trocar a chave e reenviar tudo somaria de novo as
+   * peças que já entraram (10 P + 7 M viravam +20 P). Fica o que falta registrar.
+   */
+  async function avisarEntradaJaGravada(erro) {
+    definir(tirarOQueJaEntrou(itens(), erro.detail.itens || []));
+    conferencia.set({ clientUuid: null });
+    pintar();
+    const verExtrato = await confirmar({
+      titulo: 'Esta entrada já foi gravada',
+      mensagem: `${erro.message} Tirei da lista o que ela já gravou; confira e registre o que falta.`,
+      confirmarTexto: 'Ver extrato',
+    });
+    if (verExtrato) ir('/estoque/extrato?tipo=ENTRADA');
+    else campo.focus();
   }
 
   /**

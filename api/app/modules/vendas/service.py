@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.exceptions import (
+    Duplicado,
     NaoEncontrado,
     OperacaoInvalida,
     PagamentoDivergente,
@@ -44,6 +45,9 @@ class VendaService:
     def __init__(self, session: AsyncSession):
         self.session = session
         self.repo = VendaRepository(session)
+        #: A última chamada a `registrar` devolveu uma venda que já existia (ADR-2). É o
+        #: router que lê, para responder 200 em vez de 201.
+        self.replay = False
 
     # ------------------------------------------------------------ criação
     async def registrar(self, dados: VendaIn, usuario: User) -> VendaOut:
@@ -54,12 +58,7 @@ class VendaService:
         """
         ja_registrada = await self.repo.por_client_uuid(dados.client_uuid)
         if ja_registrada is not None:
-            # O replay devolve a venda existente, mas com o mesmo escopo do GET: quem
-            # descobrisse o client_uuid de uma venda alheia leria por aqui o que
-            # `GET /vendas/{id}` recusaria.
-            if not pode(usuario.role, Pode.VER_VENDAS_DE_TODOS) and ja_registrada.seller_id != usuario.id:
-                raise SemPermissao("Esta venda pertence a outro vendedor.")
-            return await self._montar_venda(ja_registrada, usuario)
+            return await self._replay(ja_registrada, dados, usuario)
 
         variantes = await self.repo.variantes_para_venda([i.variante_id for i in dados.itens])
         faltando = [i.variante_id for i in dados.itens if i.variante_id not in variantes]
@@ -122,10 +121,14 @@ class VendaService:
         except IntegrityError:
             # Duas requisições da mesma venda ao mesmo tempo: a perdedora devolve a vencedora.
             await self.session.rollback()
+            # O rollback expirou o `usuario` (veio desta mesma sessão), e o `_replay` lê
+            # `role` e `id`: atributo expirado em sessão async é MissingGreenlet — 500 justo
+            # no ramo que existe para a corrida. Recarrega antes, explicitamente.
+            await self.session.refresh(usuario)
             existente = await self.repo.por_client_uuid(dados.client_uuid)
             if existente is None:
                 raise
-            return await self._montar_venda(existente, usuario)
+            return await self._replay(existente, dados, usuario)
 
         for item in dados.itens:
             variante = variantes[item.variante_id][0]
@@ -171,6 +174,39 @@ class VendaService:
         registrada = await self.repo.por_id(venda.id)
         assert registrada is not None
         return await self._montar_venda(registrada, usuario)
+
+    async def _replay(self, venda: Sale, dados: VendaIn, usuario: User) -> VendaOut:
+        """Devolve a venda que este `client_uuid` já registrou — se o pedido for o MESMO.
+
+        O replay devolve a venda existente com o mesmo escopo do GET: quem descobrisse o
+        client_uuid de uma venda alheia leria por aqui o que `GET /vendas/{id}` recusaria.
+
+        E só devolve se as peças e os pagamentos forem os de antes. A resposta se perde, a
+        moça troca o PIX por dinheiro (ou bipa mais uma peça) e cobra de novo com o carrinho
+        de sempre: devolver a venda antiga como sucesso mostraria o recibo de uma cobrança
+        que não aconteceu — a peça nova sai sem baixa de estoque e a gaveta espera PIX onde
+        entrou dinheiro. O 409 diz que a venda já existe e qual é; o retry de verdade (o
+        mesmo pedido, reenviado) continua sendo atendido.
+        """
+        if not pode(usuario.role, Pode.VER_VENDAS_DE_TODOS) and venda.seller_id != usuario.id:
+            raise SemPermissao("Esta venda pertence a outro vendedor.")
+        pedido = (
+            sorted((i.variante_id, i.quantidade) for i in dados.itens),
+            sorted((FormaPagamento(p.forma), p.valor) for p in dados.pagamentos),
+        )
+        gravado = (
+            sorted((i.variant_id, i.quantity) for i in venda.items),
+            sorted((FormaPagamento(p.method), p.amount) for p in venda.payments),
+        )
+        if pedido != gravado:
+            raise Duplicado(
+                f"Esta cobrança já foi registrada como a venda #{venda.id}, com outras peças "
+                "ou outro pagamento. Confira essa venda antes de cobrar de novo; para uma "
+                "venda nova, limpe o carrinho.",
+                {"venda_id": venda.id},
+            )
+        self.replay = True
+        return await self._montar_venda(venda, usuario)
 
     async def _conferir_cliente(self, cliente_id: int) -> None:
         """A cliente do fiado precisa existir E estar ativa.
@@ -255,6 +291,8 @@ class VendaService:
         if not pode(usuario.role, Pode.CANCELAR_VENDA):
             raise SemPermissao("Cancelar venda é do dono ou do gerente.")
 
+        await self._recusar_se_o_caixa_do_dia_ja_fechou(venda)
+
         # A troca de status vem ANTES dos estornos e só acontece se a venda ainda estiver
         # concluída. Sem isso, dois cancelamentos simultâneos (toque duplo, retry após
         # timeout) passariam os dois pela checagem em memória e devolveriam o estoque duas
@@ -296,6 +334,30 @@ class VendaService:
         atualizada = await self.repo.por_id(venda_id)
         assert atualizada is not None
         return await self._montar_venda(atualizada, usuario)
+
+    async def _recusar_se_o_caixa_do_dia_ja_fechou(self, venda: Sale) -> None:
+        """Venda de um dia cujo caixa já foi fechado não se cancela: devolve-se (ADR-19).
+
+        O caixa e o relatório leem a venda pelo dia em que ela ACONTECEU e só somam as
+        concluídas. Cancelar hoje a venda de R$ 100 em dinheiro de ontem tira os R$ 100 do
+        esperado de ontem — o dia que já foi contado e fechou certinho passa a mostrar sobra
+        de R$ 100 — e não põe nada no de hoje, que fecha com falta dos R$ 100 que saíram da
+        gaveta. A Devolução atende o mesmo pedido pelo caminho certo: é reconhecida no dia em
+        que acontece, e o dinheiro sai pela forma em que entrou.
+
+        A régua é o fechamento, não a data: venda de ontem com o caixa ainda aberto não foi
+        conferida por ninguém, e cancelar só acerta um dia que ainda vai ser contado.
+        """
+        # Serviço público do outro módulo, nunca o repositório dele (CLAUDE.md).
+        from app.modules.caixa.service import CaixaService
+
+        dia = venda.sold_at.astimezone(settings.tz_loja).date()
+        if await CaixaService(self.session).dia_fechado(dia):
+            raise OperacaoInvalida(
+                f"O caixa de {dia:%d/%m/%Y} já foi fechado: cancelar esta venda mudaria uma "
+                "conferência já feita. Faça a devolução das peças — ela entra no caixa de hoje.",
+                {"dia_do_caixa": dia.isoformat()},
+            )
 
     async def _recusar_se_o_fiado_ja_foi_pago(self, venda: Sale) -> None:
         """Cancelar venda no fiado que a cliente já pagou deixaria a loja devendo a ela.

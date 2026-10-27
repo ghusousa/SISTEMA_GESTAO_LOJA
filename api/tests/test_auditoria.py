@@ -4,11 +4,16 @@ A promessa: o dono — e só o dono — vê tudo que cada pessoa fez no login de
 testa senha à vontade. Estes testes guardam essas duas frases.
 """
 
+import re
 import uuid
 
-
+import bcrypt
 from conftest import criar_produto
+from sqlalchemy import text
 
+from app.core.db import SessionLocal
+from app.main import app
+from app.modules.auditoria.classificar import classificar
 
 
 async def _peca(client, auth, nome, preco="50.00"):
@@ -139,6 +144,58 @@ async def test_filtro_por_usuario(client, auth_admin, auth_vendedor, admin, vend
     assert all(e["usuario_id"] == vendedor.id for e in so_ana["items"])
 
 
+async def test_diario_congela_o_papel_do_banco_nao_o_do_token(client, gerente, auth_admin):
+    """Rebaixada de gerente a vendedora, o ato seguinte dela não sai no diário como GERENTE.
+
+    O token dela ainda diz GERENTE (foi emitido antes, vale até 30 min); a autorização já
+    usa o papel do banco, e o diário tem de dizer o mesmo que a autorização decidiu.
+    """
+    r = await client.post("/auth/login", json={"email": gerente.email, "senha": "senha1234"})
+    token_antigo = {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+    r = await client.patch(
+        f"/usuarios/{gerente.id}", headers=auth_admin, json={"papel": "VENDEDOR"}
+    )
+    assert r.status_code == 200
+    # A autorização já a trata como vendedora: categoria exige EDITAR_CATALOGO.
+    r = await client.post("/categorias", headers=token_antigo, json={"nome": "Blusas"})
+    assert r.status_code == 403
+
+    r = await client.patch(
+        "/usuarios/me/senha",
+        headers=token_antigo,
+        json={"senha_atual": "senha1234", "nova_senha": "outra12345"},
+    )
+    assert r.status_code == 204
+
+    async with SessionLocal() as s:
+        papel = (
+            await s.execute(text("SELECT user_papel FROM audit_log WHERE acao = 'SENHA_PROPRIA'"))
+        ).scalar_one()
+    assert papel == "VENDEDOR", f"diário gravou papel={papel!r} para quem já era VENDEDOR"
+
+
+def test_toda_rota_de_mutacao_tem_frase_no_diario():
+    """Rota de mutação sem linha em `classificar.py` vira 'OUTRO PATCH /...', que o dono não lê.
+
+    Percorre as rotas de verdade da aplicação (pelo esquema OpenAPI, que é o inventário
+    público delas): rota nova que muda algo e não ganhou frase — nem foi dada como ruído em
+    `_IGNORAR` — quebra aqui, e não no diário de uma loja.
+    """
+    sem_frase = []
+    for caminho, operacoes in app.openapi()["paths"].items():
+        if not caminho.startswith("/api/v1"):
+            continue
+        amostra = re.sub(r"\{[^}]+\}", "1", caminho.removeprefix("/api/v1"))
+        for metodo in operacoes:
+            if metodo.upper() not in {"POST", "PUT", "PATCH", "DELETE"}:
+                continue
+            ato = classificar(metodo, amostra)
+            if ato is not None and ato.acao == "OUTRO":
+                sem_frase.append(f"{metodo.upper()} {caminho}")
+    assert not sem_frase, f"mutações sem frase em classificar.py: {sem_frase}"
+
+
 async def test_403_nao_entra_no_diario(client, auth_admin, auth_vendedor):
     """O diário é o que foi FEITO. Uma tentativa barrada (403) não é um ato consumado."""
     antes = (await client.get("/auditoria", headers=auth_admin)).json()["total"]
@@ -171,6 +228,38 @@ async def test_trava_nao_revela_se_o_email_existe(client, admin):
     falso = await client.post("/auth/login", json={"email": "naoexiste@x.com", "senha": "xxx"})
     assert real.status_code == falso.status_code == 401
     assert real.json()["code"] == falso.json()["code"] == "CREDENCIAIS_INVALIDAS"
+
+
+async def test_email_inventado_paga_o_mesmo_bcrypt_que_senha_errada(client, admin, monkeypatch):
+    """A mensagem igual não basta: o TEMPO também não pode dizer se o e-mail existe (ADR-24).
+
+    Antes, e-mail inventado respondia em 10 ms (nem chegava ao bcrypt) e senha errada em
+    300 ms — cronometrar o login listava a equipe. Aqui, sem relógio: conta quantas
+    conferências bcrypt cada caso faz, e com que custo.
+    """
+    conferidos: list[bytes] = []
+    original = bcrypt.checkpw
+
+    def espiao(senha: bytes, hash_: bytes) -> bool:
+        conferidos.append(hash_)
+        return original(senha, hash_)
+
+    monkeypatch.setattr(bcrypt, "checkpw", espiao)
+
+    falso = await client.post(
+        "/auth/login", json={"email": "ninguem@loja.com", "senha": "errada123"}
+    )
+    real = await client.post("/auth/login", json={"email": admin.email, "senha": "errada123"})
+    assert falso.status_code == real.status_code == 401
+
+    assert len(conferidos) == 2, (
+        f"{len(conferidos)} conferências para 2 logins: o e-mail inventado respondeu sem bcrypt"
+    )
+
+    def custo(h: bytes) -> bytes:
+        return h.split(b"$")[2]  # $2b$<custo>$...
+
+    assert custo(conferidos[0]) == custo(conferidos[1]), "custo diferente = tempo diferente"
 
 
 async def test_login_certo_funciona_normalmente(client, admin):

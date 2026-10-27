@@ -15,7 +15,7 @@ from app.core.exceptions import (
     Validacao,
 )
 from app.core.pagination import Pagina, Paginacao
-from app.core.security import hash_senha, verificar_senha
+from app.core.security import HASH_DE_MENTIRA, hash_senha_async, verificar_senha_async
 from app.modules.usuarios.models import Papel, User
 from app.modules.usuarios.repository import UsuarioRepository
 from app.modules.usuarios.schemas import UsuarioCreate, UsuarioOut, UsuarioUpdate
@@ -34,9 +34,14 @@ class UsuarioService:
 
     async def autenticar(self, email: str, senha: str) -> User:
         user = await self.repo.por_email(email)
-        # Verifica a senha mesmo com usuário inexistente seria ideal contra timing attack,
-        # mas o custo do bcrypt aqui é aceitável: a mensagem de erro é sempre a mesma.
-        if user is None or not verificar_senha(senha, user.password_hash):
+        if user is None:
+            # E-mail que não existe paga o mesmo bcrypt de uma senha errada. A mensagem já
+            # era a mesma; sem isto o TEMPO entregava quem existe (10 ms contra 300 ms) e
+            # cronometrar o login listava a equipe (ADR-24). Conta desativada não precisa:
+            # a senha é conferida contra o hash dela antes de olhar `is_active`.
+            await verificar_senha_async(senha, HASH_DE_MENTIRA)
+            raise CredenciaisInvalidas()
+        if not await verificar_senha_async(senha, user.password_hash):
             raise CredenciaisInvalidas()
         if not user.is_active:
             raise CredenciaisInvalidas("Usuário desativado. Fale com o administrador.")
@@ -72,7 +77,7 @@ class UsuarioService:
         user = User(
             name=dados.nome,
             email=dados.email.strip().lower(),
-            password_hash=hash_senha(dados.senha),
+            password_hash=await hash_senha_async(dados.senha),
             role=dados.papel,
             is_active=True,
         )
@@ -146,16 +151,16 @@ class UsuarioService:
         user = await self.obter(user_id)
         # Redefinir a senha do dono daria a chave da casa: é entrar como ele.
         self._barrar_escalada(ator, None, alvo=user)
-        user.password_hash = hash_senha(nova_senha)
+        user.password_hash = await hash_senha_async(nova_senha)
         await self._derrubar_sessoes(user_id)
         await self.session.commit()
 
     async def trocar_propria_senha(self, user: User, senha_atual: str, nova_senha: str) -> None:
-        if not verificar_senha(senha_atual, user.password_hash):
+        if not await verificar_senha_async(senha_atual, user.password_hash):
             raise Validacao("Senha atual incorreta.")
         if senha_atual == nova_senha:
             raise Validacao("A nova senha deve ser diferente da atual.")
-        user.password_hash = hash_senha(nova_senha)
+        user.password_hash = await hash_senha_async(nova_senha)
         await self._derrubar_sessoes(user.id)
         await self.session.commit()
 

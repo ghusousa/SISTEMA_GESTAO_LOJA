@@ -78,7 +78,11 @@ npm run publicar     # ficha inteira na App Store via API (mobile/publicar/, -- 
   Login (sucesso/falha) é gravado pelo `AuthService`, que conhece o e-mail mesmo sem conta.
 - **Força bruta (ADR-24)**: o login conta as falhas recentes por e-mail e por IP
   (`login_attempts`, janela de 15 min) e responde 429 com `Retry-After` quando passa do teto.
-  A resposta de e-mail real e falso é idêntica — a trava não vaza se a conta existe.
+  A resposta de e-mail real e falso é idêntica — a trava não vaza se a conta existe, nem pelo
+  tempo: e-mail inexistente confere contra `HASH_DE_MENTIRA`. A contagem é serializada por
+  e-mail (`pg_advisory_xact_lock`), senão uma rajada paralela fura o teto. bcrypt **nunca**
+  direto numa rota async: `hash_senha_async`/`verificar_senha_async` (thread), ou o login
+  congela a loja inteira.
 - **Fora de dev o app se blinda**: `settings.producao` esconde `/docs` e `/openapi.json`, e
   todo request leva `X-Content-Type-Options`, `X-Frame-Options` e `Referrer-Policy`.
   `api/scripts/pentest.py` roda a bateria de ataques contra a API no ar (17 vetores).
@@ -106,6 +110,10 @@ npm run publicar     # ficha inteira na App Store via API (mobile/publicar/, -- 
   entra no contêiner que serve a loja.
 - Mutações idempotentes por `client_uuid`: `POST /vendas`, `POST /estoque/entradas`,
   `POST /vendas/{id}/devolucoes` e `POST /clientes/{id}/pagamentos` (replay → 200 com o existente).
+  A mesma chave com OUTRO pedido é 409 `DUPLICADO`, nunca o registro antigo como sucesso; a
+  Entrada devolve no `detail.itens` o que já gravou, e a tela tira isso da lista antes de
+  trocar a chave (senão o reenvio soma de novo). Depois do `rollback` de uma corrida, recarregue
+  o `usuario` (`session.refresh`) antes de ler `role`/`id`: atributo expirado é MissingGreenlet.
 - **Devolução, vale e fiado (ADR-19 a ADR-21)**: não existe "modo troca" — troca é devolução que
   vira vale mais uma venda nova. O valor volta pró-rata **pelas formas em que entrou**, com teto
   no que cada uma recebeu; o que não couber vira vale (`vouchers`, consumido por `UPDATE`
@@ -154,6 +162,8 @@ estoque, concorrência do último item, idempotência por `client_uuid`.
   `ui.js`, que formata no fuso vindo de `GET /configuracao` — nunca no do aparelho de quem olha.
 - **Estado que muda de status**: cancelar venda troca o status com `UPDATE ... WHERE status =
   'CONCLUIDA'` antes de estornar. Checar em memória deixa dois cliques estornarem duas vezes.
+  Venda de dia com caixa já FECHADO não se cancela (reescreveria a conferência) e venda no
+  fiado que a cliente já pagou também não (saldo negativo): nos dois casos, Devolução.
 - **Carrinho, conferência e cache são globais**: logout limpa tudo (`limparTudoDaSessao`),
   senão o próximo usuário herda a venda e a sacola do anterior.
 - **Uma porta só para mercadoria entrar (ADR-29)**: o cadastro cria a peça com saldo ZERO e
