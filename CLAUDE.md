@@ -243,8 +243,16 @@ Rules:
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
 - A committed graphify-out/graph.json is rewritten whole on every build, so a large diff to it in a pull request is expected. Do not flag it as churn or suggest skipping the graph rebuild or its hooks.
 
-Medido neste repo (2.975 nós, 266 arquivos de código): o grafo rende em **impacto e relação** —
-`graphify affected "aplicar_movimento()"` traz os dois níveis de chamadores com as rotas em ~1 KB,
-o que pediria várias buscas. Em pergunta pontual com o nome do símbolo já conhecido, `grep -n`
-direto custa o mesmo e já devolve o código. O `graphify-out/` não vai para o git (está no
-`.gitignore`): o `.claude/hooks/session-start.sh` gera o grafo a cada sessão, só AST, sem token.
+**Regra do dono do projeto: pergunta ou análise sobre o código começa no grafo, nunca lendo
+arquivo inteiro.**
+1. Sem `graphify-out/graph.json` (sessão nova)? Rode antes de tudo
+   `CLAUDE_CODE_REMOTE=true bash .claude/hooks/session-start.sh`: instala o graphify (versão
+   fixa) e gera o grafo só com AST local, sem token, em ~10 s.
+2. Onde está / como funciona: `graphify query "<pergunta>"` ou `graphify explain "<símbolo>"`.
+   O que quebra se mexer: `graphify affected "<símbolo>"`. Como A chega em B: `graphify path`.
+3. Só então abra o código, e só as linhas que o grafo apontou (`sed -n 'L1,L2p'`, `Read` com
+   `offset`/`limit`) — nunca o arquivo todo para "dar uma olhada".
+4. Mudou código? `graphify update .` (só AST, sem custo) antes da próxima pergunta.
+5. Subagente que explora código recebe esta regra no prompt.
+
+O `graphify-out/` não vai para o git (está no `.gitignore`): é refeito a cada sessão.
