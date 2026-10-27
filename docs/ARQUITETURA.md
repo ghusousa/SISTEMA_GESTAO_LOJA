@@ -208,11 +208,26 @@ expenses(id, category_id FK→expense_categories RESTRICT, description,
          is_recurring BOOL DEFAULT FALSE, note,
          recurring_source_id FK→expenses NULL, deleted_at, created_at, updated_at)
   uq_expenses_recurring_source_competencia UNIQUE (recurring_source_id, competencia)
+    WHERE deleted_at IS NULL
   ix_expenses_expense_date, ix_expenses_category_id
 ```
 
 A UNIQUE `(recurring_source_id, competencia)` é o que torna "replicar recorrentes do mês" idempotente:
-rodar duas vezes não duplica o aluguel.
+rodar duas vezes não duplica o aluguel. É parcial como todo soft delete: a réplica excluída não ocupa
+o mês, e "Lançar fixas" consegue trazê-la de volta.
+
+A conta fixa é a **cadeia** — a despesa-raiz e as réplicas que apontam para ela (`recurring_source_id`
+é sempre a raiz), mais a recorrente digitada à mão com a mesma categoria e descrição. Ao replicar:
+- **A linha mais recente da cadeia é o modelo**, com ou sem a marca: o valor novo do aluguel vale para
+  o mês seguinte, renomear a réplica não faz a raiz voltar como uma segunda conta, e **desmarcar
+  "recorrente" na réplica para a conta ali** (sem desmarcar o histórico). Despesa digitada à mão
+  sem a marca não conta como "parou" — desmarcada é o padrão da tela.
+- **O dia do vencimento é o da raiz**: dia 31 vira 28/02 e volta a 31/03, em vez de ficar preso no 28.
+  Mudar a data de uma réplica vale só para aquele mês.
+- Já lançada no mês é a que tem a mesma origem **ou** a mesma (categoria, descrição) — esta pega o
+  aluguel digitado à mão.
+- Cada conta entra no seu SAVEPOINT: a colisão com uma replicação simultânea conta só ela em
+  `ja_existentes`, e as outras do mês entram.
 
 ### 2.7 Caixa
 
@@ -283,6 +298,11 @@ O app gera um UUID v4 ao iniciar a venda/entrada e o envia no POST; a coluna é 
 devolve `200` com o registro já criado (em vez de `201`). Custo: uma coluna. Ganho hoje: toque duplo,
 timeout e retry de rede nunca duplicam venda nem estoque. Ganho amanhã: é exatamente a chave que uma
 fila offline (v2) exige — o app ganha SQLite e fila sem mudar o contrato.
+Devolução e recebimento de fiado procuram o `client_uuid` **duas vezes**: na entrada e de novo
+depois de travar a venda (devolução) ou a cliente (recebimento). O retry que chega enquanto a
+primeira tentativa ainda não fez commit passa pela primeira busca sem ver nada e fica parado na
+trava; sem a segunda, ele seguia com a dívida já abatida ("o valor é maior do que a dívida") ou
+batia no UNIQUE (500) — erro na tela para uma operação que aconteceu.
 
 **ADR-3 — Desconto só no total da venda.**
 Desconto por item multiplicaria os caminhos de arredondamento (rateio, soma que não fecha, margem por
@@ -320,6 +340,12 @@ mesmo dia: às 23h de São Paulo o UTC já virou, e consultar o caixa pela data 
 estornos, e o serviço só continua se a instrução afetou uma linha. Checar o status em memória
 deixaria dois cliques (ou um retry) passarem juntos: o `UPDATE` de saldo é atômico, mas *soma* — a
 peça voltaria duas vezes ao estoque sem nenhum erro aparecer.
+O mesmo `UPDATE` leva `NOT EXISTS (sale_returns)`, e por isso vem depois de um
+`SELECT ... FOR UPDATE` da venda, em instrução separada. Sozinho, o `UPDATE` tira a foto do banco
+ao começar, para na trava de uma devolução em andamento e, quando ela faz commit, segue com a foto
+velha — a devolução só travou a linha, não a alterou, e o Postgres não reavalia o WHERE. A venda
+saía CANCELADA e com devolução, com a peça e o dinheiro voltando duas vezes. Travando antes, o
+`UPDATE` começa depois do commit e enxerga a devolução.
 
 **ADR-10 — Configuração insegura derruba o boot.**
 Fora de `dev`/`test`, o app recusa subir com `JWT_SECRET` de exemplo ou curto, `CORS_ORIGINS='*'`
@@ -507,6 +533,15 @@ devendo, e nenhuma tela diz isso. O abatimento é limitado ao que ela ainda deve
 a diferença sai como vale — um papel na mão dela, que ela vê. Devolver em espécie seria
 tirar da gaveta de hoje um dinheiro que entrou noutro dia, por outra venda; o sistema não
 sabe qual pagamento quitou qual compra, e não vai fingir que sabe.
+**O cancelamento obedece à mesma regra, recusando.** Cancelar tira o fiado da conta (venda
+CANCELADA não cobra), mas o pagamento que ela já fez continua lá — e o saldo iria a negativo
+pelo mesmo caminho. Por isso `POST /vendas/{id}/cancelamento` de venda com FIADO trava a
+cliente (`quanto_deve(travar=True)`, na ordem venda → cliente, a mesma da devolução) e responde
+`409 OPERACAO_INVALIDA` quando, sem o fiado desta venda, a dívida ficaria abaixo de zero. A
+mensagem manda para a Devolução, que abate só o que ainda se deve e devolve o já pago em vale.
+Recusar em vez de converter em vale no próprio cancelamento mantém um caminho só para o
+dinheiro que já entrou; e se a dívida que sobra ainda cobre o fiado desta venda (duas compras,
+um pagamento), o cancelamento passa normalmente.
 
 **ADR-22 — Backup é do servidor, com cópia fora dele, e só vale se a restauração for testada.**
 `pg_dump` que ninguém nunca restaurou é um arquivo, não um backup. `backup.sh` valida o
@@ -515,6 +550,18 @@ dump abrindo-o depois de gerar, guarda 14 dias, manda a cópia para fora por `rc
 sobrescrever — porque restaurar o arquivo errado é o jeito mais rápido de perder o que
 ainda estava certo. O `diagnostico.sh` conta a idade do último backup: backup velho é o
 tipo de coisa que só se descobre no dia em que ele é preciso.
+Restaurar **zera o schema** (`DROP SCHEMA public CASCADE` e recria) e roda o dump, tudo numa
+transação só do `psql`. Era `pg_restore --clean`, que só derruba o que está NO dump: a cópia de
+antes de uma migration deixava para trás a tabela que ela criou, o `alembic_version` voltava, e
+o `upgrade head` do contêiner caía em DuplicateTable — a API não subia mais. Numa transação, dump
+que não abre deixa o banco como estava, e a loja volta com ele.
+A mesma restauração é a volta atrás do `atualizar.sh` quando a versão nova chegou a migrar o
+banco e não subiu: o código anterior não acha a revisão nova ("Can't locate revision"), então
+voltar só o código deixaria a loja fora. O script anota a revisão antes do `up`; se ela mudou e
+a anterior não sobe, restaura a cópia tirada antes da atualização (o `--restaurar` guarda o banco
+migrado antes, com o que se vendeu no meio tempo). Quem migra é só o `entrada.sh`, ao subir: o
+`atualizar.sh` espera o `/health` em vez de rodar outro `alembic upgrade head`, que corria junto
+com o do contêiner (o alembic não tem trava) e transformava atualização boa em volta atrás.
 
 **ADR-23 — Auditoria na borda, com nome e papel congelados na linha.**
 Quem cuida da loja precisa saber o que cada pessoa fez com o login dela — não para
@@ -603,7 +650,12 @@ não tem navegador; ele cola o JSON na tela, uma vez.
 A rotação mantém `manter` cópias ordenando por NOME (`loja-AAAAMMDD-HHMMSS.dump`) e não por data
 do Drive: o nome é nosso, o relógio do Drive não. E o timer bate de 5 em 5 min só para PERGUNTAR
 ao banco se já passou `intervalo_min` — assim o horário mora na tela, e trocar 30 por 60 minutos
-não exige `systemctl` nem SSH.
+não exige `systemctl` nem SSH. "Ligado?" é perguntado como `CASE WHEN ativo THEN 1 ELSE 0 END`:
+`true::text` é 'true' (o 't' é só como o psql mostra a coluna crua), e comparar com "t" fez o
+backup ligado nunca rodar, sem erro. No disco a cópia da nuvem se chama `loja-nuvem-…` (no Drive
+continua `loja-AAAAMMDD-HHMMSS.dump`), e a faxina de 12 h só apaga essas: com o nome do backup
+diário ela levava junto as diárias e o dump de segurança do `--restaurar`. As unidades do systemd
+levam `Environment=HOME=/root` — serviço sem `User=` não recebe HOME, e o script usa `set -u`.
 Os campos `ultimo_*` existem porque "ligado" e "ligado e quebrado" são a mesma tela sem eles: o
 que dá confiança é "há 12 minutos, 4,2 MB, 10 cópias no Drive".
 
@@ -675,7 +727,7 @@ Desativar = `PATCH {ativo:false}`. Bootstrap do primeiro admin: `python -m app.c
 ### 4.4 `estoque`
 | método | rota | papel | notas |
 |---|---|---|---|
-| POST | `/estoque/entradas` | A/V | `{client_uuid, fornecedor?, observacao?, itens:[{variante_id, quantidade, custo_unitario?}]}`; `custo_unitario` atualiza o custo da variante |
+| POST | `/estoque/entradas` | A/V | `{client_uuid, fornecedor?, observacao?, itens:[{variante_id, quantidade, custo_unitario?}]}`; `custo_unitario` atualiza o custo da variante — só de quem tem VER_DINHEIRO; dos outros é ignorado, a mesma tranca do catálogo |
 | POST | `/estoque/ajustes` | A | `{variante_id, quantidade(±), motivo}` — motivo obrigatório |
 | POST | `/estoque/inventarios` | A | `{observacao?, contagens:[{variante_id, quantidade_contada}]}` → movimentações das diferenças + resumo |
 | GET | `/estoque/saldos` | A/V | `?q=&categoria_id=&somente_baixo=` |
@@ -692,14 +744,26 @@ Desativar = `PATCH {ativo:false}`. Bootstrap do primeiro admin: `python -m app.c
 | GET | `/vendas/{id}/devolucoes` | DEVOLVER_VENDA | o que já voltou desta venda |
 | GET | `/vendas/vales/{codigo}` | A/V | consulta o vale: `{codigo, valor, usado, saldo}` |
 
-Troco não trafega: é calculado no app a partir do valor recebido em dinheiro.
+Troco não trafega: é calculado no app a partir do valor recebido em dinheiro. No web, o
+"Dinheiro recebido" vem **sugerido** igual à parte em dinheiro e a acompanha nos dois sentidos
+até alguém digitar nele; digitado, a parte mudar não o reescreve (se ficar menor que ela, a tela
+avisa e trava o botão). Acompanhar só para cima deixava troco fantasma: R$ 200 em dinheiro
+baixados para R$ 50 + R$ 150 no PIX mantinham "recebido 200" e mandavam devolver R$ 150 a quem
+entregou R$ 50.
 
 `?variante_id=` existe para a devolução: no balcão a cliente chega com a blusa e sem nota, e
 o caminho começa na peça — "de quais vendas esta peça saiu?" — não no número da venda.
+A tela gera o `client_uuid` com a devolução e o troca quando ela é **gravada** ou quando a
+**venda muda** — reabrir a mesma venda depois de uma resposta perdida mantém o uuid, que é o
+retry. O replay responde pelo uuid sem olhar a venda, e o leitor segue ligado sob o
+comprovante: com um uuid por tela, a peça da próxima cliente bipada ali recebia o comprovante da
+anterior, e a devolução dela não era gravada.
 
 Venda cancelada não pode ter devolução, e venda com devolução não pode ser cancelada: são
 dois caminhos para desfazer a mesma coisa, e deixar os dois abertos devolveria a peça duas
-vezes.
+vezes (ADR-9 diz como isso vale até com as duas chegando juntas). Venda no fiado cujo
+cancelamento deixaria o saldo da cliente negativo (porque ela já pagou) também não se cancela —
+devolve-se (ADR-21).
 
 ### 4.6 `clientes` (GERIR_CREDIARIO: dono e gerente)
 | método | rota | notas |
@@ -714,7 +778,8 @@ vezes.
 ### 4.7 `despesas` (LANCAR_DESPESA: dono e gerente)
 `GET/POST /despesas/categorias`, `PATCH/DELETE /despesas/categorias/{id}`,
 `GET/POST /despesas`, `GET/PATCH/DELETE /despesas/{id}`,
-`POST /despesas/replicar-recorrentes?competencia=YYYY-MM` (idempotente; devolve `{criadas, ignoradas}`).
+`POST /despesas/replicar-recorrentes?competencia=YYYY-MM` (idempotente; devolve
+`{competencia, criadas, ja_existentes, valor_total, despesas}` — regras da cadeia em §2.6).
 
 ### 4.8 `caixa` (FECHAR_CAIXA: dono, gerente e supervisora)
 `GET /caixa/dia?data=YYYY-MM-DD` → esperado por forma de pagamento (vendas concluídas do dia no fuso
@@ -725,7 +790,10 @@ da loja) + fechamento existente, se houver.
 ### 4.9 `relatorios` (VER_DINHEIRO: dono e gerente)
 Todos com `?inicio=&fim=` (≤ 366 dias), exceto `estoque-baixo` (sem período — é fotografia do agora).
 
-- `/relatorios/resumo` → faturamento, CMV, lucro bruto, despesas, resultado, nº de vendas, ticket médio
+- `/relatorios/resumo` → faturamento, CMV, lucro bruto, despesas, resultado, nº de vendas, ticket médio.
+  `lucro_bruto = faturamento_liquido − (CMV − CMV devolvido)` e `margem_bruta_pct = lucro_bruto /
+  faturamento_liquido` — as duas pontas líquidas de devolução; sobre o bruto, a margem encolheria
+  na proporção do que voltou
 - `/relatorios/vendas-por-dia` → série diária (faturamento, nº de vendas)
 - `/relatorios/mais-vendidos?limite=10` → ranking por quantidade (valor bruto, sem rateio de desconto)
 - `/relatorios/despesas-por-categoria`
@@ -769,7 +837,9 @@ supervisora) e mostra dentro só o que cada capacidade permite — a supervisora
 caixa do dia, sem o resumo do mês. Guarda por capacidade no `_layout`.
 
 - `api/client.ts`: axios, `baseURL` de `EXPO_PUBLIC_API_URL`, interceptor 401 → refresh sob mutex →
-  refaz a requisição → falhou: limpa SecureStore e volta ao login.
+  refaz a requisição → o servidor **recusou** o refresh (401/403, `lib/renovacao.ts`): limpa
+  SecureStore e carrinho e volta ao login. Rede caída, timeout ou 5xx no refresh não dizem nada
+  sobre o token: a requisição falha como falha de rede (o BannerConexao mostra) e a sessão fica.
 - `lib/money.ts`: `paraCentavos("149.90") → 14990`, `formatar(14990) → "R$ 149,90"`,
   `paraDecimalString(14990) → "149.90"`. Toda conta em inteiro.
 - `stores/`: `authStore` (usuário/papel), `cartStore` (carrinho do PDV), `entradaStore`,
@@ -792,7 +862,7 @@ módulos ES em `js/`.
 |---|---|
 | `js/api.js` | `fetch` com access token em memória, renovação sob mutex no 401, erros já traduzidos em `{code, message}` |
 | `js/router.js` | Roteador por hash (`#/produtos/12`), views carregadas sob demanda com `import()`, guarda por papel |
-| `js/store.js` | Sessão e carrinho do PDV — um objeto e quem quiser ser avisado se inscreve |
+| `js/store.js` | Sessão e carrinho do PDV — um objeto e quem quiser ser avisado se inscreve. Carrinho e conferência saem com a sessão (`limparTudoDaSessao`), no botão Sair **e** quando ela cai |
 | `js/ui.js` | Template `html` com escape automático, modal, avisos, paginação, formatação pt-BR, campo de dinheiro |
 | `js/dinheiro.js` | Espelho de `mobile/src/lib/money.ts`. Centavos inteiros; **se mudar lá, mude aqui** |
 | `js/leitor.js` | Captura do leitor USB (teclado) e foco permanente no campo de leitura |

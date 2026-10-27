@@ -272,6 +272,8 @@ class VendaService:
                 )
             raise OperacaoInvalida("Esta venda já está cancelada.")
 
+        await self._recusar_se_o_fiado_ja_foi_pago(venda)
+
         quantidades = {item.variant_id: item.quantity for item in venda.items}
         for variante_id in movimentos.ordenar_para_evitar_deadlock(list(quantidades)):
             await movimentos.aplicar_movimento(
@@ -287,12 +289,48 @@ class VendaService:
         await self._devolver_vales_da_venda(venda)
 
         # O fiado desta venda some junto, sem nada a fazer: o saldo do cliente só soma
-        # pagamentos de vendas CONCLUÍDAS, e esta deixou de ser uma.
+        # pagamentos de vendas CONCLUÍDAS, e esta deixou de ser uma. (O que a cliente já
+        # pagou dele é que não some — por isso a recusa acima.)
         await self.session.commit()
 
         atualizada = await self.repo.por_id(venda_id)
         assert atualizada is not None
         return await self._montar_venda(atualizada, usuario)
+
+    async def _recusar_se_o_fiado_ja_foi_pago(self, venda: Sale) -> None:
+        """Cancelar venda no fiado que a cliente já pagou deixaria a loja devendo a ela.
+
+        É a armadilha do ADR-21 entrando pela outra porta: ela levou R$ 100,00 no fiado,
+        pagou, e a venda é cancelada. O fiado some da conta (venda CANCELADA não cobra), o
+        pagamento fica, e o saldo dela vai a −R$ 100,00 — fora da lista de quem deve, sem
+        nada na tela dizendo que a loja tem um dinheiro dela. A Devolução resolve o mesmo
+        pedido sem esse buraco: abate só o que ainda se deve e entrega o resto em vale.
+
+        Roda DEPOIS de `marcar_cancelada`, dentro da mesma transação: a conta já enxerga
+        esta venda como cancelada, e "deve < 0" é exatamente "tirar este fiado deixa o
+        saldo negativo". A ordem das travas é a da devolução — venda (no `marcar_cancelada`)
+        e depois cliente —, para as duas nunca se esperarem em cruz. Sem travar a cliente,
+        um recebimento simultâneo leria a dívida antiga e o saldo iria a negativo igual.
+        """
+        fiado = sum(
+            (p.amount for p in venda.payments if p.method == FormaPagamento.FIADO), ZERO
+        )
+        if fiado <= ZERO or venda.customer_id is None:
+            return
+        # Serviço público do outro módulo, nunca o repositório dele (CLAUDE.md).
+        from app.modules.clientes.service import ClienteService
+
+        deve_depois = await ClienteService(self.session).quanto_deve(
+            venda.customer_id, travar=True
+        )
+        if deve_depois < ZERO:
+            await self.session.rollback()
+            raise OperacaoInvalida(
+                "A cliente já pagou este fiado, no todo ou em parte: cancelar deixaria a loja "
+                "devendo a ela sem registro. Faça a devolução das peças — o que já foi pago "
+                "volta em vale.",
+                {"no_fiado": str(fiado), "deve_hoje": str(deve_depois + fiado)},
+            )
 
     # ------------------------------------------------------------ leitura
     async def obter(self, venda_id: int, usuario: User) -> VendaOut:

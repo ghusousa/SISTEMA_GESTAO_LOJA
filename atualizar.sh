@@ -9,9 +9,9 @@
 #   1. backup do banco ANTES de qualquer coisa (é o que permite voltar atrás);
 #   2. baixa o código novo;
 #   3. reconstrói e sobe;
-#   4. aplica as migrations;
+#   4. as migrations, quem aplica é o contêiner ao subir (docker/entrada.sh);
 #   5. confere que o sistema respondeu — e, se não respondeu, VOLTA sozinho para a
-#      versão anterior.
+#      versão anterior (com o banco do passo 1, se uma migration chegou a rodar).
 #
 # O passo 5 é o motivo de este script existir em vez de um `git pull && docker compose up`
 # escrito no papel: quem atualiza a loja às 8h50 de um sábado precisa que uma atualização
@@ -322,7 +322,7 @@ limpar_orfaos() {
     orfaos="$(dk ps -a --filter "name=_loja-api-1" --format '{{.Names}}' 2>/dev/null \
         | grep -E '^[0-9a-f]{8,}_' || true)"
     [ -z "$orfaos" ] && return 0
-    alerta "Sobrou contêiner de uma atualização interrompida. Removendo:"
+    aviso "Sobrou contêiner de uma atualização interrompida. Removendo:"
     printf '%s\n' "$orfaos" | while read -r nome; do
         [ -n "$nome" ] || continue
         printf '    %s\n' "$nome"
@@ -330,7 +330,15 @@ limpar_orfaos() {
     done
 }
 
+# Em que migration o banco está. Lida antes de subir o código novo, é o que diz na volta
+# atrás se a versão nova chegou a mexer no schema.
+revisao_do_banco() {
+    dk compose exec -T db psql -U loja -d loja -tAc "SELECT version_num FROM alembic_version" \
+        2>/dev/null | tr -d '\r' | head -1
+}
+
 voltar_atras() {
+    local revisao_agora=""
     erro "A atualização falhou. Voltando para a versão anterior."
     git reset --hard --quiet "$ANTES"
     # Agora a instalada é a velha e existe uma nova parada no GitHub: a tela precisa dizer
@@ -344,14 +352,28 @@ voltar_atras() {
     printf '\n  aguardando a loja voltar…\n'
     if esperar_saude 30 >/dev/null; then
         printf '  %s✓ O sistema voltou para a versão de antes e está no ar.%s\n' "$VERDE" "$NORMAL"
+        [ -n "$ARQUIVO_BACKUP" ] && printf '  A cópia do banco de antes está em %s\n' "$ARQUIVO_BACKUP"
+    elif [ -n "$ARQUIVO_BACKUP" ] && [ -n "$REVISAO_ANTES" ] \
+        && revisao_agora="$(revisao_do_banco || true)" && [ -n "$revisao_agora" ] \
+        && [ "$revisao_agora" != "$REVISAO_ANTES" ]; then
+        # O contêiner novo chegou a aplicar uma migration, e o código velho não sabe ler o
+        # banco assim: o alembic dele não acha a revisão nova ("Can't locate revision") e a
+        # API não sobe. Voltar o código sem voltar o banco deixava a loja fora até alguém
+        # mexer à mão. A cópia de antes da atualização é o banco que esta versão conhece; o
+        # --restaurar guarda o de agora antes de trocar (com o que se vendeu no meio tempo).
+        aviso "Uma migration da versão nova chegou a rodar, e a anterior não sobe com o banco assim."
+        aviso "Voltando o banco para a cópia de antes da atualização: $ARQUIVO_BACKUP"
+        if ./backup.sh --restaurar "$ARQUIVO_BACKUP" --sim; then
+            printf '  %s✓ Código e banco voltaram para antes da atualização, e a loja está no ar.%s\n' \
+                "$VERDE" "$NORMAL"
+        else
+            printf '  %s✗ A versão anterior não subiu nem com o banco de antes.%s\n' "$VERMELHO" "$NORMAL"
+            printf '  Veja o que aconteceu com: %sdocker compose logs --tail 50 api%s\n' "$FORTE" "$NORMAL"
+        fi
     else
         printf '  %s✗ A versão anterior também não subiu.%s\n' "$VERMELHO" "$NORMAL"
         printf '  Veja o que aconteceu com: %sdocker compose logs --tail 50 api%s\n' "$FORTE" "$NORMAL"
-    fi
-
-    if [ -n "$ARQUIVO_BACKUP" ]; then
-        printf '  O banco NÃO foi tocado por este script; a cópia está em %s\n' "$ARQUIVO_BACKUP"
-        printf '  caso alguma migration tenha chegado a rodar.\n'
+        [ -n "$ARQUIVO_BACKUP" ] && printf '  A cópia do banco de antes está em %s\n' "$ARQUIVO_BACKUP"
     fi
     printf '  Mande a mensagem de erro acima para quem cuida do sistema.\n\n'
     exit 1
@@ -378,30 +400,31 @@ titulo "Reconstruindo e subindo"
 # `up -d --build` em vez de `restart`: dependência nova no requirements só entra na
 # imagem se ela for reconstruída, e uma imagem velha com código novo quebra de um jeito
 # difícil de entender.
+REVISAO_ANTES="$(revisao_do_banco || true)"
 limpar_orfaos
 if ! dk compose up -d --build --remove-orphans; then
     voltar_atras
 fi
 
-titulo "Atualizando o banco"
-# O entrada.sh do contêiner já roda `alembic upgrade head` ao subir. Rodar de novo aqui é
-# de graça (migration aplicada não reaplica) e serve para o erro aparecer NESTE terminal,
-# em vez de ficar escondido no log do contêiner.
-if ! dk compose exec -T api alembic upgrade head; then
-    voltar_atras
-fi
-ok "migrations aplicadas"
-
 # ------------------------------------------------------------------ conferir
 
 titulo "Conferindo se a loja voltou"
+# Quem aplica as migrations é o entrada.sh do contêiner, ao subir, e a API só responde ao
+# /health depois que elas terminaram — por isso esperar o /health basta. Este script rodava
+# um segundo `alembic upgrade head` por `exec`, e os dois corriam JUNTOS (o `up -d` não
+# espera o contêiner ficar pronto, e o alembic não tem trava): quando as transações se
+# cruzavam, o daqui caía em UniqueViolation e uma atualização boa virava volta atrás. Mais
+# tempo de espera que antes, porque agora a migration corre dentro dele.
 
 URL_LOCAL="http://localhost:$(grep -E '^PORTA_HTTP=' .env | cut -d= -f2 || echo 80)"
 
-if ! SAUDE="$(esperar_saude 30)"; then
+if ! SAUDE="$(esperar_saude 60)"; then
+    # O motivo (uma migration que falhou, um import quebrado) está no log do contêiner;
+    # mostrar aqui é o que mantém o erro NESTE terminal, e não escondido lá.
+    dk compose logs --tail 30 api 2>&1 | sed 's/^/    /' || true
     voltar_atras
 fi
-ok "a API respondeu: $SAUDE"
+ok "migrations aplicadas e a API respondeu: $SAUDE"
 
 # Cada `--build` deixa a imagem antiga para trás, sem nome, ocupando disco. Vinte
 # atualizações depois são vários GB — e num servidor de loja o disco acaba antes.
@@ -415,13 +438,16 @@ LIXO="$(dk image prune -f 2>/dev/null | grep -i 'reclaimed' | sed 's/.*: *//')"
 GUARDAR=5
 # O padrão é o nome COMPLETO que este script usa: `loja-backup-*.dump` pegaria também os
 # backups do desinstalador, que são de quem os fez, não meus para apagar.
-SOBRANDO="$(ls -1t loja-backup-antes-de-atualizar-*.dump 2>/dev/null | tail -n +$((GUARDAR + 1)))"
+# `|| true`: sem dump nenhum (--sem-backup num servidor novo), o `ls` sai 2 e, com
+# `pipefail`, o script morria AQUI — atualizado, mas sem o "✓ Atualizado" e com o serviço
+# do systemd marcado como falho.
+SOBRANDO="$(ls -1t loja-backup-antes-de-atualizar-*.dump 2>/dev/null | tail -n +$((GUARDAR + 1)) || true)"
 if [ -n "$SOBRANDO" ]; then
     printf '%s\n' "$SOBRANDO" | xargs -r rm -f
     ok "backups antigos apagados (ficam os $GUARDAR mais novos)"
 fi
 # O mesmo para os logs guardados antes de cada reconstrução.
-ls -1t loja-backup-log-antes-de-atualizar-*.txt 2>/dev/null | tail -n +$((GUARDAR + 1)) | xargs -r rm -f
+ls -1t loja-backup-log-antes-de-atualizar-*.txt 2>/dev/null | tail -n +$((GUARDAR + 1)) | xargs -r rm -f || true
 
 # ------------------------------------------------------------------ pronto
 

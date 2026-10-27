@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import Duplicado, NaoEncontrado, OperacaoInvalida, Validacao
 from app.core.pagination import Pagina, Paginacao
-from app.modules.despesas.models import Expense, ExpenseCategory
+from app.modules.despesas.models import UQ_RECORRENCIA, Expense, ExpenseCategory
 from app.modules.despesas.repository import DespesaRepository
 from app.modules.despesas.schemas import (
     CategoriaDespesaIn,
@@ -160,19 +160,19 @@ class DespesaService:
         """Traz as contas fixas para o mês pedido.
 
         Idempotente pela UNIQUE (origem, competência): rodar de novo não duplica o aluguel,
-        devolve quantas já existiam.
+        devolve quantas já existiam — cada uma contada por si, nunca o lote inteiro.
         """
         referencia = _competencia_para_data(competencia)
+        origens_lancadas, chaves_lancadas = await self.repo.lancamentos_da_competencia(referencia)
         modelos = await self.repo.recorrentes_ate(referencia)
-        ja_lancadas = await self.repo.lancamentos_da_competencia(referencia)
+        # O vencimento é o da raiz, não o da réplica anterior: o aluguel do dia 31 cai em
+        # 28/02 e, copiado de fevereiro, ficaria preso no dia 28 para sempre.
+        dias = await self.repo.dias_das_origens({m.recurring_source_id or m.id for m in modelos})
 
-        criadas: list[Expense] = []
-        ja_existentes = 0
+        # Montadas ANTES do primeiro INSERT: o rollback de um savepoint expira objetos, e
+        # ler atributo expirado em sessão async é MissingGreenlet (o 500 do caixa).
+        novas: list[tuple[tuple[int, str], Expense]] = []
         for modelo in modelos:
-            chave = (modelo.category_id, modelo.description.strip().lower())
-            if chave in ja_lancadas:
-                ja_existentes += 1
-                continue
             # A origem da réplica é sempre a despesa-raiz, não a réplica anterior:
             # assim a UNIQUE cobre a cadeia inteira e o mês nunca duplica.
             origem_id = modelo.recurring_source_id or modelo.id
@@ -180,31 +180,39 @@ class DespesaService:
                 category_id=modelo.category_id,
                 description=modelo.description,
                 amount=modelo.amount,
-                expense_date=_dia_no_mes(referencia, modelo.expense_date.day),
+                expense_date=_dia_no_mes(
+                    referencia, dias.get(origem_id, modelo.expense_date.day)
+                ),
                 is_recurring=True,
                 note=modelo.note,
                 recurring_source_id=origem_id,
             )
-            self.session.add(nova)
-            criadas.append(nova)
-            ja_lancadas.add(chave)
+            novas.append(((modelo.category_id, modelo.description.strip().lower()), nova))
 
-        try:
-            await self.session.commit()
-        except IntegrityError as exc:
-            await self.session.rollback()
-            # Só a corrida das duas replicações simultâneas é "já estava lá". Qualquer outra
-            # violação (categoria excluída no meio, valor inválido) é erro de verdade e não
-            # pode virar um "tudo certo" que esconde despesa faltando no mês.
-            if "recurring_source_id" not in str(exc.orig):
-                raise
-            return ReplicacaoOut(
-                competencia=competencia,
-                criadas=0,
-                ja_existentes=len(modelos),
-                valor_total=ZERO,
-                despesas=[],
-            )
+        criadas: list[Expense] = []
+        ja_existentes = 0
+        for chave, nova in novas:
+            if nova.recurring_source_id in origens_lancadas or chave in chaves_lancadas:
+                ja_existentes += 1
+                continue
+            # Um SAVEPOINT por conta: a colisão de uma (a outra replicação simultânea
+            # chegou antes) conta só ela como "já estava lá". Desfazer o lote inteiro
+            # deixava o mês sem a luz por causa do aluguel — e a tela dizia "tudo lançado".
+            try:
+                async with self.session.begin_nested():
+                    self.session.add(nova)
+                    await self.session.flush()
+            except IntegrityError as exc:
+                # Só a UNIQUE da recorrência é "já estava lá". Qualquer outra violação
+                # (categoria excluída no meio, valor inválido) é erro de verdade e não pode
+                # virar um "tudo certo" que esconde despesa faltando no mês.
+                if UQ_RECORRENCIA not in str(exc.orig):
+                    raise
+                ja_existentes += 1
+                continue
+            criadas.append(nova)
+
+        await self.session.commit()
 
         resultado = [await self.obter(d.id) for d in criadas]
         return ReplicacaoOut(

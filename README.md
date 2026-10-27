@@ -541,18 +541,24 @@ No Windows são as mesmas, com traço único: `-ManterDados`, `-SemBackup`, `-Ap
 ### Restaurar um backup
 
 O caminho normal é `./backup.sh --restaurar ARQUIVO` (ver **Backup automático, todo dia**).
-Na mão, para um dump antigo:
+Na mão, para um dump antigo. O schema é zerado antes: `pg_restore --clean` só derruba o que
+está no dump, e uma tabela criada por migration mais nova ficaria para trás — a API não
+subiria mais (`DuplicateTable` no `alembic upgrade head`).
 
 ```bash
 ./instalar.sh
-docker compose exec -T db pg_restore -U loja -d loja --clean < loja-backup-2026-08-22-1438.dump
-docker compose restart api
+docker compose stop api
+docker compose exec -T db psql -U loja -d loja -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public AUTHORIZATION pg_database_owner; GRANT USAGE ON SCHEMA public TO PUBLIC;"
+docker compose exec -T db pg_restore -U loja -d loja --no-owner < loja-backup-2026-08-22-1438.dump
+docker compose start api
 ```
 
 ```powershell
 .\instalar.bat
-cmd /c "docker compose exec -T db pg_restore -U loja -d loja --clean < loja-backup-2026-08-22-1438.dump"
-docker compose restart api
+docker compose stop api
+docker compose exec -T db psql -U loja -d loja -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public AUTHORIZATION pg_database_owner; GRANT USAGE ON SCHEMA public TO PUBLIC;"
+cmd /c "docker compose exec -T db pg_restore -U loja -d loja --no-owner < loja-backup-2026-08-22-1438.dump"
+docker compose start api
 ```
 
 ### Tirar o Docker também

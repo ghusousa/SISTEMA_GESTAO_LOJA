@@ -5,10 +5,14 @@
  * vencido, um refresh por requisição rotacionaria o token cinco vezes e a API — que revoga a
  * família inteira ao ver reuso — derrubaria a sessão. Por isso o refresh acontece sob um
  * mutex: o primeiro renova, os outros esperam a mesma promessa e refazem a requisição.
+ *
+ * E só o servidor recusando o token derruba a sessão (`refreshRecusado`). Refresh que cai
+ * na rede rejeita a requisição com o erro de rede e deixa token e carrinho onde estavam.
  */
 
 import axios, { AxiosError, type AxiosInstance, type InternalAxiosRequestConfig } from 'axios';
 
+import { refreshRecusado } from '../lib/renovacao';
 import { lerAccessToken, lerRefreshToken, limparSessao, salvarTokens } from './sessao';
 import { enderecoSugerido, servidorEmCache } from './servidor';
 import type { ErroApi, Tokens } from './tipos';
@@ -46,6 +50,12 @@ api.interceptors.request.use(async (config) => {
   return config;
 });
 
+/**
+ * O token novo, ou `null` quando a sessão acabou de verdade (sem refresh no cofre, ou o
+ * servidor o recusou). Falha de rede, timeout e 5xx REJEITAM: não são resposta sobre o
+ * token, e tratá-las como `null` apagava um refresh válido e esvaziava o carrinho do PDV a
+ * cada oscilação do Wi-Fi da loja.
+ */
 async function renovarSessao(): Promise<string | null> {
   const refresh = await lerRefreshToken();
   if (!refresh) return null;
@@ -58,8 +68,9 @@ async function renovarSessao(): Promise<string | null> {
     );
     await salvarTokens(data.access_token, data.refresh_token);
     return data.access_token;
-  } catch {
-    return null;
+  } catch (erro) {
+    if (axios.isAxiosError(erro) && refreshRecusado(erro.response?.status)) return null;
+    throw erro;
   }
 }
 
@@ -75,9 +86,19 @@ api.interceptors.response.use(
     }
 
     original._jaTentouRefresh = true;
-    refreshEmAndamento = refreshEmAndamento ?? renovarSessao();
-    const novoToken = await refreshEmAndamento;
-    refreshEmAndamento = null;
+    // A promessa se solta sozinha ao terminar (bem ou mal): agora ela também pode rejeitar,
+    // e quem esperava não pode deixar o mutex preso numa renovação que já falhou.
+    refreshEmAndamento ??= renovarSessao().finally(() => {
+      refreshEmAndamento = null;
+    });
+    let novoToken: string | null;
+    try {
+      novoToken = await refreshEmAndamento;
+    } catch (erroDoRefresh) {
+      // Rede caiu no meio da renovação: a requisição falha como falha de rede (é isso que
+      // `mensagemDoErro` e o BannerConexao mostram) e a sessão fica. A próxima tenta de novo.
+      return Promise.reject(erroDoRefresh);
+    }
 
     if (!novoToken) {
       await limparSessao();

@@ -99,6 +99,13 @@ function ligarCobranca(corpo, fechar, { total, desconto, itens, clientUuid }) {
   /** @type {{forma: string, valor: number, codigoVale?: string}[]} */
   let pagamentos = [];
   let recebidoEmDinheiro = 0;
+  // O "recebido" nasce como SUGESTÃO (igual à parte em dinheiro) e a acompanha nos dois
+  // sentidos enquanto ninguém digitar nele. Acompanhar só para cima deixava troco fantasma:
+  // R$ 200 em dinheiro baixados para R$ 50 (+ R$ 150 no PIX) mantinham "recebido 200", que
+  // ninguém digitou, e a tela mandava devolver R$ 150 a quem entregou R$ 50. Digitado, o
+  // número é o que a cliente entregou de fato: a parte mudar não o reescreve — se ele ficar
+  // menor que a parte, a tela avisa em vez de inventar um valor que ninguém recebeu.
+  let recebidoDigitado = false;
   let enviando = false;
 
   const areaPagamentos = corpo.querySelector('[data-pagamentos]');
@@ -172,15 +179,18 @@ function ligarCobranca(corpo, fechar, { total, desconto, itens, clientUuid }) {
     pagamentos.forEach((p, i) => {
       ligarCampoDinheiro(areaPagamentos.querySelector(`[data-pagamento="${i}"]`), p.valor, (valor) => {
         pagamentos[i].valor = valor;
-        // Ajustar a parte em dinheiro sem mexer no recebido deixaria um troco fantasma.
-        if (p.forma === 'DINHEIRO' && recebidoEmDinheiro < valor) definirRecebido(valor);
+        // Ajustar a parte em dinheiro sem mexer no recebido sugerido deixaria um troco fantasma.
+        if (p.forma === 'DINHEIRO' && !recebidoDigitado) definirRecebido(valor);
         atualizarSituacao();
       });
     });
     areaPagamentos.querySelectorAll('[data-remover]').forEach((b) =>
       b.addEventListener('click', () => {
         pagamentos.splice(Number(b.dataset.remover), 1);
-        if (!pagamentos.some((p) => p.forma === 'DINHEIRO')) recebidoEmDinheiro = 0;
+        if (!pagamentos.some((p) => p.forma === 'DINHEIRO')) {
+          recebidoEmDinheiro = 0;
+          recebidoDigitado = false;
+        }
         // Tirou a linha do fiado pelo ✕: a cliente sai junto. Senão a venda (e o recibo)
         // ficariam no nome de quem não levou nada fiado.
         if (!pagamentos.some((p) => p.forma === 'FIADO')) cliente = null;
@@ -207,20 +217,23 @@ function ligarCobranca(corpo, fechar, { total, desconto, itens, clientUuid }) {
         <input data-recebido inputmode="numeric" />
       </label>
     `;
+    if (!recebidoDigitado) recebidoEmDinheiro = parte;
     campoRecebido = ligarCampoDinheiro(
       areaDinheiro.querySelector('[data-recebido]'),
-      Math.max(recebidoEmDinheiro, parte),
+      recebidoEmDinheiro,
       (valor) => {
         recebidoEmDinheiro = valor;
+        recebidoDigitado = true;
         atualizarSituacao();
       },
     );
-    recebidoEmDinheiro = Math.max(recebidoEmDinheiro, parte);
   }
 
+  /** A sugestão acompanhando a parte em dinheiro. Não é digitação, embora avise o campo. */
   function definirRecebido(valor) {
-    recebidoEmDinheiro = valor;
     campoRecebido?.definir(valor);
+    recebidoEmDinheiro = valor;
+    recebidoDigitado = false;
   }
 
   const pintarTudo = () => pintarPagamentos();
@@ -231,7 +244,10 @@ function ligarCobranca(corpo, fechar, { total, desconto, itens, clientUuid }) {
       const indice = pagamentos.findIndex((p) => p.forma === forma);
       if (indice >= 0) {
         pagamentos.splice(indice, 1);
-        if (forma === 'DINHEIRO') recebidoEmDinheiro = 0;
+        if (forma === 'DINHEIRO') {
+          recebidoEmDinheiro = 0;
+          recebidoDigitado = false;
+        }
         if (forma === 'FIADO') cliente = null;
       } else if (forma === 'VALE') {
         // Vale precisa saber QUAL vale antes de saber quanto. E o valor é limitado pelo

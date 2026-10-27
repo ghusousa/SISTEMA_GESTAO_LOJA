@@ -103,6 +103,35 @@ async def test_entrada_atualiza_o_custo_da_peca(
     assert peca_p["preco_custo"] == "26.00"
 
 
+async def test_vendedora_nao_altera_custo_pela_entrada(
+    client: AsyncClient,
+    auth_admin: dict[str, str],
+    auth_vendedor: dict[str, str],
+    grade: dict,
+) -> None:
+    """A mercadoria entra; o custo que veio junto, não — é número de quem vê dinheiro.
+
+    A tela da vendedora nem mostra o campo, mas a API aceitava: um `custo_unitario` de
+    R$ 0,01 numa peça de R$ 20,00 inflava o lucro do mês sem ninguém ver de onde.
+    """
+    resp = await client.post(
+        "/estoque/entradas",
+        headers=auth_vendedor,
+        json={
+            "client_uuid": str(uuid.uuid4()),
+            "itens": [{"variante_id": grade["P"], "quantidade": 1, "custo_unitario": "0.01"}],
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["total_pecas"] == 1
+
+    produto = (
+        await client.get(f"/produtos/{grade['produto_id']}", headers=auth_admin)
+    ).json()
+    peca_p = next(v for v in produto["variantes"] if v["id"] == grade["P"])
+    assert peca_p["preco_custo"] == "20.00"
+
+
 async def test_entrada_de_peca_inexistente_retorna_404(
     client: AsyncClient, auth_vendedor: dict[str, str]
 ) -> None:

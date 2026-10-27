@@ -63,10 +63,16 @@ class EstoqueService:
                 raise
             return await self._montar_entrada(existente)
 
+        # Custo só é gravado por quem vê dinheiro — a mesma tranca do catálogo
+        # (`_custo_permitido`, `atualizar_variante`). A vendedora dá entrada de mercadoria,
+        # mas não recebe o custo em resposta nenhuma: um `custo_unitario` vindo dela
+        # reescreveria a margem da loja sem ela nunca poder conferir o número. A tela já
+        # não mostra o campo; isto aqui é para a requisição que vier por outro caminho.
+        grava_custo = pode(usuario.role, Pode.VER_DINHEIRO)
         itens_por_variante = {i.variante_id: i for i in dados.itens}
         for variante_id in movimentos.ordenar_para_evitar_deadlock(list(itens_por_variante)):
             item = itens_por_variante[variante_id]
-            if item.custo_unitario is not None:
+            if item.custo_unitario is not None and grava_custo:
                 variantes[variante_id].cost_price = item.custo_unitario
             await movimentos.aplicar_movimento(
                 self.session,

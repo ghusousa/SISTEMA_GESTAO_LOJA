@@ -256,6 +256,11 @@ document.addEventListener('rota-trocada', marcarItemAtivo);
 /* ------------------------------------------------------------------------ boot */
 
 definirTratadorDeSessaoPerdida(() => {
+  // Mesma limpeza do botão Sair. A sessão que cai (refresh vencido, conta desativada,
+  // família revogada) leva para a tela de entrada, e quem entra depois no mesmo navegador
+  // herdaria o carrinho — com o client_uuid — e a conferência de quem estava antes: a
+  // venda e a entrada sairiam no nome da pessoa errada.
+  limparTudoDaSessao();
   desconectarTempoReal();
   aviso('Sua sessão expirou. Entre de novo para continuar.', 'alerta');
 });

@@ -191,17 +191,29 @@ class DevolucaoService:
         return saida
 
     # ---------------------------------------------------------------- ação
-    async def devolver(self, venda_id: int, dados, usuario: User):
-        """Recebe as peças de volta. Tudo numa transação — ou nada."""
-        ja = (
+    async def _por_client_uuid(self, client_uuid) -> SaleReturn | None:
+        return (
             await self.session.execute(
-                select(SaleReturn).where(SaleReturn.client_uuid == dados.client_uuid)
+                select(SaleReturn).where(SaleReturn.client_uuid == client_uuid)
             )
         ).scalar_one_or_none()
+
+    async def devolver(self, venda_id: int, dados, usuario: User):
+        """Recebe as peças de volta. Tudo numa transação — ou nada."""
+        ja = await self._por_client_uuid(dados.client_uuid)
         if ja is not None:
             return await self.montar(ja)
 
         venda = await self._venda_travada(venda_id)
+
+        # A mesma pergunta de novo, agora com a venda travada. O retry que chega enquanto
+        # a primeira tentativa ainda não fez commit passa pela checagem lá de cima sem ver
+        # nada e fica parado na trava; quando ela solta, a primeira já gravou. Sem esta
+        # releitura ele seguia até o INSERT, batia no UNIQUE do `client_uuid` e a tela
+        # mostrava erro (500) para uma devolução que aconteceu.
+        ja = await self._por_client_uuid(dados.client_uuid)
+        if ja is not None:
+            return await self.montar(ja)
 
         itens_da_venda = {
             item.id: item

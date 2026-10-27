@@ -151,6 +151,10 @@ class CaixaService:
         hoje_loja = hoje_na_loja()
         if dados.data > hoje_loja:
             raise Validacao("Não dá para fechar o caixa de um dia que ainda não aconteceu.")
+        # Lido já, enquanto o objeto está fresco: o rollback da corrida lá embaixo expira
+        # tudo o que a sessão carregou, e ler `usuario.id` depois dele, em sessão async,
+        # é MissingGreenlet — o ramo que existe para a corrida dava 500 justo nela.
+        usuario_id = usuario.id
 
         formas = [c.forma for c in dados.contagens]
         if len(formas) != len(set(formas)):
@@ -177,7 +181,7 @@ class CaixaService:
 
         fechamento = await self._fechamento_do_dia(dados.data)
         if fechamento is None:
-            fechamento = CashClosing(closing_date=dados.data, user_id=usuario.id)
+            fechamento = CashClosing(closing_date=dados.data, user_id=usuario_id)
             self.session.add(fechamento)
             try:
                 await self.session.flush()
@@ -188,13 +192,13 @@ class CaixaService:
                 fechamento = await self._fechamento_do_dia(dados.data)
                 if fechamento is None:
                     raise
-                fechamento.user_id = usuario.id
+                fechamento.user_id = usuario_id
                 fechamento.closed_at = datetime.now(UTC)
                 for linha in list(fechamento.lines):
                     await self.session.delete(linha)
                 await self.session.flush()
         else:
-            fechamento.user_id = usuario.id
+            fechamento.user_id = usuario_id
             fechamento.closed_at = datetime.now(UTC)
             for linha in list(fechamento.lines):
                 await self.session.delete(linha)

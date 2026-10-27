@@ -146,11 +146,14 @@ class RelatorioService:
         # O lucro sai do líquido dos dois lados: a peça que voltou não faturou e também
         # não consumiu mercadoria (quando voltou vendável).
         lucro_bruto = faturamento_liquido - (cmv - cmv_devolvido)
+        # Margem na MESMA base do lucro: líquido sobre líquido. Dividir pelo bruto encolhia
+        # a margem na proporção da devolução — vendeu duas blusas, uma voltou, e a margem
+        # de 50% aparecia como 25%.
         margem = (
-            (lucro_bruto / faturamento * 100).quantize(
+            (lucro_bruto / faturamento_liquido * 100).quantize(
                 Decimal("0.01"), rounding=ROUND_HALF_UP
             )
-            if faturamento > 0
+            if faturamento_liquido > 0
             else ZERO
         )
         ticket = _centavos(faturamento / qtd_vendas) if qtd_vendas else ZERO

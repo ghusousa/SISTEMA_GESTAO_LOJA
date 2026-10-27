@@ -297,21 +297,34 @@ class ClienteService:
         )
 
     # ----------------------------------------------------------- recebimento
+    async def _recebimento_por_client_uuid(self, client_uuid) -> CustomerPayment | None:
+        return (
+            await self.session.execute(
+                select(CustomerPayment).where(CustomerPayment.client_uuid == client_uuid)
+            )
+        ).scalar_one_or_none()
+
     async def receber(
         self, cliente_id: int, dados: PagamentoClienteIn, usuario: User
     ) -> PagamentoClienteOut:
         # Idempotência antes de tudo: recebimento é a operação mais provável de ser
         # reenviada (sinal ruim no meio da rua), e reenviar aqui perdoaria uma dívida.
-        ja = (
-            await self.session.execute(
-                select(CustomerPayment).where(CustomerPayment.client_uuid == dados.client_uuid)
-            )
-        ).scalar_one_or_none()
+        ja = await self._recebimento_por_client_uuid(dados.client_uuid)
         if ja is not None:
             return PagamentoClienteOut.model_validate(ja)
 
         cliente = await self._obter(cliente_id)
         deve = await self.quanto_deve(cliente_id, travar=True)
+
+        # E de novo, já com a cliente travada. O retry que chega enquanto a primeira
+        # tentativa ainda não fez commit passa pela checagem lá de cima sem ver nada e
+        # fica parado na trava; quando ela solta, o pagamento já está gravado e a dívida
+        # já caiu. Sem esta releitura ele respondia "o valor é maior do que a dívida" para
+        # um recebimento que entrou — e quem está no balcão, vendo erro, cobrava de novo.
+        ja = await self._recebimento_por_client_uuid(dados.client_uuid)
+        if ja is not None:
+            return PagamentoClienteOut.model_validate(ja)
+
         if deve <= ZERO:
             raise OperacaoInvalida("Este cliente não está devendo nada.")
         if dados.valor > deve:

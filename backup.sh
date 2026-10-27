@@ -181,13 +181,23 @@ copiar() {
 # contêiner da API, pela mesma razão do token do GitHub no `atualizar.sh`: quem serve a
 # loja não precisa da chave que apaga a cópia dela.
 
-CONF_RCLONE="$HOME/.config/rclone/loja.conf"
+# `${HOME:-/root}`: serviço de sistema sem `User=` não recebe $HOME do systemd, e com
+# `set -u` esta linha matava o script antes do primeiro pg_dump — o backup das 03:15 e o da
+# nuvem falhavam todo dia, com o erro só no journal. Quem roda pelo timer é o root.
+CONF_RCLONE="${HOME:-/root}/.config/rclone/loja.conf"
 
 # Lê um campo da configuração direto do Postgres. `-tA` = sem cabeçalho, sem alinhamento.
 conf_backup() {
     dk compose exec -T db psql -U loja -d loja -tA \
         -c "SELECT COALESCE($1::text, '') FROM backup_config WHERE id = 1" 2>/dev/null \
         | tr -d '\r' | head -1
+}
+
+# Ligado na tela? A pergunta devolve 1/0, e não o boolean em texto: `true::text` no
+# Postgres é 'true' — o 't' é só como o psql MOSTRA a coluna crua —, e comparar com "t"
+# fazia o backup ligado nunca rodar, sem erro em lugar nenhum.
+backup_ligado() {
+    [ "$(conf_backup "CASE WHEN ativo THEN 1 ELSE 0 END")" = "1" ]
 }
 
 # Escreve de volta como foi. É isto que a tela mostra — sem este retorno, "ligado" e
@@ -228,6 +238,11 @@ FIM
 # A ordenação é por NOME, e é de propósito: o nome carrega a data
 # (`loja-AAAAMMDD-HHMMSS.dump`), que é estável. Ordenar por data de modificação do Drive
 # entregaria a decisão a um relógio que não é o nosso.
+#
+# O stdout desta função É a resposta (quem chama faz `$(rotacionar_nuvem ...)`), então o
+# recado de cada apagada vai para o stderr. No stdout ele virava parte do número, o UPDATE
+# de `copias_na_nuvem` quebrava calado, `ultimo_em` congelava, e o timer passava a copiar
+# a cada 5 minutos — com 10 cópias, o Drive guardava só os últimos 50 minutos.
 rotacionar_nuvem() {
     local manter="$1" pasta="$2" nomes total sobrando
     nomes="$(rclone --config "$CONF_RCLONE" lsf "loja:$pasta" --include 'loja-*.dump' 2>/dev/null \
@@ -236,7 +251,7 @@ rotacionar_nuvem() {
     if [ "$total" -gt "$manter" ]; then
         printf '%s\n' "$nomes" | grep . | head -n "$((total - manter))" | while read -r velho; do
             rclone --config "$CONF_RCLONE" deletefile "loja:$pasta/$velho" >/dev/null 2>&1 \
-                && printf '  apagada do Drive: %s\n' "$velho"
+                && printf '  apagada do Drive: %s\n' "$velho" >&2
         done
         sobrando="$manter"
     else
@@ -272,9 +287,8 @@ copiar_para_nuvem() {
         exit 1
     fi
 
-    local ativo token pasta manter
-    ativo="$(conf_backup ativo)"
-    if [ "$ativo" != "t" ]; then
+    local token pasta manter
+    if ! backup_ligado; then
         aviso "O backup na nuvem está DESLIGADO na tela do sistema. Nada a fazer."
         exit 0
     fi
@@ -301,7 +315,12 @@ copiar_para_nuvem() {
 
     # ---------------------------------------------------------------- o dump
     mkdir -p "$DESTINO"
-    local arquivo="$DESTINO/loja-$(date +%Y%m%d-%H%M%S).dump"
+    # No disco, prefixo PRÓPRIO (`loja-nuvem-`): é o que deixa a faxina lá embaixo apagar só
+    # o que este bloco gerou. Com o mesmo nome do `copiar()`, ela levava junto as cópias
+    # diárias (que prometem 14 dias) e o dump de segurança do --restaurar, que nunca sobe
+    # para o Drive. No Drive o nome continua `loja-AAAAMMDD-HHMMSS.dump`, o da rotação.
+    local carimbo; carimbo="$(date +%Y%m%d-%H%M%S)"
+    local arquivo="$DESTINO/loja-nuvem-$carimbo.dump"
     if ! dk compose exec -T db pg_dump -U loja -d loja -Fc -f /tmp/backup.dump 2>/dev/null; then
         anotar_backup false NULL NULL "O pg_dump falhou — o banco respondeu?"
         erro "O pg_dump falhou. O banco está no ar?"
@@ -325,7 +344,8 @@ copiar_para_nuvem() {
     ok "cópia gerada ($(du -h "$arquivo" | cut -f1)) — e ela abre"
 
     # ---------------------------------------------------------------- para o Drive
-    if ! rclone --config "$CONF_RCLONE" copy "$arquivo" "loja:$pasta" 2>/tmp/rclone.err; then
+    if ! rclone --config "$CONF_RCLONE" copyto "$arquivo" "loja:$pasta/loja-$carimbo.dump" \
+            2>/tmp/rclone.err; then
         local motivo; motivo="$(tail -2 /tmp/rclone.err 2>/dev/null | tr '\n' ' ')"
         anotar_backup false "$bytes" NULL "Não subiu para o Drive: ${motivo:-erro do rclone}"
         erro "NÃO consegui enviar para o Drive. A cópia só existe neste servidor."
@@ -338,8 +358,8 @@ copiar_para_nuvem() {
     ok "$sobrando cópias no Drive (o teto é $manter)"
 
     # No disco local guardamos poucas: o Drive é a cópia que vale, e o disco de um VPS
-    # pequeno não pode virar cemitério de dump a cada 30 minutos.
-    find "$DESTINO" -name 'loja-*.dump' -mmin +720 -delete 2>/dev/null || true
+    # pequeno não pode virar cemitério de dump a cada 30 minutos. Só as `loja-nuvem-*`.
+    find "$DESTINO" -name 'loja-nuvem-*.dump' -mmin +720 -delete 2>/dev/null || true
 
     anotar_backup true "$bytes" "$sobrando" ""
     printf '\n'
@@ -391,14 +411,31 @@ restaurar() {
 
     titulo "Restaurando"
     dk compose cp "$ARQUIVO_ALVO" db:/tmp/restaurar.dump >/dev/null 2>&1
-    # `--clean --if-exists`: derruba o que existe antes de recriar. Sem isso o restore
-    # empilharia dados por cima dos atuais e o estoque sairia dobrado.
-    if dk compose exec -T db pg_restore -U loja -d loja --clean --if-exists --no-owner \
-        /tmp/restaurar.dump 2>&1 | grep -vi "^pg_restore: warning" | tail -20; then
-        :
+    # O schema inteiro é ZERADO e recriado pelo dump — tudo numa transação só. Era
+    # `pg_restore --clean`, que só derruba o que está NO DUMP: uma cópia de antes de uma
+    # migration deixava para trás a tabela que ela criou, o alembic_version voltava à
+    # revisão velha, e o `alembic upgrade head` do contêiner tentava criá-la de novo
+    # (DuplicateTable) — a API não subia mais. Primeiro o dump vira SQL (arquivo ilegível
+    # para aqui, sem tocar no banco); depois o psql roda o DROP, o CREATE e o dump com
+    # `--single-transaction`: se qualquer linha falhar, o banco continua o de antes.
+    # `public` volta como o initdb cria (dono pg_database_owner, USAGE para todos), para
+    # restaurar duas vezes dar o mesmo banco.
+    local restaurou=0
+    if dk compose exec -T db pg_restore --no-owner -f /tmp/restaurar.sql /tmp/restaurar.dump \
+        && dk compose exec -T db psql -U loja -d loja -q -v ON_ERROR_STOP=1 --single-transaction \
+            -c "SET client_min_messages = warning" \
+            -c "DROP SCHEMA public CASCADE" \
+            -c "CREATE SCHEMA public AUTHORIZATION pg_database_owner" \
+            -c "GRANT USAGE ON SCHEMA public TO PUBLIC" \
+            -f /tmp/restaurar.sql >/dev/null; then
+        restaurou=1
+        ok "banco trocado pelo da cópia"
+    else
+        erro "A restauração falhou e foi desfeita: o banco continua o de antes."
     fi
-    dk compose exec -T db rm -f /tmp/restaurar.dump >/dev/null 2>&1 || true
+    dk compose exec -T db rm -f /tmp/restaurar.dump /tmp/restaurar.sql >/dev/null 2>&1 || true
 
+    # Religa mesmo se falhou: o banco de antes está intacto, e a loja volta com ele.
     titulo "Religando"
     dk compose start api >/dev/null 2>&1 || dk compose up -d api >/dev/null 2>&1
 
@@ -408,6 +445,11 @@ restaurar() {
         if dk compose exec -T api python -c \
             'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=3)' \
             >/dev/null 2>&1; then
+            if [ "$restaurou" -eq 0 ]; then
+                ok "a loja voltou, com o banco de ANTES — nada foi restaurado"
+                printf '  Veja o erro acima; o arquivo pode ser de outra versão ou estar ruim.\n\n'
+                exit 1
+            fi
             ok "a loja voltou, com os dados de $(date -r "$ARQUIVO_ALVO" '+%d/%m/%Y %H:%M')"
             printf '\n  O banco de antes ficou em: %s\n' "${antes:-—}"
             printf '  %sNo balcão:%s Ctrl+F5. %sNo celular:%s feche e abra o app.\n\n' \
@@ -441,6 +483,8 @@ After=docker.service
 [Service]
 Type=oneshot
 WorkingDirectory=$PASTA
+# Sem User=, o systemd não define HOME — e é nele que mora a configuração do rclone.
+Environment=HOME=/root
 ExecStart=$PASTA/backup.sh --nuvem-timer --sim
 TimeoutStartSec=1800
 UNIDADE
@@ -492,6 +536,8 @@ After=docker.service
 [Service]
 Type=oneshot
 WorkingDirectory=$PASTA
+# Sem User=, o systemd não define HOME — e é nele que mora a configuração do rclone.
+Environment=HOME=/root
 ExecStart=$PASTA/backup.sh --sim
 TimeoutStartSec=1800
 UNIDADE
@@ -538,7 +584,7 @@ case "$ACAO" in
     nuvem-timer)
         # Chamado pelo timer. Sai calado quando não é a hora: o journal da máquina não
         # pode virar um log de "ainda não" a cada 5 minutos.
-        if [ "$(conf_backup ativo 2>/dev/null)" != "t" ]; then exit 0; fi
+        if ! backup_ligado 2>/dev/null; then exit 0; fi
         if ! esta_na_hora; then exit 0; fi
         copiar_para_nuvem
         ;;

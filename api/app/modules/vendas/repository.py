@@ -37,7 +37,19 @@ class VendaRepository:
         que já voltou — e o dinheiro ficaria sem caminho, porque a devolução já pagou parte
         e o cancelamento não sabe quanto nem por qual forma. Quem quer desfazer o resto
         devolve o resto.
+
+        A trava vem ANTES, numa instrução separada, e é ela que faz o `NOT EXISTS` valer
+        contra uma devolução em andamento. Sem ela, o `UPDATE` tira a foto do banco ao
+        começar — quando a devolução ainda não tinha feito commit —, para na trava que a
+        devolução segura (`_venda_travada`) e, quando ela solta, segue com a foto velha: a
+        devolução só TRAVOU a linha, não a alterou, então o Postgres não reavalia o WHERE.
+        A venda saía CANCELADA e com devolução, a peça voltava duas vezes à arara e o
+        dinheiro dela saía duas vezes. Travando primeiro, o `UPDATE` só começa depois do
+        commit da devolução, com foto nova, e enxerga a linha em `sale_returns`.
         """
+        await self.session.execute(
+            select(Sale.id).where(Sale.id == venda_id).with_for_update()
+        )
         resultado = await self.session.execute(
             update(Sale)
             .where(

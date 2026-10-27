@@ -237,6 +237,107 @@ async def test_venda_fiado_cancelada_para_de_cobrar(client, auth_admin) -> None:
     ) == Decimal("0.00"), "venda cancelada não pode continuar sendo cobrada"
 
 
+async def test_cancelar_fiado_que_a_cliente_ja_pagou_e_recusado(client, auth_admin) -> None:
+    """O ADR-21 pela outra porta: o fiado sai da conta, o pagamento fica, e o saldo vira −30.
+
+    A loja passaria a dever à cliente sem nada na tela dizendo isso. A recusa manda para a
+    Devolução, que abate só o que ainda se deve e entrega o já pago em vale.
+    """
+    cliente = await _cliente(client, auth_admin, "Dona Pagou Parte")
+    variante = await _peca(client, auth_admin, "Peca Paga Parte", "100.00")
+    venda = (
+        await client.post(
+            "/vendas",
+            headers=auth_admin,
+            json={
+                "client_uuid": str(uuid.uuid4()),
+                "cliente_id": cliente["id"],
+                "itens": [{"variante_id": variante, "quantidade": 1}],
+                "pagamentos": [{"forma": "FIADO", "valor": "100.00"}],
+            },
+        )
+    ).json()
+    pago = await client.post(
+        f"/clientes/{cliente['id']}/pagamentos",
+        headers=auth_admin,
+        json={"forma": "DINHEIRO", "valor": "30.00", "client_uuid": str(uuid.uuid4())},
+    )
+    assert pago.status_code == 201, pago.text
+
+    cancelamento = await client.post(
+        f"/vendas/{venda['id']}/cancelamento",
+        headers=auth_admin,
+        json={"motivo": "Cliente desistiu"},
+    )
+    assert cancelamento.status_code == 409, cancelamento.text
+    assert "devolução" in cancelamento.json()["message"].lower()
+
+    # Nada mudou: a venda continua de pé, a peça não voltou e a dívida é a mesma.
+    detalhe = (await client.get(f"/vendas/{venda['id']}", headers=auth_admin)).json()
+    assert detalhe["status"] == "CONCLUIDA"
+    saldos = (
+        await client.get("/estoque/saldos", headers=auth_admin, params={"q": "Peca Paga Parte"})
+    ).json()
+    assert saldos["items"][0]["saldo"] == 19
+    deve = (await client.get(f"/clientes/{cliente['id']}", headers=auth_admin)).json()["deve"]
+    assert Decimal(deve) == Decimal("70.00")
+
+    # E o caminho indicado fecha a conta: 70 abatem a dívida, os 30 já pagos viram vale.
+    devolucao = await client.post(
+        f"/vendas/{venda['id']}/devolucoes",
+        headers=auth_admin,
+        json={
+            "client_uuid": str(uuid.uuid4()),
+            "itens": [{"item_id": venda["itens"][0]["id"], "quantidade": 1}],
+        },
+    )
+    assert devolucao.status_code == 201, devolucao.text
+    por_forma = {p["forma"]: Decimal(p["valor"]) for p in devolucao.json()["pagamentos"]}
+    assert por_forma == {"FIADO": Decimal("70.00"), "VALE": Decimal("30.00")}
+    deve = (await client.get(f"/clientes/{cliente['id']}", headers=auth_admin)).json()["deve"]
+    assert Decimal(deve) == Decimal("0.00")
+
+
+async def test_cancelar_fiado_que_a_divida_ainda_cobre_e_permitido(client, auth_admin) -> None:
+    """A recusa é só para o saldo negativo, não para toda venda de quem já pagou algo.
+
+    Duas compras de R$ 100,00 e um pagamento de R$ 100,00: cancelar uma delas leva a dívida
+    a zero, não abaixo — o sistema não sabe qual compra o pagamento quitou, e não finge.
+    """
+    cliente = await _cliente(client, auth_admin, "Dona Duas Compras")
+    variante = await _peca(client, auth_admin, "Peca Duas Compras", "100.00")
+    vendas = []
+    for _ in range(2):
+        vendas.append(
+            (
+                await client.post(
+                    "/vendas",
+                    headers=auth_admin,
+                    json={
+                        "client_uuid": str(uuid.uuid4()),
+                        "cliente_id": cliente["id"],
+                        "itens": [{"variante_id": variante, "quantidade": 1}],
+                        "pagamentos": [{"forma": "FIADO", "valor": "100.00"}],
+                    },
+                )
+            ).json()
+        )
+    await client.post(
+        f"/clientes/{cliente['id']}/pagamentos",
+        headers=auth_admin,
+        json={"forma": "PIX", "valor": "100.00", "client_uuid": str(uuid.uuid4())},
+    )
+
+    cancelamento = await client.post(
+        f"/vendas/{vendas[0]['id']}/cancelamento",
+        headers=auth_admin,
+        json={"motivo": "Cliente desistiu"},
+    )
+    assert cancelamento.status_code == 200, cancelamento.text
+    deve = (await client.get(f"/clientes/{cliente['id']}", headers=auth_admin)).json()["deve"]
+    assert Decimal(deve) == Decimal("0.00")
+
+
 async def test_devolucao_de_venda_fiado_abate_a_divida(client, auth_admin) -> None:
     """Não sai dinheiro da gaveta para quem ainda não pagou — abate o que ela deve."""
     cliente = await _cliente(client, auth_admin, "Dona Devolveu")
@@ -490,6 +591,100 @@ async def test_segundo_recebimento_da_mesma_divida_e_recusado(client, auth_admin
 
     depois = (await client.get(f"/clientes/{cliente['id']}", headers=auth_admin)).json()
     assert Decimal(depois["deve"]) == Decimal("0.00")
+
+
+async def _quando_alguem_parar_numa_trava() -> None:
+    """Espera, sem relógio, até outra sessão estar parada numa trava do banco.
+
+    É o que torna a corrida determinística: em vez de dormir "o bastante" e torcer, pergunta
+    ao Postgres. `pg_stat_activity` é uma foto tirada uma vez por transação, por isso cada
+    volta do laço abre a sua — senão a pergunta repetiria a mesma resposta para sempre.
+    """
+    from sqlalchemy import text
+
+    from app.core.db import engine
+
+    async with engine.connect() as conexao:
+        while True:
+            parada = await conexao.scalar(
+                text(
+                    "SELECT EXISTS (SELECT 1 FROM pg_stat_activity"
+                    " WHERE datname = current_database() AND wait_event_type = 'Lock'"
+                    " AND pid <> pg_backend_pid())"
+                )
+            )
+            await conexao.rollback()
+            if parada:
+                return
+
+
+async def test_retry_simultaneo_do_recebimento_devolve_o_existente(
+    client, auth_admin, admin
+) -> None:
+    """O app reenvia o MESMO recebimento enquanto o primeiro ainda não fez commit.
+
+    O retry passa pela checagem de idempotência sem ver nada e fica parado na trava da
+    cliente. Quando ela solta, a dívida já caiu de 100 para 40, e ele respondia "o valor é
+    maior do que a dívida" para um pagamento que entrou — quem está no balcão via erro e
+    cobrava de novo. A ordem aqui é forçada pela trava: a primeira tentativa só faz commit
+    depois que o Postgres diz que o retry está parado esperando por ela.
+    """
+    import asyncio
+
+    from app.core.db import SessionLocal
+    from app.modules.clientes.schemas import PagamentoClienteIn
+    from app.modules.clientes.service import ClienteService
+
+    cliente = await _cliente(client, auth_admin, "Dona Retry")
+    variante = await _peca(client, auth_admin, "Peca Retry", "100.00")
+    await client.post(
+        "/vendas",
+        headers=auth_admin,
+        json={
+            "client_uuid": str(uuid.uuid4()),
+            "cliente_id": cliente["id"],
+            "itens": [{"variante_id": variante, "quantidade": 1}],
+            "pagamentos": [{"forma": "FIADO", "valor": "100.00"}],
+        },
+    )
+    chave = uuid.uuid4()
+    primeira_no_commit = asyncio.Event()
+    liberar_commit = asyncio.Event()
+
+    async def receber(segurar_commit: bool):
+        async with SessionLocal() as sessao:
+            if segurar_commit:
+                commit = sessao.commit
+
+                async def commit_segurado():
+                    primeira_no_commit.set()
+                    await liberar_commit.wait()
+                    await commit()
+
+                sessao.commit = commit_segurado  # type: ignore[method-assign]
+            else:
+                await primeira_no_commit.wait()
+            usuario = await sessao.get(User, admin.id)
+            dados = PagamentoClienteIn(forma="DINHEIRO", valor=Decimal("60.00"), client_uuid=chave)
+            return await ClienteService(sessao).receber(cliente["id"], dados, usuario)
+
+    async def soltar_quando_o_retry_parar():
+        await primeira_no_commit.wait()
+        try:
+            await asyncio.wait_for(_quando_alguem_parar_numa_trava(), timeout=15)
+        finally:
+            liberar_commit.set()
+
+    primeira, retry, soltou = await asyncio.gather(
+        receber(True), receber(False), soltar_quando_o_retry_parar(), return_exceptions=True
+    )
+    assert soltou is None, f"o retry nunca parou na trava: {soltou!r}"
+    assert not isinstance(primeira, Exception), repr(primeira)
+    assert not isinstance(retry, Exception), f"retry do mesmo recebimento recusado: {retry!r}"
+    assert retry.id == primeira.id
+
+    depois = (await client.get(f"/clientes/{cliente['id']}", headers=auth_admin)).json()
+    assert Decimal(depois["deve"]) == Decimal("40.00")
 
 
 # ----------------------------------------------------------------------- vale

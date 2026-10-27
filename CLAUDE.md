@@ -131,7 +131,8 @@ npm run publicar     # ficha inteira na App Store via API (mobile/publicar/, -- 
 
 - Dinheiro no app = **centavos inteiros** (`lib/money.ts`); converte na borda da API. Proibido `parseFloat` em valor.
 - Estado do servidor → TanStack Query. Rascunho/sessão (carrinho do PDV, entrada) → Zustand.
-- Tokens só em `expo-secure-store`; interceptor 401 → refresh (mutex) → refaz → falhou: logout.
+- Tokens só em `expo-secure-store`; interceptor 401 → refresh (mutex) → refaz → servidor recusou
+  (401/403): logout; rede/timeout/5xx: falha a requisição e MANTÉM a sessão e o carrinho (`lib/renovacao.ts`).
 - Endereço do servidor é do APARELHO (`api/servidor.ts`), não do build: um `.apk` serve para todas
   as lojas e trocar de IP não exige reinstalar. `baseAtual()` resolve a base a cada requisição.
 

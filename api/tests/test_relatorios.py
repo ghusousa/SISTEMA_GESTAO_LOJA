@@ -241,3 +241,62 @@ async def test_estoque_baixo_lista_o_que_precisa_repor(
     assert linhas[0]["saldo"] == 2
     assert linhas[0]["estoque_minimo"] == 2
     assert linhas[0]["faltam"] == 0
+
+
+async def test_margem_bruta_e_sobre_o_faturamento_liquido(
+    client: AsyncClient, auth_admin: dict[str, str]
+) -> None:
+    """Duas blusas de 100,00 (custo 50,00), uma voltou: a margem é 50%, não 25%.
+
+    O lucro já sai do líquido; dividir pelo faturamento bruto encolhia a margem na
+    proporção da devolução.
+    """
+    categoria = (
+        await client.post("/categorias", headers=auth_admin, json={"nome": "Blusas"})
+    ).json()["id"]
+    produto = await criar_produto(client, auth_admin, {
+        "categoria_id": categoria,
+        "nome": "Blusa",
+        "variantes": [
+            {
+                "tamanho": "M",
+                "cor": "Preta",
+                "preco_custo": "50.00",
+                "preco_venda": "100.00",
+                "estoque_inicial": 5,
+            }
+        ],
+    })
+    variante = produto["variantes"][0]["id"]
+    vendas = []
+    for _ in range(2):
+        resp = await client.post(
+            "/vendas",
+            headers=auth_admin,
+            json={
+                "client_uuid": str(uuid.uuid4()),
+                "itens": [{"variante_id": variante, "quantidade": 1}],
+                "pagamentos": [{"forma": "DINHEIRO", "valor": "100.00"}],
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        vendas.append(resp.json())
+    resp = await client.post(
+        f"/vendas/{vendas[1]['id']}/devolucoes",
+        headers=auth_admin,
+        json={
+            "client_uuid": str(uuid.uuid4()),
+            "itens": [{"item_id": vendas[1]["itens"][0]["id"], "quantidade": 1}],
+        },
+    )
+    assert resp.status_code == 201, resp.text
+
+    hoje = _hoje_loja()
+    r = (
+        await client.get(
+            "/relatorios/resumo", headers=auth_admin, params={"inicio": hoje, "fim": hoje}
+        )
+    ).json()
+    assert r["faturamento_liquido"] == "100.00"
+    assert r["lucro_bruto"] == "50.00"
+    assert r["margem_bruta_pct"] == "50.00"

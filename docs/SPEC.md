@@ -100,7 +100,8 @@ A loja consegue operar 100% sem celular.
    quem. No computador sai na impressora de bobina; no celular vai pelo WhatsApp. Não é nota
    fiscal, e está escrito no rodapé.
 8. **Lançar despesas** — valor, categoria, data, se é recorrente. Despesas recorrentes podem ser
-   replicadas para a competência seguinte sem duplicar.
+   replicadas para a competência seguinte sem duplicar; desmarcar "recorrente" no último mês
+   faz a conta fixa parar ali.
 9. **Ver o resultado** — faturamento, custo das mercadorias vendidas (CMV), lucro bruto, despesas e
    resultado do período; produtos mais vendidos; peças com estoque abaixo do mínimo; curva de vendas
    por dia.
@@ -124,7 +125,8 @@ A loja consegue operar 100% sem celular.
 - Fiado e vale nunca contam como dinheiro na conferência do caixa; recebimento de fiado conta,
   separado do faturamento.
 - O saldo devedor de um cliente nunca fica negativo: o abatimento para onde a dívida acaba, e
-  a diferença sai em vale.
+  a diferença sai em vale. Pelo mesmo motivo, venda no fiado cujo cancelamento deixaria o saldo
+  negativo (porque a cliente já pagou) não se cancela — devolve-se.
 - O mesmo vale não paga duas vendas.
 - Toda ação de quem está logado que muda alguma coisa fica registrada na auditoria, com o nome
   e o cargo congelados; o registro não pode derrubar a operação que ele observa.
