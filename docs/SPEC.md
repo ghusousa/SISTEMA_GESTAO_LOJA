@@ -196,11 +196,13 @@ A loja consegue operar 100% sem celular.
 - Instalar pelo IP público é recusado: HTTP puro só dentro da rede da loja.
 - A taxa da maquininha fica congelada em cada venda: mudar ou apagar a tabela vale só daqui
   para frente. O resultado do período desconta as taxas das vendas no cartão e devolve a taxa
-  da parte devolvida pelo cartão. Só o crédito parcela (até 12x); débito e PIX, nunca.
+  da parte devolvida pelo cartão — somadas, as devoluções nunca devolvem mais taxa do que a
+  venda pagou. Só o crédito parcela (até 12x); débito e PIX, nunca.
 - Só o dono muda as taxas da maquininha; quem vê dinheiro as lê; a vendedora não as vê.
 - O balcão busca e cadastra cliente sem ver saldo, limite ou observação do crediário; vender
-  fiado continua sendo de quem cuida do crediário. Cadastro reenviado pela rede não duplica a
-  cliente.
+  fiado continua sendo de quem cuida do crediário. Pelo documento, o balcão só acha a cliente
+  com o CPF (ou CNPJ) inteiro — nunca por um trecho dele. Cadastro reenviado pela rede não
+  duplica a cliente.
 - A comissão sai do faturamento LÍQUIDO de quem fez a venda: venda cancelada não conta, e a peça
   devolvida tira a comissão no período em que voltou — sem reescrever a folha de um mês fechado.
   A soma da equipe fecha com o faturamento líquido do resumo da loja.

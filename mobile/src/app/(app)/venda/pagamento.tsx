@@ -26,6 +26,7 @@ import {
   type Centavos,
 } from '@/lib/money';
 import { rotuloPagamento } from '@/lib/cartao';
+import { passaDoDevido } from '@/lib/pagamento';
 import { PODE, pode } from '@/lib/permissoes';
 import { invalidarAposVenda } from '@/lib/queryClient';
 import { ALVO_TOQUE, cores, espaco, fonte, raio } from '@/lib/tema';
@@ -125,6 +126,17 @@ export default function Pagamento() {
     const valor = valorPretendido();
     if (valor <= 0) return;
 
+    // Em cartão ou PIX não existe troco: aceitar em silêncio esconderia um erro de
+    // digitação (R$ 120,00 numa venda de R$ 100,00 vira R$ 100,00 sem aviso). Vem ANTES das
+    // perguntas: o crédito pergunta as parcelas, e depois delas cortaria para o que falta.
+    if (passaDoDevido(forma, valorDigitado, restante)) {
+      Alert.alert(
+        'Valor maior que o devido',
+        `Faltam ${formatar(restante)}. Em ${forma.toLowerCase()} não há troco — ajuste o valor ou receba a diferença em dinheiro.`,
+      );
+      return;
+    }
+
     // Vale, fiado e crédito precisam de uma pergunta ANTES do valor: qual papel, de quem é
     // a dívida, em quantas vezes. Uma linha de cada por venda — dois vales na mesma compra
     // é caso que não existe no balcão, e somar em cima estouraria o saldo do primeiro.
@@ -149,14 +161,6 @@ export default function Pagamento() {
     if (forma === 'DINHEIRO') {
       // Recebeu mais do que devia: a diferença é troco, não pagamento a mais.
       setRecebidoDinheiro((atual) => atual + Math.max(valorDigitado, valor));
-    } else if (valorDigitado > restante) {
-      // Em cartão ou PIX não existe troco: aceitar em silêncio esconderia um erro de
-      // digitação (R$ 120,00 numa venda de R$ 100,00 vira R$ 100,00 sem aviso).
-      Alert.alert(
-        'Valor maior que o devido',
-        `Faltam ${formatar(restante)}. Em ${forma.toLowerCase()} não há troco — ajuste o valor ou receba a diferença em dinheiro.`,
-      );
-      return;
     }
 
     somar({ forma, valor });

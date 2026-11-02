@@ -9,8 +9,9 @@ As regras (ADR-35):
 - A taxa de cada pagamento é `round(valor × taxa_percentual / 100, 2)`, com a taxa
   FOTOGRAFADA na venda — nunca a da tabela de hoje.
 - Devolução é evento do dia em que acontece (ADR-19): a taxa da parte que voltou pelo
-  cartão sai das taxas do período da DEVOLUÇÃO, pela taxa média que aquela forma pagou
-  naquela venda (a devolução diz por qual forma voltou, não por qual dos pagamentos).
+  cartão sai das taxas do período da DEVOLUÇÃO, na proporção da taxa que aquela forma
+  pagou naquela venda (a devolução diz por qual forma voltou, não por qual dos
+  pagamentos) — e de forma ACUMULADA, para a soma das devoluções nunca passar da taxa paga.
 - Na agenda, débito cai em D+prazo; crédito em N parcelas, a 1ª em D+prazo e as outras de
   30 em 30 dias. O centavo que sobra da divisão vai na 1ª parcela, como faz a credenciadora.
   O estorno no cartão é debitado da agenda no dia da devolução.
@@ -47,14 +48,45 @@ def _taxa_do_pagamento():
 
 
 def _taxa_devolvida():
-    """A taxa da parte que voltou: valor devolvido × taxa média da forma naquela venda."""
+    """A taxa da parte que voltou, ACUMULADA por venda e forma.
+
+    Arredondar cada devolução sozinha devolvia mais do que a venda pagou: R$ 10,00 no
+    crédito a 2,5% pagam R$ 0,25, e duas devoluções de R$ 5,00 devolviam 0,13 + 0,13. Aqui
+    a conta é a taxa que a forma PAGOU naquela venda × a fração dela que já voltou
+    (devoluções anteriores e esta, em ordem de gravação), arredondada uma vez só, menos a
+    mesma conta sem esta devolução. A soma telescopa: o que voltou de taxa é sempre o
+    arredondamento da fração devolvida da taxa paga, e tudo devolvido devolve exatamente a
+    taxa paga — nunca um centavo a mais. O teto (`LEAST`) é a rede, como o CHECK do saldo.
+    """
     sp = aliased(SalePayment)
-    media = (
-        select(func.sum(sp.amount * sp.taxa_percentual) / func.sum(sp.amount))
-        .where(sp.sale_id == SaleReturn.sale_id, sp.method == SaleReturnPayment.method)
+    da_forma = (sp.sale_id == SaleReturn.sale_id, sp.method == SaleReturnPayment.method)
+    recebido = select(func.sum(sp.amount)).where(*da_forma).scalar_subquery()
+    paga = (
+        select(func.sum(func.round(sp.amount * sp.taxa_percentual / 100, 2)))
+        .where(*da_forma)
         .scalar_subquery()
     )
-    return func.round(SaleReturnPayment.amount * func.coalesce(media, 0) / 100, 2)
+    srp = aliased(SaleReturnPayment)
+    sr = aliased(SaleReturn)
+    devolvido_ate_esta = (
+        select(func.sum(srp.amount))
+        .join(sr, sr.id == srp.return_id)
+        .where(
+            sr.sale_id == SaleReturn.sale_id,
+            srp.method == SaleReturnPayment.method,
+            srp.id <= SaleReturnPayment.id,
+        )
+        .scalar_subquery()
+    )
+
+    def acumulada(devolvido):
+        return func.least(func.round(paga * devolvido / func.nullif(recebido, 0), 2), paga)
+
+    return func.coalesce(
+        acumulada(devolvido_ate_esta)
+        - acumulada(devolvido_ate_esta - SaleReturnPayment.amount),
+        0,
+    )
 
 
 async def taxas_do_periodo(session: AsyncSession, inicio: date, fim: date) -> Decimal:

@@ -264,6 +264,13 @@ async def test_reenvio_com_outras_parcelas_e_outra_cobranca(client, auth_admin):
     )
     assert outra.status_code == 409
     assert outra.json()["code"] == "DUPLICADO"
+    # Outra bandeira também é outro cartão: confere com outro extrato da credenciadora.
+    outro_cartao = await _vender(
+        client, auth_admin, variante,
+        [{"forma": "CREDITO", "valor": "100.00", "bandeira": "Elo"}], chave=chave,
+    )
+    assert outro_cartao.status_code == 409
+    assert outro_cartao.json()["code"] == "DUPLICADO"
     # Uma venda só, uma baixa só.
     saldos = (await client.get("/estoque/saldos", headers=auth_admin)).json()["items"]
     assert saldos[0]["saldo"] == 19
@@ -335,6 +342,78 @@ async def test_venda_cancelada_nao_paga_taxa(client, auth_admin):
         )
     ).json()
     assert agenda["total"] == 0
+
+
+async def _devolver(client, auth, venda, quantidade: int = 1) -> None:
+    resp = await client.post(
+        f"/vendas/{venda.json()['id']}/devolucoes",
+        headers=auth,
+        json={
+            "itens": [{"item_id": venda.json()["itens"][0]["id"], "quantidade": quantidade}],
+            "client_uuid": str(uuid.uuid4()),
+        },
+    )
+    assert resp.status_code == 201, resp.text
+
+
+async def _taxa_liquida_na_agenda(client, auth) -> Decimal:
+    """Σ da taxa na agenda, da devolução (hoje) até a parcela (D+30)."""
+    hoje = hoje_na_loja()
+    agenda = await client.get(
+        "/relatorios/recebiveis",
+        headers=auth,
+        params={"inicio": hoje.isoformat(), "fim": (hoje + timedelta(days=30)).isoformat()},
+    )
+    return sum((Decimal(i["taxa"]) for i in agenda.json()["items"]), Decimal("0.00"))
+
+
+async def test_devolucoes_parciais_nao_devolvem_mais_taxa_do_que_a_venda_pagou(
+    client, auth_admin
+):
+    """R$ 10,00 no crédito a 2,5% pagam R$ 0,25. Arredondando cada devolução sozinha, duas
+    de R$ 5,00 devolviam 0,13 + 0,13 = 0,26: a maquininha "pagava" 1 centavo à loja e o
+    Resultado subia. Acumulada, a 2ª devolve só o que falta da taxa paga."""
+    variante = await _peca(client, auth_admin, preco="5.00")
+    await _taxa(client, auth_admin, forma="CREDITO", parcelas_ate=12, percentual="2.50",
+                prazo_dias=30)
+    venda = await _vender(
+        client, auth_admin, variante, [{"forma": "CREDITO", "valor": "10.00"}], quantidade=2
+    )
+    assert venda.status_code == 201, venda.text
+    periodo = {"inicio": _hoje(), "fim": _hoje()}
+
+    async def taxas_do_dia() -> str:
+        resumo = await client.get("/relatorios/resumo", headers=auth_admin, params=periodo)
+        return resumo.json()["taxas_cartao"]
+
+    assert await taxas_do_dia() == "0.25"
+    depois = []
+    for _ in range(2):
+        await _devolver(client, auth_admin, venda)
+        depois.append(await taxas_do_dia())
+    assert depois == ["0.12", "0.00"]  # 0,13 na 1ª; 0,12 na 2ª — nunca negativo
+    # A agenda fecha com o resumo: os estornos debitam o mesmo que a parcela pagou.
+    assert await _taxa_liquida_na_agenda(client, auth_admin) == Decimal("0.00")
+
+
+async def test_dois_cartoes_devolvidos_devolvem_a_taxa_que_pagaram(client, auth_admin):
+    """Dois cartões de R$ 5,00 a 2,08%: cada um paga round(0,104) = 0,10, e a venda paga
+    0,20. Pela taxa média sobre o total, a devolução de tudo devolvia round(0,208) = 0,21.
+    A taxa devolvida sai da taxa que a forma PAGOU, então tudo de volta é zero, cravado."""
+    variante = await _peca(client, auth_admin, preco="5.00")
+    await _taxa(client, auth_admin, forma="CREDITO", parcelas_ate=12, percentual="2.08",
+                prazo_dias=30)
+    venda = await _vender(
+        client, auth_admin, variante,
+        [{"forma": "CREDITO", "valor": "5.00"}, {"forma": "CREDITO", "valor": "5.00"}],
+        quantidade=2,
+    )
+    assert venda.status_code == 201, venda.text
+    await _devolver(client, auth_admin, venda, quantidade=2)
+    periodo = {"inicio": _hoje(), "fim": _hoje()}
+    resumo = (await client.get("/relatorios/resumo", headers=auth_admin, params=periodo)).json()
+    assert resumo["taxas_cartao"] == "0.00"
+    assert await _taxa_liquida_na_agenda(client, auth_admin) == Decimal("0.00")
 
 
 # ------------------------------------------------------------------ a agenda
