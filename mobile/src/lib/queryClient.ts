@@ -62,6 +62,10 @@ export const chaves = {
   taxasCartao: ['taxas-cartao'] as const,
   aniversariantes: (mes: number) => ['clientes', 'aniversariantes', mes] as const,
   comprasDaCliente: (id: number) => ['vendas', 'cliente', id] as const,
+  condicionais: ['condicionais'] as const,
+  condicional: (id: number) => ['condicionais', id] as const,
+  /** NÃO é relatório: conta a pagar fica fora do Resultado (ADR-40). */
+  contasPagar: ['contas-pagar'] as const,
 };
 
 /**
@@ -114,6 +118,15 @@ export function invalidarAposVenda(): void {
   queryClient.invalidateQueries({ queryKey: chaves.clientes });
   invalidarRelatorios();
   invalidarGiro();
+}
+
+/**
+ * Abrir ou fechar condicional mexe no saldo; fechar com venda mexe também em vendas, caixa,
+ * fiado e relatórios — é uma venda comum (ADR-39).
+ */
+export function invalidarAposCondicional(): void {
+  queryClient.invalidateQueries({ queryKey: chaves.condicionais });
+  invalidarAposVenda();
 }
 
 export function invalidarAposMovimentoEstoque(): void {

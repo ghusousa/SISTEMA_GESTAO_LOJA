@@ -534,4 +534,8 @@ export const TIPOS_MOVIMENTO = {
   //: Peça que a cliente trouxe de volta, com a venda continuando de pé — diferente do
   //: ESTORNO, que é a venda inteira desfeita.
   DEVOLUCAO: 'Devolução',
+  //: A peça foi para a casa da cliente provar (ADR-39): saiu do disponível, não foi vendida.
+  CONDICIONAL_SAIDA: 'Saiu em condicional',
+  //: A condicional fechou e a peça voltou; o que ficou com a cliente sai em seguida por Venda.
+  CONDICIONAL_RETORNO: 'Voltou da condicional',
 };

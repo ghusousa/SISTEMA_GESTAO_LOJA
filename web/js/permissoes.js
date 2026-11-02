@@ -18,6 +18,7 @@ export const PODE = {
   DEVOLVER_VENDA: 'DEVOLVER_VENDA',
   GERIR_CREDIARIO: 'GERIR_CREDIARIO',
   ATENDER_CLIENTE: 'ATENDER_CLIENTE',
+  FAZER_CONDICIONAL: 'FAZER_CONDICIONAL',
   VER_VENDAS_DE_TODOS: 'VER_VENDAS_DE_TODOS',
   CORRIGIR_ESTOQUE: 'CORRIGIR_ESTOQUE',
   EDITAR_CATALOGO: 'EDITAR_CATALOGO',
@@ -29,7 +30,7 @@ export const PODE = {
   DEFINIR_COMISSAO: 'DEFINIR_COMISSAO',
 };
 
-const VENDEDORA = [PODE.ATENDER_CLIENTE];
+const VENDEDORA = [PODE.ATENDER_CLIENTE, PODE.FAZER_CONDICIONAL];
 const SUPERVISORA = [
   ...VENDEDORA,
   PODE.VER_VENDAS_DE_TODOS,
@@ -83,6 +84,7 @@ const EM_PORTUGUES = {
   [PODE.LANCAR_DESPESA]: 'lançar despesas',
   [PODE.CANCELAR_VENDA]: 'cancelar venda concluída',
   [PODE.ATENDER_CLIENTE]: 'buscar e cadastrar cliente no balcão',
+  [PODE.FAZER_CONDICIONAL]: 'levar peça em condicional para a cliente provar',
   [PODE.VER_VENDAS_DE_TODOS]: 'ver as vendas de toda a equipe',
   [PODE.CORRIGIR_ESTOQUE]: 'ajustar estoque e fazer inventário',
   [PODE.EDITAR_CATALOGO]: 'editar e excluir produtos e categorias',

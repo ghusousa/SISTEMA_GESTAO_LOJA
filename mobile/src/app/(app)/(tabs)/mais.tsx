@@ -38,6 +38,13 @@ const OPCOES: Opcao[] = [
     pode: PODE.DEVOLVER_VENDA,
   },
   {
+    rotulo: 'Condicional',
+    descricao: 'Peças na casa da cliente, com prazo',
+    icone: 'shopping-outline',
+    rota: '/condicional',
+    pode: PODE.FAZER_CONDICIONAL,
+  },
+  {
     rotulo: 'Crediário',
     descricao: 'Quem levou fiado e quanto deve',
     icone: 'handshake-outline',

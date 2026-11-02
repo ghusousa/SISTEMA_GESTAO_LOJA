@@ -33,6 +33,10 @@ class Pode(StrEnum):
     #: os aniversariantes do mês. Sem saldo, sem limite, sem dinheiro: o schema de resposta
     #: é outro (`ClienteBalcaoOut`), e o fiado continua sendo `GERIR_CREDIARIO` (ADR-36).
     ATENDER_CLIENTE = "ATENDER_CLIENTE"
+    #: Levar peça para a casa da cliente provar (condicional) e fechar quando ela volta.
+    #: Da vendedora em diante: é atendimento de balcão. Fechar com fiado continua pedindo
+    #: o crediário, e o preço é o de venda — nada de custo (ADR-39).
+    FAZER_CONDICIONAL = "FAZER_CONDICIONAL"
     #: Ver as vendas de toda a equipe, não só as próprias.
     VER_VENDAS_DE_TODOS = "VER_VENDAS_DE_TODOS"
     #: Ajuste manual de saldo e inventário — as duas portas de mexer no estoque sem venda.
@@ -60,12 +64,15 @@ class Pode(StrEnum):
     DEFINIR_COMISSAO = "DEFINIR_COMISSAO"
 
 
-VENDEDORA: frozenset[Pode] = frozenset({Pode.ATENDER_CLIENTE})
+VENDEDORA: frozenset[Pode] = frozenset({Pode.ATENDER_CLIENTE, Pode.FAZER_CONDICIONAL})
 """Vende, consulta preço e saldo, cadastra peça nova e dá entrada de mercadoria.
 
 Tudo isso é aberto a qualquer usuário autenticado e por isso não aparece como capacidade.
-A única capacidade nomeada é atender cliente (buscar e cadastrar no balcão), porque ela
-existe ao lado de uma irmã mais forte — o crediário — e as duas precisam ser ditas.
+As duas nomeadas: atender cliente (buscar e cadastrar no balcão), porque existe ao lado de
+uma irmã mais forte — o crediário — e as duas precisam ser ditas; e a condicional, que é
+capacidade nova e precisa aparecer na tabela. A nota do fornecedor na Entrada, não: ela é
+de quem vê dinheiro (ADR-40).
+
 O que a vendedora NÃO faz está no que falta aqui: nada de custo, de estorno, de correção
 de estoque, de despesa e de fiado.
 """

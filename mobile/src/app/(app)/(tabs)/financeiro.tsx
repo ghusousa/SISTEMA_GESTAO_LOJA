@@ -14,7 +14,7 @@ import { useRouter } from 'expo-router';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { mensagemDoErro } from '@/api/client';
-import { relatorios } from '@/api/endpoints';
+import { contasPagar, relatorios } from '@/api/endpoints';
 import { Carregando, Cartao, ErroEstado } from '@/components/ui';
 import { formatar, formatarPercentual, paraCentavos } from '@/lib/money';
 import { chaves } from '@/lib/queryClient';
@@ -26,6 +26,7 @@ const ATALHOS = [
   { rotulo: 'Despesas', icone: 'receipt', rota: '/financeiro/despesas', pode: PODE.LANCAR_DESPESA },
   { rotulo: 'Relatórios', icone: 'chart-line', rota: '/financeiro/relatorios', pode: PODE.VER_DINHEIRO },
   { rotulo: 'Caixa', icone: 'cash-register', rota: '/financeiro/caixa', pode: PODE.FECHAR_CAIXA },
+  { rotulo: 'A pagar', icone: 'calendar-clock', rota: '/financeiro/contas-pagar', pode: PODE.VER_DINHEIRO },
 ] as const;
 
 export default function Financeiro() {
@@ -54,6 +55,15 @@ export default function Financeiro() {
     enabled: veDinheiro,
   });
   const pecasNoMinimo = estoqueBaixo.data?.total ?? 0;
+
+  // O aviso do boleto: vencidas e a semana que vem (ADR-40). Rota leve, três somas.
+  const contas = useQuery({
+    queryKey: [...chaves.contasPagar, 'resumo'],
+    queryFn: contasPagar.resumo,
+    enabled: veDinheiro,
+  });
+  const aPagarNaSemana =
+    (contas.data?.vencidas.quantidade ?? 0) + (contas.data?.proximos_7_dias.quantidade ?? 0);
 
   if (!veDinheiro) return <SoCaixa atalhos={atalhos} aoAbrir={(rota) => router.push(rota as never)} />;
   if (resumo.isPending) return <Carregando />;
@@ -118,6 +128,22 @@ export default function Financeiro() {
             <MaterialCommunityIcons name="alert-circle" size={22} color="#7A5A00" />
             <Text style={s.alertaTexto}>
               {pecasNoMinimo} peça(s) no estoque mínimo — hora de repor
+            </Text>
+          </View>
+        </Pressable>
+      )}
+
+      {aPagarNaSemana > 0 && contas.data && (
+        <Pressable onPress={() => router.push('/financeiro/contas-pagar')}>
+          <View style={s.alerta}>
+            <MaterialCommunityIcons name="calendar-alert" size={22} color="#7A5A00" />
+            <Text style={s.alertaTexto}>
+              {contas.data.vencidas.quantidade > 0
+                ? `${contas.data.vencidas.quantidade} conta(s) de fornecedor vencida(s)`
+                : `${aPagarNaSemana} conta(s) de fornecedor nos próximos 7 dias`}{' '}
+              — {formatar(
+                paraCentavos(contas.data.vencidas.valor) + paraCentavos(contas.data.proximos_7_dias.valor),
+              )}
             </Text>
           </View>
         </Pressable>

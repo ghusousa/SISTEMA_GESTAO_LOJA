@@ -4,6 +4,9 @@
  * O fluxo real do estoquista é: abrir a caixa e bipar peça por peça. A tela soma sozinha e
  * só envia no final, em uma única requisição — com client_uuid, para um reenvio depois de
  * queda de rede não somar o estoque duas vezes.
+ *
+ * Quem vê dinheiro pode lançar junto a nota do fornecedor: valor e vencimentos viram Contas
+ * a pagar na MESMA transação da entrada (ADR-40). A vendedora dá entrada sem ela.
  */
 
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -16,12 +19,15 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 import { codigoDoErro, detalheDoErro, mensagemDoErro } from '@/api/client';
 import { catalogo, estoque } from '@/api/endpoints';
 import { BuscarPeca } from '@/components/BuscarPeca';
+import { NOTA_VAZIA, NotaFornecedor, notaParaApi, type EstadoNota } from '@/components/NotaFornecedor';
 import { CodigoManual } from '@/components/CodigoManual';
 import { Scanner } from '@/components/Scanner';
 import { Botao, Campo } from '@/components/ui';
 import { type ItemGravado, tirarOQueJaEntrou } from '@/lib/entrada';
 import { gerarUuid } from '@/lib/uuid';
-import { invalidarAposMovimentoEstoque } from '@/lib/queryClient';
+import { PODE, pode } from '@/lib/permissoes';
+import { chaves, invalidarAposMovimentoEstoque, queryClient } from '@/lib/queryClient';
+import { useAuthStore } from '@/stores/authStore';
 import { ALVO_TOQUE, cores, espaco, fonte, raio } from '@/lib/tema';
 
 interface ItemBipado {
@@ -40,6 +46,8 @@ export default function EntradaEstoque() {
   const [aviso, setAviso] = useState<string | null>(null);
   const [clientUuid, setClientUuid] = useState(() => gerarUuid());
   const [consultando, setConsultando] = useState(false);
+  const [nota, setNota] = useState<EstadoNota>(NOTA_VAZIA);
+  const veDinheiro = pode(useAuthStore((e) => e.usuario?.papel), PODE.VER_DINHEIRO);
   const buscando = useRef(false);
 
   /** Soma uma peça à conferência, venha ela do bipe ou da busca pelo nome. */
@@ -87,14 +95,19 @@ export default function EntradaEstoque() {
   }, [somar]);
 
   const salvar = useMutation({
-    mutationFn: () =>
-      estoque.registrarEntrada({
+    mutationFn: () => {
+      const notaApi = veDinheiro ? notaParaApi(nota) : null;
+      return estoque.registrarEntrada({
         client_uuid: clientUuid,
         fornecedor: fornecedor.trim() || null,
         itens: itens.map((i) => ({ variante_id: i.varianteId, quantidade: i.quantidade })),
-      }),
+        ...(notaApi ? { nota: notaApi } : {}),
+      });
+    },
     onSuccess: (entrada) => {
       invalidarAposMovimentoEstoque();
+      if (entrada.contas_a_pagar) queryClient.invalidateQueries({ queryKey: chaves.contasPagar });
+      setNota(NOTA_VAZIA);
       // Limpa e troca o UUID ANTES do alerta: no Android o alerta pode ser fechado pelo
       // botão voltar sem rodar o onPress, e a próxima entrada reusaria a chave de
       // idempotência — o servidor devolveria a entrada antiga e as peças novas sumiriam.
@@ -103,7 +116,8 @@ export default function EntradaEstoque() {
       setClientUuid(gerarUuid());
       Alert.alert(
         'Entrada registrada',
-        `${entrada.total_pecas} peça(s) somadas ao estoque.`,
+        `${entrada.total_pecas} peça(s) somadas ao estoque.` +
+          (entrada.contas_a_pagar ? ` ${entrada.contas_a_pagar} parcela(s) foram para Contas a pagar.` : ''),
         [{ text: 'Pronto', onPress: () => router.back() }],
       );
     },
@@ -174,6 +188,7 @@ export default function EntradaEstoque() {
           placeholder="Malharia Nova"
           autoCapitalize="words"
         />
+        {veDinheiro && <NotaFornecedor nota={nota} aoMudar={setNota} />}
 
         {itens.length === 0 ? (
           <View style={s.vazio}>
@@ -239,7 +254,16 @@ export default function EntradaEstoque() {
           grande
           desabilitado={itens.length === 0}
           carregando={salvar.isPending}
-          onPress={() => salvar.mutate()}
+          onPress={() => {
+            // A nota que não fecha é avisada ANTES de enviar, com a frase dela.
+            try {
+              if (veDinheiro) notaParaApi(nota);
+            } catch (erro) {
+              Alert.alert('Nota do fornecedor', (erro as Error).message);
+              return;
+            }
+            salvar.mutate();
+          }}
         />
       </View>
     </View>

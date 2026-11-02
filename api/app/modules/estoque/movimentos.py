@@ -1,8 +1,8 @@
 """Núcleo do estoque: a única forma de mudar um saldo.
 
-Fica numa camada baixa (sem depender de catálogo ou vendas) porque quatro módulos precisam
-dela — catálogo (estoque inicial), estoque (entrada/ajuste/inventário) e vendas (baixa e
-estorno). Assim ninguém precisa importar o repository do outro.
+Fica numa camada baixa (sem depender de catálogo ou vendas) porque vários módulos precisam
+dela — catálogo (estoque inicial), estoque (entrada/ajuste/inventário), vendas (baixa e
+estorno) e condicionais (saída e retorno). Assim ninguém importa o repository do outro.
 
 Invariantes garantidas aqui:
 - saldo só muda junto com uma linha em `stock_movements`, na mesma transação;
@@ -67,8 +67,12 @@ async def travar_saldos(session: AsyncSession, variante_ids: list[int]) -> dict[
 
 
 #: A mercadoria que volta da cliente. Se a peça saiu do catálogo depois da venda, ela não
-#: pode ser recusada — está fisicamente de volta na loja (ADR-30).
-_VOLTA_DA_CLIENTE = frozenset({TipoMovimento.ESTORNO, TipoMovimento.DEVOLUCAO})
+#: pode ser recusada — está fisicamente de volta na loja (ADR-30). A condicional entra aqui
+#: pelo mesmo motivo: a última peça vai para a casa da cliente, o saldo fica zero, alguém
+#: tira a peça do catálogo achando que esgotou — e a peça volta na sacola (ADR-39).
+_VOLTA_DA_CLIENTE = frozenset(
+    {TipoMovimento.ESTORNO, TipoMovimento.DEVOLUCAO, TipoMovimento.CONDICIONAL_RETORNO}
+)
 
 
 async def aplicar_movimento(
@@ -81,6 +85,7 @@ async def aplicar_movimento(
     entry_id: int | None = None,
     sale_id: int | None = None,
     return_id: int | None = None,
+    consignment_id: int | None = None,
     observacao: str | None = None,
 ) -> StockMovement:
     """Aplica `delta` ao saldo e registra a movimentação. Devolve a movimentação criada.
@@ -151,6 +156,7 @@ async def aplicar_movimento(
         entry_id=entry_id,
         sale_id=sale_id,
         return_id=return_id,
+        consignment_id=consignment_id,
         user_id=user_id,
         note=observacao,
     )

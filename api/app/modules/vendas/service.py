@@ -52,11 +52,17 @@ class VendaService:
         self.replay = False
 
     # ------------------------------------------------------------ criação
-    async def registrar(self, dados: VendaIn, usuario: User) -> VendaOut:
+    async def registrar(
+        self, dados: VendaIn, usuario: User, *, confirmar: bool = True
+    ) -> VendaOut:
         """Registra a venda inteira em uma transação: itens, pagamentos e baixa de estoque.
 
         Ou tudo acontece, ou nada acontece — meia venda deixaria estoque baixado sem
         registro de dinheiro, que é o pior estado possível para a loja.
+
+        `confirmar=False` é para quem registra a venda DENTRO da própria transação (o
+        fechamento da condicional, ADR-39): grava tudo, mas o commit é de quem chamou — e o
+        rollback de um erro leva junto o que ele já tinha feito.
         """
         ja_registrada = await self.repo.por_client_uuid(dados.client_uuid)
         if ja_registrada is not None:
@@ -121,6 +127,10 @@ class VendaService:
         try:
             await self.session.flush()
         except IntegrityError:
+            if not confirmar:
+                # O rollback desfaria o que quem chamou já gravou nesta transação; quem
+                # chama decide o que fazer com a chave repetida.
+                raise Duplicado("Esta cobrança já foi registrada por outra requisição.") from None
             # Duas requisições da mesma venda ao mesmo tempo: a perdedora devolve a vencedora.
             await self.session.rollback()
             # O rollback expirou o `usuario` (veio desta mesma sessão), e o `_replay` lê
@@ -180,7 +190,10 @@ class VendaService:
                 sale_id=venda.id,
             )
 
-        await self.session.commit()
+        if confirmar:
+            await self.session.commit()
+        else:
+            await self.session.flush()
         registrada = await self.repo.por_id(venda.id)
         assert registrada is not None
         return await self._montar_venda(registrada, usuario)

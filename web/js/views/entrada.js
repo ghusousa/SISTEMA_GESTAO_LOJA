@@ -14,6 +14,9 @@
  *
  * Peça que nunca existiu não entra por aqui: ela nasce em Produtos → Cadastrar, que já
  * tem coluna de estoque inicial. Esta tela é da segunda vez em diante.
+ *
+ * Quem vê dinheiro pode lançar junto a nota do fornecedor (`nota-fornecedor.js`): valor e
+ * vencimentos viram Contas a pagar na MESMA transação da entrada (ADR-40).
  */
 
 import { api, ErroApi } from '../api.js';
@@ -25,6 +28,7 @@ import { ir } from '../router.js';
 import { conferencia, limparConferencia, novoClientUuid } from '../store.js';
 import { PODE, pode } from '../permissoes.js';
 import { MAX_POR_PECA, pintarConferencia } from '../tabela-conferencia.js';
+import { ligarNotaFornecedor } from '../nota-fornecedor.js';
 import { ajuda, aviso, avisarErro, confirmar, cru, html, ligarCampoDinheiro, plural } from '../ui.js';
 
 export function render(raiz) {
@@ -64,6 +68,7 @@ export function render(raiz) {
           <span>Observação <span class="campo__dica">nota fiscal, pedido…</span></span>
           <input data-observacao maxlength="500" />
         </label>
+        ${veDinheiro ? html`<div data-nota></div>` : ''}
 
         <div class="pdv__linha">
           <span class="texto-suave">Peças</span>
@@ -106,6 +111,12 @@ export function render(raiz) {
   campoObservacao.addEventListener('input', () =>
     conferencia.set({ observacao: campoObservacao.value }),
   );
+  const nota = veDinheiro
+    ? ligarNotaFornecedor(raiz.querySelector('[data-nota]'), {
+        inicial: conferencia.get().nota,
+        aoMudar: (estado) => conferencia.set({ nota: estado }),
+      })
+    : null;
 
   /* ------------------------------------------------------------- somar peça */
 
@@ -190,6 +201,13 @@ export function render(raiz) {
 
   async function salvar() {
     if (enviando || !itens().length) return;
+    let notaApi = null;
+    try {
+      notaApi = nota?.paraApi() ?? null;
+    } catch (erro) {
+      avisarErro(erro);
+      return;
+    }
     enviando = true;
     botaoSalvar.disabled = true;
     botaoSalvar.innerHTML = cru('<span class="giro" aria-hidden="true"></span> Registrando…');
@@ -208,8 +226,10 @@ export function render(raiz) {
           quantidade: i.quantidade,
           custo_unitario: i.custo > 0 ? paraDecimalString(i.custo) : null,
         })),
+        ...(notaApi ? { nota: notaApi } : {}),
       });
       limparConferencia();
+      nota?.limpar();
       campoFornecedor.value = '';
       campoObservacao.value = '';
       leitor.esquecerUltimo();
@@ -254,9 +274,12 @@ export function render(raiz) {
    */
   async function ofereceEtiquetas(entrada, registrados) {
     const total = plural(entrada.total_pecas, 'peça entrou', 'peças entraram');
+    const contas = entrada.contas_a_pagar
+      ? ` ${plural(entrada.contas_a_pagar, 'parcela foi', 'parcelas foram')} para Contas a pagar.`
+      : '';
     const imprimir = await confirmar({
       titulo: 'Entrada registrada',
-      mensagem: `${total} no estoque. Imprimir as etiquetas destas peças agora?`,
+      mensagem: `${total} no estoque.${contas} Imprimir as etiquetas destas peças agora?`,
       confirmarTexto: 'Imprimir etiquetas',
     });
     if (!imprimir) {
@@ -278,6 +301,7 @@ export function render(raiz) {
     });
     if (!certeza) return;
     limparConferencia();
+    nota?.limpar();
     campoFornecedor.value = '';
     campoObservacao.value = '';
     leitor.esquecerUltimo();

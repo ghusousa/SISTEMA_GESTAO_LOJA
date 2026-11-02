@@ -17,6 +17,7 @@ export const PODE = {
   DEVOLVER_VENDA: 'DEVOLVER_VENDA',
   GERIR_CREDIARIO: 'GERIR_CREDIARIO',
   ATENDER_CLIENTE: 'ATENDER_CLIENTE',
+  FAZER_CONDICIONAL: 'FAZER_CONDICIONAL',
   VER_VENDAS_DE_TODOS: 'VER_VENDAS_DE_TODOS',
   CORRIGIR_ESTOQUE: 'CORRIGIR_ESTOQUE',
   EDITAR_CATALOGO: 'EDITAR_CATALOGO',
@@ -31,7 +32,7 @@ export const PODE = {
 
 export type Capacidade = (typeof PODE)[keyof typeof PODE];
 
-const VENDEDORA: Capacidade[] = [PODE.ATENDER_CLIENTE];
+const VENDEDORA: Capacidade[] = [PODE.ATENDER_CLIENTE, PODE.FAZER_CONDICIONAL];
 
 const SUPERVISORA: Capacidade[] = [
   ...VENDEDORA,
@@ -78,7 +79,7 @@ export const DESCRICAO: Record<Papel, string> = {
   SUPERVISORA:
     'Estoque, catálogo, caixa e as vendas da equipe. Não vê custo nem despesa, e não estorna.',
   VENDEDOR:
-    'Vende, consulta preço, cadastra peça e cliente, e dá entrada de mercadoria.',
+    'Vende, consulta preço, cadastra peça e cliente, dá entrada de mercadoria e leva peça em condicional.',
 };
 
 /** Papel desconhecido não recebe nada — falha fechada, igual ao servidor. */

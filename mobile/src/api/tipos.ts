@@ -20,7 +20,11 @@ export type TipoMovimento =
   | 'VENDA'
   | 'ESTORNO'
   /** Peça devolvida pela cliente com a venda continuando de pé (≠ ESTORNO, que é a venda inteira). */
-  | 'DEVOLUCAO';
+  | 'DEVOLUCAO'
+  /** Foi para a casa da cliente provar (ADR-39): saiu do disponível, não foi vendida. */
+  | 'CONDICIONAL_SAIDA'
+  /** A condicional fechou e a peça voltou; o que ficou sai logo depois como VENDA. */
+  | 'CONDICIONAL_RETORNO';
 export type TipoCodigo = 'EAN' | 'INTERNO';
 
 export interface Pagina<T> {
@@ -111,6 +115,7 @@ export interface Movimento {
   saldo_apos: number;
   venda_id: number | null;
   entrada_id: number | null;
+  condicional_id?: number | null;
   usuario_id: number;
   observacao: string | null;
   criado_em: string;
@@ -145,6 +150,8 @@ export interface Entrada {
   criada_em: string;
   itens: Movimento[];
   total_pecas: number;
+  /** Quantas parcelas da nota viraram contas a pagar (ADR-40). */
+  contas_a_pagar?: number;
 }
 
 export interface InventarioDiferenca {
@@ -611,4 +618,92 @@ export interface Backup {
   copias_na_nuvem: number | null;
   /** Ligado e sem cópia nova há mais de 2× o intervalo. Quem decide é o servidor. */
   atrasado: boolean;
+}
+
+// ------------------------------------------------------------------ condicional (ADR-39)
+export type StatusCondicional = 'ABERTA' | 'FECHADA';
+export type FiltroCondicionais = 'abertas' | 'vencidas' | 'fechadas' | 'todas';
+
+export interface ItemCondicional {
+  variante_id: number;
+  produto: string;
+  tamanho: string;
+  cor: string;
+  codigo_barras: string;
+  /** Preço de venda de HOJE: é por ele que o que ficar será cobrado. */
+  preco_venda: string;
+  quantidade: number;
+  devolvida: number | null;
+  ficou: number | null;
+}
+
+export interface Condicional {
+  id: number;
+  status: StatusCondicional;
+  cliente_id: number;
+  cliente: string;
+  cliente_telefone: string | null;
+  vendedora_id: number;
+  vendedora: string;
+  prazo: string;
+  vencida: boolean;
+  dias_para_vencer: number;
+  observacao: string | null;
+  criada_em: string;
+  fechada_em: string | null;
+  fechada_por: string | null;
+  venda_id: number | null;
+  itens: ItemCondicional[];
+  total_pecas: number;
+  valor_pecas: string;
+}
+
+/** A cliente como o balcão a enxerga (`GET /clientes/balcao`, frente B1): sem saldo. */
+export interface ClienteDoBalcao {
+  id: number;
+  nome: string;
+  telefone: string | null;
+}
+
+// ------------------------------------------------------------------ contas a pagar (ADR-40)
+export type FormaPagamentoConta = 'BOLETO' | 'PIX' | 'TRANSFERENCIA' | 'DINHEIRO' | 'CARTAO';
+export type SituacaoConta = 'ABERTA' | 'VENCIDA' | 'PAGA';
+export type FiltroContas = 'abertas' | 'vencidas' | 'proximos_7_dias' | 'pagas' | 'todas';
+
+export interface ContaPagar {
+  id: number;
+  fornecedor: string;
+  descricao: string;
+  numero_nota: string | null;
+  valor: string;
+  vencimento: string;
+  parcela: number;
+  parcelas: number;
+  situacao: SituacaoConta;
+  dias_para_vencer: number;
+  paga_em: string | null;
+  forma_pagamento: FormaPagamentoConta | null;
+  entrada_id: number | null;
+  observacao: string | null;
+  ativo: boolean;
+  criada_em: string;
+}
+
+export interface FaixaContas {
+  quantidade: number;
+  valor: string;
+}
+
+export interface ResumoContas {
+  hoje: string;
+  vencidas: FaixaContas;
+  proximos_7_dias: FaixaContas;
+  em_aberto: FaixaContas;
+}
+
+/** A nota do fornecedor como a API recebe: dinheiro em string decimal. */
+export interface NotaFornecedor {
+  numero: string | null;
+  valor_total: string;
+  parcelas: { vencimento: string; valor: string }[];
 }

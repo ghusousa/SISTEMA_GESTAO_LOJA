@@ -34,6 +34,8 @@ const TABELA: [Capacidade, Papel[]][] = [
   [PODE.GERIR_CREDIARIO, [DONO, GERENTE]],
   // Buscar e cadastrar cliente no balcão é de todo mundo; o fiado, não (ADR-36).
   [PODE.ATENDER_CLIENTE, [DONO, GERENTE, SUPERVISORA, VENDEDORA]],
+  // A condicional é atendimento de balcão: da vendedora em diante (ADR-39).
+  [PODE.FAZER_CONDICIONAL, [DONO, GERENTE, SUPERVISORA, VENDEDORA]],
 ];
 
 for (const [capacidade, quemPode] of TABELA) {
@@ -44,9 +46,13 @@ for (const [capacidade, quemPode] of TABELA) {
   });
 }
 
-test('a vendedora só atende cliente além de vender e consultar', () => {
+test('a vendedora só atende cliente e faz condicional além de vender e consultar', () => {
   for (const capacidade of Object.values(PODE)) {
-    assert.equal(pode(VENDEDORA, capacidade), capacidade === PODE.ATENDER_CLIENTE, capacidade);
+    assert.equal(
+      pode(VENDEDORA, capacidade),
+      capacidade === PODE.ATENDER_CLIENTE || capacidade === PODE.FAZER_CONDICIONAL,
+      capacidade,
+    );
   }
 });
 

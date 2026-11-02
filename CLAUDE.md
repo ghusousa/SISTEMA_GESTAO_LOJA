@@ -148,6 +148,12 @@ npm run publicar     # ficha inteira na App Store via API (mobile/publicar/, -- 
   Entrada devolve no `detail.itens` o que já gravou, e a tela tira isso da lista antes de
   trocar a chave (senão o reenvio soma de novo). Depois do `rollback` de uma corrida, recarregue
   o `usuario` (`session.refresh`) antes de ler `role`/`id`: atributo expirado é MissingGreenlet.
+- **Condicional e contas a pagar (ADR-39, ADR-40)**: a condicional tira a peça do saldo
+  (`CONDICIONAL_SAIDA`); o fechamento devolve TUDO (`CONDICIONAL_RETORNO`) e vende o que ficou
+  pelo `VendaService.registrar(..., confirmar=False)` — a venda dentro da transação de quem chama,
+  sem commit. Não há segundo caminho de venda. `payables` (contas a pagar do fornecedor) nascem
+  na Entrada, na mesma transação, e **nunca** entram no Resultado: o CMV já conta a mercadoria.
+  `web/js/parcelas.js`/`condicional.js` são espelhos de `mobile/src/lib/` — mudou um, mude o outro.
 - **Devolução, vale e fiado (ADR-19 a ADR-21)**: não existe "modo troca" — troca é devolução que
   vira vale mais uma venda nova. O valor volta pró-rata **pelas formas em que entrou**, com teto
   no que cada uma recebeu; o que não couber vira vale (`vouchers`, consumido por `UPDATE`

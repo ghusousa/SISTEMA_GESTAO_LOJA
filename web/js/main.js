@@ -23,6 +23,10 @@ rota('/vendas', () => import('./views/vendas.js'));
 rota('/vendas/devolucao', () => import('./views/devolucao.js'), { pode: PODE.DEVOLVER_VENDA });
 rota('/vendas/:id/recibo', () => import('./views/recibo.js'));
 rota('/vendas/:id', () => import('./views/venda-detalhe.js'));
+rota('/condicionais', () => import('./views/condicionais.js'), { pode: PODE.FAZER_CONDICIONAL });
+// Antes de '/condicionais/:id', pelo mesmo motivo de '/vendas/devolucao'.
+rota('/condicionais/nova', () => import('./views/condicionais-nova.js'), { pode: PODE.FAZER_CONDICIONAL });
+rota('/condicionais/:id', () => import('./views/condicionais-detalhe.js'), { pode: PODE.FAZER_CONDICIONAL });
 
 rota('/produtos', () => import('./views/produtos.js'));
 rota('/produtos/novo', () => import('./views/produto-novo.js'));
@@ -44,6 +48,7 @@ rota('/caixa', () => import('./views/caixa.js'), { pode: PODE.FECHAR_CAIXA });
 rota('/despesas', () => import('./views/despesas.js'), { pode: PODE.LANCAR_DESPESA });
 rota('/relatorios', () => import('./views/relatorios.js'), { pode: PODE.VER_DINHEIRO });
 rota('/taxas', () => import('./views/taxas.js'), { pode: PODE.VER_DINHEIRO });
+rota('/contas-pagar', () => import('./views/contas-pagar.js'), { pode: PODE.VER_DINHEIRO });
 
 rota('/clientes', () => import('./views/clientes.js'), { pode: PODE.GERIR_CREDIARIO });
 rota('/aniversariantes', () => import('./views/aniversariantes.js'), { pode: PODE.ATENDER_CLIENTE });
@@ -63,6 +68,7 @@ const MENU = [
       { href: '/vendas', icone: '🧾', texto: 'Vendas' },
       { href: '/vendas/devolucao', icone: '↩️', texto: 'Devolução', pode: PODE.DEVOLVER_VENDA },
       { href: '/aniversariantes', icone: '🎂', texto: 'Aniversariantes', pode: PODE.ATENDER_CLIENTE },
+      { href: '/condicionais', icone: '🛍️', texto: 'Condicional', pode: PODE.FAZER_CONDICIONAL },
     ],
   },
   {
@@ -86,6 +92,7 @@ const MENU = [
     itens: [
       { href: '/caixa', icone: '💰', texto: 'Caixa do dia', pode: PODE.FECHAR_CAIXA },
       { href: '/despesas', icone: '💸', texto: 'Despesas', pode: PODE.LANCAR_DESPESA },
+      { href: '/contas-pagar', icone: '📅', texto: 'Contas a pagar', pode: PODE.VER_DINHEIRO },
       { href: '/relatorios', icone: '📊', texto: 'Relatórios', pode: PODE.VER_DINHEIRO },
       { href: '/taxas', icone: '💳', texto: 'Taxas do cartão', pode: PODE.VER_DINHEIRO },
       { href: '/clientes', icone: '🤝', texto: 'Crediário', pode: PODE.GERIR_CREDIARIO },
@@ -152,6 +159,7 @@ function molduraHtml(usuario) {
           </div>
           <div class="lateral__versao" data-versao hidden></div>
           <a class="lateral__versao is-atencao" data-backup href="#/backup" style="text-decoration:none;color:inherit" hidden></a>
+          <a class="lateral__versao is-atencao" data-contas href="#/contas-pagar" style="text-decoration:none;color:inherit" hidden></a>
           <a class="lateral__privacidade" href="/privacidade" target="_blank" rel="noopener">Privacidade</a>
         </div>
       </nav>
@@ -233,9 +241,38 @@ async function pintarBackup(raizMoldura) {
   }
 }
 
+/**
+ * "Tem boleto vencendo?" — para quem vê dinheiro, no mesmo desenho dos outros selos, e só
+ * quando há o que pagar: vencida ou vencendo nos próximos 7 dias (`/contas-pagar/resumo`,
+ * ADR-40). Sem isto o boleto da coleção só aparecia para quem abrisse Contas a pagar.
+ */
+let contasPintadasEm = 0;
+async function pintarContas(raizMoldura) {
+  const area = raizMoldura.querySelector('[data-contas]');
+  if (!area || !pode(PODE.VER_DINHEIRO)) return;
+  contasPintadasEm = Date.now();
+  try {
+    const r = await api.get('/contas-pagar/resumo');
+    const qtd = r.vencidas.quantidade + r.proximos_7_dias.quantidade;
+    area.hidden = qtd === 0;
+    if (area.hidden) return;
+    area.title = 'Abrir Contas a pagar';
+    area.innerHTML = html`
+      <span class="lateral__versao-ponto" aria-hidden="true"></span>
+      <span>
+        <strong>${r.vencidas.quantidade ? 'Conta vencida' : 'Contas da semana'}</strong>
+        <span>${qtd} a pagar até 7 dias</span>
+      </span>
+    `;
+  } catch {
+    area.hidden = true;
+  }
+}
+
 // O PDV fica aberto o dia inteiro: o selo se refaz na navegação, no máximo a cada 5 min.
 document.addEventListener('rota-trocada', () => {
   if (Date.now() - backupPintadoEm > 5 * 60_000) void pintarBackup(raiz);
+  if (Date.now() - contasPintadasEm > 5 * 60_000) void pintarContas(raiz);
 });
 
 /* --------------------------------------------------------------------- moldura */
@@ -270,6 +307,7 @@ function areaDeConteudo(caminho, usuario) {
       raiz.innerHTML = molduraHtml(usuario);
       void pintarVersao(raiz);
       void pintarBackup(raiz);
+      void pintarContas(raiz);
       raiz.querySelector('[data-sair]').addEventListener('click', async () => {
         const confirmou = await confirmar({
           titulo: 'Sair do sistema',

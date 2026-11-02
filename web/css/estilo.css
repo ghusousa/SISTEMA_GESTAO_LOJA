@@ -1487,6 +1487,12 @@ kbd {
   line-height: 1.3;
 }
 
+/* O `display: flex` acima vence o atributo `hidden`: o selo escondido (backup em dia, nenhuma
+   conta a pagar) aparecia como uma faixa vazia na barra. */
+.lateral__versao[hidden] {
+  display: none;
+}
+
 .lateral__versao > span:last-child {
   display: flex;
   flex-direction: column;

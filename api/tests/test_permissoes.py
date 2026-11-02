@@ -17,6 +17,7 @@ A leitura é a própria tabela:
     fechar caixa          ✓       ✓          ✓           ✗
     vendas de todos       ✓       ✓          ✓           ✗
     atender cliente       ✓       ✓          ✓           ✓
+    condicional           ✓       ✓          ✓           ✓
     vender e bipar        ✓       ✓          ✓           ✓
 """
 
@@ -55,6 +56,8 @@ TODOS = [Papel.ADMIN, Papel.GERENTE, Papel.SUPERVISORA, Papel.VENDEDOR]
         # Buscar e cadastrar cliente no balcão é de todo mundo; o fiado, não (ADR-36).
         (Pode.ATENDER_CLIENTE, set(TODOS)),
         (Pode.GERIR_CREDIARIO, {Papel.ADMIN, Papel.GERENTE}),
+        # A condicional é atendimento de balcão: da vendedora em diante (ADR-39).
+        (Pode.FAZER_CONDICIONAL, set(TODOS)),
     ],
 )
 def test_tabela_de_permissoes(capacidade: Pode, quem_pode: set[Papel]) -> None:
@@ -62,10 +65,11 @@ def test_tabela_de_permissoes(capacidade: Pode, quem_pode: set[Papel]) -> None:
         assert pode(papel, capacidade) is (papel in quem_pode), f"{papel} x {capacidade}"
 
 
-def test_vendedora_so_atende_cliente() -> None:
-    """O papel mais baixo vende, consulta e atende a cliente; qualquer poder além disso é
-    engano. Atender é buscar e cadastrar no balcão, sem saldo nem limite (ADR-36)."""
-    assert PERMISSOES[Papel.VENDEDOR] == frozenset({Pode.ATENDER_CLIENTE})
+def test_vendedora_so_atende_cliente_e_faz_condicional() -> None:
+    """O papel mais baixo vende, consulta, atende a cliente e leva peça em condicional;
+    qualquer poder além disso é engano. Atender é buscar e cadastrar no balcão, sem saldo
+    nem limite (ADR-36); a condicional é atendimento de balcão (ADR-39)."""
+    assert PERMISSOES[Papel.VENDEDOR] == frozenset({Pode.ATENDER_CLIENTE, Pode.FAZER_CONDICIONAL})
 
 
 def test_a_hierarquia_nao_tem_buraco() -> None:

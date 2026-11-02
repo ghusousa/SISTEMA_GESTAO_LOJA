@@ -94,14 +94,16 @@ stock_balances(variant_id PK FK→product_variants, quantity INT CHECK >= 0, upd
 
 stock_entries(id, user_id FK→users, supplier, note, client_uuid UUID UNIQUE, created_at)
 
-stock_movements(id, variant_id FK→product_variants, movement_type CHECK IN
-                  ('ENTRADA','AJUSTE','INVENTARIO','VENDA','ESTORNO'),
+stock_movements(id, variant_id FK→product_variants, movement_type VARCHAR(20) CHECK IN
+                  ('ENTRADA','AJUSTE','INVENTARIO','VENDA','ESTORNO','DEVOLUCAO',
+                   'CONDICIONAL_SAIDA','CONDICIONAL_RETORNO'),   -- ADR-39
                 quantity INT CHECK (quantity <> 0),   -- com sinal: +entrada, -venda
                 balance_after INT NOT NULL,           -- saldo resultante (auditoria)
                 entry_id FK→stock_entries NULL, sale_id FK→sales NULL,
+                return_id FK→sale_returns NULL, consignment_id FK→consignments NULL,
                 user_id FK→users, note, created_at)
   ix_stock_movements_variant_created (variant_id, created_at)
-  ix_stock_movements_sale_id, ix_stock_movements_type_created
+  ix_stock_movements_sale_id, ix_stock_movements_type_created, ix_stock_movements_consignment_id
   ix_stock_movements_created_at                 -- filtro de período do extrato (ADR-27)
 ```
 
@@ -313,6 +315,41 @@ store_config(id, nome, segmento, documento, telefone, endereco, created_at, upda
 uma linha numa tabela Python, não uma migration. Ramo desconhecido cai no vocabulário neutro em
 vez de estourar — uma linha estranha (restauração antiga, edição na mão) não pode derrubar a tela
 de login.
+
+### 2.10 Condicional e contas a pagar do fornecedor (ADR-39, ADR-40)
+
+```sql
+consignments(id, customer_id FK→customers NOT NULL, seller_id FK→users,
+             due_date DATE,                         -- prazo: dia de calendário, sem fuso
+             status CHECK IN ('ABERTA','FECHADA'),
+             client_uuid UUID UNIQUE,               -- chave da abertura
+             closing_uuid UUID UNIQUE NULL,         -- chave do fechamento = chave da venda dele
+             sale_id FK→sales UNIQUE NULL,          -- a venda do que ficou com a cliente
+             note, created_at, closed_at NULL, closed_by_id FK→users NULL)
+  ck_consignments_close_consistency  -- ABERTA sem nada de fechamento; FECHADA com quem/quando/chave
+  ix_consignments_open_due_date (due_date) WHERE status = 'ABERTA'
+  ix_consignments_customer_id
+
+consignment_items(id, consignment_id FK→consignments CASCADE, variant_id FK→product_variants,
+                  quantity INT CHECK > 0,
+                  returned_quantity INT NULL CHECK (NULL OR 0..quantity),  -- preenchido ao fechar
+                  UNIQUE (consignment_id, variant_id))
+
+payables(id, supplier, description, invoice_number NULL, amount NUMERIC(14,2) CHECK > 0,
+         due_date DATE, paid_on DATE NULL,
+         payment_method CHECK IN ('BOLETO','PIX','TRANSFERENCIA','DINHEIRO','CARTAO') NULL,
+         installment_number, installment_count,     -- "parcela 2 de 3"
+         entry_id FK→stock_entries NULL,            -- a Entrada que trouxe a mercadoria
+         client_uuid UUID NULL,                     -- chave do lançamento avulso
+         note, created_by_id FK→users, paid_by_id FK→users NULL, deleted_at, created_at, updated_at)
+  ck_payables_paid_consistency       -- paga = dia + forma + quem, juntos; aberta = nenhum dos três
+  ix_payables_open_due_date (due_date) WHERE paid_on IS NULL AND deleted_at IS NULL
+  uq_payables_entry_id_installment_number    WHERE entry_id IS NOT NULL
+  uq_payables_client_uuid_installment_number WHERE client_uuid IS NOT NULL
+```
+
+O que ficou com a cliente não é coluna: é `quantity - returned_quantity`, e a venda dele mora em
+`sales` como qualquer outra. `payables` não é lida por relatório nenhum: fica fora do Resultado.
 
 ---
 
@@ -1078,6 +1115,50 @@ enquanto ele é < 80%, B < 95%, C o resto — quem cruza a linha dos 80% ainda �
 INTEIRA (peça excluída fica de fora, como em toda tela de estoque) — é o número que a tela
 Saldos não podia dar, porque soma só a página. 9 ms.
 
+**ADR-39 — Condicional tira a peça do saldo; o fechamento devolve TUDO e vende o que ficou.**
+A peça que ia para a casa da cliente provar continuava "disponível": o balcão podia vendê-la de
+novo, ou a vendedora simulava venda + devolução e sujava faturamento, taxa de devolução e caixa.
+Agora abrir a condicional (`POST /condicionais`, cliente obrigatória, prazo, itens, `client_uuid`)
+tira as peças do saldo por um movimento próprio, `CONDICIONAL_SAIDA`, pela porta de sempre
+(`movimentos.aplicar_movimento`, ordenado por `variant_id`, com o CHECK do saldo como rede).
+Fechar informa quantas VOLTARAM de cada peça — todas, conferidas uma a uma — e, se algo ficou,
+os pagamentos. O fechamento devolve **tudo** ao estoque (`CONDICIONAL_RETORNO`) e registra o que
+ficou pelo `VendaService.registrar` público, com a cliente da condicional: não existe um segundo
+caminho de venda, e o que ficou entra no caixa, no faturamento, na comissão, tem recibo e pode
+ser devolvido depois como qualquer venda (preço de hoje, ADR-4; fiado continua pedindo o
+crediário). Retorno, venda e `consignments.sale_id` vão no MESMO commit — por isso o
+`registrar` ganhou `confirmar=False` (grava sem commit; a transação é de quem chamou). A
+transição é `UPDATE ... SET status='FECHADA' WHERE status='ABERTA'` (o mesmo padrão do
+cancelamento de venda): dois aparelhos fechando ao mesmo tempo, um fecha, o outro recebe 409.
+O fechamento é idempotente pela chave dele, que é também a chave da venda: reenvio igual → 200;
+mesma chave com outro retorno ou outro pagamento → 409 `DUPLICADO`; outra chave numa condicional
+já fechada → 409 `OPERACAO_INVALIDA`. A peça que volta entra no `_VOLTA_DA_CLIENTE` do ADR-30: a
+última blusa vai para a sacola, o saldo zera, alguém exclui a peça achando que esgotou — e a
+blusa volta ao catálogo em vez de ser recusada. O extrato diz "Condicional #12", nunca o nome da
+cliente: o extrato é append-only e a exclusão de cliente apaga o dado pessoal (LGPD). Capacidade
+nova `FAZER_CONDICIONAL`, da vendedora em diante; todas veem todas (a cliente devolve a sacola a
+quem estiver no balcão). A resposta não tem custo nem margem: só o preço de venda, que o balcão
+já vê. "Vencida" é `prazo < hoje_na_loja()` — vence no dia SEGUINTE ao prazo.
+
+**ADR-40 — Contas a pagar do fornecedor nascem na Entrada e ficam FORA do Resultado.**
+A coleção comprada em 30/60/90 é a maior saída de dinheiro da loja, e não tinha onde morar: o
+caminho natural, lançar o boleto em Despesas, contava o mesmo custo duas vezes — o Resultado já
+desconta a mercadoria pelo CMV, no dia em que a peça é VENDIDA. `payables` é o calendário de
+saída de dinheiro, não custo do mês: nenhum relatório a lê, e a tela diz isso. A nota entra pela
+Entrada (`nota: {numero?, valor_total, parcelas:[{vencimento, valor}]}`), que cria uma conta por
+parcela ligada a ela, na MESMA transação: se a mercadoria não entra, a dívida também não, e a
+chave da Entrada protege as duas — o reenvio compara também a nota (outro valor ou outro
+vencimento com a mesma chave → 409). As parcelas vêm prontas da tela (a sugestão 30/60/90 e o
+centavo que sobra são de `lib/parcelas.ts` / `js/parcelas.js`); o servidor só confere que
+somam a nota. Quem vê dinheiro vê, lança e paga (`VER_DINHEIRO`); a vendedora dá entrada SEM a
+nota, e a nota vinda dela é recusada (403), não ignorada como o custo — ignorar deixaria a loja
+achando que o boleto foi lançado. Pagar é `UPDATE ... WHERE paid_on IS NULL` com dia (não no
+futuro) e forma; o reenvio igual é atendido, outro pagamento por cima é 409; conta paga não se
+edita nem se exclui sem desfazer o pagamento antes. Pagar em dinheiro NÃO mexe na conferência
+do caixa (sangria é decisão em aberto). `GET /contas-pagar/resumo` (vencidas, próximos 7 dias,
+em aberto — três somas no índice das abertas) é o aviso de quem olha o dinheiro: no topo da tela
+de contas, num selo da barra lateral do web e na aba Financeiro do app.
+
 ## 4. Contratos de API
 
 Prefixo `/api/v1`. Auth: `Authorization: Bearer <access_token>`.
@@ -1132,7 +1213,7 @@ com o valor atual. No `PATCH`, ausente = não mexe, `meta_diaria: null` tira a m
 ### 4.4 `estoque`
 | método | rota | papel | notas |
 |---|---|---|---|
-| POST | `/estoque/entradas` | A/V | `{client_uuid, fornecedor?, observacao?, itens:[{variante_id, quantidade, custo_unitario?}]}`; `custo_unitario` atualiza o custo da variante — só de quem tem VER_DINHEIRO; dos outros é ignorado, a mesma tranca do catálogo. Replay → 200; mesma chave com outras peças, quantidades, fornecedor ou custo → 409 com `detail.entrada_id` (ADR-2) |
+| POST | `/estoque/entradas` | A/V | `{client_uuid, fornecedor?, observacao?, itens:[{variante_id, quantidade, custo_unitario?}], nota?}`; `custo_unitario` atualiza o custo da variante — só de quem tem VER_DINHEIRO; dos outros é ignorado, a mesma tranca do catálogo. `nota: {numero?, valor_total, parcelas:[{vencimento, valor}]}` cria as contas a pagar na mesma transação — só VER_DINHEIRO (403 dos outros), exige fornecedor e parcelas que somem a nota (ADR-40). Resposta traz `contas_a_pagar` (quantas parcelas). Replay → 200; mesma chave com outras peças, quantidades, fornecedor, custo ou nota → 409 com `detail.entrada_id` (ADR-2) |
 | POST | `/estoque/ajustes` | A | `{variante_id, quantidade(±), motivo}` — motivo obrigatório |
 | POST | `/estoque/inventarios` | A | `{observacao?, contagens:[{variante_id, quantidade_contada}]}` → movimentações das diferenças + resumo. A diferença é calculada com peças e saldos travados (ADR-30) |
 | GET | `/estoque/saldos` | A/V | `?q=&categoria_id=&somente_baixo=` · `q` acha por nome do produto (sem acento, como `/variantes`) ou código |
@@ -1283,6 +1364,26 @@ congelados (ADR-23). `inicio`/`fim` recortam pelo dia no fuso da loja. Nem o ger
 Ligar com `ativo: true` sem token gravado é `409 OPERACAO_INVALIDA` — tela dizendo "ativo" sem
 backup acontecendo é pior do que não ter tela.
 
+### 4.13 `condicionais` (FAZER_CONDICIONAL: da vendedora em diante, ADR-39)
+| método | rota | notas |
+|---|---|---|
+| POST | `/condicionais` | `{client_uuid, cliente_id, prazo: YYYY-MM-DD, observacao?, itens:[{variante_id, quantidade}]}` → 201 com a condicional; tira as peças do saldo (`CONDICIONAL_SAIDA`). Prazo que já passou → 422; peça sem estoque → 409 `ESTOQUE_INSUFICIENTE`. Replay → 200; mesma chave com outra cliente, prazo ou peças → 409 `detail.condicional_id` |
+| GET | `/condicionais` | `?situacao=abertas` (padrão) `|vencidas|fechadas|todas` `&cliente_id=` · abertas e vencidas pela que vence primeiro |
+| GET | `/condicionais/{id}` | `{id, status, cliente_id, cliente, cliente_telefone, vendedora, prazo, vencida, dias_para_vencer, itens:[{variante_id, produto, tamanho, cor, codigo_barras, preco_venda, quantidade, devolvida, ficou}], total_pecas, valor_pecas, venda_id, fechada_em, fechada_por}` — sem custo |
+| POST | `/condicionais/{id}/fechamento` | `{client_uuid, itens:[{variante_id, devolvida}] (todas as peças), desconto?, pagamentos:[…como em /vendas]}` → 201; tudo volta (`CONDICIONAL_RETORNO`) e o que ficou vira venda (`venda_id`), no mesmo commit. Sem nada a cobrar, `pagamentos` vazio. Replay → 200; mesma chave com outro retorno/pagamento → 409 `DUPLICADO`; já fechada com outra chave → 409 `OPERACAO_INVALIDA` |
+
+A busca de cliente das telas de condicional é a de balcão (`GET /clientes/balcao`, `ATENDER_CLIENTE`).
+
+### 4.14 `contas-pagar` (VER_DINHEIRO: dono e gerente, ADR-40)
+| método | rota | notas |
+|---|---|---|
+| GET | `/contas-pagar/resumo` | `{hoje, vencidas, proximos_7_dias, em_aberto}`, cada faixa `{quantidade, valor}` — rota leve, para aviso |
+| GET | `/contas-pagar` | `?situacao=abertas` (padrão) `|vencidas|proximos_7_dias|pagas|todas` `&fornecedor=&entrada_id=` → `{id, fornecedor, descricao, numero_nota, valor, vencimento, parcela, parcelas, situacao: ABERTA|VENCIDA|PAGA, dias_para_vencer, paga_em, forma_pagamento, entrada_id, observacao, ativo, criada_em}` |
+| POST | `/contas-pagar` | lançamento sem Entrada: `{client_uuid, fornecedor, descricao, observacao?, nota}` → 201 `{contas, valor_total}`; replay → 200; mesma chave com outro fornecedor/valor/vencimento → 409 |
+| GET/PATCH/DELETE | `/contas-pagar/{id}` | PATCH `{fornecedor?, descricao?, numero_nota?, valor?, vencimento?, observacao?}` e DELETE (soft) só com a conta aberta (409 se paga) |
+| POST | `/contas-pagar/{id}/pagamento` | `{forma: BOLETO|PIX|TRANSFERENCIA|DINHEIRO|CARTAO, pago_em?}` (padrão: hoje na loja; futuro → 422). Reenvio igual → 200; outro pagamento sobre conta paga → 409 |
+| DELETE | `/contas-pagar/{id}/pagamento` | desfaz o pagamento marcado por engano (idempotente) |
+
 ---
 
 ## 5. App mobile
@@ -1313,6 +1414,13 @@ caixa do dia, sem o resumo do mês. Guarda por capacidade no `_layout`.
   do cartão, valor do estoque, estoque parado), uma por assunto. Chaves `relatorio-*` caem com
   venda e despesa; `estoque-parado` e `valor-do-estoque` caem com qualquer aviso de `estoque`.
 
+- `lib/parcelas.ts` (espelho de `web/js/parcelas.js`): sugestão 30/60/90 da nota do fornecedor
+  sem perder centavo e a conferência de que as parcelas somam a nota (ADR-40).
+- `lib/condicional.ts` (espelho de `web/js/condicional.js`): o total do que ficou com a cliente,
+  o corpo do fechamento e o prazo em palavras (ADR-39). Telas em `(app)/condicional/` (lista,
+  nova, detalhe com fechamento) e `(app)/financeiro/contas-pagar`; a Entrada ganhou a nota
+  (`components/NotaFornecedor.tsx`) para quem vê dinheiro.
+
 Fluxo do PDV: bipar → item no carrinho → (qtd/desconto) → cobrar → formas de pagamento (misto,
 com ajuste do centavo na última parcela) → confirma → `POST /vendas` com `client_uuid` → limpa
 carrinho e invalida `['saldos']`, `['vendas']`, `['caixa']`.
@@ -1333,6 +1441,8 @@ módulos ES em `js/`.
 | `js/dinheiro.js` | Espelho de `mobile/src/lib/money.ts`. Centavos inteiros; **se mudar lá, mude aqui** |
 | `js/leitor.js` | Captura do leitor USB (teclado) e foco permanente no campo de leitura |
 | `js/grafico.js` | Barras e proporções em SVG escrito à mão — sem biblioteca, sem CDN |
+| `js/parcelas.js`, `js/condicional.js` | Espelhos de `mobile/src/lib/parcelas.ts` e `condicional.ts` (com teste lá): parcelas da nota do fornecedor e a conta do fechamento da condicional |
+| `js/nota-fornecedor.js` | A nota do fornecedor (valor, número, parcelas) — na Entrada e no lançamento avulso de Contas a pagar |
 | `js/views/*.js` | Uma tela por arquivo, `export function render(raiz, params, consulta)` |
 | `js/views/relatorios-*.js` | Os cartões da tela de Relatórios com lista própria (repor, equipe, curva ABC, a receber, giro do estoque) e os cartões do resumo — cada um pagina no servidor e guarda a página na URL |
 | `js/views/pdv-meta.js` | "Hoje: R$ X de R$ meta" no PDV de quem está logado (ADR-37); se atualiza sozinha sem redesenhar o PDV |
@@ -1363,4 +1473,7 @@ simultâneas) · trava de força bruta sob rajada simultânea · vendedor não r
 leva 403 em despesas/relatórios · venda atômica (falha em um item não grava nada) · estorno devolve
 estoque · duas vendas concorrentes do último item → uma falha `ESTOQUE_INSUFICIENTE` · replay de
 `client_uuid` não duplica · soma de pagamentos ≠ total → `PAGAMENTO_DIVERGENTE` · replicar recorrentes
-duas vezes não duplica · resumo financeiro fecha a conta (receita − CMV − despesas).
+duas vezes não duplica · resumo financeiro fecha a conta (receita − CMV − despesas) · condicional:
+a peça na sacola não se vende no balcão, fechar duas vezes (simultâneo ou reenvio) não devolve
+nem cobra duas vezes, erro na venda do fechamento desfaz o retorno · conta a pagar: a nota entra
+com a Entrada ou nada entra, vendedora não lança nota, pagar uma vez só, Resultado não muda.

@@ -56,6 +56,15 @@ _REGRAS: list[tuple[str, re.Pattern[str], str, str, str | None]] = [
     ("DELETE", re.compile(r"^/despesas/categorias/(\d+)$"), "CATEGORIA_DESPESA_EXCLUIDA", "Excluiu uma categoria de despesa", "despesa"),
     # caixa
     ("POST", re.compile(r"^/caixa/fechamentos$"), "CAIXA_FECHADO", "Fechou o caixa do dia", "caixa"),
+    # condicional — a peça que foi para a casa da cliente provar
+    ("POST", re.compile(r"^/condicionais$"), "CONDICIONAL_ABERTA", "Abriu uma condicional (peças saíram para a cliente provar)", "condicional"),
+    ("POST", re.compile(r"^/condicionais/(\d+)/fechamento$"), "CONDICIONAL_FECHADA", "Fechou a condicional #{id}", "condicional"),
+    # contas a pagar do fornecedor
+    ("POST", re.compile(r"^/contas-pagar$"), "CONTA_PAGAR_LANCADA", "Lançou uma conta a pagar de fornecedor", "conta_pagar"),
+    ("PATCH", re.compile(r"^/contas-pagar/(\d+)$"), "CONTA_PAGAR_EDITADA", "Corrigiu a conta a pagar #{id}", "conta_pagar"),
+    ("DELETE", re.compile(r"^/contas-pagar/(\d+)$"), "CONTA_PAGAR_EXCLUIDA", "Excluiu a conta a pagar #{id}", "conta_pagar"),
+    ("POST", re.compile(r"^/contas-pagar/(\d+)/pagamento$"), "CONTA_PAGA", "Marcou como paga a conta #{id}", "conta_pagar"),
+    ("DELETE", re.compile(r"^/contas-pagar/(\d+)/pagamento$"), "CONTA_PAGAMENTO_DESFEITO", "Desfez o pagamento da conta #{id}", "conta_pagar"),
     # usuários — os mais sensíveis: mexer em quem entra no sistema
     ("POST", re.compile(r"^/usuarios$"), "USUARIO_CRIADO", "Criou um usuário", "usuario"),
     ("PATCH", re.compile(r"^/usuarios/(\d+)/senha$"), "SENHA_REDEFINIDA", "Redefiniu a senha do usuário #{id}", "usuario"),
