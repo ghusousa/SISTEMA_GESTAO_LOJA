@@ -131,7 +131,8 @@ A loja consegue operar 100% sem celular.
 10. **Fechar o caixa do dia** — conferir o esperado por forma de pagamento contra o contado.
 11. **Levar em condicional** — escolher a cliente, bipar (ou buscar pelo nome) as peças que ela
     vai provar e combinar o prazo; as peças saem do estoque. Na volta, dizer quantas voltaram de
-    cada peça e cobrar o que ficou, como no PDV. A lista de vencidas é a das ligações do dia.
+    cada peça e cobrar o que ficou, como no PDV — no crédito, em quantas vezes e em que
+    bandeira. A lista de vencidas é a das ligações do dia.
 12. **Pagar o fornecedor** — na Entrada, quem vê dinheiro informa o valor da nota e as parcelas
     (o sistema sugere 30/60/90); elas aparecem em Contas a pagar, com o aviso do que venceu e do
     que vence nos próximos 7 dias. Pagou, marca como paga (dia e forma).
@@ -169,7 +170,9 @@ A loja consegue operar 100% sem celular.
 - Peça em condicional não está disponível: sai do saldo na abertura e só volta no fechamento.
   Fechar duas vezes (toque duplo, dois aparelhos, resposta perdida) não devolve a peça duas
   vezes nem cobra a cliente duas vezes; o que ficou com ela é sempre uma venda comum, com caixa
-  e recibo, registrada junto com o retorno — ou nada acontece.
+  e recibo, registrada junto com o retorno — ou nada acontece. Do mesmo jeito, abrir de novo
+  depois de uma resposta perdida (mesmo mexendo na sacola) não abre uma segunda condicional: a
+  tela avisa qual já foi aberta e leva a ela.
 - Conta a pagar do fornecedor nunca entra no Resultado nem nas Despesas. A nota só entra junto
   com a mercadoria da Entrada (ou nenhuma das duas), e as parcelas têm de somar a nota. Só quem
   vê dinheiro vê, lança e paga; a mesma conta não é paga duas vezes.

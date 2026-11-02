@@ -33,6 +33,7 @@ from app.modules.vendas.schemas import (
     ItemVendaAdminOut,
     ItemVendaOut,
     PagamentoAdminOut,
+    PagamentoIn,
     PagamentoOut,
     VendaAdminOut,
     VendaIn,
@@ -238,6 +239,46 @@ class VendaService:
             )
         self.replay = True
         return await self._montar_venda(venda, usuario)
+
+    async def mesma_cobranca(
+        self,
+        venda_id: int,
+        pagamentos: list[PagamentoIn],
+        desconto: Decimal,
+        usuario: User,
+    ) -> bool:
+        """A venda `venda_id` foi cobrada exatamente assim? Para quem registra venda por
+        dentro e precisa decidir se um reenvio é o MESMO pedido (o fechamento da
+        condicional, ADR-39).
+
+        Forma, valor, parcelas, bandeira e código do vale: "crédito 1x" reenviado como
+        "crédito 3x" é outra cobrança (outra taxa, outra agenda de recebíveis), e o vale de
+        outro código é outro papel na mão da cliente. Venda de outra vendedora, para quem
+        não vê as de todos, não é o reenvio de quem pergunta.
+        """
+        venda = await self.repo.por_id(venda_id)
+        if venda is None:
+            return False
+        if not pode(usuario.role, Pode.VER_VENDAS_DE_TODOS) and venda.seller_id != usuario.id:
+            return False
+        codigos = await self.repo.codigos_dos_vales(
+            [p.voucher_id for p in venda.payments if p.voucher_id is not None]
+        )
+        gravado = sorted(
+            (
+                FormaPagamento(p.method),
+                p.amount,
+                p.parcelas,
+                p.bandeira or "",
+                codigos.get(p.voucher_id, "") if p.voucher_id is not None else "",
+            )
+            for p in venda.payments
+        )
+        pedido = sorted(
+            (FormaPagamento(p.forma), p.valor, p.parcelas, p.bandeira or "", p.codigo_vale or "")
+            for p in pagamentos
+        )
+        return gravado == pedido and venda.discount == desconto
 
     async def _conferir_cliente(self, cliente_id: int) -> None:
         """A cliente do fiado precisa existir E estar ativa.

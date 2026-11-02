@@ -701,7 +701,14 @@ export const condicionais = {
       client_uuid: string;
       itens: { variante_id: number; devolvida: number }[];
       desconto?: string;
-      pagamentos: { forma: FormaPagamento; valor: string; codigo_vale?: string }[];
+      pagamentos: {
+        forma: FormaPagamento;
+        valor: string;
+        codigo_vale?: string;
+        /** Só no crédito, de 1 a 12 — como no PDV (ADR-35). */
+        parcelas?: number;
+        bandeira?: string | null;
+      }[];
     },
   ) {
     const { data } = await api.post<Condicional>(`/condicionais/${id}/fechamento`, dados);

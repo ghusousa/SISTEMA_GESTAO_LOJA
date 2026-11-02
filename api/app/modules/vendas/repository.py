@@ -8,7 +8,14 @@ from sqlalchemy.orm import selectinload
 from app.core.pagination import Paginacao
 from app.modules.catalogo.models import Product, ProductVariant
 from app.modules.usuarios.models import User
-from app.modules.vendas.models import Sale, SaleItem, SalePayment, SaleReturn, StatusVenda
+from app.modules.vendas.models import (
+    Sale,
+    SaleItem,
+    SalePayment,
+    SaleReturn,
+    StatusVenda,
+    Voucher,
+)
 
 
 class VendaRepository:
@@ -82,6 +89,13 @@ class VendaRepository:
             .where(Sale.client_uuid == client_uuid)
         )
         return (await self.session.execute(stmt)).unique().scalar_one_or_none()
+
+    async def codigos_dos_vales(self, ids: list[int]) -> dict[int, str]:
+        """O código impresso de cada vale, para comparar com o que a tela mandou."""
+        if not ids:
+            return {}
+        stmt = select(Voucher.id, Voucher.code).where(Voucher.id.in_(ids))
+        return {vid: codigo for vid, codigo in (await self.session.execute(stmt)).all()}
 
     async def variantes_para_venda(self, ids: list[int]) -> dict[int, tuple]:
         """Peça + produto ATIVOS, com preço e custo atuais — o que será congelado na venda."""

@@ -14,7 +14,7 @@ import * as Haptics from 'expo-haptics';
 import { useCallback, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { codigoDoErro, mensagemDoErro } from '@/api/client';
+import { codigoDoErro, detalheDoErro, mensagemDoErro } from '@/api/client';
 import { catalogo, condicionais } from '@/api/endpoints';
 import type { ClienteDoBalcao } from '@/api/tipos';
 import { BuscarPeca } from '@/components/BuscarPeca';
@@ -45,8 +45,11 @@ export default function NovaCondicional() {
   const [busca, setBusca] = useState('');
   const [dias, setDias] = useState<number | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
-  // Nasce com a tela; muda se a sacola, a cliente ou o prazo mudarem (outro pedido).
-  const [chave, setChave] = useState(() => gerarUuid());
+  // Nasce com a tela e só morre com ela (sucesso ou 409): mexer na sacola, na cliente ou
+  // no prazo depois de uma resposta perdida NÃO a troca — senão o reenvio abriria uma
+  // segunda condicional e as peças sairiam do saldo duas vezes. Com a mesma chave, o
+  // servidor recusa (409) e diz qual já abriu (ADR-39), como o PDV e a Entrada.
+  const [chave] = useState(() => gerarUuid());
   const [consultando, setConsultando] = useState(false);
   const ocupado = useRef(false);
 
@@ -56,10 +59,7 @@ export default function NovaCondicional() {
     enabled: !cliente && busca.trim().length >= 2,
   });
 
-  const mudar = useCallback((fn: (atuais: Peca[]) => Peca[]) => {
-    setPecas(fn);
-    setChave(gerarUuid());
-  }, []);
+  const mudar = useCallback((fn: (atuais: Peca[]) => Peca[]) => setPecas(fn), []);
 
   const somar = useCallback(
     (p: { varianteId: number; produto: string; tamanho: string; cor: string; preco: string }) =>
@@ -105,7 +105,19 @@ export default function NovaCondicional() {
       router.replace(`/condicional/${c.id}`);
     },
     onError: (erro) => {
-      if (codigoDoErro(erro) === 'DUPLICADO') setChave(gerarUuid());
+      const jaAberta = codigoDoErro(erro) === 'DUPLICADO' ? detalheDoErro(erro)?.condicional_id : null;
+      if (jaAberta) {
+        // Esta chave já abriu uma condicional (a resposta se perdeu e a sacola mudou
+        // depois). Ela é a que vale: vai para ela ANTES do alerta — no Android o alerta
+        // fecha pelo voltar sem rodar o onPress, e a câmera daqui seguiria lendo por baixo.
+        invalidarAposCondicional();
+        router.replace(`/condicional/${String(jaAberta)}`);
+        Alert.alert(
+          `Esta condicional já foi aberta (#${String(jaAberta)})`,
+          'Confira o que saiu nela. Se a cliente levou mais alguma peça, abra outra condicional.',
+        );
+        return;
+      }
       setAviso(mensagemDoErro(erro, 'Não deu para registrar a condicional.'));
     },
   });
@@ -138,7 +150,7 @@ export default function NovaCondicional() {
 
       <ScrollView contentContainerStyle={s.conteudo} keyboardShouldPersistTaps="handled">
         {cliente ? (
-          <Pressable onPress={() => { setCliente(null); setChave(gerarUuid()); }} style={s.cliente}>
+          <Pressable onPress={() => setCliente(null)} style={s.cliente}>
             <Text style={s.clienteNome}>{cliente.nome}</Text>
             <Text style={s.detalhe}>{cliente.telefone ?? 'sem telefone'} · toque para trocar</Text>
           </Pressable>
@@ -146,7 +158,7 @@ export default function NovaCondicional() {
           <>
             <Campo rotulo="Cliente" value={busca} onChangeText={setBusca} placeholder="Nome ou telefone" />
             {(clientes.data?.items ?? []).map((c) => (
-              <Pressable key={c.id} style={s.opcao} onPress={() => { setCliente(c); setChave(gerarUuid()); }}>
+              <Pressable key={c.id} style={s.opcao} onPress={() => setCliente(c)}>
                 <Text style={s.clienteNome}>{c.nome}</Text>
                 {!!c.telefone && <Text style={s.detalhe}>{c.telefone}</Text>}
               </Pressable>
@@ -158,7 +170,7 @@ export default function NovaCondicional() {
         <Text style={s.rotulo}>Prazo para devolver</Text>
         <View style={s.prazos}>
           {PRAZOS.map((d) => (
-            <Pressable key={d} onPress={() => { setDias(d); setChave(gerarUuid()); }} style={[s.prazo, dias === d && s.prazoAtivo]}>
+            <Pressable key={d} onPress={() => setDias(d)} style={[s.prazo, dias === d && s.prazoAtivo]}>
               <Text style={[s.prazoTexto, dias === d && s.prazoTextoAtivo]}>{d === 1 ? 'amanhã' : `${d} dias`}</Text>
             </Pressable>
           ))}

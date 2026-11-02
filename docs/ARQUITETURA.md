@@ -1149,11 +1149,23 @@ crediário). Retorno, venda e `consignments.sale_id` vão no MESMO commit — po
 `registrar` ganhou `confirmar=False` (grava sem commit; a transação é de quem chamou). A
 transição é `UPDATE ... SET status='FECHADA' WHERE status='ABERTA'` (o mesmo padrão do
 cancelamento de venda): dois aparelhos fechando ao mesmo tempo, um fecha, o outro recebe 409.
+A abertura é idempotente pela chave dela, que as duas telas criam com a tela e só trocam
+depois do sucesso (como o PDV e a Entrada): mexer na sacola, na cliente ou no prazo depois de
+uma resposta perdida NÃO troca a chave — trocar abria uma segunda condicional e tirava as peças
+do saldo de novo. Mesma chave com outra cliente, prazo ou peças → 409 `DUPLICADO` com
+`detail.condicional_id`, e a tela diz "esta condicional já foi aberta (#id)" e leva a ela.
 O fechamento é idempotente pela chave dele, que é também a chave da venda: reenvio igual → 200;
-mesma chave com outro retorno ou outro pagamento → 409 `DUPLICADO`; outra chave numa condicional
-já fechada → 409 `OPERACAO_INVALIDA`. A peça que volta entra no `_VOLTA_DA_CLIENTE` do ADR-30: a
-última blusa vai para a sacola, o saldo zera, alguém exclui a peça achando que esgotou — e a
-blusa volta ao catálogo em vez de ser recusada. O extrato diz "Condicional #12", nunca o nome da
+mesma chave com outro retorno ou outra cobrança → 409 `DUPLICADO`. "Outra cobrança" é a régua
+do reenvio do PDV (`VendaService.mesma_cobranca`): forma, valor, parcelas, bandeira, código do
+vale e desconto — crédito 1x reenviado como 3x não é o mesmo pedido. Outra chave numa
+condicional já fechada → 409 `OPERACAO_INVALIDA`. No crédito, as telas perguntam parcelas
+(1 a 12) e bandeira como o PDV (ADR-35) — sem isso toda condicional parcelada virava 1x, com a
+taxa e a agenda de recebíveis do à vista. A peça que volta entra no `_VOLTA_DA_CLIENTE` do
+ADR-30: a última blusa vai para a sacola, o saldo zera, alguém exclui a peça achando que esgotou
+— e a blusa volta ao catálogo em vez de ser recusada. Se a dona já a recadastrou (mesma
+etiqueta ou mesma grade), o retorno vai para a peça ativa, e o que ficou com a cliente é
+vendido DESSA peça (a que `aplicar_movimento` devolve como a que recebeu), nunca da excluída —
+vender a excluída dava 404 e a condicional não fechava. O extrato diz "Condicional #12", nunca o nome da
 cliente: o extrato é append-only e a exclusão de cliente apaga o dado pessoal (LGPD). Capacidade
 nova `FAZER_CONDICIONAL`, da vendedora em diante; todas veem todas (a cliente devolve a sacola a
 quem estiver no balcão). A resposta não tem custo nem margem: só o preço de venda, que o balcão
@@ -1438,7 +1450,7 @@ backup acontecendo é pior do que não ter tela.
 | POST | `/condicionais` | `{client_uuid, cliente_id, prazo: YYYY-MM-DD, observacao?, itens:[{variante_id, quantidade}]}` → 201 com a condicional; tira as peças do saldo (`CONDICIONAL_SAIDA`). Prazo que já passou → 422; peça sem estoque → 409 `ESTOQUE_INSUFICIENTE`. Replay → 200; mesma chave com outra cliente, prazo ou peças → 409 `detail.condicional_id` |
 | GET | `/condicionais` | `?situacao=abertas` (padrão) `|vencidas|fechadas|todas` `&cliente_id=` · abertas e vencidas pela que vence primeiro |
 | GET | `/condicionais/{id}` | `{id, status, cliente_id, cliente, cliente_telefone, vendedora, prazo, vencida, dias_para_vencer, itens:[{variante_id, produto, tamanho, cor, codigo_barras, preco_venda, quantidade, devolvida, ficou}], total_pecas, valor_pecas, venda_id, fechada_em, fechada_por}` — sem custo |
-| POST | `/condicionais/{id}/fechamento` | `{client_uuid, itens:[{variante_id, devolvida}] (todas as peças), desconto?, pagamentos:[…como em /vendas]}` → 201; tudo volta (`CONDICIONAL_RETORNO`) e o que ficou vira venda (`venda_id`), no mesmo commit. Sem nada a cobrar, `pagamentos` vazio. Replay → 200; mesma chave com outro retorno/pagamento → 409 `DUPLICADO`; já fechada com outra chave → 409 `OPERACAO_INVALIDA` |
+| POST | `/condicionais/{id}/fechamento` | `{client_uuid, itens:[{variante_id, devolvida}] (todas as peças), desconto?, pagamentos:[…como em /vendas, com parcelas e bandeira no crédito]}` → 201; tudo volta (`CONDICIONAL_RETORNO`) e o que ficou vira venda (`venda_id`), no mesmo commit — da peça que recebeu o retorno, se a original foi excluída e recadastrada. Sem nada a cobrar, `pagamentos` vazio e desconto 0 (senão 422). Replay → 200; mesma chave com outro retorno ou outra cobrança (forma, valor, parcelas, bandeira, vale, desconto) → 409 `DUPLICADO`; já fechada com outra chave → 409 `OPERACAO_INVALIDA` |
 
 A busca de cliente das telas de condicional é a de balcão (`GET /clientes/balcao`, `ATENDER_CLIENTE`).
 

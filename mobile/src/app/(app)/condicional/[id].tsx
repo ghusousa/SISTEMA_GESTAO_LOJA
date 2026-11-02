@@ -17,8 +17,10 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 
 import { codigoDoErro, mensagemDoErro } from '@/api/client';
 import { condicionais } from '@/api/endpoints';
 import type { FormaPagamento } from '@/api/tipos';
+import { ModalParcelas, type CreditoEscolhido } from '@/components/PagarCredito';
 import { ModalVale } from '@/components/PagarValeFiado';
 import { Botao, Carregando, Cartao, ErroEstado, Etiqueta, Linha } from '@/components/ui';
+import { rotuloPagamento } from '@/lib/cartao';
 import { itensDoFechamento, resumirFechamento, textoDoPrazo } from '@/lib/condicional';
 import { formatar, paraCentavos, paraDecimalString, somar, type Centavos } from '@/lib/money';
 import { PODE, pode } from '@/lib/permissoes';
@@ -31,6 +33,8 @@ interface Pagamento {
   forma: FormaPagamento;
   valor: Centavos;
   codigoVale?: string;
+  parcelas?: number;
+  bandeira?: string | null;
 }
 
 const ROTULO: Record<FormaPagamento, string> = {
@@ -45,6 +49,7 @@ export default function CondicionalDetalhe() {
   const [pagamentos, setPagamentos] = useState<Pagamento[]>([]);
   const [desconto, setDesconto] = useState<Centavos>(0);
   const [perguntandoVale, setPerguntandoVale] = useState(false);
+  const [perguntandoParcelas, setPerguntandoParcelas] = useState(false);
   const [chave] = useState(() => gerarUuid());
 
   const consulta = useQuery({
@@ -57,11 +62,17 @@ export default function CondicionalDetalhe() {
       condicionais.fechar(Number(id), {
         client_uuid: chave,
         itens: itensDoFechamento(consulta.data!.itens, devolvidas),
-        desconto: paraDecimalString(desconto),
+        // Tudo voltou, o campo some — e o desconto digitado antes não pode ir junto: o
+        // servidor recusa desconto sem venda (422). Espelho do web.
+        desconto: paraDecimalString(
+          Math.min(desconto, resumirFechamento(consulta.data!.itens, devolvidas).total),
+        ),
         pagamentos: pagamentos.map((p) => ({
           forma: p.forma,
           valor: paraDecimalString(p.valor),
           ...(p.codigoVale ? { codigo_vale: p.codigoVale } : {}),
+          ...(p.parcelas ? { parcelas: p.parcelas } : {}),
+          ...(p.bandeira ? { bandeira: p.bandeira } : {}),
         })),
       }),
     onSuccess: (c) => {
@@ -101,7 +112,16 @@ export default function CondicionalDetalhe() {
   function adicionar(forma: FormaPagamento) {
     if (forma === 'VALE') return setPerguntandoVale(true);
     if (pagamentos.some((p) => p.forma === forma) || falta <= 0) return;
+    // Como no PDV (ADR-35): em quantas vezes e em que bandeira, antes do valor entrar.
+    // Sem isto toda condicional parcelada virava 1x — a taxa e os recebíveis do à vista.
+    if (forma === 'CREDITO') return setPerguntandoParcelas(true);
     setPagamentos((atuais) => [...atuais, { forma, valor: falta }]);
+  }
+
+  function aplicarCredito(escolha: CreditoEscolhido) {
+    setPerguntandoParcelas(false);
+    if (falta <= 0) return;
+    setPagamentos((atuais) => [...atuais, { forma: 'CREDITO', valor: falta, ...escolha }]);
   }
 
   return (
@@ -185,7 +205,7 @@ export default function CondicionalDetalhe() {
                   </View>
                   {pagamentos.map((p, n) => (
                     <View key={`${p.forma}-${n}`} style={s.linha}>
-                      <Text style={s.nome}>{ROTULO[p.forma]}{p.codigoVale ? ` ${p.codigoVale}` : ''}</Text>
+                      <Text style={s.nome}>{p.forma === 'CREDITO' ? rotuloPagamento(p) : ROTULO[p.forma]}{p.codigoVale ? ` ${p.codigoVale}` : ''}</Text>
                       <Text style={s.nome}>{formatar(p.valor)}</Text>
                       <Pressable onPress={() => setPagamentos((a) => a.filter((_, j) => j !== n))}>
                         <Text style={s.remover}>✕</Text>
@@ -209,6 +229,12 @@ export default function CondicionalDetalhe() {
         </>
       )}
 
+      <ModalParcelas
+        visivel={perguntandoParcelas}
+        valor={Math.max(0, falta)}
+        aoEscolher={aplicarCredito}
+        aoCancelar={() => setPerguntandoParcelas(false)}
+      />
       <ModalVale
         visivel={perguntandoVale}
         falta={Math.max(0, falta)}

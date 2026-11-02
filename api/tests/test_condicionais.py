@@ -57,7 +57,13 @@ async def loja(client: AsyncClient, auth_admin: dict[str, str]) -> dict:
             "/clientes", headers=auth_admin, json={"nome": "Dona Cida", "telefone": "11988887777"}
         )
     ).json()
-    return {"vestido": vestido, "blusa": blusa, "cliente": cliente["id"]}
+    return {
+        "vestido": vestido,
+        "blusa": blusa,
+        "cliente": cliente["id"],
+        "produto": produto["id"],
+        "etiqueta_blusa": produto["variantes"][1]["codigo_barras"],
+    }
 
 
 async def _saldo(client: AsyncClient, auth: dict[str, str], variante_id: int) -> int:
@@ -180,6 +186,29 @@ async def test_mesma_chave_com_outra_sacola_e_409(
     assert outra.status_code == 409, outra.text
     assert outra.json()["code"] == "DUPLICADO"
     assert outra.json()["detail"]["condicional_id"] == primeira.json()["id"]
+    assert await _saldo(client, auth_vendedor, loja["vestido"]) == 3
+
+
+async def test_sacola_editada_depois_da_resposta_perdida_diz_qual_condicional_ja_abriu(
+    client: AsyncClient, auth_vendedor: dict[str, str], loja: dict
+) -> None:
+    """A tela guarda a chave até dar certo (ADR-39): resposta perdida, a vendedora troca o
+    prazo ou a cliente e reenvia — a MESMA chave chega, e o 409 diz o número da sacola que
+    já saiu, para a tela levar a ela em vez de abrir uma segunda."""
+    pedido = _abertura(loja)
+    primeira = await client.post("/condicionais", headers=auth_vendedor, json=pedido)
+    assert primeira.status_code == 201, primeira.text
+    numero = primeira.json()["id"]
+
+    outro_prazo = (hoje_na_loja() + timedelta(days=7)).isoformat()
+    outra = await client.post(
+        "/condicionais", headers=auth_vendedor, json={**pedido, "prazo": outro_prazo}
+    )
+    assert outra.status_code == 409, outra.text
+    assert outra.json()["code"] == "DUPLICADO"
+    assert outra.json()["detail"]["condicional_id"] == numero
+    assert f"#{numero}" in outra.json()["message"]
+    assert await _contar("SELECT count(*) FROM consignments") == 1
     assert await _saldo(client, auth_vendedor, loja["vestido"]) == 3
 
 
@@ -409,6 +438,68 @@ async def test_fechamento_reenviado_nao_cobra_duas_vezes(
     assert await _saldo(client, auth_vendedor, loja["vestido"]) == 4
 
 
+async def test_fechamento_reenviado_com_outro_parcelamento_e_409(
+    client: AsyncClient, auth_vendedor: dict[str, str], loja: dict
+) -> None:
+    """Crédito 1x reenviado com a mesma chave como 3x (ou com outra bandeira) é outra
+    cobrança, como no PDV: 200 com a venda antiga deixaria a taxa e os recebíveis do 1x."""
+    condicional = await _abrir(
+        client, auth_vendedor, loja, itens=[{"variante_id": loja["vestido"], "quantidade": 1}]
+    )
+    url = f"/condicionais/{condicional['id']}/fechamento"
+    credito = {"forma": "CREDITO", "valor": "199.90", "parcelas": 1, "bandeira": "Elo"}
+    pedido = _fechamento({loja["vestido"]: 0}, [credito])
+    primeira = await client.post(url, headers=auth_vendedor, json=pedido)
+    assert primeira.status_code == 201, primeira.text
+    venda = (
+        await client.get(f"/vendas/{primeira.json()['venda_id']}", headers=auth_vendedor)
+    ).json()
+    assert (venda["pagamentos"][0]["parcelas"], venda["pagamentos"][0]["bandeira"]) == (1, "Elo")
+
+    retry = await client.post(url, headers=auth_vendedor, json=pedido)
+    assert retry.status_code == 200, retry.text
+
+    for diferente in ({"parcelas": 3}, {"bandeira": "Visa"}):
+        outro = await client.post(
+            url, headers=auth_vendedor, json={**pedido, "pagamentos": [{**credito, **diferente}]}
+        )
+        assert outro.status_code == 409, (diferente, outro.text)
+        assert outro.json()["code"] == "DUPLICADO"
+    assert await _contar("SELECT count(*) FROM sales") == 1
+
+
+async def test_fechamento_reenviado_com_outro_vale_e_409(
+    client: AsyncClient, auth_vendedor: dict[str, str], loja: dict
+) -> None:
+    """O vale é papel na mão da cliente: o mesmo valor em OUTRO vale é outra cobrança."""
+    # Dois vales de R$ 89,90 já emitidos (como a devolução emite: só o código e o valor).
+    codigos = ["VCOND01", "VCOND02"]
+    async with engine.begin() as conn:
+        for codigo in codigos:
+            await conn.execute(
+                text("INSERT INTO vouchers (code, value, used_value) VALUES (:c, 89.90, 0)"),
+                {"c": codigo},
+            )
+
+    condicional = await _abrir(
+        client, auth_vendedor, loja, itens=[{"variante_id": loja["blusa"], "quantidade": 1}]
+    )
+    url = f"/condicionais/{condicional['id']}/fechamento"
+    vale = {"forma": "VALE", "valor": "89.90", "codigo_vale": codigos[0]}
+    pedido = _fechamento({loja["blusa"]: 0}, [vale])
+    primeira = await client.post(url, headers=auth_vendedor, json=pedido)
+    assert primeira.status_code == 201, primeira.text
+    assert (await client.post(url, headers=auth_vendedor, json=pedido)).status_code == 200
+
+    outro = await client.post(
+        url,
+        headers=auth_vendedor,
+        json={**pedido, "pagamentos": [{**vale, "codigo_vale": codigos[1]}]},
+    )
+    assert outro.status_code == 409, outro.text
+    assert outro.json()["code"] == "DUPLICADO"
+
+
 async def test_dois_aparelhos_fechando_ao_mesmo_tempo_so_um_fecha(
     client: AsyncClient, auth_vendedor: dict[str, str], loja: dict
 ) -> None:
@@ -501,6 +592,53 @@ async def test_peca_excluida_enquanto_estava_na_condicional_volta_para_o_catalog
     )
     assert resposta.status_code == 201, resposta.text
     assert await _saldo(client, auth_vendedor, loja["blusa"]) == 3
+
+
+@pytest.mark.parametrize("mesma_etiqueta", [True, False], ids=["etiqueta", "grade"])
+async def test_peca_excluida_e_recadastrada_vende_da_peca_que_recebeu_o_retorno(
+    client: AsyncClient,
+    auth_vendedor: dict[str, str],
+    auth_admin: dict[str, str],
+    loja: dict,
+    mesma_etiqueta: bool,
+) -> None:
+    """As 3 blusas na casa da cliente, saldo zero: a dona exclui a peça e a recadastra (a
+    mesma etiqueta, ou a mesma grade). O retorno vai para a peça ATIVA (ADR-30), e a blusa
+    que ficou tem de ser vendida DELA — vender a excluída dava "Peça não encontrada" e a
+    condicional não fechava nunca."""
+    condicional = await _abrir(
+        client, auth_vendedor, loja, itens=[{"variante_id": loja["blusa"], "quantidade": 3}]
+    )
+    excluir = await client.delete(f"/variantes/{loja['blusa']}", headers=auth_admin)
+    assert excluir.status_code == 204, excluir.text
+    nova = {"tamanho": "P", "cor": "Rosa", "preco_custo": "35.00", "preco_venda": "89.90"}
+    if mesma_etiqueta:
+        nova["codigo_barras"] = loja["etiqueta_blusa"]
+    recadastro = await client.post(
+        f"/produtos/{loja['produto']}/variantes", headers=auth_admin, json=nova
+    )
+    assert recadastro.status_code == 201, recadastro.text
+    nova_id = next(
+        v["id"]
+        for v in recadastro.json()["variantes"]
+        if (v["tamanho"], v["cor"]) == ("P", "Rosa") and v["id"] != loja["blusa"]
+    )
+
+    resposta = await client.post(
+        f"/condicionais/{condicional['id']}/fechamento",
+        headers=auth_vendedor,
+        json=_fechamento({loja["blusa"]: 2}, [{"forma": "PIX", "valor": "89.90"}]),
+    )
+    assert resposta.status_code == 201, resposta.text
+    fechada = resposta.json()
+    assert fechada["status"] == "FECHADA"
+    assert fechada["itens"][0]["ficou"] == 1
+
+    venda = (await client.get(f"/vendas/{fechada['venda_id']}", headers=auth_vendedor)).json()
+    assert [(i["variante_id"], i["quantidade"]) for i in venda["itens"]] == [(nova_id, 1)]
+    assert venda["total"] == "89.90"
+    # Voltaram 3 para a peça nova e 1 saiu pela venda: ficam as 2 que a cliente devolveu.
+    assert await _saldo(client, auth_vendedor, nova_id) == 2
 
 
 async def test_cliente_com_sacola_em_casa_nao_se_exclui(

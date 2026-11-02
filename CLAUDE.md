@@ -160,7 +160,11 @@ npm run publicar     # ficha inteira na App Store via API (mobile/publicar/, -- 
 - **Condicional e contas a pagar (ADR-39, ADR-40)**: a condicional tira a peça do saldo
   (`CONDICIONAL_SAIDA`); o fechamento devolve TUDO (`CONDICIONAL_RETORNO`) e vende o que ficou
   pelo `VendaService.registrar(..., confirmar=False)` — a venda dentro da transação de quem chama,
-  sem commit. Não há segundo caminho de venda. `payables` (contas a pagar do fornecedor) nascem
+  sem commit. Não há segundo caminho de venda; o que ficou sai da peça que RECEBEU o retorno
+  (a que `aplicar_movimento` devolve — a recadastrada, se a original foi excluída). A chave da
+  abertura vive com a tela: mexer na sacola não a troca, e o 409 leva à condicional que já
+  abriu. O reenvio do fechamento compara a cobrança inteira (`VendaService.mesma_cobranca`:
+  forma, valor, parcelas, bandeira, vale). `payables` (contas a pagar do fornecedor) nascem
   na Entrada, na mesma transação, e **nunca** entram no Resultado: o CMV já conta a mercadoria.
   `web/js/parcelas.js`/`condicional.js` são espelhos de `mobile/src/lib/` — mudou um, mude o outro.
 - **Devolução, vale e fiado (ADR-19 a ADR-21)**: não existe "modo troca" — troca é devolução que

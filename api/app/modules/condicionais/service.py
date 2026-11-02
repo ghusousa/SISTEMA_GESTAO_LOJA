@@ -183,14 +183,10 @@ class CondicionalService:
         if demais:
             raise Validacao("Voltou mais peça do que a cliente levou.", {"itens": demais})
 
-        ficaram = {
-            vid: itens[vid].quantity - devolvidas[vid]
-            for vid in sorted(itens)
-            if itens[vid].quantity - devolvidas[vid] > 0
-        }
-        if ficaram and not dados.pagamentos:
+        ficou_algo = any(itens[vid].quantity > devolvidas[vid] for vid in itens)
+        if ficou_algo and not dados.pagamentos:
             raise Validacao("Ficou peça com a cliente: diga como ela pagou.")
-        if not ficaram and (dados.pagamentos or dados.desconto):
+        if not ficou_algo and (dados.pagamentos or dados.desconto):
             raise Validacao("Tudo voltou: não há o que cobrar nem descontar.")
 
         try:
@@ -209,10 +205,14 @@ class CondicionalService:
             assert condicional is not None
             return await self._replay_fechamento(condicional, dados, usuario)
 
+        # O que ficou é vendido da peça que RECEBEU o retorno, não da que saiu: se a dona
+        # excluiu a peça e a recadastrou enquanto ela estava na casa da cliente, o retorno
+        # vai para a ativa (ADR-30) — e vender a excluída daria "Peça não encontrada".
+        ficaram: dict[int, int] = {}
         for variante_id in movimentos.ordenar_para_evitar_deadlock(list(itens)):
             item = itens[variante_id]
             ficou = item.quantity - devolvidas[variante_id]
-            await movimentos.aplicar_movimento(
+            retorno = await movimentos.aplicar_movimento(
                 self.session,
                 variante_id=variante_id,
                 delta=item.quantity,
@@ -227,6 +227,9 @@ class CondicionalService:
                 ),
             )
             item.returned_quantity = devolvidas[variante_id]
+            if ficou:
+                recebeu = retorno.variant_id
+                ficaram[recebeu] = ficaram.get(recebeu, 0) + ficou
 
         if ficaram:
             venda_id = await self._vender(condicional, ficaram, dados, usuario)
@@ -308,14 +311,12 @@ class CondicionalService:
     async def _mesma_cobranca(self, venda_id: int, dados: FechamentoIn, usuario: User) -> bool:
         from app.modules.vendas.service import VendaService
 
-        try:
-            venda = await VendaService(self.session).obter(venda_id, usuario)
-        except NaoEncontrado:
-            # A venda é de outra vendedora: este pedido não é o reenvio de quem fechou.
-            return False
-        gravado = sorted((p.forma, p.valor) for p in venda.pagamentos)
-        pedido = sorted((p.forma, p.valor) for p in dados.pagamentos)
-        return gravado == pedido and venda.desconto == dados.desconto
+        # A mesma régua do reenvio do PDV: forma, valor, parcelas, bandeira e vale. Crédito
+        # 1x reenviado como 3x é outra cobrança — devolver o fechamento antigo como sucesso
+        # deixaria a taxa e os recebíveis do 1x numa venda que a moça acha que parcelou.
+        return await VendaService(self.session).mesma_cobranca(
+            venda_id, dados.pagamentos, dados.desconto, usuario
+        )
 
     # ------------------------------------------------------------ leitura
     async def abertas_da_cliente(self, cliente_id: int) -> int:
