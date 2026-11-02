@@ -18,6 +18,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 
 import { codigoDoErro, detalheDoErro, mensagemDoErro } from '@/api/client';
 import { catalogo, estoque } from '@/api/endpoints';
+import type { NotaFornecedor as NotaApi } from '@/api/tipos';
 import { BuscarPeca } from '@/components/BuscarPeca';
 import { NOTA_VAZIA, NotaFornecedor, notaParaApi, type EstadoNota } from '@/components/NotaFornecedor';
 import { CodigoManual } from '@/components/CodigoManual';
@@ -95,15 +96,14 @@ export default function EntradaEstoque() {
   }, [somar]);
 
   const salvar = useMutation({
-    mutationFn: () => {
-      const notaApi = veDinheiro ? notaParaApi(nota) : null;
-      return estoque.registrarEntrada({
+    // A nota vai como variável: o ramo do 409 compara a nota que FOI com a que a gravada levou.
+    mutationFn: (notaApi: NotaApi | null) =>
+      estoque.registrarEntrada({
         client_uuid: clientUuid,
         fornecedor: fornecedor.trim() || null,
         itens: itens.map((i) => ({ variante_id: i.varianteId, quantidade: i.quantidade })),
         ...(notaApi ? { nota: notaApi } : {}),
-      });
-    },
+      }),
     onSuccess: (entrada) => {
       invalidarAposMovimentoEstoque();
       if (entrada.contas_a_pagar) queryClient.invalidateQueries({ queryKey: chaves.contasPagar });
@@ -121,21 +121,27 @@ export default function EntradaEstoque() {
         [{ text: 'Pronto', onPress: () => router.back() }],
       );
     },
-    onError: (erro) => {
+    onError: (erro, notaApi) => {
       if (codigoDoErro(erro) === 'DUPLICADO' && detalheDoErro(erro)?.entrada_id) {
         // Esta chave já gravou OUTRA entrada (a resposta se perdeu e a lista mudou depois):
         // o servidor recusa em vez de devolver a antiga como sucesso (ADR-2). O que ela
         // gravou sai da lista ANTES de a chave ser trocada — só trocar a chave e reenviar
         // tudo somaria de novo as peças que já entraram. Fica o que falta registrar.
-        // A nota idem: se a gravada já a levou, reenviá-la dobraria Contas a pagar.
+        // A nota idem: se a gravada já levou ESTA nota, reenviá-la dobraria Contas a pagar;
+        // se levou outra (ou nenhuma), esta ainda não entrou e fica.
         const detalhe = detalheDoErro(erro) as { itens?: ItemGravado[]; nota?: NotaGravada | null };
-        const { tirarNota, frase } = notaDepoisDoDuplicado(detalhe, veDinheiro && nota.ligada);
-        setItens((atuais) => tirarOQueJaEntrou(atuais, detalhe.itens ?? []));
+        const gravados = detalhe.itens ?? [];
+        const sobrou = tirarOQueJaEntrou(itens, gravados).length > 0;
+        const { tirarNota, frase } = notaDepoisDoDuplicado(detalhe, notaApi, sobrou);
+        setItens((atuais) => tirarOQueJaEntrou(atuais, gravados));
         if (tirarNota) setNota(NOTA_VAZIA);
         setClientUuid(gerarUuid());
         Alert.alert(
           'Esta entrada já foi gravada',
-          `${mensagemDoErro(erro)} Tirei da lista o que ela já gravou; confira e registre o que falta.` +
+          `${mensagemDoErro(erro)} ` +
+            (sobrou
+              ? 'Tirei da lista o que ela já gravou; confira e registre o que falta.'
+              : 'Tudo o que estava na lista ela já tinha gravado.') +
             (frase ? ` ${frase}` : ''),
           [
             { text: 'Conferir a lista', style: 'cancel' },
@@ -260,13 +266,14 @@ export default function EntradaEstoque() {
           carregando={salvar.isPending}
           onPress={() => {
             // A nota que não fecha é avisada ANTES de enviar, com a frase dela.
+            let notaApi: NotaApi | null;
             try {
-              if (veDinheiro) notaParaApi(nota);
+              notaApi = veDinheiro ? notaParaApi(nota) : null;
             } catch (erro) {
               Alert.alert('Nota do fornecedor', (erro as Error).message);
               return;
             }
-            salvar.mutate();
+            salvar.mutate(notaApi);
           }}
         />
       </View>

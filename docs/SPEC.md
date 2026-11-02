@@ -156,8 +156,10 @@ A loja consegue operar 100% sem celular.
   (idempotência por `client_uuid`). E a mesma chave com outro pedido (outras peças, outro
   pagamento, outra venda) é recusada — nunca respondida com o registro antigo como se fosse ela.
   Na Entrada, a recusa tira da tela o que já entrou — as peças e, se a entrada gravada já levou
-  a nota do fornecedor, a nota também, que já está em Contas a pagar —, e o que falta é
-  registrado sem lançar a mesma dívida duas vezes.
+  a mesma nota do fornecedor (mesmo número; sem número, mesmo valor), a nota também, que já
+  está em Contas a pagar —, e o que falta é registrado sem lançar a mesma dívida duas vezes.
+  Nota diferente da gravada fica e entra com o resto; se não sobrou peça para levá-la, a tela
+  avisa para lançá-la em Contas a pagar.
 - Nunca volta mais peça do que saiu na venda, nem em duas devoluções simultâneas.
 - O que a devolução paga respeita o que cada forma recebeu: não sai da gaveta dinheiro que
   nunca entrou nela.

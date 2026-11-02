@@ -408,13 +408,21 @@ bipadas devolvia `201` com a entrada antiga: as sete não entravam, e a tela ain
 etiqueta para elas. O 409 leva também o que a entrada gravada levou: `detail.itens` (peças e
 quantidades) e, para quem vê dinheiro, `detail.nota` (`{numero, valor_total, parcelas}`, ou
 `null` se foi sem nota). Web e celular tiram da conferência os itens gravados
-(`tirarOQueJaEntrou`) e, se a gravada já levou nota, tiram a nota do formulário
+(`tirarOQueJaEntrou`) e, se a gravada já levou ESTA nota, tiram a nota do formulário
 (`notaDepoisDoDuplicado`, `js/entrada-gravada.js` ↔ `lib/entrada.ts`) — só então trocam a chave,
 que é da entrada que já existe (com ela, todo reenvio cairia no mesmo 409). Trocar a chave e
 reenviar o resto com a mesma nota lançava as parcelas de novo: a nota de R$ 900 virava R$ 1.800
 em Contas a pagar, porque o servidor não tem como saber que duas notas iguais são a mesma (o
-número é opcional e se repete entre fornecedores). Gravada sem nota → a do formulário fica e vai
-com o resto; a mensagem diz à pessoa qual dos dois aconteceu.
+número é opcional e se repete entre fornecedores). Quem compara é a tela, que tem as duas: é a
+mesma quando o número bate (sem pontuação nem caixa; mesmo número com outro valor é a nota
+corrigida, e a correção é em Contas a pagar) ou, faltando número de um lado, quando o valor bate.
+Outro número → é outra nota, que ainda não entrou: fica e vai com o resto (tirar qualquer nota
+deixava o boleto dela vencer esquecido, o desfecho que o ADR-40 chama de pior). Sem número e
+com outro valor não dá para saber: fica, e a mensagem pede para tirá-la se for a mesma. Gravada
+sem nota → a do formulário fica e vai com o resto. E "vai com o resto" só vale se sobrou peça:
+se a gravada já levou a lista inteira, o botão Registrar desliga e a nota não sairia — a
+mensagem manda lançá-la em Contas a pagar (`POST /contas-pagar`). A mensagem diz à pessoa qual
+dos casos aconteceu.
 
 **ADR-3 — Desconto só no total da venda.**
 Desconto por item multiplicaria os caminhos de arredondamento (rateio, soma que não fecha, margem por

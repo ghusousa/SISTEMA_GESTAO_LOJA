@@ -223,6 +223,44 @@ async def test_409_da_entrada_sem_nota_diz_que_a_nota_do_formulario_fica(
     assert "nota" not in r.json()["detail"]
 
 
+async def test_409_da_entrada_com_outra_nota_no_formulario_a_outra_ainda_entra(
+    client: AsyncClient, auth_admin: dict[str, str], pecas: dict
+) -> None:
+    """A gravada levou a nota 123 de R$ 300; o reenvio veio com a 456 de R$ 500 e mais peças.
+    O 409 diz o NÚMERO da nota gravada, e é por ele que a tela vê que a 456 é outra: ela fica
+    e vai com o resto. Tirar do formulário qualquer nota quando a gravada levou alguma deixava
+    Contas a pagar em R$ 300 e o boleto de R$ 500 vencendo esquecido. A regra é de
+    `notaDepoisDoDuplicado` (testada em `mobile/src/lib/entrada.test.ts`); aqui, o contrato
+    que ela usa e o desfecho."""
+
+    def nota(numero: str, valor: str) -> dict:
+        return {
+            "numero": numero,
+            "valor_total": valor,
+            "parcelas": [{"vencimento": _dia(30), "valor": valor}],
+        }
+
+    pedido = _entrada(
+        pecas, nota("123", "300.00"), itens=[{"variante_id": pecas["38"], "quantidade": 10}]
+    )
+    r = await client.post("/estoque/entradas", headers=auth_admin, json=pedido)
+    assert r.status_code == 201, r.text
+
+    mais = [*pedido["itens"], {"variante_id": pecas["40"], "quantidade": 7}]
+    reenvio = {**pedido, "itens": mais, "nota": nota("456", "500.00")}
+    r = await client.post("/estoque/entradas", headers=auth_admin, json=reenvio)
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["nota"]["numero"] == "123"
+
+    resto = _entrada(
+        pecas, nota("456", "500.00"), itens=[{"variante_id": pecas["40"], "quantidade": 7}]
+    )
+    r = await client.post("/estoque/entradas", headers=auth_admin, json=resto)
+    assert r.status_code == 201, r.text
+    assert r.json()["contas_a_pagar"] == 1
+    assert await _contar("SELECT sum(amount)::int FROM payables WHERE deleted_at IS NULL") == 800
+
+
 # ------------------------------------------------------------------ quem vê
 async def _barrado(client: AsyncClient, auth: dict[str, str]) -> None:
     assert (await client.get("/contas-pagar", headers=auth)).status_code == 403

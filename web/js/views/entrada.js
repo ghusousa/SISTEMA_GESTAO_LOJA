@@ -238,7 +238,7 @@ export function render(raiz) {
       campo.focus();
     } catch (erro) {
       if (erro instanceof ErroApi && erro.status === 409 && erro.detail?.entrada_id) {
-        await avisarEntradaJaGravada(erro, !!notaApi);
+        await avisarEntradaJaGravada(erro, notaApi);
         return;
       }
       avisarErro(erro);
@@ -254,17 +254,22 @@ export function render(raiz) {
    * depois): o servidor recusa (ADR-2) e devolve os itens dela. O que ela gravou sai da
    * lista ANTES de a chave sair — só trocar a chave e reenviar tudo somaria de novo as
    * peças que já entraram (10 P + 7 M viravam +20 P). Fica o que falta registrar. A nota
-   * idem: se a gravada já a levou, reenviá-la dobraria Contas a pagar.
+   * idem: se a gravada já levou ESTA nota, reenviá-la dobraria Contas a pagar; se levou
+   * outra (ou nenhuma), esta ainda não entrou e fica.
    */
-  async function avisarEntradaJaGravada(erro, temNota) {
-    const { tirarNota, frase } = notaDepoisDoDuplicado(erro.detail, temNota);
-    definir(tirarOQueJaEntrou(itens(), erro.detail.itens || []));
+  async function avisarEntradaJaGravada(erro, notaApi) {
+    const resto = tirarOQueJaEntrou(itens(), erro.detail.itens || []);
+    const { tirarNota, frase } = notaDepoisDoDuplicado(erro.detail, notaApi, resto.length > 0);
+    definir(resto);
     if (tirarNota) nota?.limpar();
     conferencia.set({ clientUuid: null });
     pintar();
+    const lista = resto.length
+      ? 'Tirei da lista o que ela já gravou; confira e registre o que falta.'
+      : 'Tudo o que estava na lista ela já tinha gravado.';
     const verExtrato = await confirmar({
       titulo: 'Esta entrada já foi gravada',
-      mensagem: `${erro.message} Tirei da lista o que ela já gravou; confira e registre o que falta.${frase ? ` ${frase}` : ''}`,
+      mensagem: `${erro.message} ${lista}${frase ? ` ${frase}` : ''}`,
       confirmarTexto: 'Ver extrato',
     });
     if (verExtrato) ir('/estoque/extrato?tipo=ENTRADA');
