@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +17,7 @@ from app.core.exceptions import (
     Validacao,
 )
 from app.core.pagination import Pagina, Paginacao
+from app.core.permissoes import Pode, pode
 from app.core.security import HASH_DE_MENTIRA, hash_senha_async, verificar_senha_async
 from app.modules.auditoria.service import AuditoriaService
 from app.modules.usuarios.models import Papel, User
@@ -76,8 +79,24 @@ class UsuarioService:
         if alvo is not None and alvo.role == Papel.ADMIN:
             raise SemPermissao("A conta do dono só é alterada pelo próprio dono.")
 
+    #: Os campos que mexem na folha: só quem tem DEFINIR_COMISSAO os manda (ADR-37).
+    CAMPOS_DE_COMISSAO = ("comissao_percentual", "meta_diaria")
+
+    @classmethod
+    def _barrar_comissao(cls, ator: User, dados: UsuarioCreate | UsuarioUpdate) -> None:
+        """Comissão e meta são do dono. O gerente administra a equipe, mas recebe comissão
+        também: com GERIR_USUARIOS sozinho, um PATCH no próprio id aumentava o próprio
+        salário. Mandar o campo já é a tentativa — mesmo com o valor de hoje — e a recusa é
+        explícita (403), não um "ignorei" silencioso que faria a tela mentir que salvou.
+        """
+        if pode(ator.role, Pode.DEFINIR_COMISSAO):
+            return
+        if any(campo in dados.model_fields_set for campo in cls.CAMPOS_DE_COMISSAO):
+            raise SemPermissao("Só o dono define comissão e meta.")
+
     async def criar(self, dados: UsuarioCreate, ator: User) -> User:
         self._barrar_escalada(ator, dados.papel)
+        self._barrar_comissao(ator, dados)
         if await self.repo.por_email(dados.email) is not None:
             raise Duplicado("Já existe um usuário com esse e-mail.")
         user = User(
@@ -86,6 +105,8 @@ class UsuarioService:
             password_hash=await hash_senha_async(dados.senha),
             role=dados.papel,
             is_active=True,
+            comissao_percentual=dados.comissao_percentual or Decimal("0"),
+            meta_diaria=dados.meta_diaria,
         )
         self.repo.adicionar(user)
         try:
@@ -99,8 +120,16 @@ class UsuarioService:
     async def atualizar(self, user_id: int, dados: UsuarioUpdate, ator: User) -> User:
         user = await self.obter(user_id)
         self._barrar_escalada(ator, dados.papel, alvo=user)
+        self._barrar_comissao(ator, dados)
         if dados.nome is not None:
             user.name = dados.nome.strip()
+        if "comissao_percentual" in dados.model_fields_set:
+            # `null` não é "sem comissão" por acidente: zero é dito com zero.
+            if dados.comissao_percentual is None:
+                raise Validacao("Informe a comissão em %; para não pagar comissão, use 0.")
+            user.comissao_percentual = dados.comissao_percentual
+        if "meta_diaria" in dados.model_fields_set:
+            user.meta_diaria = dados.meta_diaria
         # A loja não pode ficar sem dono ativo — nem por rebaixamento, nem por desativação.
         vai_perder_dono = (dados.papel is not None and dados.papel != Papel.ADMIN) or (
             dados.ativo is False

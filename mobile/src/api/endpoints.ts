@@ -3,11 +3,14 @@
  * contrato muda, muda aqui, e o TypeScript aponta quem precisa acompanhar.
  */
 
+import axios from 'axios';
+
 import { api } from './client';
 import type {
   Backup,
   ConfiguracaoLoja,
   ConfiguracaoPublica,
+  CurvaAbc,
   Categoria,
   CategoriaDespesa,
   Despesa,
@@ -20,9 +23,13 @@ import type {
   FormaPagamento,
   InventarioResultado,
   MaisVendido,
+  MeuDia,
   Movimento,
   Pagina,
+  PaginaEstoqueParado,
+  PaginaVendedoras,
   Produto,
+  Recebivel,
   Replicacao,
   ResumoFinanceiro,
   Saldo,
@@ -38,6 +45,7 @@ import type {
   PagamentoCliente,
   Vale,
   Variante,
+  ValorEstoque,
   VarianteLookup,
   Versao,
   Venda,
@@ -70,11 +78,28 @@ export const usuarios = {
     const { data } = await api.get<Pagina<Usuario>>('/usuarios', { params });
     return data;
   },
+  async obter(id: number) {
+    const { data } = await api.get<Usuario>(`/usuarios/${id}`);
+    return data;
+  },
   async criar(dados: { nome: string; email: string; senha: string; papel: string }) {
     const { data } = await api.post<Usuario>('/usuarios', dados);
     return data;
   },
-  async atualizar(id: number, dados: { nome?: string; papel?: string; ativo?: boolean }) {
+  /**
+   * Comissão (% em string decimal) e meta (`null` tira) só vão quando o dono mexe nelas:
+   * mandar os campos sem `DEFINIR_COMISSAO` é 403, mesmo com o valor de hoje (ADR-37).
+   */
+  async atualizar(
+    id: number,
+    dados: {
+      nome?: string;
+      papel?: string;
+      ativo?: boolean;
+      comissao_percentual?: string;
+      meta_diaria?: string | null;
+    },
+  ) {
     const { data } = await api.patch<Usuario>(`/usuarios/${id}`, dados);
     return data;
   },
@@ -536,6 +561,49 @@ export const relatorios = {
       params,
     });
     return data;
+  },
+  /** Faturamento líquido e comissão de cada pessoa da equipe, com os totais do período. */
+  async vendedoras(inicio: string, fim: string, params: Paginado = {}) {
+    const { data } = await api.get<PaginaVendedoras>('/relatorios/vendedoras', {
+      params: { inicio, fim, ...params },
+    });
+    return data;
+  },
+  /** O placar de hoje de quem está logado (aberto a toda a equipe). */
+  async meuDia() {
+    const { data } = await api.get<MeuDia>('/relatorios/meu-dia');
+    return data;
+  },
+  async estoqueParado(dias: number, params: Paginado = {}) {
+    const { data } = await api.get<PaginaEstoqueParado>('/relatorios/estoque-parado', {
+      params: { dias, ...params },
+    });
+    return data;
+  },
+  async curvaAbc(inicio: string, fim: string, params: Paginado = {}) {
+    const { data } = await api.get<Pagina<CurvaAbc>>('/relatorios/curva-abc', {
+      params: { inicio, fim, ...params },
+    });
+    return data;
+  },
+  async valorDoEstoque() {
+    const { data } = await api.get<ValorEstoque>('/relatorios/valor-do-estoque');
+    return data;
+  },
+  /**
+   * Agenda do que a maquininha ainda vai depositar. Servidor sem o módulo de taxas
+   * responde 404: aqui isso vira `null`, e a seção some da tela em vez de pintar erro.
+   */
+  async recebiveis(inicio: string, fim: string, params: Paginado = {}) {
+    try {
+      const { data } = await api.get<Pagina<Recebivel>>('/relatorios/recebiveis', {
+        params: { inicio, fim, ...params },
+      });
+      return data;
+    } catch (erro) {
+      if (axios.isAxiosError(erro) && erro.response?.status === 404) return null;
+      throw erro;
+    }
   },
 };
 

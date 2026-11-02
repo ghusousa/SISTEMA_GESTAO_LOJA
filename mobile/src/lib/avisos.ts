@@ -16,7 +16,7 @@
 
 import type { QueryClient, QueryKey } from '@tanstack/react-query';
 
-import { CHAVES_RELATORIO, chaves, queryClient } from './queryClient';
+import { CHAVES_GIRO, CHAVES_RELATORIO, chaves, queryClient } from './queryClient';
 
 /** Os mesmos assuntos de `api/app/core/eventos.py`. Mudou lá, mude aqui. */
 export type Assunto =
@@ -57,12 +57,14 @@ const CHAVES_POR_ASSUNTO: Record<Assunto, readonly QueryKey[]> = {
     chaves.produtos,
     chaves.estoqueBaixo,
     ['variante-codigo'],
+    ...CHAVES_GIRO,
   ],
   vendas: [chaves.vendas, ['caixa-dia'], ...CHAVES_RELATORIO],
   despesas: [chaves.despesas, chaves.categoriasDespesa, ...CHAVES_RELATORIO],
   clientes: [chaves.clientes],
   caixa: [['caixa-dia'], chaves.fechamentos],
-  usuarios: [chaves.usuarios],
+  // O dono mudou a meta de alguém: o placar do PDV daquela pessoa precisa da régua nova.
+  usuarios: [chaves.usuarios, chaves.meuDia],
   // Sinais de vida, não mudança: quem trata `conectado` é a reconexão, que recarrega tudo.
   conectado: [],
   ping: [],

@@ -53,6 +53,11 @@ class Pode(StrEnum):
     #: Ligar o backup na nuvem e conectar a conta do Drive. Só o dono: quem tem essa
     #: conta tem a cópia inteira da loja — vendas, custos, clientes e dívidas.
     GERIR_BACKUP = "GERIR_BACKUP"
+    #: Definir a % de comissão e a meta do dia de cada pessoa da equipe. Só o dono, pelo
+    #: mesmo motivo da auditoria: o gerente também recebe comissão, e quem recebe não
+    #: decide quanto (ADR-37). GERIR_USUARIOS sozinho não basta — senão um PATCH no
+    #: próprio id dobraria a comissão do gerente.
+    DEFINIR_COMISSAO = "DEFINIR_COMISSAO"
 
 
 VENDEDORA: frozenset[Pode] = frozenset({Pode.ATENDER_CLIENTE})

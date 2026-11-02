@@ -25,6 +25,8 @@ export const PODE = {
   VER_AUDITORIA: 'VER_AUDITORIA',
   CONFIGURAR_LOJA: 'CONFIGURAR_LOJA',
   GERIR_BACKUP: 'GERIR_BACKUP',
+  /** Comissão e meta do dia da equipe. Só o dono: quem recebe não decide quanto (ADR-37). */
+  DEFINIR_COMISSAO: 'DEFINIR_COMISSAO',
 } as const;
 
 export type Capacidade = (typeof PODE)[keyof typeof PODE];

@@ -13,10 +13,10 @@ o superior não tenha.
 
 | Cargo | Além do degrau anterior | O que NÃO alcança |
 |---|---|---|
-| **Vendedora** (`VENDEDOR`) | Vende no PDV, bipa e consulta preço, cadastra peça nova, dá entrada de mercadoria; busca e cadastra cliente no balcão e põe o nome dela em qualquer venda, sem ver saldo nem limite | Custo, lucro, despesas, relatórios, estorno, ajuste de estoque, inventário, vendas das colegas, fiado, taxa da maquininha |
+| **Vendedora** (`VENDEDOR`) | Vende no PDV, bipa e consulta preço, cadastra peça nova, dá entrada de mercadoria; busca e cadastra cliente no balcão e põe o nome dela em qualquer venda, sem ver saldo nem limite; vê no PDV quanto ela mesma vendeu hoje contra a meta do dia | Custo, lucro, despesas, relatórios, estorno, ajuste de estoque, inventário, vendas e números das colegas, fiado, taxa da maquininha |
 | **Supervisora** (`SUPERVISORA`) | Ajusta estoque, faz inventário, edita e exclui produtos e categorias, confere e fecha o caixa do dia, vê as vendas de toda a equipe | Custo, lucro, despesas, relatórios, estorno, devolução, crediário, logins da equipe |
-| **Gerente** (`GERENTE`) | Vê custo, lucro e margem; lança despesas; abre relatórios (e lê as taxas da maquininha que o resultado desconta); cancela venda concluída; recebe peça de volta (devolução) e cuida do crediário; administra os logins da equipe | A conta do dono (não cria, não promove, não edita, não redefine a senha dele), o **diário de auditoria**, o **nome da loja** e a **tabela de taxas da maquininha** — a identidade e os contratos do negócio são do dono |
-| **Dono** (`ADMIN`) | Tudo, inclusive criar e promover outro dono, o **diário de auditoria** (tudo que cada login fez), o **nome e ramo da loja** e a **tabela de taxas da maquininha** | — |
+| **Gerente** (`GERENTE`) | Vê custo, lucro e margem; lança despesas; abre relatórios (inclusive a comissão de cada um, e lê as taxas da maquininha que o resultado desconta); cancela venda concluída; recebe peça de volta (devolução) e cuida do crediário; administra os logins da equipe | A conta do dono (não cria, não promove, não edita, não redefine a senha dele), o **diário de auditoria**, o **nome da loja**, a **tabela de taxas da maquininha** e a **comissão e meta** da equipe — a identidade e os contratos do negócio são do dono, e quem recebe comissão não decide quanto |
+| **Dono** (`ADMIN`) | Tudo, inclusive criar e promover outro dono, o **diário de auditoria** (tudo que cada login fez), o **nome e ramo da loja**, a **tabela de taxas da maquininha** e a **% de comissão e a meta do dia** de cada pessoa | — |
 
 **Quatro decisões que a loja tomou e que o sistema faz valer:**
 
@@ -116,6 +116,12 @@ A loja consegue operar 100% sem celular.
 9. **Ver o resultado** — faturamento, custo das mercadorias vendidas (CMV), lucro bruto, despesas e
    resultado do período; produtos mais vendidos; peças com estoque abaixo do mínimo; curva de vendas
    por dia.
+   - **Vendas e comissão por vendedora**: faturamento líquido (vendido menos devolvido), peças,
+     ticket médio e comissão de cada pessoa no período, com o total a pagar. A vendedora vê no
+     PDV só o próprio dia: "hoje: R$ X de R$ meta".
+   - **Giro do estoque**: estoque parado (peças com saldo sem vender há mais de N dias, com o
+     dinheiro parado nelas), curva ABC dos produtos pelo faturamento do período, e o valor da
+     arara inteira em custo e em preço de venda.
 10. **Fechar o caixa do dia** — conferir o esperado por forma de pagamento contra o contado.
 
 ## Regras de negócio que não podem ser violadas
@@ -172,6 +178,13 @@ A loja consegue operar 100% sem celular.
 - O balcão busca e cadastra cliente sem ver saldo, limite ou observação do crediário; vender
   fiado continua sendo de quem cuida do crediário. Cadastro reenviado pela rede não duplica a
   cliente.
+- A comissão sai do faturamento LÍQUIDO de quem fez a venda: venda cancelada não conta, e a peça
+  devolvida tira a comissão no período em que voltou — sem reescrever a folha de um mês fechado.
+  A soma da equipe fecha com o faturamento líquido do resumo da loja.
+- Só o dono define a % de comissão (0 a 100) e a meta do dia de cada um; nem o gerente, que também
+  recebe comissão, mexe nisso — nem na própria.
+- Cada pessoa vê o próprio dia no PDV (vendido, peças, meta), sem custo, lucro nem o número das
+  colegas.
 
 ## Fora do escopo do v1
 
@@ -183,5 +196,7 @@ qualquer valor), cobrança automática por mensagem.
 
 *Saíram de "fora do escopo" e hoje existem:* impressão de etiquetas, recibo da venda, cadastro de
 clientes, trocas com vale, o sistema servir a outros ramos além de roupas, taxa da maquininha com
-crédito parcelado e agenda de recebíveis (sem TEF integrada: a maquininha segue à parte), e
-cliente em qualquer venda, com aniversário, preferências e histórico de compras (sem pontos).
+crédito parcelado e agenda de recebíveis (sem TEF integrada: a maquininha segue à parte),
+cliente em qualquer venda, com aniversário, preferências e histórico de compras (sem pontos),
+comissão e meta do dia por vendedora, e os relatórios de estoque parado, curva ABC e valor do
+estoque.

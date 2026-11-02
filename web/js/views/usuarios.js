@@ -27,6 +27,7 @@ import {
   vazio,
 } from '../ui.js';
 import { PAPEIS, titulo } from '../permissoes.js';
+import { camposComissao, ligarCamposComissao, resumoComissao } from './usuarios-comissao.js';
 
 const TAMANHO = 25;
 
@@ -136,7 +137,10 @@ export async function render(raiz, _params, consulta) {
                     ${u.id === eu ? cru(html`<span class="celula-secundaria">é você</span>`) : ''}
                   </td>
                   <td class="texto-suave">${u.email}</td>
-                  <td>${cru(etiqueta(titulo(u.papel), u.papel === 'ADMIN' ? 'info' : 'neutro'))}</td>
+                  <td>
+                    ${cru(etiqueta(titulo(u.papel), u.papel === 'ADMIN' ? 'info' : 'neutro'))}
+                    ${resumoComissao(u) ? cru(html`<span class="celula-secundaria">${resumoComissao(u)}</span>`) : ''}
+                  </td>
                   <td>${u.ativo ? etiqueta('Ativo', 'ok') : etiqueta('Desativado', 'perigo')}</td>
                   <td class="texto-suave">${formatarData(u.criado_em)}</td>
                   <td class="direita">
@@ -189,12 +193,14 @@ export async function render(raiz, _params, consulta) {
             )}
           </select>
         </label>
+        ${camposComissao()}
         <div class="modal__acoes">
           <button class="botao botao--neutro" data-nao>Cancelar</button>
           <button class="botao" data-ok>Criar</button>
         </div>
       `,
       aoAbrir: (corpo, fechar) => {
+        const lerComissao = ligarCamposComissao(corpo);
         corpo.querySelector('[data-nao]').addEventListener('click', () => fechar(false));
         corpo.querySelector('[data-ok]').addEventListener('click', async (e) => {
           const senha = corpo.querySelector('[data-senha]').value;
@@ -206,6 +212,7 @@ export async function render(raiz, _params, consulta) {
               email: corpo.querySelector('[data-email]').value.trim(),
               senha,
               papel: corpo.querySelector('[data-papel]').value,
+              ...lerComissao(),
             });
             aviso('Usuário criado.');
             fechar(true);
@@ -244,16 +251,18 @@ export async function render(raiz, _params, consulta) {
           <span>Pode entrar no sistema ${ajuda('Desmarcado, o acesso dela para na hora, inclusive no celular. As vendas que ela fez continuam no histórico e na auditoria.')}</span>
         </label>
         ${eu ? cru('<p class="campo__dica">você não pode desativar a própria conta</p>') : ''}
+        ${camposComissao(usuario)}
         <div class="modal__acoes">
           <button class="botao botao--neutro" data-nao>Cancelar</button>
           <button class="botao" data-ok>Salvar</button>
         </div>
       `,
       aoAbrir: (corpo, fechar) => {
+        const lerComissao = ligarCamposComissao(corpo, usuario);
         corpo.querySelector('[data-nao]').addEventListener('click', () => fechar(false));
         corpo.querySelector('[data-ok]').addEventListener('click', async (e) => {
           e.currentTarget.disabled = true;
-          const dados = { nome: corpo.querySelector('[data-nome]').value.trim() };
+          const dados = { nome: corpo.querySelector('[data-nome]').value.trim(), ...lerComissao() };
           if (!eu) {
             dados.papel = corpo.querySelector('[data-papel]').value;
             dados.ativo = corpo.querySelector('[data-ativo]').checked;

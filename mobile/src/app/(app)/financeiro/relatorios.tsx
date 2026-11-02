@@ -1,7 +1,11 @@
 /**
- * Relatórios do período: curva de vendas, campeões de venda, para onde o dinheiro foi
- * e o que precisa repor. Gráfico é barra desenhada com View — evita uma biblioteca
- * inteira de charts para mostrar sete a trinta e um números.
+ * Relatórios do período: curva de vendas, campeões de venda, a equipe e a comissão, a
+ * curva ABC, para onde o dinheiro foi, o que a maquininha ainda deposita, e o estoque (o
+ * que repor, quanto vale e o que está parado). Gráfico é barra desenhada com View — evita
+ * uma biblioteca inteira de charts para mostrar sete a trinta e um números.
+ *
+ * As seções novas moram em `components/relatorios/`, uma por assunto, para esta tela não
+ * virar um arquivo de mil linhas.
  */
 
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
@@ -12,6 +16,13 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { mensagemDoErro } from '@/api/client';
 import { relatorios } from '@/api/endpoints';
+import { SecaoRecebiveis } from '@/components/relatorios/SecaoRecebiveis';
+import { SecaoVendedoras } from '@/components/relatorios/SecaoVendedoras';
+import {
+  SecaoCurvaAbc,
+  SecaoEstoqueParado,
+  SecaoValorEstoque,
+} from '@/components/relatorios/SecoesDoEstoque';
 import { Botao, Carregando, Cartao, ErroEstado, Etiqueta } from '@/components/ui';
 import { formatar, formatarPercentual, paraCentavos } from '@/lib/money';
 import { chaves } from '@/lib/queryClient';
@@ -152,6 +163,9 @@ export default function Relatorios() {
         )}
       </Cartao>
 
+      <SecaoVendedoras inicio={inicio} fim={fim} />
+      <SecaoCurvaAbc inicio={inicio} fim={fim} />
+
       <Cartao>
         <Text style={s.titulo}>Para onde o dinheiro foi</Text>
         {(porCategoria.data?.length ?? 0) === 0 ? (
@@ -171,6 +185,8 @@ export default function Relatorios() {
           ))
         )}
       </Cartao>
+
+      <SecaoRecebiveis inicio={inicio} fim={fim} />
 
       <Cartao>
         <Text style={s.titulo}>Hora de repor</Text>
@@ -210,6 +226,9 @@ export default function Relatorios() {
           />
         )}
       </Cartao>
+
+      <SecaoValorEstoque />
+      <SecaoEstoqueParado />
     </ScrollView>
   );
 }

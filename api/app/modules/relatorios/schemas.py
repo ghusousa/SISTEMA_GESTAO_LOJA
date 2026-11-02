@@ -1,7 +1,9 @@
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from pydantic import BaseModel
+
+from app.core.pagination import Pagina
 
 
 class ResumoOut(BaseModel):
@@ -91,3 +93,114 @@ class RecebivelOut(BaseModel):
     bruto: Decimal
     taxa: Decimal
     liquido: Decimal
+
+
+# ------------------------------------------------------------------ equipe (ADR-37)
+
+
+class VendedoraOut(BaseModel):
+    """O período de uma pessoa da equipe, já com as devoluções abatidas.
+
+    A devolução entra no dia em que ACONTECEU (ADR-19) e pesa para quem fez a venda
+    original, não para quem atendeu a troca: a comissão paga sobre a blusa que voltou é
+    estornada no mês em que ela voltou. Por isso o líquido pode ficar negativo num período
+    só de devoluções — e a comissão, também: é o estorno.
+    """
+
+    usuario_id: int
+    nome: str
+    comissao_percentual: Decimal
+    quantidade_vendas: int
+    #: Vendas concluídas no período, com desconto. Cancelada não conta.
+    faturamento: Decimal
+    #: O que voltou no período, das vendas dela (de qualquer época).
+    devolucoes: Decimal
+    #: `faturamento - devolucoes`: a base da comissão.
+    faturamento_liquido: Decimal
+    #: Peças vendidas menos as que voltaram no período.
+    pecas: int
+    #: Faturamento ÷ número de vendas — a mesma conta do resumo da loja.
+    ticket_medio: Decimal
+    #: `faturamento_liquido × comissao_percentual ÷ 100`, arredondado no centavo.
+    comissao: Decimal
+
+
+class PaginaVendedoras(Pagina[VendedoraOut]):
+    """A página e os totais do PERÍODO INTEIRO — a folha soma a equipe toda, não a página."""
+
+    faturamento_liquido_total: Decimal
+    comissao_total: Decimal
+
+
+class MeuDiaOut(BaseModel):
+    """O dia de quem está logado, sem custo nem lucro: é o que a vendedora vê no PDV."""
+
+    data: date
+    #: Vendido hoje menos o que voltou hoje das vendas dela — a mesma base da comissão.
+    vendido: Decimal
+    quantidade_vendas: int
+    pecas: int
+    #: `null` quando o dono não definiu meta: o PDV não mostra a régua.
+    meta: Decimal | None = None
+    #: Quanto falta para a meta (zero quando já bateu). `null` sem meta.
+    falta: Decimal | None = None
+
+
+# ------------------------------------------------------- giro do estoque (ADR-38)
+
+
+class EstoqueParadoOut(BaseModel):
+    variante_id: int
+    produto_id: int
+    produto: str
+    tamanho: str
+    cor: str
+    codigo_barras: str
+    saldo: int
+    #: Última venda desta peça (movimento VENDA). `null` = nunca vendeu.
+    ultima_venda: datetime | None
+    #: Última entrada de mercadoria. `null` = o saldo veio de outro caminho (cadastro
+    #: antigo, ajuste, inventário) — aí a conta começa no cadastro da peça.
+    ultima_entrada: datetime | None
+    #: Dias no calendário da loja desde a última venda (ou, sem venda, desde a última
+    #: entrada; sem as duas, desde o cadastro).
+    dias_parada: int
+    preco_custo: Decimal
+    preco_venda: Decimal
+    #: `saldo × custo`: o dinheiro da loja que está parado nesta arara.
+    valor_em_custo: Decimal
+    #: `saldo × preço de venda`: quanto entraria se tudo vendesse pelo preço cheio.
+    valor_em_venda: Decimal
+
+
+class PaginaEstoqueParado(Pagina[EstoqueParadoOut]):
+    """A página e os totais de TODAS as peças paradas, não só das desta página."""
+
+    dias: int
+    pecas_total: int
+    valor_em_custo_total: Decimal
+    valor_em_venda_total: Decimal
+
+
+class CurvaAbcOut(BaseModel):
+    produto_id: int
+    produto: str
+    pecas: int
+    #: Vendido no período (com o desconto da venda rateado) menos o devolvido no período.
+    faturamento_liquido: Decimal
+    #: Fatia deste produto no faturamento líquido do período.
+    percentual: Decimal
+    #: Soma das fatias até este produto, inclusive.
+    percentual_acumulado: Decimal
+    #: A: os que juntos fazem os primeiros 80% · B: até 95% · C: o resto.
+    classe: str
+
+
+class ValorEstoqueOut(BaseModel):
+    """A loja inteira, agora — não a página de uma listagem."""
+
+    pecas: int
+    #: Quantas variantes (tamanho × cor) têm ao menos uma peça.
+    variantes: int
+    valor_em_custo: Decimal
+    valor_em_venda: Decimal

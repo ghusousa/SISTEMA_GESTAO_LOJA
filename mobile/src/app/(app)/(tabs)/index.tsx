@@ -18,6 +18,7 @@ import { codigoDoErro, mensagemDoErro } from '@/api/client';
 import { catalogo } from '@/api/endpoints';
 import { BuscarPeca } from '@/components/BuscarPeca';
 import { CodigoManual } from '@/components/CodigoManual';
+import { MetaDoDia } from '@/components/MetaDoDia';
 import { Scanner, type ScannerRef } from '@/components/Scanner';
 import { Botao } from '@/components/ui';
 import { useConexao } from '@/components/BannerConexao';
@@ -193,6 +194,9 @@ export default function Pdv() {
           <Text style={s.avisoTexto}>{aviso}</Text>
         </Pressable>
       )}
+
+      {/* O placar do dia de quem está logado; sem meta definida, não ocupa espaço. */}
+      <MetaDoDia />
 
       <View style={s.carrinho}>
         <View style={s.carrinhoCabecalho}>

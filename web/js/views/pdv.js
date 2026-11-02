@@ -36,6 +36,7 @@ import {
   plural,
 } from '../ui.js';
 import { cobrar } from './pdv-cobranca.js';
+import { ligarMetaDoDia } from './pdv-meta.js';
 
 const LAYOUT = html`
   <div class="pagina pagina--larga pdv">
@@ -58,6 +59,7 @@ const LAYOUT = html`
     </div>
 
     <aside class="pdv__resumo">
+      <div data-meta hidden style="margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--borda)"></div>
       <div class="pdv__linha">
         <span class="texto-suave">Itens ${ajuda('O que já foi bipado fica guardado se você sair para consultar um preço em outra tela. Some ao limpar a venda, ao sair do sistema ou se a página for recarregada.')}</span>
         <strong data-contagem>0 peças</strong>
@@ -321,6 +323,7 @@ export function render(raiz) {
       leitor.esquecerUltimo();
       campo.value = '';
       campo.focus();
+      metaDoDia.atualizar();
     } finally {
       cobrando = false;
     }
@@ -371,10 +374,12 @@ export function render(raiz) {
   leitor.ligar();
   const pararFoco = manterFoco(campo);
   const desinscrever = carrinho.inscrever(pintar);
+  const metaDoDia = ligarMetaDoDia(raiz.querySelector('[data-meta]'));
   document.addEventListener('keydown', atalhos);
   pintar();
 
   return () => {
+    metaDoDia.desligar();
     leitor.desligar();
     busca.desligar();
     pararFoco();

@@ -46,7 +46,10 @@ Convenções: PK `BIGINT GENERATED ALWAYS AS IDENTITY`; dinheiro `NUMERIC(14,2)`
 ```sql
 users(id, name, email UNIQUE, password_hash,
       role CHECK(role IN ('ADMIN','GERENTE','SUPERVISORA','VENDEDOR')),
-      is_active BOOL DEFAULT TRUE, created_at, updated_at)
+      is_active BOOL DEFAULT TRUE,
+      comissao_percentual NUMERIC(5,2) NOT NULL DEFAULT 0 CHECK (0 <= x <= 100),
+      meta_diaria NUMERIC(14,2) NULL CHECK (meta_diaria > 0),   -- ADR-37
+      created_at, updated_at)
 
 refresh_tokens(jti UUID PK, user_id FK→users, family_id UUID NOT NULL,
                expires_at, revoked BOOL DEFAULT FALSE, created_at)
@@ -1018,6 +1021,63 @@ não tira mais a cliente da venda: ela continua sendo quem comprou. O histórico
 `GET /vendas?cliente_id=`, com o escopo de sempre — a vendedora vê só as que ela fez. Editar
 preferências pelo balcão ficou de fora (é do crediário, por enquanto).
 
+**ADR-37 — Comissão sai do líquido de quem vendeu, e só o dono diz quanto.**
+A loja paga comissão e o dono somava `/vendas` à mão, página por página, sem abater devolução.
+`users` ganha `comissao_percentual NUMERIC(5,2) NOT NULL DEFAULT 0` (CHECK 0–100) e `meta_diaria
+NUMERIC(14,2) NULL` (CHECK > 0; sem meta é `NULL`, não zero). A conta (`relatorios/vendedoras.py`):
+**líquido = vendas concluídas no período − devoluções no período**, a devolução entrando no dia
+em que aconteceu (ADR-19) e na conta de quem fez a venda ORIGINAL — quem só atendeu a troca não
+perde nada. Assim um mês fechado nunca muda (a folha paga continua certa) e a blusa vendida em
+outubro que voltou em novembro estorna a comissão em novembro; um período só de devolução tem
+líquido e comissão **negativos**, de propósito: é o estorno, e escondê-lo daria a comissão de
+graça. Cancelada não conta (cancelar desfaz a venda inteira). `comissao = líquido × % ÷ 100`,
+meio centavo para cima. Ticket médio = vendido ÷ nº de vendas, a mesma conta do resumo. A soma
+da equipe fecha **centavo por centavo** com o `faturamento_liquido` do resumo (teste). Cada
+fonte é somada por vendedora antes de juntar (três `GROUP BY seller_id` num `UNION ALL`), e a
+equipe inteira vem numa consulta: são dezenas de pessoas, então a página é recortada em Python
+e os totais (`faturamento_liquido_total`, `comissao_total`) valem para o período todo — a folha
+paga a equipe, não a página. No banco de três anos: mês 1,6 ms, ano 79 ms.
+**Quem define**: capacidade nova `DEFINIR_COMISSAO`, só do dono. `GERIR_USUARIOS` não basta: o
+gerente também recebe comissão, e um PATCH no próprio id dobraria o próprio salário — a mesma
+lógica do `_barrar_escalada`. Mandar o campo sem a capacidade é **403**, mesmo com o valor de
+hoje: um "ignorei" silencioso faria a tela dizer que salvou. Ausente = não mexe; `meta_diaria:
+null` tira a meta; `comissao_percentual: null` é 422 (zero se diz com zero).
+**O balcão vê o próprio dia** em `GET /relatorios/meu-dia`, aberto a qualquer login: o id sai
+do token (nunca da URL), e a resposta tem só vendido, peças, meta e quanto falta — sem custo,
+lucro nem a % (o dinheiro da loja continua nos schemas de quem vê dinheiro). É a MESMA conta do
+relatório do dono para aquele dia. O PDV web e o app mostram "Hoje: R$ X de R$ meta" quando há
+meta; a régua refaz com o aviso de `vendas` (venda de outro balcão) e de `usuarios` (o dono
+mudou a meta), só ela — redesenhar o PDV apagaria o carrinho.
+
+**ADR-38 — Giro do estoque: parada pela última venda, ABC pelo líquido, valor da loja inteira.**
+Roupa é sazonal e o capital na arara é o maior ativo da loja; os dados já existiam
+(`stock_movements` e saldo × preço), faltava a pergunta (`relatorios/giro.py`).
+**Estoque parado** (`?dias=90`, 1–3650): peça com saldo > 0 cuja última `VENDA` tem MAIS de N
+dias, ou que nunca vendeu e cuja última `ENTRADA` tem mais de N dias. "Parada desde" =
+`coalesce(última venda, última entrada, cadastro da peça)` — o cadastro cobre o saldo que veio
+de ajuste, inventário ou do cadastro antigo (antes do ADR-29), que senão sumiria do relatório.
+Os dias contam no calendário da loja; exatamente N dias ainda não entra. Cada data é um `max()`
+correlacionado que desce `ix_stock_movements_variant_id_created_at` de trás para frente — uma
+leitura curta por peça com saldo, sem agrupar os anos de movimento; a de entrada só roda para
+quem nunca vendeu (o `COALESCE` é preguiçoso). Banco de três anos, 8 mil peças com saldo:
+60–110 ms por consulta (contagem+totais e página), boa parte dela o JIT que o custo estimado
+dispara. Os parciais `(variant_id, created_at) WHERE movement_type = 'VENDA'` (e `'ENTRADA'`)
+foram medidos: 30–60 ms, com Index Only Scan — e ficaram de fora, porque cobrariam uma escrita
+de índice a mais em TODA venda para um relatório que o dono abre poucas vezes por dia. Os totais (`pecas_total`, `valor_em_custo_total`,
+`valor_em_venda_total`) são de TODAS as peças paradas. Limite conhecido: a última VENDA de uma
+venda depois cancelada continua contando como venda (o movimento existe).
+**Curva ABC** (`?inicio&fim`): produto (não variante) por faturamento líquido no período — o
+item com o desconto da venda rateado (`preço × qtd × total ÷ subtotal`, a mesma conta do
+`refund_amount`) menos o devolvido no período. Somar o preço cheio contra a devolução rateada
+inflaria quem vende com desconto. Só entra quem teve líquido > 0 (produto só com devolução
+puxaria o acumulado acima de 100% e de volta). A classe vai pelo acumulado ANTES do produto: A
+enquanto ele é < 80%, B < 95%, C o resto — quem cruza a linha dos 80% ainda é A; pelo acumulado
+"inclusive", um campeão que sozinho faz 90% seria B e a loja ficaria sem nenhum A. Janela
+(`sum() OVER`) antes do `OFFSET`, então a página 2 continua o acumulado da 1. Ano: 127 ms.
+**Valor do estoque**: peças, variantes com saldo, saldo × custo e saldo × preço de venda da loja
+INTEIRA (peça excluída fica de fora, como em toda tela de estoque) — é o número que a tela
+Saldos não podia dar, porque soma só a página. 9 ms.
+
 ## 4. Contratos de API
 
 Prefixo `/api/v1`. Auth: `Authorization: Bearer <access_token>`.
@@ -1049,6 +1109,9 @@ Erros: `{"code": "...", "message": "...", "detail": {...}}`.
 `GET /usuarios` (A) · `POST /usuarios` (A) · `GET/PATCH /usuarios/{id}` (A) ·
 `PATCH /usuarios/{id}/senha` (A, reset) · `PATCH /usuarios/me/senha` (qualquer, exige senha atual).
 Desativar = `PATCH {ativo:false}`. Bootstrap do primeiro admin: `python -m app.cli create-admin`.
+`UsuarioOut` traz `comissao_percentual` ("2.50") e `meta_diaria` (string ou `null`). No `POST` e no
+`PATCH` esses dois campos exigem `DEFINIR_COMISSAO` (só o dono): mandá-los sem ela é `403`, mesmo
+com o valor atual. No `PATCH`, ausente = não mexe, `meta_diaria: null` tira a meta (ADR-37).
 
 ### 4.3 `catalogo`
 | método | rota | papel | notas |
@@ -1137,8 +1200,9 @@ da loja) + fechamento existente, se houver.
 `POST /caixa/fechamentos` `{data, contagens:[{forma, valor_contado}], observacao?}` → upsert do dia.
 `GET /caixa/fechamentos?inicio=&fim=`.
 
-### 4.9 `relatorios` (VER_DINHEIRO: dono e gerente)
-Todos com `?inicio=&fim=` (≤ 366 dias), exceto `estoque-baixo` (sem período — é fotografia do agora).
+### 4.9 `relatorios` (VER_DINHEIRO: dono e gerente; `meu-dia` é de qualquer login)
+Com `?inicio=&fim=` (≤ 366 dias), exceto `estoque-baixo`, `estoque-parado`, `valor-do-estoque` e
+`meu-dia` (sem período — são fotografia do agora).
 
 - `/relatorios/resumo` → faturamento, CMV, lucro bruto, despesas, `taxas_cartao`, resultado, nº de
   vendas, ticket médio.
@@ -1160,6 +1224,20 @@ Todos com `?inicio=&fim=` (≤ 366 dias), exceto `estoque-baixo` (sem período �
   dele; `variante_id` desempata). Quem só mostra "N peças no mínimo" (aba Financeiro do app)
   pede `size=1` e lê `total` — a lista inteira passava de 7 mil linhas e 1,5 MB, baixados a
   cada venda.
+- `/relatorios/vendedoras?inicio&fim&page&size` (ADR-37) → `{items, total, page, size,
+  faturamento_liquido_total, comissao_total}`; cada item `{usuario_id, nome, comissao_percentual,
+  quantidade_vendas, faturamento, devolucoes, faturamento_liquido, pecas, ticket_medio, comissao}`,
+  quem mais trouxe primeiro. Os totais são da equipe inteira no período.
+- `/relatorios/meu-dia` (**qualquer login**, sem período: é o hoje da loja) → `{data, vendido,
+  quantidade_vendas, pecas, meta, falta}` de quem está logado; `meta`/`falta` nulos sem meta.
+- `/relatorios/estoque-parado?dias=90&page&size` (ADR-38, sem período) → `{items, total, page,
+  size, dias, pecas_total, valor_em_custo_total, valor_em_venda_total}`; cada item `{variante_id,
+  produto_id, produto, tamanho, cor, codigo_barras, saldo, ultima_venda, ultima_entrada,
+  dias_parada, preco_custo, preco_venda, valor_em_custo, valor_em_venda}`, a mais antiga primeiro.
+- `/relatorios/curva-abc?inicio&fim&page&size` (ADR-38) → paginado; cada item `{produto_id,
+  produto, pecas, faturamento_liquido, percentual, percentual_acumulado, classe: A|B|C}`.
+- `/relatorios/valor-do-estoque` (sem período) → `{pecas, variantes, valor_em_custo,
+  valor_em_venda}` da loja inteira.
 
 ### 4.9.1 `taxas-cartao` (ler: VER_DINHEIRO; mudar: CONFIGURAR_LOJA)
 | método | rota | notas |
@@ -1227,6 +1305,13 @@ caixa do dia, sem o resumo do mês. Guarda por capacidade no `_layout`.
 - `lib/caixa.ts`: na conferência de caixa, o contado nasce com o esperado e o **acompanha** nos
   campos que ninguém digitou; a tela refaz a consulta ao focar e logo antes de gravar. Preenchido
   uma vez só, quem confirmava direto gravava como falta as vendas feitas com a tela aberta.
+- `lib/comissao.ts` (com teste): a % digitada ("2,5") vira "2.50" e só aceita 0–100 com até duas
+  casas — "0,005" pela régua do dinheiro viraria 5%; meta zero é `null`; `progressoDaMeta` dá a
+  barra do PDV (`components/MetaDoDia.tsx`). O dono edita comissão e meta em
+  `(app)/mais/usuario-comissao` (ADR-37).
+- `components/relatorios/`: as seções novas da tela de Relatórios (equipe, curva ABC, a receber
+  do cartão, valor do estoque, estoque parado), uma por assunto. Chaves `relatorio-*` caem com
+  venda e despesa; `estoque-parado` e `valor-do-estoque` caem com qualquer aviso de `estoque`.
 
 Fluxo do PDV: bipar → item no carrinho → (qtd/desconto) → cobrar → formas de pagamento (misto,
 com ajuste do centavo na última parcela) → confirma → `POST /vendas` com `client_uuid` → limpa
@@ -1249,6 +1334,8 @@ módulos ES em `js/`.
 | `js/leitor.js` | Captura do leitor USB (teclado) e foco permanente no campo de leitura |
 | `js/grafico.js` | Barras e proporções em SVG escrito à mão — sem biblioteca, sem CDN |
 | `js/views/*.js` | Uma tela por arquivo, `export function render(raiz, params, consulta)` |
+| `js/views/relatorios-*.js` | Os cartões da tela de Relatórios com lista própria (repor, equipe, curva ABC, a receber, giro do estoque) e os cartões do resumo — cada um pagina no servidor e guarda a página na URL |
+| `js/views/pdv-meta.js` | "Hoje: R$ X de R$ meta" no PDV de quem está logado (ADR-37); se atualiza sozinha sem redesenhar o PDV |
 
 **Leitor USB.** O leitor de balcão é um teclado: digita os dígitos em rajada e manda Enter. Não há
 API de navegador para isso. `leitor.js` ouve o `keydown` do documento inteiro em fase de captura,

@@ -6,14 +6,18 @@ import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } 
 import { mensagemDoErro } from '@/api/client';
 import { usuarios } from '@/api/endpoints';
 import { Carregando, ErroEstado, Etiqueta } from '@/components/ui';
+import { resumoDaComissao } from '@/lib/comissao';
+import { formatar } from '@/lib/money';
 import { chaves, queryClient } from '@/lib/queryClient';
-import { titulo } from '@/lib/permissoes';
+import { PODE, pode, titulo } from '@/lib/permissoes';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
 import { useAuthStore } from '@/stores/authStore';
 
 export default function Usuarios() {
   const router = useRouter();
   const eu = useAuthStore((e) => e.usuario);
+  // Comissão e meta são do dono (ADR-37): para os outros, a linha não abre nada.
+  const defineComissao = pode(eu?.papel, PODE.DEFINIR_COMISSAO);
 
   const consulta = useQuery({
     queryKey: chaves.usuarios,
@@ -50,9 +54,21 @@ export default function Usuarios() {
       >
         {consulta.data.items.map((usuario) => {
           const souEu = usuario.id === eu?.id;
+          const comissao = resumoDaComissao(
+            usuario.comissao_percentual,
+            usuario.meta_diaria,
+            formatar,
+          );
           return (
             <View key={usuario.id} style={s.item}>
-              <View style={s.itemInfo}>
+              <Pressable
+                style={s.itemInfo}
+                disabled={!defineComissao}
+                onPress={() =>
+                  router.push({ pathname: '/mais/usuario-comissao', params: { id: usuario.id } })
+                }
+                accessibilityHint={defineComissao ? 'Abre comissão e meta do dia' : undefined}
+              >
                 <Text style={s.nome}>
                   {usuario.nome}
                   {souEu ? ' (você)' : ''}
@@ -68,7 +84,13 @@ export default function Usuarios() {
                     <Etiqueta texto="desativado" cor={cores.perigoFraco} corTexto={cores.perigo} />
                   )}
                 </View>
-              </View>
+                {(!!comissao || defineComissao) && (
+                  <Text style={s.comissao}>
+                    {comissao || 'sem comissão nem meta'}
+                    {defineComissao ? '  ›' : ''}
+                  </Text>
+                )}
+              </Pressable>
 
               {!souEu && (
                 <Pressable
@@ -130,6 +152,7 @@ const s = StyleSheet.create({
   nome: { fontSize: fonte.base, fontWeight: '700', color: cores.texto },
   email: { fontSize: fonte.pequena, color: cores.textoSuave },
   etiquetas: { flexDirection: 'row', gap: espaco.xs, marginTop: espaco.xs },
+  comissao: { fontSize: fonte.pequena, color: cores.primaria, marginTop: espaco.xs },
 
   botaoFlutuante: {
     position: 'absolute',
