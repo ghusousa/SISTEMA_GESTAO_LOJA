@@ -23,6 +23,7 @@ import { mensagemDoErro } from '@/api/client';
 import { vendas } from '@/api/endpoints';
 import type { ConfiguracaoLoja, FormaPagamento, Venda } from '@/api/tipos';
 import { Botao, Carregando, ErroEstado } from '@/components/ui';
+import { rotuloPagamento } from '@/lib/cartao';
 import { formatar, formatarSemSimbolo, paraCentavos } from '@/lib/money';
 import { chaves } from '@/lib/queryClient';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
@@ -72,7 +73,7 @@ export function reciboEmTexto(venda: Venda, loja?: DadosDaLoja): string {
   linhas.push('');
 
   for (const p of venda.pagamentos) {
-    linhas.push(`${ROTULO_FORMA[p.forma] ?? p.forma}: ${formatar(paraCentavos(p.valor))}`);
+    linhas.push(`${rotuloPagamento(p, ROTULO_FORMA)}: ${formatar(paraCentavos(p.valor))}`);
   }
 
   if (venda.pagamentos.some((p) => p.forma === 'FIADO')) {
@@ -171,7 +172,7 @@ export default function Recibo() {
 
           {venda.pagamentos.map((p, i) => (
             <View key={`${p.forma}-${i}`} style={s.conta}>
-              <Text style={s.contaRotulo}>{ROTULO_FORMA[p.forma] ?? p.forma}</Text>
+              <Text style={s.contaRotulo}>{rotuloPagamento(p, ROTULO_FORMA)}</Text>
               <Text style={s.contaValor}>{formatar(paraCentavos(p.valor))}</Text>
             </View>
           ))}

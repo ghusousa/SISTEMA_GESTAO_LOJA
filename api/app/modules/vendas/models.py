@@ -12,6 +12,7 @@ from sqlalchemy import (
     Index,
     Integer,
     Numeric,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -201,6 +202,26 @@ class SalePayment(Base):
             ["sales.id", "sales.customer_id"],
             name="sale_id_customer_id_sales",
         ),
+        # Parcelado só existe no crédito: "débito em 3x" ou "PIX em 2x" é erro de tela, e
+        # viraria três recebíveis que a conta nunca recebe (ADR-35).
+        CheckConstraint(
+            "parcelas >= 1 AND (parcelas = 1 OR method = 'CREDITO')", name="parcelas"
+        ),
+        # Bandeira e prazo são do cartão; taxa só o cartão paga. O prazo é obrigatório no
+        # cartão porque é dele que sai a data da agenda de recebíveis.
+        CheckConstraint(
+            "bandeira IS NULL OR method IN ('DEBITO','CREDITO')", name="bandeira_so_cartao"
+        ),
+        CheckConstraint(
+            "taxa_percentual >= 0 AND taxa_percentual < 100"
+            " AND (taxa_percentual = 0 OR method IN ('DEBITO','CREDITO'))",
+            name="taxa_percentual",
+        ),
+        CheckConstraint(
+            "(method IN ('DEBITO','CREDITO')) = (prazo_dias IS NOT NULL)"
+            " AND (prazo_dias IS NULL OR prazo_dias >= 0)",
+            name="prazo_so_cartao",
+        ),
         Index("ix_sale_payments_sale_id", "sale_id"),
         # Só o fiado: "vendido a prazo" no resumo do mês e a dívida de cada cliente somam
         # exatamente isto, e é uma fração pequena dos pagamentos.
@@ -219,6 +240,21 @@ class SalePayment(Base):
     voucher_id: Mapped[int | None] = mapped_column(ForeignKey("vouchers.id", ondelete="RESTRICT"))
     #: Só preenchido em pagamento FIADO — e então igual ao cliente da venda (FK composta).
     customer_id: Mapped[int | None] = mapped_column()
+    #: Em quantas vezes a cliente parcelou no crédito. 1 em toda outra forma.
+    parcelas: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=1, server_default="1"
+    )
+    #: Visa, Mastercard, Elo… Opcional e livre: serve para conferir o extrato da
+    #: credenciadora, não para calcular nada.
+    bandeira: Mapped[str | None] = mapped_column(String(20))
+    #: Taxa da maquininha FOTOGRAFADA na venda (ADR-35). Mudar a tabela de taxas amanhã não
+    #: reescreve o resultado de hoje — mesmo princípio do custo congelado em `sale_items`.
+    taxa_percentual: Mapped[Decimal] = mapped_column(
+        Numeric(5, 2), nullable=False, default=Decimal("0.00"), server_default="0"
+    )
+    #: Dias até cair na conta (no parcelado, a 1ª parcela; as outras de 30 em 30). Também
+    #: fotografado: a agenda de recebíveis não muda porque o contrato mudou depois.
+    prazo_dias: Mapped[int | None] = mapped_column(SmallInteger)
 
     sale: Mapped[Sale] = relationship(
         back_populates="payments", foreign_keys="SalePayment.sale_id"

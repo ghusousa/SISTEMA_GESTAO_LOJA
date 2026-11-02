@@ -352,7 +352,7 @@ async def test_reenvio_com_outro_carrinho_e_recusado_e_nao_devolve_a_venda_antig
     assert await _saldo(client, auth_vendedor, loja["camiseta"]) == 9
     assert await _saldo(client, auth_vendedor, loja["calca"]) == 1
     venda = (await client.get(f"/vendas/{primeira.json()['id']}", headers=auth_vendedor)).json()
-    assert venda["pagamentos"] == [{"forma": "PIX", "valor": "49.90"}]
+    assert [(p["forma"], p["valor"]) for p in venda["pagamentos"]] == [("PIX", "49.90")]
 
 
 async def test_duas_vendas_simultaneas_da_ultima_peca_so_uma_passa(

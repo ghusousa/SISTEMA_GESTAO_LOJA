@@ -27,10 +27,12 @@ from app.modules.vendas.models import (
     StatusVenda,
     Voucher,
 )
+from app.modules.taxas.service import TaxaService, valor_da_taxa
 from app.modules.vendas.repository import VendaRepository
 from app.modules.vendas.schemas import (
     ItemVendaAdminOut,
     ItemVendaOut,
+    PagamentoAdminOut,
     PagamentoOut,
     VendaAdminOut,
     VendaIn,
@@ -142,10 +144,14 @@ class VendaService:
                     unit_cost=variante.cost_price,
                 )
             )
+        taxas = TaxaService(self.session)
         for pagamento in dados.pagamentos:
             voucher_id = None
             if pagamento.forma == FormaPagamento.VALE:
                 voucher_id = await self._consumir_vale(pagamento.codigo_vale, pagamento.valor)
+            # A taxa da maquininha é FOTOGRAFADA aqui (ADR-35): a tabela de amanhã não
+            # reescreve o resultado de hoje. Fora do cartão não há taxa nem prazo.
+            aplicada = await taxas.aplicada(pagamento.forma, pagamento.parcelas)
             self.session.add(
                 SalePayment(
                     sale_id=venda.id,
@@ -156,6 +162,10 @@ class VendaService:
                     customer_id=(
                         dados.cliente_id if pagamento.forma == FormaPagamento.FIADO else None
                     ),
+                    parcelas=pagamento.parcelas,
+                    bandeira=pagamento.bandeira,
+                    taxa_percentual=aplicada.percentual if aplicada else Decimal("0.00"),
+                    prazo_dias=aplicada.prazo_dias if aplicada else None,
                 )
             )
 
@@ -190,13 +200,21 @@ class VendaService:
         """
         if not pode(usuario.role, Pode.VER_VENDAS_DE_TODOS) and venda.seller_id != usuario.id:
             raise SemPermissao("Esta venda pertence a outro vendedor.")
+        # Parcelas e bandeira fazem parte do pedido: "crédito 1x" reenviado como "crédito
+        # 3x" é outra cobrança, e a agenda de recebíveis da primeira não serve para ela.
         pedido = (
             sorted((i.variante_id, i.quantidade) for i in dados.itens),
-            sorted((FormaPagamento(p.forma), p.valor) for p in dados.pagamentos),
+            sorted(
+                (FormaPagamento(p.forma), p.valor, p.parcelas, p.bandeira or "")
+                for p in dados.pagamentos
+            ),
         )
         gravado = (
             sorted((i.variant_id, i.quantity) for i in venda.items),
-            sorted((FormaPagamento(p.method), p.amount) for p in venda.payments),
+            sorted(
+                (FormaPagamento(p.method), p.amount, p.parcelas, p.bandeira or "")
+                for p in venda.payments
+            ),
         )
         if pedido != gravado:
             raise Duplicado(
@@ -476,14 +494,35 @@ class VendaService:
             "cliente": await self.repo.nome_do_cliente(venda.customer_id),
             "observacao": venda.note,
             "itens": itens,
-            "pagamentos": [
-                PagamentoOut(forma=p.method, valor=p.amount) for p in venda.payments
-            ],
         }
+        pagamento_comum = [
+            {
+                "forma": p.method,
+                "valor": p.amount,
+                "parcelas": p.parcelas,
+                "bandeira": p.bandeira,
+            }
+            for p in venda.payments
+        ]
         if not admin:
-            return VendaOut(**comum_venda)
+            return VendaOut(
+                **comum_venda, pagamentos=[PagamentoOut(**p) for p in pagamento_comum]
+            )
 
+        # A taxa da maquininha é dinheiro da loja: só sai pelo schema de quem vê dinheiro.
+        pagamentos = [
+            PagamentoAdminOut(
+                **comum,
+                taxa_percentual=p.taxa_percentual,
+                taxa=valor_da_taxa(p.amount, p.taxa_percentual),
+            )
+            for comum, p in zip(pagamento_comum, venda.payments, strict=True)
+        ]
         custo_total = sum((i.unit_cost * i.quantity for i in venda.items), ZERO)
         return VendaAdminOut(
-            **comum_venda, custo_total=custo_total, lucro_bruto=venda.total - custo_total
+            **comum_venda,
+            pagamentos=pagamentos,
+            custo_total=custo_total,
+            lucro_bruto=venda.total - custo_total,
+            taxas_cartao=sum((p.taxa for p in pagamentos), ZERO),
         )

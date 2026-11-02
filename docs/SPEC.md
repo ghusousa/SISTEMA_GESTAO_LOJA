@@ -13,10 +13,10 @@ o superior não tenha.
 
 | Cargo | Além do degrau anterior | O que NÃO alcança |
 |---|---|---|
-| **Vendedora** (`VENDEDOR`) | Vende no PDV, bipa e consulta preço, cadastra peça nova, dá entrada de mercadoria | Custo, lucro, despesas, relatórios, estorno, ajuste de estoque, inventário, vendas das colegas |
+| **Vendedora** (`VENDEDOR`) | Vende no PDV, bipa e consulta preço, cadastra peça nova, dá entrada de mercadoria; busca e cadastra cliente no balcão e põe o nome dela em qualquer venda, sem ver saldo nem limite | Custo, lucro, despesas, relatórios, estorno, ajuste de estoque, inventário, vendas das colegas, fiado, taxa da maquininha |
 | **Supervisora** (`SUPERVISORA`) | Ajusta estoque, faz inventário, edita e exclui produtos e categorias, confere e fecha o caixa do dia, vê as vendas de toda a equipe | Custo, lucro, despesas, relatórios, estorno, devolução, crediário, logins da equipe |
-| **Gerente** (`GERENTE`) | Vê custo, lucro e margem; lança despesas; abre relatórios; cancela venda concluída; recebe peça de volta (devolução) e cuida do crediário; administra os logins da equipe | A conta do dono (não cria, não promove, não edita, não redefine a senha dele), o **diário de auditoria** e o **nome da loja** — a identidade do negócio é do dono |
-| **Dono** (`ADMIN`) | Tudo, inclusive criar e promover outro dono, o **diário de auditoria** (tudo que cada login fez) e o **nome e ramo da loja** | — |
+| **Gerente** (`GERENTE`) | Vê custo, lucro e margem; lança despesas; abre relatórios (e lê as taxas da maquininha que o resultado desconta); cancela venda concluída; recebe peça de volta (devolução) e cuida do crediário; administra os logins da equipe | A conta do dono (não cria, não promove, não edita, não redefine a senha dele), o **diário de auditoria**, o **nome da loja** e a **tabela de taxas da maquininha** — a identidade e os contratos do negócio são do dono |
+| **Dono** (`ADMIN`) | Tudo, inclusive criar e promover outro dono, o **diário de auditoria** (tudo que cada login fez), o **nome e ramo da loja** e a **tabela de taxas da maquininha** | — |
 
 **Quatro decisões que a loja tomou e que o sistema faz valer:**
 
@@ -51,16 +51,23 @@ A loja consegue operar 100% sem celular.
   estorno). O saldo nunca é editado direto: é consequência das movimentações. Isso dá auditoria
   completa ("por que tenho 3 e não 5?").
 - **Venda** — o que saiu no PDV: itens (com preço e custo **congelados** no momento da venda),
-  pagamentos (pode ser misto) e desconto.
+  pagamentos (pode ser misto) e desconto. Pode levar o nome da cliente, em qualquer forma de
+  pagamento. No crédito, guarda em quantas vezes (1 a 12) e a bandeira; no cartão, a taxa da
+  maquininha e o prazo para cair na conta, **congelados** no momento da venda.
+- **Taxa da maquininha** — o contrato do dono com a credenciadora: quanto o débito e cada faixa
+  de parcelas do crédito custam, e em quantos dias o dinheiro cai. O resultado do mês desconta
+  essas taxas, e a agenda de recebíveis mostra quanto cai na conta em cada dia.
 - **Devolução** — a cliente voltou com a peça. Registra o que voltou, quanto saiu e por qual
   forma. Cada peça decide se volta ao estoque (a manchada não volta). Não existe "modo
   troca": troca é devolução + venda nova.
 - **Vale de troca** — papel com código, gerado quando o valor não pode voltar pela forma que
   entrou. Vale como pagamento na próxima compra, inteiro ou em parte.
-- **Cliente do crediário** — quem leva no fiado. Tem nome, telefone e um limite **combinado**
-  que avisa, mas não bloqueia. Quanto deve é sempre calculado, nunca guardado. Quitada, pode ter
-  o cadastro excluído a pedido dela: nome, telefone, documento e observação são apagados na hora
-  (o cadastro vira "Cliente removido") e as compras ficam no histórico, sem o nome.
+- **Cliente** — quem compra. Tem nome, telefone, aniversário e preferências (tamanho, estilo); o
+  balcão busca e cadastra sem ver dinheiro, e a ficha mostra todas as compras dela. Quem leva no
+  **fiado** tem também um limite **combinado** que avisa, mas não bloqueia, e quanto deve é
+  sempre calculado, nunca guardado. Quitada, pode ter o cadastro excluído a pedido dela: nome,
+  telefone, documento, aniversário, preferências e observação são apagados na hora (o cadastro
+  vira "Cliente removido") e as compras ficam no histórico, sem o nome.
 - **Despesa** — saída de dinheiro que não é compra de mercadoria (aluguel, energia, salário...),
   com categoria e marcação de recorrente.
 - **Fechamento de caixa** — conferência diária: quanto o sistema esperava por forma de pagamento
@@ -158,6 +165,13 @@ A loja consegue operar 100% sem celular.
 - Loja fora do ar, disco quase cheio, backup da nuvem atrasado ou rotina da máquina que falhou
   avisam o dono (ntfy), sem repetir o mesmo aviso antes de uma hora.
 - Instalar pelo IP público é recusado: HTTP puro só dentro da rede da loja.
+- A taxa da maquininha fica congelada em cada venda: mudar ou apagar a tabela vale só daqui
+  para frente. O resultado do período desconta as taxas das vendas no cartão e devolve a taxa
+  da parte devolvida pelo cartão. Só o crédito parcela (até 12x); débito e PIX, nunca.
+- Só o dono muda as taxas da maquininha; quem vê dinheiro as lê; a vendedora não as vê.
+- O balcão busca e cadastra cliente sem ver saldo, limite ou observação do crediário; vender
+  fiado continua sendo de quem cuida do crediário. Cadastro reenviado pela rede não duplica a
+  cliente.
 
 ## Fora do escopo do v1
 
@@ -168,4 +182,6 @@ notificações push, parcelamento do crediário em datas fixas (hoje é dívida 
 qualquer valor), cobrança automática por mensagem.
 
 *Saíram de "fora do escopo" e hoje existem:* impressão de etiquetas, recibo da venda, cadastro de
-clientes, trocas com vale, e o sistema servir a outros ramos além de roupas.
+clientes, trocas com vale, o sistema servir a outros ramos além de roupas, taxa da maquininha com
+crédito parcelado e agenda de recebíveis (sem TEF integrada: a maquininha segue à parte), e
+cliente em qualquer venda, com aniversário, preferências e histórico de compras (sem pontos).

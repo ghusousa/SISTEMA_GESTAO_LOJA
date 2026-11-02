@@ -48,6 +48,10 @@ export const chaves = {
   cliente: (id: number) => ['clientes', id] as const,
   extratoCliente: (id: number) => ['clientes', id, 'extrato'] as const,
   devolucoesDaVenda: (vendaId: number) => ['devolucoes', vendaId] as const,
+  /** Mudar a taxa NÃO invalida relatório: a venda guarda a taxa do dia dela (ADR-35). */
+  taxasCartao: ['taxas-cartao'] as const,
+  aniversariantes: (mes: number) => ['clientes', 'aniversariantes', mes] as const,
+  comprasDaCliente: (id: number) => ['vendas', 'cliente', id] as const,
 };
 
 /**

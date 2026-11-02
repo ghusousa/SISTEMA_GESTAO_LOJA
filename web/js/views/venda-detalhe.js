@@ -10,7 +10,6 @@ import { formatar, paraCentavos } from '../dinheiro.js';
 import { recarregarRota } from '../router.js';
 import { PODE, pode } from '../permissoes.js';
 import {
-  FORMAS,
   ajuda,
   aviso,
   avisarErro,
@@ -24,6 +23,7 @@ import {
   numero,
   perguntarTexto,
   plural,
+  rotuloPagamento,
 } from '../ui.js';
 
 export async function render(raiz, { id }) {
@@ -82,7 +82,7 @@ export async function render(raiz, { id }) {
         <div class="indicador indicador--destaque">
           <div class="indicador__rotulo">Total</div>
           <div class="indicador__valor dinheiro">${formatar(total)}</div>
-          <div class="indicador__nota">${venda.pagamentos.map((p) => FORMAS[p.forma] || p.forma).join(' + ')}</div>
+          <div class="indicador__nota">${venda.pagamentos.map((p) => rotuloPagamento(p)).join(' + ')}</div>
         </div>
         ${veDinheiro
           ? cru(html`
@@ -92,7 +92,7 @@ export async function render(raiz, { id }) {
                 <div class="indicador__nota">congelado no momento da venda</div>
               </div>
               <div class="indicador">
-                <div class="indicador__rotulo">Lucro bruto ${ajuda('Total da venda menos o custo das peças. Ainda não desconta as despesas da loja nem a taxa da maquininha.')}</div>
+                <div class="indicador__rotulo">Lucro bruto ${ajuda('Total da venda menos o custo das peças. Não desconta as despesas da loja nem a taxa da maquininha — o Resultado dos relatórios desconta as duas.')}</div>
                 <div class="indicador__valor dinheiro ${cru(lucro < 0 ? 'negativo' : 'positivo')}">${formatar(lucro)}</div>
                 <div class="indicador__nota">
                   ${total > 0 ? `${numero(Math.round((lucro / total) * 100))}% do total` : '—'}
@@ -163,7 +163,10 @@ export async function render(raiz, { id }) {
           ${venda.pagamentos.map(
             (p) => html`
               <div class="pagamento-linha">
-                <strong>${FORMAS[p.forma] || p.forma}</strong>
+                <strong>${rotuloPagamento(p)}</strong>
+                ${veDinheiro && paraCentavos(p.taxa) > 0
+                  ? cru(html`<span class="texto-suave">maquininha ${formatar(paraCentavos(p.taxa))} (${p.taxa_percentual}%)</span>`)
+                  : ''}
                 <span class="dinheiro">${formatar(paraCentavos(p.valor))}</span>
               </div>
             `,

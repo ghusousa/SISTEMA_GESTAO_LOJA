@@ -24,6 +24,10 @@ class ResumoOut(BaseModel):
     cmv_devolvido: Decimal = Decimal("0.00")
     lucro_bruto: Decimal
     despesas: Decimal
+    #: O que a maquininha ficou das vendas no cartão do período, já abatida a taxa da parte
+    #: devolvida no período (ADR-35). Sai do resultado: é custo de receber, não de vender.
+    taxas_cartao: Decimal = Decimal("0.00")
+    #: `lucro_bruto - despesas - taxas_cartao`.
     resultado: Decimal
     #: Sobre o faturamento BRUTO, com o denominador bruto — misturar numerador líquido com
     #: denominador bruto é o erro que faz a margem parecer o que não é.
@@ -75,3 +79,15 @@ class EstoqueBaixoOut(BaseModel):
     estoque_minimo: int
     faltam: int
     preco_custo: Decimal
+
+
+class RecebivelOut(BaseModel):
+    """Quanto cai na conta num dia: o bruto das parcelas, a taxa e o que sobra (ADR-35).
+
+    Estorno no cartão aparece no dia da devolução, com valores negativos.
+    """
+
+    data: date
+    bruto: Decimal
+    taxa: Decimal
+    liquido: Decimal

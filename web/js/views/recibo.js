@@ -15,7 +15,7 @@
 
 import { api } from '../api.js';
 import { formatar, paraCentavos } from '../dinheiro.js';
-import { avisarErro, cru, dataHora, grade, html, numero, plural } from '../ui.js';
+import { avisarErro, cru, dataHora, grade, html, numero, plural, rotuloPagamento } from '../ui.js';
 import { garantirDadosDaLoja, loja } from '../loja.js';
 
 const FORMAS = {
@@ -95,7 +95,7 @@ export async function render(raiz, params) {
           ${venda.pagamentos.map(
             (p) => html`
               <div class="recibo__pagamento">
-                <span>${FORMAS[p.forma] || p.forma}</span>
+                <span>${rotuloPagamento(p, FORMAS)}</span>
                 <span class="dinheiro">${formatar(paraCentavos(p.valor))}</span>
               </div>
             `,

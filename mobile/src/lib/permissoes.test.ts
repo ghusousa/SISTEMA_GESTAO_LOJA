@@ -29,6 +29,9 @@ const TABELA: [Capacidade, Papel[]][] = [
   [PODE.CORRIGIR_ESTOQUE, [DONO, GERENTE, SUPERVISORA]],
   [PODE.EDITAR_CATALOGO, [DONO, GERENTE, SUPERVISORA]],
   [PODE.FECHAR_CAIXA, [DONO, GERENTE, SUPERVISORA]],
+  [PODE.GERIR_CREDIARIO, [DONO, GERENTE]],
+  // Buscar e cadastrar cliente no balcão é de todo mundo; o fiado, não (ADR-36).
+  [PODE.ATENDER_CLIENTE, [DONO, GERENTE, SUPERVISORA, VENDEDORA]],
 ];
 
 for (const [capacidade, quemPode] of TABELA) {
@@ -39,9 +42,9 @@ for (const [capacidade, quemPode] of TABELA) {
   });
 }
 
-test('a vendedora não tem capacidade nenhuma além de vender e consultar', () => {
+test('a vendedora só atende cliente além de vender e consultar', () => {
   for (const capacidade of Object.values(PODE)) {
-    assert.equal(pode(VENDEDORA, capacidade), false, capacidade);
+    assert.equal(pode(VENDEDORA, capacidade), capacidade === PODE.ATENDER_CLIENTE, capacidade);
   }
 });
 

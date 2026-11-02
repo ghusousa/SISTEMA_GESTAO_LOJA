@@ -11,6 +11,7 @@
  */
 
 import { api } from '../api.js';
+import { mostrarCompras } from '../compras-da-cliente.js';
 import { formatar, paraCentavos, paraDecimalString } from '../dinheiro.js';
 import { novoClientUuid } from '../store.js';
 import { trocarConsulta } from '../router.js';
@@ -151,6 +152,10 @@ export async function render(raiz, _params, consulta) {
           <label class="campo"><span>Nome</span><input data-nome maxlength="120" placeholder="Maria da Silva" /></label>
           <label class="campo"><span>Telefone</span><input data-telefone maxlength="20" placeholder="(11) 99999-8888" /></label>
           <label class="campo"><span>Documento <span class="campo__dica">opcional</span></span><input data-documento maxlength="20" /></label>
+          <div class="linha-campos">
+            <label class="campo"><span>Aniversário <span class="campo__dica">opcional</span></span><input data-nascimento type="date" /></label>
+            <label class="campo"><span>Preferências <span class="campo__dica">tamanho, estilo</span></span><input data-preferencias maxlength="200" /></label>
+          </div>
           <label class="campo">
             <span>Limite combinado <span class="campo__dica">só avisa, não bloqueia</span> ${ajuda('Quanto você aceita deixar essa cliente dever. Passando disso a tela avisa e a venda continua: quem decide na hora é você.')}</span>
             <input data-limite inputmode="numeric" />
@@ -174,6 +179,8 @@ export async function render(raiz, _params, consulta) {
               telefone: corpo.querySelector('[data-telefone]').value.trim() || null,
               documento: corpo.querySelector('[data-documento]').value.trim() || null,
               limite: limite > 0 ? paraDecimalString(limite) : null,
+              nascimento: corpo.querySelector('[data-nascimento]').value || null,
+              preferencias: corpo.querySelector('[data-preferencias]').value.trim() || null,
             });
             fechar();
             aviso(`${nome} cadastrada.`);
@@ -214,6 +221,9 @@ export async function render(raiz, _params, consulta) {
         titulo: extrato.cliente.nome,
         largura: '620px',
         render: () => html`
+            ${extrato.cliente.nascimento || extrato.cliente.preferencias
+              ? cru(html`<p class="texto-suave">${[extrato.cliente.nascimento && `Aniversário ${formatarData(extrato.cliente.nascimento)}`, extrato.cliente.preferencias].filter(Boolean).join(' · ')}</p>`)
+              : ''}
             <div class="pdv__linha"><span class="texto-suave">Levou no fiado</span><span class="dinheiro">${formatar(paraCentavos(extrato.total_fiado))}</span></div>
             <div class="pdv__linha"><span class="texto-suave">Já pagou</span><span class="dinheiro">${formatar(paraCentavos(extrato.total_pago))}</span></div>
             <div class="pdv__linha"><span class="texto-suave">Devolveu</span><span class="dinheiro">${formatar(paraCentavos(extrato.total_devolvido))}</span></div>
@@ -231,18 +241,22 @@ export async function render(raiz, _params, consulta) {
             ${temMais(extrato)
               ? cru('<button class="botao botao--neutro botao--largo" style="margin-top:12px" data-mais>Carregar mais</button>')
               : ''}
+
+            <h3 style="margin-top:16px">Todas as compras</h3>
+            <div data-historico></div>
             ${Number(extrato.deve) > 0
               ? ''
               : cru('<button class="botao botao--fantasma botao--pequeno" style="margin-top:16px" data-excluir>Excluir cadastro (pedido da cliente)</button>')}
         `,
         aoAbrir: (corpo, fechar) => {
+          void mostrarCompras(corpo.querySelector('[data-historico]'), clienteId);
           // LGPD: só quitada. A API anonimiza (nome, telefone, CPF e observação somem) e as
           // vendas ficam — a mensagem diz exatamente isso, que é o que a página pública promete.
           corpo.querySelector('[data-excluir]')?.addEventListener('click', async () => {
             fechar();
             const ok = await confirmar({
               titulo: 'Excluir o cadastro',
-              mensagem: `Nome, telefone, CPF e observação de ${extrato.cliente.nome} serão apagados de vez. As compras continuam no histórico, sem o nome. Não tem volta.`,
+              mensagem: `Nome, telefone, CPF, aniversário, preferências e observação de ${extrato.cliente.nome} serão apagados de vez. As compras continuam no histórico, sem o nome. Não tem volta.`,
               confirmarTexto: 'Excluir',
               perigo: true,
             });

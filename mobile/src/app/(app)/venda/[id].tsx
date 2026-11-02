@@ -13,6 +13,7 @@ import { mensagemDoErro } from '@/api/client';
 import { vendas } from '@/api/endpoints';
 import type { FormaPagamento } from '@/api/tipos';
 import { Botao, Carregando, Cartao, ErroEstado, Etiqueta, Linha, Separador } from '@/components/ui';
+import { rotuloPagamento } from '@/lib/cartao';
 import { formatar, paraCentavos } from '@/lib/money';
 import { chaves, invalidarAposVenda } from '@/lib/queryClient';
 import { PODE, pode } from '@/lib/permissoes';
@@ -172,7 +173,7 @@ export default function DetalheVenda() {
         {venda.pagamentos.map((p, indice) => (
           <Linha
             key={`${p.forma}-${indice}`}
-            esquerda={ROTULO_FORMA[p.forma]}
+            esquerda={rotuloPagamento(p, ROTULO_FORMA)}
             direita={formatar(paraCentavos(p.valor))}
           />
         ))}
@@ -191,6 +192,14 @@ export default function DetalheVenda() {
             direita={formatar(paraCentavos(venda.lucro_bruto))}
             destaque
           />
+          {/* A taxa fotografada na venda (ADR-35). O lucro bruto não a desconta; o
+              Resultado dos relatórios, sim. */}
+          {paraCentavos(venda.taxas_cartao ?? '0') > 0 && (
+            <Linha
+              esquerda="Taxa da maquininha"
+              direita={`− ${formatar(paraCentavos(venda.taxas_cartao ?? '0'))}`}
+            />
+          )}
         </Cartao>
       )}
 

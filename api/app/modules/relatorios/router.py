@@ -10,6 +10,7 @@ from app.modules.relatorios.schemas import (
     DiaVendaOut,
     EstoqueBaixoOut,
     MaisVendidoOut,
+    RecebivelOut,
     ResumoOut,
 )
 from app.modules.relatorios.service import RelatorioService
@@ -78,3 +79,20 @@ async def estoque_baixo(
     # Paginada como toda listagem. Quem só mostra "N peças no mínimo" pede `size=1` e lê
     # o `total` — não baixa a lista inteira para contar.
     return await RelatorioService(session).estoque_baixo(p)
+
+
+@router.get(
+    "/recebiveis",
+    response_model=Pagina[RecebivelOut],
+    summary="Agenda do cartão: bruto, taxa e líquido por dia previsto de crédito",
+)
+async def recebiveis(
+    session: SessionDep,
+    _: ExigeDinheiro,
+    inicio: Inicio,
+    fim: Fim,
+    p: Annotated[Paginacao, Depends(paginacao)],
+) -> Pagina[RecebivelOut]:
+    # O período é o da DATA PREVISTA de crédito, não o da venda: "quanto cai na conta em
+    # dezembro" inclui a 3ª parcela de uma venda de outubro.
+    return await RelatorioService(session).recebiveis(inicio, fim, p)

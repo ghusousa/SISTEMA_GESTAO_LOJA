@@ -17,12 +17,16 @@ cobrando. Sem a terceira, a cliente que devolveu a peça segue devendo por ela.
 from decimal import Decimal
 
 from sqlalchemy import Select, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.datas import hoje_na_loja
 from app.core.exceptions import Duplicado, NaoEncontrado, OperacaoInvalida, Validacao
 from app.core.pagination import Pagina, Paginacao
 from app.modules.clientes.models import Customer, CustomerPayment
 from app.modules.clientes.schemas import (
+    ClienteBalcaoIn,
+    ClienteBalcaoOut,
     ClienteIn,
     ClienteOut,
     ClienteUpdate,
@@ -114,6 +118,8 @@ class ClienteService:
             document=dados.documento,
             credit_limit=dados.limite,
             note=dados.observacao,
+            nascimento=dados.nascimento,
+            preferencias=dados.preferencias,
         )
         self.session.add(cliente)
         await self.session.commit()
@@ -128,6 +134,8 @@ class ClienteService:
             ("documento", "document"),
             ("limite", "credit_limit"),
             ("observacao", "note"),
+            ("nascimento", "nascimento"),
+            ("preferencias", "preferencias"),
         ):
             valor = getattr(dados, campo)
             if valor is not None:
@@ -165,6 +173,9 @@ class ClienteService:
         cliente.phone = None
         cliente.document = None
         cliente.note = None
+        # Aniversário e gosto pessoal também são dado pessoal (ADR-36): somem junto.
+        cliente.nascimento = None
+        cliente.preferencias = None
         await self.session.commit()
 
     async def _recusar_repetido(
@@ -187,6 +198,105 @@ class ClienteService:
                 f"Já existe um cliente com esse telefone ou documento: {existente.name}.",
                 {"cliente_id": existente.id},
             )
+
+    # ---------------------------------------------------------------- balcão
+    # Buscar e cadastrar no balcão (`ATENDER_CLIENTE`, ADR-36). Tudo aqui responde
+    # `ClienteBalcaoOut` — nenhum saldo, limite ou observação do crediário sai por estas
+    # portas, nem calculado: a conta do `deve` nem chega a rodar.
+
+    @staticmethod
+    def _filtro_busca(stmt: Select, q: str | None) -> Select:
+        """Nome sem acento, telefone ou documento — a mesma busca do crediário."""
+        if not q:
+            return stmt
+        from app.modules.catalogo.repository import _achatar, achatar_termo
+
+        termo = f"%{achatar_termo(q)}%"
+        so_digitos = "".join(c for c in q if c.isdigit())
+        condicoes = [_achatar(Customer.name).like(termo)]
+        if so_digitos:
+            condicoes.append(Customer.phone.like(f"%{so_digitos}%"))
+            condicoes.append(Customer.document.like(f"%{so_digitos}%"))
+        return stmt.where(or_(*condicoes))
+
+    async def buscar_no_balcao(self, p: Paginacao, q: str | None) -> Pagina[ClienteBalcaoOut]:
+        stmt = self._filtro_busca(select(Customer).where(Customer.deleted_at.is_(None)), q)
+        total = await self._contar(stmt)
+        linhas = (
+            await self.session.execute(
+                stmt.order_by(Customer.name, Customer.id).offset(p.offset).limit(p.limit)
+            )
+        ).scalars()
+        return Pagina.montar([ClienteBalcaoOut.model_validate(c) for c in linhas], total, p)
+
+    async def _por_client_uuid(self, client_uuid) -> Customer | None:
+        return (
+            await self.session.execute(
+                select(Customer).where(Customer.client_uuid == client_uuid)
+            )
+        ).scalar_one_or_none()
+
+    def _replay_balcao(self, cliente: Customer, dados: ClienteBalcaoIn) -> ClienteBalcaoOut:
+        """A mesma chave com OUTRO cadastro é 409, nunca o cadastro antigo como sucesso.
+
+        Devolver a "Ana" gravada para um pedido de "Maria" com a chave reaproveitada poria
+        a venda da Maria no nome da Ana — e o histórico das duas ficaria errado.
+        """
+        if (cliente.name, cliente.phone) != (dados.nome, dados.telefone):
+            raise Duplicado(
+                f"Este cadastro já foi gravado com outro nome ou telefone (cliente "
+                f"#{cliente.id}). Procure a cliente antes de cadastrar de novo.",
+                {"cliente_id": cliente.id},
+            )
+        self.replay = True
+        return ClienteBalcaoOut.model_validate(cliente)
+
+    async def cadastrar_no_balcao(self, dados: ClienteBalcaoIn) -> ClienteBalcaoOut:
+        ja = await self._por_client_uuid(dados.client_uuid)
+        if ja is not None:
+            return self._replay_balcao(ja, dados)
+        await self._recusar_repetido(dados.telefone, None)
+        cliente = Customer(
+            name=dados.nome,
+            phone=dados.telefone,
+            nascimento=dados.nascimento,
+            preferencias=dados.preferencias,
+            client_uuid=dados.client_uuid,
+        )
+        self.session.add(cliente)
+        try:
+            await self.session.commit()
+        except IntegrityError:
+            # Os dois toques chegaram juntos: o perdedor responde o que o vencedor gravou.
+            # (Ou o telefone entrou por outro aparelho no meio: aí o recado é o de sempre.)
+            await self.session.rollback()
+            ja = await self._por_client_uuid(dados.client_uuid)
+            if ja is not None:
+                return self._replay_balcao(ja, dados)
+            await self._recusar_repetido(dados.telefone, None)
+            raise
+        await self.session.refresh(cliente)
+        return ClienteBalcaoOut.model_validate(cliente)
+
+    async def aniversariantes(self, p: Paginacao, mes: int | None) -> Pagina[ClienteBalcaoOut]:
+        """Quem faz aniversário no mês (o da loja, se não vier), na ordem do calendário."""
+        mes = mes or hoje_na_loja().month
+        stmt = select(Customer).where(
+            Customer.deleted_at.is_(None),
+            Customer.nascimento.is_not(None),
+            func.extract("month", Customer.nascimento) == mes,
+        )
+        total = await self._contar(stmt)
+        linhas = (
+            await self.session.execute(
+                stmt.order_by(
+                    func.extract("day", Customer.nascimento), Customer.name, Customer.id
+                )
+                .offset(p.offset)
+                .limit(p.limit)
+            )
+        ).scalars()
+        return Pagina.montar([ClienteBalcaoOut.model_validate(c) for c in linhas], total, p)
 
     # --------------------------------------------------------------- saldos
     async def quanto_deve(self, cliente_id: int, *, travar: bool = False) -> Decimal:
@@ -229,17 +339,7 @@ class ClienteService:
     async def listar(
         self, p: Paginacao, q: str | None, somente_devendo: bool
     ) -> Pagina[ClienteOut]:
-        stmt = select(Customer).where(Customer.deleted_at.is_(None))
-        if q:
-            from app.modules.catalogo.repository import _achatar, achatar_termo
-
-            termo = f"%{achatar_termo(q)}%"
-            so_digitos = "".join(c for c in q if c.isdigit())
-            condicoes = [_achatar(Customer.name).like(termo)]
-            if so_digitos:
-                condicoes.append(Customer.phone.like(f"%{so_digitos}%"))
-                condicoes.append(Customer.document.like(f"%{so_digitos}%"))
-            stmt = stmt.where(or_(*condicoes))
+        stmt = self._filtro_busca(select(Customer).where(Customer.deleted_at.is_(None)), q)
 
         deve = _deve_expr()
         if somente_devendo:
