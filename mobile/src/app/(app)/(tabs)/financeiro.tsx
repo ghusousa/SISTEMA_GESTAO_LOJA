@@ -69,6 +69,9 @@ export default function Financeiro() {
   const r = resumo.data;
   const resultado = paraCentavos(r.resultado);
   const noVermelho = resultado < 0;
+  // Taxa da maquininha: o servidor que a calcula manda o campo e já a desconta do
+  // resultado. Servidor sem o cálculo não manda, e a linha some — nada de "R$ 0,00" mentindo.
+  const temTaxas = r.taxas_cartao !== undefined && r.taxas_cartao !== null;
 
   return (
     <ScrollView
@@ -90,6 +93,7 @@ export default function Financeiro() {
         <Text style={s.destaqueValor}>{formatar(resultado)}</Text>
         <Text style={s.destaqueAjuda}>
           Faturamento − custo das peças vendidas − despesas
+          {temTaxas ? ' − taxas de cartão' : ''}
         </Text>
       </View>
 
@@ -98,6 +102,7 @@ export default function Financeiro() {
         <Bloco rotulo="Custo das peças vendidas" valor={r.custo_mercadoria_vendida} negativo />
         <Bloco rotulo="Lucro bruto" valor={r.lucro_bruto} forte />
         <Bloco rotulo="Despesas" valor={r.despesas} negativo />
+        {temTaxas && <Bloco rotulo="Taxas de cartão" valor={r.taxas_cartao!} negativo />}
         <View style={s.separador} />
         <View style={s.indicadores}>
           <Indicador rotulo="Vendas" valor={String(r.quantidade_vendas)} />

@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
@@ -16,6 +17,11 @@ class UsuarioOut(BaseModel):
     papel: Papel = Field(validation_alias="role")
     ativo: bool = Field(validation_alias="is_active")
     criado_em: datetime = Field(validation_alias="created_at")
+    #: % sobre o faturamento líquido (ADR-37). Sai para quem administra a equipe e, no
+    #: `/auth/me`, para a própria pessoa — nunca a comissão de uma para a outra.
+    comissao_percentual: Decimal = Decimal("0.00")
+    #: Meta de venda do dia; `null` = sem meta.
+    meta_diaria: Decimal | None = None
 
 
 class UsuarioCreate(BaseModel):
@@ -23,6 +29,9 @@ class UsuarioCreate(BaseModel):
     email: EmailStr
     senha: str = Field(min_length=SENHA_MIN, max_length=72)
     papel: Papel = Papel.VENDEDOR
+    #: Só o dono define (DEFINIR_COMISSAO). Mandar estes campos sem a capacidade é 403.
+    comissao_percentual: Decimal | None = Field(default=None, ge=0, le=100, decimal_places=2)
+    meta_diaria: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
 
     @field_validator("nome")
     @classmethod
@@ -34,6 +43,10 @@ class UsuarioUpdate(BaseModel):
     nome: str | None = Field(default=None, min_length=2, max_length=120)
     papel: Papel | None = None
     ativo: bool | None = None
+    #: Ausente = não mexe. Só o dono define (DEFINIR_COMISSAO).
+    comissao_percentual: Decimal | None = Field(default=None, ge=0, le=100, decimal_places=2)
+    #: Ausente = não mexe; `null` = tira a meta. Só o dono define.
+    meta_diaria: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
 
 
 class SenhaReset(BaseModel):

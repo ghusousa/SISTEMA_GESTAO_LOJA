@@ -42,6 +42,7 @@ export default function AppLayout() {
       <Stack.Screen name="mais/auditoria" options={{ title: 'Auditoria' }} />
       <Stack.Screen name="mais/loja" options={{ title: 'A loja' }} />
       <Stack.Screen name="mais/usuario-novo" options={{ title: 'Novo usuário' }} />
+      <Stack.Screen name="mais/usuario-comissao" options={{ title: 'Comissão e meta' }} />
       <Stack.Screen name="mais/senha" options={{ title: 'Trocar senha' }} />
       <Stack.Screen name="mais/categorias" options={{ title: 'Categorias' }} />
     </Stack>

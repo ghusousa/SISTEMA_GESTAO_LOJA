@@ -43,6 +43,10 @@ export interface Usuario {
   papel: Papel;
   ativo: boolean;
   criado_em: string;
+  /** % sobre o faturamento líquido ("2.50"). Opcional: servidor antigo não manda (ADR-37). */
+  comissao_percentual?: string;
+  /** Meta de venda do dia; `null` = sem meta. */
+  meta_diaria?: string | null;
 }
 
 export interface Tokens {
@@ -283,6 +287,11 @@ export interface ResumoFinanceiro {
   quantidade_pecas: number;
   ticket_medio: string;
   vendas_canceladas: number;
+  /**
+   * Taxas da maquininha no período, já descontadas do `resultado`. Opcional de propósito:
+   * servidor sem o cálculo de taxas não manda o campo, e a linha some da tela.
+   */
+  taxas_cartao?: string;
 }
 
 export interface DiaVenda {
@@ -309,6 +318,90 @@ export interface DespesaPorCategoria {
   total: string;
   percentual: string;
   quantidade: number;
+}
+
+/** Uma pessoa da equipe no período, devoluções já abatidas (ADR-37). */
+export interface Vendedora {
+  usuario_id: number;
+  nome: string;
+  comissao_percentual: string;
+  quantidade_vendas: number;
+  faturamento: string;
+  devolucoes: string;
+  /** Base da comissão. Pode ser negativo num período só de devoluções (estorno). */
+  faturamento_liquido: string;
+  pecas: number;
+  ticket_medio: string;
+  comissao: string;
+}
+
+/** A página e os totais do período INTEIRO (a folha soma a equipe toda). */
+export interface PaginaVendedoras extends Pagina<Vendedora> {
+  faturamento_liquido_total: string;
+  comissao_total: string;
+}
+
+/** O placar de hoje de quem está logado: sem custo, lucro nem comissão. */
+export interface MeuDia {
+  data: string;
+  vendido: string;
+  quantidade_vendas: number;
+  pecas: number;
+  meta: string | null;
+  falta: string | null;
+}
+
+export interface EstoqueParado {
+  variante_id: number;
+  produto_id: number;
+  produto: string;
+  tamanho: string;
+  cor: string;
+  codigo_barras: string;
+  saldo: number;
+  ultima_venda: string | null;
+  ultima_entrada: string | null;
+  dias_parada: number;
+  preco_custo: string;
+  preco_venda: string;
+  valor_em_custo: string;
+  valor_em_venda: string;
+}
+
+/** Os totais valem para TODAS as peças paradas, não só para a página. */
+export interface PaginaEstoqueParado extends Pagina<EstoqueParado> {
+  dias: number;
+  pecas_total: number;
+  valor_em_custo_total: string;
+  valor_em_venda_total: string;
+}
+
+export type ClasseAbc = 'A' | 'B' | 'C';
+
+export interface CurvaAbc {
+  produto_id: number;
+  produto: string;
+  pecas: number;
+  faturamento_liquido: string;
+  percentual: string;
+  percentual_acumulado: string;
+  classe: ClasseAbc;
+}
+
+/** A arara inteira, agora. */
+export interface ValorEstoque {
+  pecas: number;
+  variantes: number;
+  valor_em_custo: string;
+  valor_em_venda: string;
+}
+
+/** Um dia da agenda "a receber do cartão" (ADR da taxa de cartão). */
+export interface Recebivel {
+  data: string;
+  bruto: string;
+  taxa: string;
+  liquido: string;
 }
 
 export interface EstoqueBaixo {

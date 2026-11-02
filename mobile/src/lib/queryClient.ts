@@ -41,6 +41,16 @@ export const chaves = {
   relatorioDespesas: (inicio: string, fim: string) =>
     ['relatorio-despesas', inicio, fim] as const,
   estoqueBaixo: ['estoque-baixo'] as const,
+  relatorioVendedoras: (inicio: string, fim: string) =>
+    ['relatorio-vendedoras', inicio, fim] as const,
+  relatorioCurvaAbc: (inicio: string, fim: string) => ['relatorio-curva-abc', inicio, fim] as const,
+  relatorioRecebiveis: (inicio: string, fim: string) =>
+    ['relatorio-recebiveis', inicio, fim] as const,
+  /** O placar do PDV. Cai com venda (relatório) e com usuário (o dono mudou a meta). */
+  meuDia: ['relatorio-meu-dia'] as const,
+  /** Fotografias do agora, sem período: caem com qualquer mexida no estoque. */
+  estoqueParado: (dias: number) => ['estoque-parado', dias] as const,
+  valorDoEstoque: ['valor-do-estoque'] as const,
   usuarios: ['usuarios'] as const,
   auditoria: ['auditoria'] as const,
   configuracao: ['configuracao'] as const,
@@ -59,7 +69,23 @@ export const CHAVES_RELATORIO = [
   ['relatorio-vendas-dia'],
   ['relatorio-mais-vendidos'],
   ['relatorio-despesas'],
+  ['relatorio-vendedoras'],
+  ['relatorio-curva-abc'],
+  ['relatorio-recebiveis'],
+  ['relatorio-meu-dia'],
 ] as const;
+
+/**
+ * O que é fotografia do estoque de agora (não do período): saldo mudou, elas caem. Mesma
+ * lista no tempo real (`lib/avisos.ts`) e nas mutações daqui.
+ */
+export const CHAVES_GIRO = [['estoque-parado'], ['valor-do-estoque']] as const;
+
+function invalidarGiro(): void {
+  for (const chave of CHAVES_GIRO) {
+    queryClient.invalidateQueries({ queryKey: chave });
+  }
+}
 
 function invalidarRelatorios(): void {
   for (const chave of CHAVES_RELATORIO) {
@@ -83,6 +109,7 @@ export function invalidarAposVenda(): void {
   // mostraria o saldo antigo no seletor — e poderia não disparar o aviso de limite.
   queryClient.invalidateQueries({ queryKey: chaves.clientes });
   invalidarRelatorios();
+  invalidarGiro();
 }
 
 export function invalidarAposMovimentoEstoque(): void {
@@ -90,6 +117,7 @@ export function invalidarAposMovimentoEstoque(): void {
   queryClient.invalidateQueries({ queryKey: chaves.produtos });
   queryClient.invalidateQueries({ queryKey: chaves.movimentacoes });
   queryClient.invalidateQueries({ queryKey: chaves.estoqueBaixo });
+  invalidarGiro();
 }
 
 /** Despesa entra no resultado do mês: a lista sozinha não basta. */
@@ -115,6 +143,7 @@ export function invalidarAposDevolucao(vendaId: number): void {
   // A devolução pode ter abatido fiado: o saldo da cliente mudou junto.
   queryClient.invalidateQueries({ queryKey: chaves.clientes });
   invalidarRelatorios();
+  invalidarGiro();
 }
 
 /**

@@ -5,6 +5,11 @@
  * agregado pela API (o navegador nunca soma dez mil linhas), e o custo usado é o congelado
  * na venda, não o custo de hoje — senão uma remarcação de fornecedor reescreveria o lucro
  * do mês passado.
+ *
+ * Cada cartão com lista própria mora num módulo irmão (`relatorios-*.js`) e pagina no
+ * servidor, com a página na URL para o F5 não perdê-la. Os que dependem do período
+ * (equipe, curva ABC, a receber do cartão) recomeçam da página 1 quando as datas mudam;
+ * os que são o AGORA do estoque (repor, valor, parado) não dependem delas.
  */
 
 import { api } from '../api.js';
@@ -12,7 +17,6 @@ import { formatar, formatarPercentual, paraCentavos } from '../dinheiro.js';
 import { barrasPorDia, proporcoes } from '../grafico.js';
 import { trocarConsulta } from '../router.js';
 import {
-  ajuda,
   carregando,
   cru,
   data as formatarData,
@@ -24,7 +28,11 @@ import {
   numero,
   plural,
 } from '../ui.js';
+import { desenharEquipe } from './relatorios-equipe.js';
+import { DIAS_PARADO, desenharCurvaAbc, desenharEstoqueParado, desenharValorEstoque } from './relatorios-giro.js';
+import { desenharRecebiveis } from './relatorios-recebiveis.js';
 import { desenharRepor } from './relatorios-repor.js';
+import { cartoesDoResumo } from './relatorios-resumo.js';
 
 const ATALHOS = [
   { chave: 'hoje', texto: 'Hoje', inicio: () => hojeISO() },
@@ -44,9 +52,19 @@ export async function render(raiz, _params, consulta) {
     inicio: consulta.inicio || diasAtrasISO(29),
     fim: consulta.fim || hojeISO(),
   };
-  // Página do "Precisa repor": vai para a URL junto com o período, para o F5 não perdê-la.
-  let paginaRepor = Number(consulta.repor) || 1;
-  const guardarNaUrl = () => trocarConsulta({ ...periodo, repor: paginaRepor > 1 ? paginaRepor : '' });
+  // Página de cada lista: vai para a URL junto com o período, para o F5 não perdê-la.
+  const paginas = {
+    repor: Number(consulta.repor) || 1,
+    equipe: Number(consulta.equipe) || 1,
+    abc: Number(consulta.abc) || 1,
+    receber: Number(consulta.receber) || 1,
+    parado: Number(consulta.parado) || 1,
+  };
+  let dias = DIAS_PARADO.includes(Number(consulta.dias)) ? Number(consulta.dias) : 90;
+  const guardarNaUrl = () => {
+    const naUrl = Object.fromEntries(Object.entries(paginas).map(([k, v]) => [k, v > 1 ? v : '']));
+    trocarConsulta({ ...periodo, ...naUrl, dias: dias !== 90 ? dias : '' });
+  };
 
   raiz.innerHTML = html`
     <div class="pagina">
@@ -74,19 +92,49 @@ export async function render(raiz, _params, consulta) {
       </div>
 
       <div data-conteudo></div>
+      <div data-equipe></div>
+      <div data-abc></div>
+      <div data-receber></div>
       <div data-repor></div>
+      <div data-valor></div>
+      <div data-parado></div>
     </div>
   `;
 
   const area = raiz.querySelector('[data-conteudo]');
-  const areaRepor = raiz.querySelector('[data-repor]');
+  const secao = (nome) => raiz.querySelector(`[data-${nome}]`);
 
-  function carregarRepor() {
+  /** Liga uma lista paginada: `desenhar(area, pagina, aoMudarPagina)`. */
+  const lista = (nome, desenhar) => {
+    const recarregar = () => {
+      guardarNaUrl();
+      return desenhar(secao(nome), paginas[nome], (p) => {
+        paginas[nome] = p;
+        recarregar();
+      });
+    };
+    return recarregar;
+  };
+  const carregarRepor = lista('repor', desenharRepor);
+  const carregarEquipe = lista('equipe', (a, p, mudar) => desenharEquipe(a, periodo, p, mudar));
+  const carregarAbc = lista('abc', (a, p, mudar) => desenharCurvaAbc(a, periodo, p, mudar));
+  const carregarReceber = lista('receber', (a, p, mudar) => desenharRecebiveis(a, periodo, p, mudar));
+  const carregarValor = () => desenharValorEstoque(secao('valor'));
+  function carregarParado() {
     guardarNaUrl();
-    return desenharRepor(areaRepor, paginaRepor, (p) => {
-      paginaRepor = p;
-      carregarRepor();
+    return desenharEstoqueParado(secao('parado'), dias, paginas.parado, (mudou) => {
+      paginas.parado = mudou.pagina;
+      dias = mudou.dias;
+      carregarParado();
     });
+  }
+
+  /** Datas novas: o resumo e as listas do período recomeçam da primeira página. */
+  function carregarPeriodo() {
+    paginas.equipe = 1;
+    paginas.abc = 1;
+    paginas.receber = 1;
+    return Promise.all([carregar(), carregarEquipe(), carregarAbc(), carregarReceber()]);
   }
 
   async function carregar() {
@@ -106,50 +154,8 @@ export async function render(raiz, _params, consulta) {
   }
 
   function desenhar({ resumo, porDia, maisVendidos, porCategoria }) {
-    const resultado = paraCentavos(resumo.resultado);
-
     area.innerHTML = html`
-      <div class="grade-cartoes">
-        <div class="indicador indicador--destaque">
-          <div class="indicador__rotulo">Faturamento ${ajuda('Tudo que foi vendido no período, inclusive o que saiu no fiado e ainda não foi recebido. Venda cancelada fica de fora.')}</div>
-          <div class="indicador__valor dinheiro">${formatar(paraCentavos(resumo.faturamento))}</div>
-          <div class="indicador__nota">
-            ${plural(resumo.quantidade_vendas, 'venda', 'vendas')} ·
-            ${plural(resumo.quantidade_pecas, 'peça', 'peças')}
-          </div>
-        </div>
-        <div class="indicador">
-          <div class="indicador__rotulo">Custo da mercadoria ${ajuda('O que você pagou ao fornecedor pelas peças que saíram. O custo fica congelado na venda: mudar o preço de compra hoje não mexe no lucro de ontem.')}</div>
-          <div class="indicador__valor dinheiro">${formatar(paraCentavos(resumo.custo_mercadoria_vendida))}</div>
-          <div class="indicador__nota">o que a loja pagou pelas peças vendidas</div>
-        </div>
-        <div class="indicador">
-          <div class="indicador__rotulo">Lucro bruto ${ajuda('Faturamento menos o custo das peças, tirando as devoluções dos dois lados. Não é a subtração dos dois cartões acima, que mostram o período inteiro. As despesas ficam de fora.')}</div>
-          <div class="indicador__valor dinheiro">${formatar(paraCentavos(resumo.lucro_bruto))}</div>
-          <div class="indicador__nota">margem de ${formatarPercentual(resumo.margem_bruta_pct)}</div>
-        </div>
-        <div class="indicador">
-          <div class="indicador__rotulo">Despesas</div>
-          <div class="indicador__valor dinheiro">${formatar(paraCentavos(resumo.despesas))}</div>
-          <div class="indicador__nota">lançadas no período</div>
-        </div>
-        <div class="indicador">
-          <div class="indicador__rotulo">Resultado</div>
-          <div class="indicador__valor dinheiro ${cru(resultado < 0 ? 'negativo' : 'positivo')}">
-            ${formatar(resultado)}
-          </div>
-          <div class="indicador__nota">lucro bruto menos despesas</div>
-        </div>
-        <div class="indicador">
-          <div class="indicador__rotulo">Ticket médio ${ajuda('Quanto cada venda trouxe, em média: o faturamento dividido pelo número de vendas do período.')}</div>
-          <div class="indicador__valor dinheiro">${formatar(paraCentavos(resumo.ticket_medio))}</div>
-          <div class="indicador__nota">
-            ${resumo.vendas_canceladas
-              ? `${plural(resumo.vendas_canceladas, 'venda cancelada', 'vendas canceladas')} fora da conta`
-              : 'nenhuma venda cancelada'}
-          </div>
-        </div>
-      </div>
+      ${cartoesDoResumo(resumo)}
 
       <div class="cartao" style="margin-bottom:16px">
         <div class="cartao__topo">
@@ -232,18 +238,27 @@ export async function render(raiz, _params, consulta) {
       periodo.fim = hojeISO();
       raiz.querySelector('[data-inicio]').value = periodo.inicio;
       raiz.querySelector('[data-fim]').value = periodo.fim;
-      carregar();
+      carregarPeriodo();
     }),
   );
   raiz.querySelector('[data-inicio]').addEventListener('change', (e) => {
     periodo.inicio = e.target.value;
-    carregar();
+    carregarPeriodo();
   });
   raiz.querySelector('[data-fim]').addEventListener('change', (e) => {
     periodo.fim = e.target.value;
-    carregar();
+    carregarPeriodo();
   });
 
-  // O "Precisa repor" não depende do período: carrega uma vez, ao lado do resto.
-  await Promise.all([carregar(), carregarRepor()]);
+  // Repor, valor e parado não dependem do período: carregam uma vez, ao lado do resto.
+  // As listas do período abrem na página que estava na URL (por isso não `carregarPeriodo`).
+  await Promise.all([
+    carregar(),
+    carregarEquipe(),
+    carregarAbc(),
+    carregarReceber(),
+    carregarRepor(),
+    carregarValor(),
+    carregarParado(),
+  ]);
 }

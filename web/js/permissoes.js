@@ -25,6 +25,7 @@ export const PODE = {
   VER_AUDITORIA: 'VER_AUDITORIA',
   CONFIGURAR_LOJA: 'CONFIGURAR_LOJA',
   GERIR_BACKUP: 'GERIR_BACKUP',
+  DEFINIR_COMISSAO: 'DEFINIR_COMISSAO',
 };
 
 const VENDEDORA = [];
@@ -88,6 +89,7 @@ const EM_PORTUGUES = {
   [PODE.VER_AUDITORIA]: 'ver o diário de auditoria',
   [PODE.CONFIGURAR_LOJA]: 'mudar o nome e o ramo da loja',
   [PODE.GERIR_BACKUP]: 'ligar e configurar o backup na nuvem',
+  [PODE.DEFINIR_COMISSAO]: 'definir a comissão e a meta do dia da equipe',
 };
 
 /** Sempre aberto a quem entrou: é disto que o balcão vive. */

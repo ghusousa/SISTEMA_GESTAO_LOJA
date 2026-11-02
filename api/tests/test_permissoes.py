@@ -45,6 +45,8 @@ TODOS = [Papel.ADMIN, Papel.GERENTE, Papel.SUPERVISORA, Papel.VENDEDOR]
         (Pode.GERIR_USUARIOS, {Papel.ADMIN, Papel.GERENTE}),
         # Auditoria é só do dono — nem o gerente lê, porque a auditoria audita o gerente também.
         (Pode.VER_AUDITORIA, {Papel.ADMIN}),
+        # Comissão e meta: só o dono. O gerente recebe comissão também (ADR-37).
+        (Pode.DEFINIR_COMISSAO, {Papel.ADMIN}),
         (Pode.VER_VENDAS_DE_TODOS, {Papel.ADMIN, Papel.GERENTE, Papel.SUPERVISORA}),
         (Pode.CORRIGIR_ESTOQUE, {Papel.ADMIN, Papel.GERENTE, Papel.SUPERVISORA}),
         (Pode.EDITAR_CATALOGO, {Papel.ADMIN, Papel.GERENTE, Papel.SUPERVISORA}),
@@ -152,6 +154,20 @@ async def test_custo_da_peca_so_chega_a_quem_ve_dinheiro(
         ),
         ("GET", "/caixa/dia", None, Pode.FECHAR_CAIXA),
         ("GET", "/usuarios", None, Pode.GERIR_USUARIOS),
+        (
+            "GET",
+            "/relatorios/vendedoras?inicio=2026-01-01&fim=2026-12-31",
+            None,
+            Pode.VER_DINHEIRO,
+        ),
+        (
+            "GET",
+            "/relatorios/curva-abc?inicio=2026-01-01&fim=2026-12-31",
+            None,
+            Pode.VER_DINHEIRO,
+        ),
+        ("GET", "/relatorios/estoque-parado", None, Pode.VER_DINHEIRO),
+        ("GET", "/relatorios/valor-do-estoque", None, Pode.VER_DINHEIRO),
     ],
 )
 async def test_portas_de_leitura(

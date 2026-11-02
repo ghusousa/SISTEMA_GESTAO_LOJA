@@ -13,10 +13,10 @@ o superior não tenha.
 
 | Cargo | Além do degrau anterior | O que NÃO alcança |
 |---|---|---|
-| **Vendedora** (`VENDEDOR`) | Vende no PDV, bipa e consulta preço, cadastra peça nova, dá entrada de mercadoria | Custo, lucro, despesas, relatórios, estorno, ajuste de estoque, inventário, vendas das colegas |
+| **Vendedora** (`VENDEDOR`) | Vende no PDV, bipa e consulta preço, cadastra peça nova, dá entrada de mercadoria; vê no PDV quanto ela mesma vendeu hoje contra a meta do dia | Custo, lucro, despesas, relatórios, estorno, ajuste de estoque, inventário, vendas e números das colegas |
 | **Supervisora** (`SUPERVISORA`) | Ajusta estoque, faz inventário, edita e exclui produtos e categorias, confere e fecha o caixa do dia, vê as vendas de toda a equipe | Custo, lucro, despesas, relatórios, estorno, devolução, crediário, logins da equipe |
-| **Gerente** (`GERENTE`) | Vê custo, lucro e margem; lança despesas; abre relatórios; cancela venda concluída; recebe peça de volta (devolução) e cuida do crediário; administra os logins da equipe | A conta do dono (não cria, não promove, não edita, não redefine a senha dele), o **diário de auditoria** e o **nome da loja** — a identidade do negócio é do dono |
-| **Dono** (`ADMIN`) | Tudo, inclusive criar e promover outro dono, o **diário de auditoria** (tudo que cada login fez) e o **nome e ramo da loja** | — |
+| **Gerente** (`GERENTE`) | Vê custo, lucro e margem; lança despesas; abre relatórios (inclusive a comissão de cada um); cancela venda concluída; recebe peça de volta (devolução) e cuida do crediário; administra os logins da equipe | A conta do dono (não cria, não promove, não edita, não redefine a senha dele), o **diário de auditoria**, o **nome da loja** e a **comissão e meta** da equipe — quem recebe comissão não decide quanto |
+| **Dono** (`ADMIN`) | Tudo, inclusive criar e promover outro dono, o **diário de auditoria** (tudo que cada login fez), o **nome e ramo da loja** e a **% de comissão e a meta do dia** de cada pessoa | — |
 
 **Quatro decisões que a loja tomou e que o sistema faz valer:**
 
@@ -109,6 +109,12 @@ A loja consegue operar 100% sem celular.
 9. **Ver o resultado** — faturamento, custo das mercadorias vendidas (CMV), lucro bruto, despesas e
    resultado do período; produtos mais vendidos; peças com estoque abaixo do mínimo; curva de vendas
    por dia.
+   - **Vendas e comissão por vendedora**: faturamento líquido (vendido menos devolvido), peças,
+     ticket médio e comissão de cada pessoa no período, com o total a pagar. A vendedora vê no
+     PDV só o próprio dia: "hoje: R$ X de R$ meta".
+   - **Giro do estoque**: estoque parado (peças com saldo sem vender há mais de N dias, com o
+     dinheiro parado nelas), curva ABC dos produtos pelo faturamento do período, e o valor da
+     arara inteira em custo e em preço de venda.
 10. **Fechar o caixa do dia** — conferir o esperado por forma de pagamento contra o contado.
 
 ## Regras de negócio que não podem ser violadas
@@ -158,6 +164,13 @@ A loja consegue operar 100% sem celular.
 - Loja fora do ar, disco quase cheio, backup da nuvem atrasado ou rotina da máquina que falhou
   avisam o dono (ntfy), sem repetir o mesmo aviso antes de uma hora.
 - Instalar pelo IP público é recusado: HTTP puro só dentro da rede da loja.
+- A comissão sai do faturamento LÍQUIDO de quem fez a venda: venda cancelada não conta, e a peça
+  devolvida tira a comissão no período em que voltou — sem reescrever a folha de um mês fechado.
+  A soma da equipe fecha com o faturamento líquido do resumo da loja.
+- Só o dono define a % de comissão (0 a 100) e a meta do dia de cada um; nem o gerente, que também
+  recebe comissão, mexe nisso — nem na própria.
+- Cada pessoa vê o próprio dia no PDV (vendido, peças, meta), sem custo, lucro nem o número das
+  colegas.
 
 ## Fora do escopo do v1
 
@@ -168,4 +181,5 @@ notificações push, parcelamento do crediário em datas fixas (hoje é dívida 
 qualquer valor), cobrança automática por mensagem.
 
 *Saíram de "fora do escopo" e hoje existem:* impressão de etiquetas, recibo da venda, cadastro de
-clientes, trocas com vale, e o sistema servir a outros ramos além de roupas.
+clientes, trocas com vale, o sistema servir a outros ramos além de roupas, comissão e meta do dia
+por vendedora, e os relatórios de estoque parado, curva ABC e valor do estoque.

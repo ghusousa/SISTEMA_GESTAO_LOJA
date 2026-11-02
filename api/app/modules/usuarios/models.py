@@ -1,6 +1,7 @@
+from decimal import Decimal
 from enum import StrEnum
 
-from sqlalchemy import Boolean, CheckConstraint, String
+from sqlalchemy import Boolean, CheckConstraint, Numeric, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base, TimestampMixin
@@ -36,6 +37,11 @@ class User(Base, TimestampMixin):
         CheckConstraint(
             "role IN ('ADMIN','GERENTE','SUPERVISORA','VENDEDOR')", name="role"
         ),
+        CheckConstraint(
+            "comissao_percentual >= 0 AND comissao_percentual <= 100",
+            name="comissao_percentual",
+        ),
+        CheckConstraint("meta_diaria IS NULL OR meta_diaria > 0", name="meta_diaria"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -44,6 +50,13 @@ class User(Base, TimestampMixin):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(20), nullable=False, default=Papel.VENDEDOR)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    #: Quanto a pessoa ganha sobre o que vendeu, em % do faturamento LÍQUIDO (venda menos
+    #: devolução). Zero é "não ganha comissão", não "ainda não definido" (ADR-37).
+    comissao_percentual: Mapped[Decimal] = mapped_column(
+        Numeric(5, 2), nullable=False, default=Decimal("0"), server_default=text("0")
+    )
+    #: Meta de venda por dia. Opcional: sem meta, o PDV não mostra a régua.
+    meta_diaria: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
 
     @property
     def titulo(self) -> str:
