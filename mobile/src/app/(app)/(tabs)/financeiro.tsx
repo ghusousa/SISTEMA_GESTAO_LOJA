@@ -45,11 +45,15 @@ export default function Financeiro() {
     enabled: veDinheiro,
   });
 
+  // Só o NÚMERO: `size: 1` e o `total` que o servidor conta. Esta consulta refaz a cada
+  // venda (aviso de estoque), e baixar a lista inteira para mostrar "N peças" custava
+  // 1,5 MB por venda numa loja grande.
   const estoqueBaixo = useQuery({
-    queryKey: chaves.estoqueBaixo,
-    queryFn: () => relatorios.estoqueBaixo(),
+    queryKey: [...chaves.estoqueBaixo, 'contagem'],
+    queryFn: () => relatorios.estoqueBaixo({ size: 1 }),
     enabled: veDinheiro,
   });
+  const pecasNoMinimo = estoqueBaixo.data?.total ?? 0;
 
   if (!veDinheiro) return <SoCaixa atalhos={atalhos} aoAbrir={(rota) => router.push(rota as never)} />;
   if (resumo.isPending) return <Carregando />;
@@ -103,12 +107,12 @@ export default function Financeiro() {
         </View>
       </Cartao>
 
-      {(estoqueBaixo.data?.length ?? 0) > 0 && (
+      {pecasNoMinimo > 0 && (
         <Pressable onPress={() => router.push('/financeiro/relatorios')}>
           <View style={s.alerta}>
             <MaterialCommunityIcons name="alert-circle" size={22} color="#7A5A00" />
             <Text style={s.alertaTexto}>
-              {estoqueBaixo.data!.length} peça(s) no estoque mínimo — hora de repor
+              {pecasNoMinimo} peça(s) no estoque mínimo — hora de repor
             </Text>
           </View>
         </Pressable>

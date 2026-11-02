@@ -26,7 +26,7 @@ import { Botao, Carregando, ErroEstado } from '@/components/ui';
 import { formatar, formatarSemSimbolo, paraCentavos } from '@/lib/money';
 import { chaves } from '@/lib/queryClient';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
-import { useLoja } from '@/hooks/useLoja';
+import { useDadosDaLoja } from '@/hooks/useLoja';
 
 const ROTULO_FORMA: Record<FormaPagamento, string> = {
   DINHEIRO: 'Dinheiro',
@@ -87,7 +87,8 @@ export function reciboEmTexto(venda: Venda, loja?: DadosDaLoja): string {
 }
 
 export default function Recibo() {
-  const loja = useLoja();
+  // Documento e contato da loja só vêm com sessão — o recibo é sempre de quem está logado.
+  const loja = useDadosDaLoja();
   const { id } = useLocalSearchParams<{ id: string }>();
   const vendaId = Number(id);
 

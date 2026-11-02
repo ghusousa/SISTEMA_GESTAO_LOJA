@@ -1,9 +1,10 @@
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
 from app.core.deps import ExigeDinheiro, SessionDep
+from app.core.pagination import Pagina, Paginacao, paginacao
 from app.modules.relatorios.schemas import (
     DespesaCategoriaOut,
     DiaVendaOut,
@@ -66,8 +67,14 @@ async def despesas_por_categoria(
 
 @router.get(
     "/estoque-baixo",
-    response_model=list[EstoqueBaixoOut],
-    summary="Peças no estoque mínimo ou abaixo (sem período: é o agora)",
+    response_model=Pagina[EstoqueBaixoOut],
+    summary="Peças no estoque mínimo ou abaixo, mais urgentes primeiro (sem período: é o agora)",
 )
-async def estoque_baixo(session: SessionDep, _: ExigeDinheiro) -> list[EstoqueBaixoOut]:
-    return await RelatorioService(session).estoque_baixo()
+async def estoque_baixo(
+    session: SessionDep,
+    _: ExigeDinheiro,
+    p: Annotated[Paginacao, Depends(paginacao)],
+) -> Pagina[EstoqueBaixoOut]:
+    # Paginada como toda listagem. Quem só mostra "N peças no mínimo" pede `size=1` e lê
+    # o `total` — não baixa a lista inteira para contar.
+    return await RelatorioService(session).estoque_baixo(p)

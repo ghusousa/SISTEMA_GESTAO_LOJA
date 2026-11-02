@@ -389,6 +389,75 @@ async def test_cliente_devendo_nao_pode_ser_excluido(client, auth_admin) -> None
     assert resposta.status_code == 409
 
 
+async def test_excluir_cliente_quitada_apaga_o_dado_pessoal(client, auth_admin, session) -> None:
+    """LGPD: excluir só marcava `deleted_at`, e CPF, telefone e observação ficavam para
+    sempre no banco (e em todo backup), contra o que a página de exclusão promete.
+
+    Quitada, a cliente é anonimizada; a venda continua inteira, apontando para o mesmo id,
+    para o caixa e os relatórios do passado não mudarem.
+    """
+    from sqlalchemy import select
+
+    from app.modules.clientes.models import Customer
+
+    criada = await client.post(
+        "/clientes",
+        headers=auth_admin,
+        json={
+            "nome": "Dona Privada",
+            "telefone": "11977776666",
+            "documento": "12345678900",
+            "observacao": "Mora na rua de trás, prefere azul",
+        },
+    )
+    assert criada.status_code == 201, criada.text
+    cliente = criada.json()
+    variante = await _peca(client, auth_admin, "Peca Privada", "90.00")
+    venda = await client.post(
+        "/vendas",
+        headers=auth_admin,
+        json={
+            "client_uuid": str(uuid.uuid4()),
+            "cliente_id": cliente["id"],
+            "itens": [{"variante_id": variante, "quantidade": 1}],
+            "pagamentos": [{"forma": "FIADO", "valor": "90.00"}],
+        },
+    )
+    assert venda.status_code == 201, venda.text
+    pago = await client.post(
+        f"/clientes/{cliente['id']}/pagamentos",
+        headers=auth_admin,
+        json={"forma": "PIX", "valor": "90.00", "client_uuid": str(uuid.uuid4())},
+    )
+    assert pago.status_code == 201, pago.text
+
+    excluiu = await client.delete(f"/clientes/{cliente['id']}", headers=auth_admin)
+    assert excluiu.status_code == 204, excluiu.text
+
+    linha = (
+        await session.execute(select(Customer).where(Customer.id == cliente["id"]))
+    ).scalar_one()
+    assert linha.deleted_at is not None
+    assert linha.name == f"Cliente removido #{cliente['id']}"
+    assert linha.phone is None
+    assert linha.document is None
+    assert linha.note is None
+
+    # o histórico ficou: a venda existe, com o valor de antes e o nome já anônimo
+    detalhe = await client.get(f"/vendas/{venda.json()['id']}", headers=auth_admin)
+    assert detalhe.status_code == 200, detalhe.text
+    assert Decimal(detalhe.json()["total"]) == Decimal("90.00")
+    assert detalhe.json()["cliente"] == f"Cliente removido #{cliente['id']}"
+
+    # e a mesma pessoa pode voltar a ser cadastrada com o mesmo telefone e CPF
+    de_novo = await client.post(
+        "/clientes",
+        headers=auth_admin,
+        json={"nome": "Dona Privada", "telefone": "11977776666", "documento": "12345678900"},
+    )
+    assert de_novo.status_code == 201, de_novo.text
+
+
 async def test_vendedora_nao_vende_no_fiado(client, auth_vendedor, auth_admin) -> None:
     """Quem não enxerga a dívida não pode abrir a dívida.
 

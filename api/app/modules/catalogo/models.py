@@ -18,6 +18,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base, TimestampMixin
+from app.modules.catalogo.busca import achatar
 
 # Alimenta o código de barras interno (EAN-13 com prefixo 2) das peças sem etiqueta do fornecedor.
 internal_barcode_seq = Sequence("internal_barcode_seq", start=1, metadata=Base.metadata)
@@ -52,6 +53,15 @@ class Product(Base, TimestampMixin):
     __table_args__ = (
         Index("ix_products_category_id", "category_id"),
         Index("ix_products_name_lower", text("lower(name)")),
+        # Trigram sobre o nome ACHATADO (catalogo/busca.py): é o que a busca por nome
+        # compara com `LIKE '%calca%'`. Sem ele, cada tecla da busca aplica translate() no
+        # catálogo inteiro. A expressão tem de ser a mesma da consulta, letra por letra.
+        Index(
+            "ix_products_nome_achatado",
+            achatar(text("name")).label("nome_achatado"),
+            postgresql_using="gin",
+            postgresql_ops={"nome_achatado": "gin_trgm_ops"},
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -92,6 +102,14 @@ class ProductVariant(Base, TimestampMixin):
             "color",
             unique=True,
             postgresql_where=text("deleted_at IS NULL"),
+        ),
+        # A busca por nome também acha pela cor ("rose" acha a "Rosé"): mesmo índice do
+        # nome do produto, pelo mesmo motivo.
+        Index(
+            "ix_product_variants_cor_achatada",
+            achatar(text("color")).label("cor_achatada"),
+            postgresql_using="gin",
+            postgresql_ops={"cor_achatada": "gin_trgm_ops"},
         ),
     )
 

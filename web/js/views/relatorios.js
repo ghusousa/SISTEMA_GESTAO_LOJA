@@ -18,14 +18,13 @@ import {
   data as formatarData,
   diasAtrasISO,
   erroBloco,
-  etiqueta,
   grade,
   hojeISO,
   html,
   numero,
   plural,
-  vazio,
 } from '../ui.js';
+import { desenharRepor } from './relatorios-repor.js';
 
 const ATALHOS = [
   { chave: 'hoje', texto: 'Hoje', inicio: () => hojeISO() },
@@ -45,6 +44,9 @@ export async function render(raiz, _params, consulta) {
     inicio: consulta.inicio || diasAtrasISO(29),
     fim: consulta.fim || hojeISO(),
   };
+  // Página do "Precisa repor": vai para a URL junto com o período, para o F5 não perdê-la.
+  let paginaRepor = Number(consulta.repor) || 1;
+  const guardarNaUrl = () => trocarConsulta({ ...periodo, repor: paginaRepor > 1 ? paginaRepor : '' });
 
   raiz.innerHTML = html`
     <div class="pagina">
@@ -72,29 +74,38 @@ export async function render(raiz, _params, consulta) {
       </div>
 
       <div data-conteudo></div>
+      <div data-repor></div>
     </div>
   `;
 
   const area = raiz.querySelector('[data-conteudo]');
+  const areaRepor = raiz.querySelector('[data-repor]');
+
+  function carregarRepor() {
+    guardarNaUrl();
+    return desenharRepor(areaRepor, paginaRepor, (p) => {
+      paginaRepor = p;
+      carregarRepor();
+    });
+  }
 
   async function carregar() {
     area.innerHTML = carregando('Somando o período…');
-    trocarConsulta(periodo);
+    guardarNaUrl();
     try {
-      const [resumo, porDia, maisVendidos, porCategoria, estoqueBaixo] = await Promise.all([
+      const [resumo, porDia, maisVendidos, porCategoria] = await Promise.all([
         api.get('/relatorios/resumo', periodo),
         api.get('/relatorios/vendas-por-dia', periodo),
         api.get('/relatorios/mais-vendidos', { ...periodo, limite: 10 }),
         api.get('/relatorios/despesas-por-categoria', periodo),
-        api.get('/relatorios/estoque-baixo'),
       ]);
-      desenhar({ resumo, porDia, maisVendidos, porCategoria, estoqueBaixo });
+      desenhar({ resumo, porDia, maisVendidos, porCategoria });
     } catch (erro) {
       area.innerHTML = erroBloco(erro.textoAmigavel);
     }
   }
 
-  function desenhar({ resumo, porDia, maisVendidos, porCategoria, estoqueBaixo }) {
+  function desenhar({ resumo, porDia, maisVendidos, porCategoria }) {
     const resultado = paraCentavos(resumo.resultado);
 
     area.innerHTML = html`
@@ -211,52 +222,6 @@ export async function render(raiz, _params, consulta) {
           </div>
         </div>
       </div>
-
-      <div class="cartao" style="margin-top:16px">
-        <div class="cartao__topo">
-          <h2>Precisa repor ${ajuda('Peças cujo saldo chegou no estoque mínimo que você definiu no cadastro. Peça sem mínimo só aparece quando zera.')}</h2>
-          <span class="texto-fraco">situação de agora, não do período</span>
-        </div>
-        ${estoqueBaixo.length
-          ? cru(html`
-              <div class="tabela-rolagem" style="border:0;box-shadow:none;border-radius:0">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Peça</th>
-                      <th>Código</th>
-                      <th class="direita">Saldo</th>
-                      <th class="direita">Mínimo</th>
-                      <th class="direita">Faltam</th>
-                      <th class="direita">Custo para repor</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    ${estoqueBaixo.map(
-                      (e) => html`
-                        <tr>
-                          <td>
-                            <span class="celula-principal">${e.produto}</span>
-                            <span class="celula-secundaria">${grade(e.tamanho, e.cor)}</span>
-                          </td>
-                          <td class="dinheiro texto-suave">${e.codigo_barras}</td>
-                          <td class="direita">
-                            ${e.saldo === 0 ? etiqueta('Zerado', 'perigo') : cru(html`<span class="dinheiro">${numero(e.saldo)}</span>`)}
-                          </td>
-                          <td class="direita dinheiro texto-suave">${numero(e.estoque_minimo)}</td>
-                          <td class="direita dinheiro celula-principal">${numero(e.faltam)}</td>
-                          <td class="direita dinheiro texto-suave">
-                            ${formatar(paraCentavos(e.preco_custo) * e.faltam)}
-                          </td>
-                        </tr>
-                      `,
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            `)
-          : cru('<div class="cartao__corpo">' + vazio('Estoque em dia', 'Nenhuma peça no mínimo.') + '</div>')}
-      </div>
     `;
   }
 
@@ -279,5 +244,6 @@ export async function render(raiz, _params, consulta) {
     carregar();
   });
 
-  await carregar();
+  // O "Precisa repor" não depende do período: carrega uma vez, ao lado do resto.
+  await Promise.all([carregar(), carregarRepor()]);
 }

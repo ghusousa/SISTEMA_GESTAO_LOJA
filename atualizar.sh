@@ -6,6 +6,7 @@
 #
 # Faz nesta ordem, e a ordem importa:
 #
+#   0. só segue com commit de CI verde no GitHub, e que não tenha falhado aqui antes;
 #   1. backup do banco ANTES de qualquer coisa, conferido (é o que permite voltar atrás);
 #   2. baixa o código novo;
 #   3. reconstrói e sobe;
@@ -23,6 +24,9 @@
 #                    opção, backup que falha ou não abre faz o --sim desistir de atualizar
 #   --forcar         desfaz edições feitas nos arquivos DO SISTEMA neste servidor
 #   --sim            não pergunta nada
+#   --ignorar-ci     implanta mesmo sem o CI verde no GitHub (vermelho ou rodando). Sem
+#                    esta opção o --sim não implanta, e o interativo pergunta. Se não dá
+#                    nem para ler o CI (token sem "Checks"), o --sim sobe e avisa
 #   --automatico [N] liga a atualização sozinha, de N em N minutos (padrão 10)
 #   --sem-automatico desliga a atualização sozinha
 
@@ -40,6 +44,7 @@ erro()   { printf '\n%s✗ %s%s\n' "$VERMELHO" "$1" "$NORMAL" >&2; }
 
 SEM_BACKUP=0
 FORCAR=0
+IGNORAR_CI=0
 INTERATIVO=1
 AUTOMATICO=""
 MINUTOS=10
@@ -47,13 +52,14 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --sem-backup)     SEM_BACKUP=1 ;;
         --forcar)         FORCAR=1 ;;
+        --ignorar-ci)     IGNORAR_CI=1 ;;
         --sim)            INTERATIVO=0 ;;
         --automatico)
             AUTOMATICO="ligar"
             case "${2:-}" in [0-9]*) MINUTOS="$2"; shift ;; esac
             ;;
         --sem-automatico) AUTOMATICO="desligar" ;;
-        -h|--help)        sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help)        sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *)                erro "Opção desconhecida: $1"; exit 1 ;;
     esac
     shift
@@ -101,6 +107,89 @@ gravar_implantado() {
     printf '%s\n' "$1" > "$IMPLANTADO.novo" && mv -f "$IMPLANTADO.novo" "$IMPLANTADO"
 }
 
+# O commit que subiu, não respondeu e foi desfeito pela volta atrás. Sem este registro, a
+# execução seguinte via "GitHub diferente do que está no ar" e tentava de novo — e um commit
+# quebrado no main derrubava a loja por 3 a 4 minutos a cada 10, o dia inteiro, em horário
+# de venda. Com ele, o --sim espera um commit NOVO; o arquivo some quando um commit sobe bem.
+FALHOU="$ESTADO/falhou"
+
+# ------------------------------------------------------------------ o CI do GitHub
+#
+# Só se implanta commit que o CI aprovou. Quem pergunta é este script, com a credencial que
+# o git já usa para buscar o código (a do `remote.origin.url`, que o --automatico manda
+# gravar, ou a do ajudante de credenciais) — a API continua sem falar com o GitHub (ADR-18).
+
+# dono/repositório, da URL CRUA do origin (`git config`, não `git remote get-url`, que
+# aplicaria um `insteadOf` e esconderia o endereço do GitHub).
+repositorio_github() {
+    local url; url="$(git config --get remote.origin.url 2>/dev/null || true)"
+    case "$url" in *github.com[:/]*) ;; *) return 1 ;; esac
+    url="${url#*github.com}"; url="${url#[:/]}"; url="${url%/}"; url="${url%.git}"
+    case "$url" in */*) printf '%s' "$url" ;; *) return 1 ;; esac
+}
+
+token_github() {
+    local url credencial; url="$(git config --get remote.origin.url 2>/dev/null || true)"
+    case "$url" in
+        https://*@github.com/*)
+            credencial="${url#https://}"; credencial="${credencial%%@*}"
+            # `x-access-token:TOKEN` ou `usuario:TOKEN` → o que vem depois do ':'; um
+            # `TOKEN@github.com` sozinho é o próprio token.
+            printf '%s' "${credencial#*:}"; return 0 ;;
+    esac
+    # O ajudante de credenciais do git, se houver, sem nunca abrir pergunta para ninguém.
+    printf 'protocol=https\nhost=github.com\n\n' \
+        | GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false SSH_ASKPASS=/bin/false \
+            git credential fill 2>/dev/null | sed -n 's/^password=//p'
+}
+
+# Pergunta ao GitHub como está o CI do commit e responde em CI_SITUACAO:
+#   verde        todas as verificações terminaram, nenhuma reprovou
+#   vermelho     alguma reprovou (ou foi cancelada, ou estourou o tempo)
+#   pendente     alguma ainda roda — ou o CI nem começou (zero verificações)
+#   indisponivel não deu para perguntar (sem curl, origem fora do GitHub, token sem a
+#                permissão "Checks: leitura", GitHub fora do ar)
+# Por que check-runs e não o "status" combinado: é onde o GitHub Actions publica.
+situacao_do_ci() {
+    local sha="$1" repo token resposta total vermelhos rodando
+    CI_SITUACAO="indisponivel"; CI_DETALHE=""
+    command -v curl >/dev/null 2>&1 || { CI_DETALHE="o curl não está instalado"; return 0; }
+    repo="$(repositorio_github)" || { CI_DETALHE="a origem do código não é o GitHub"; return 0; }
+    token="$(token_github || true)"
+    # O token vai pela configuração em stdin (`-K -`), nunca na linha de comando: ali
+    # qualquer usuário da máquina o leria com um `ps`.
+    if ! resposta="$(
+        { printf 'header = "Accept: application/vnd.github+json"\n'
+          printf 'header = "X-GitHub-Api-Version: 2022-11-28"\n'
+          # `if`, não `&&`: sem token (repositório público), o `&&` faria o bloco sair 1 e,
+          # com pipefail, uma resposta boa do GitHub viraria "não respondeu".
+          if [ -n "$token" ]; then printf 'header = "Authorization: Bearer %s"\n' "$token"; fi
+        } | curl -fsS --max-time 20 -K - \
+            "https://api.github.com/repos/$repo/commits/$sha/check-runs?per_page=100" 2>&1
+    )"; then
+        CI_DETALHE="o GitHub não respondeu ($(printf '%s' "$resposta" | tail -1 | cut -c1-120))"
+        return 0
+    fi
+    # Sem jq nem python na máquina: o JSON do GitHub tem estas chaves no nível de cada
+    # verificação, e dentro de um texto as aspas viriam escapadas (\"status\") — não casam.
+    total="$(printf '%s' "$resposta" | grep -oE '"total_count": *[0-9]+' | head -1 | grep -oE '[0-9]+$' || true)"
+    [ -n "$total" ] || { CI_DETALHE="o GitHub respondeu algo que não entendi"; return 0; }
+    # `-o` e contar linhas, não `-c`: o JSON pode vir numa linha só, e `-c` conta LINHAS.
+    vermelhos="$(printf '%s' "$resposta" \
+        | grep -oE '"conclusion": *"(failure|cancelled|timed_out|action_required|startup_failure|stale)"' \
+        | wc -l | tr -d ' ' || true)"
+    rodando="$(printf '%s' "$resposta" | grep -oE '"status": *"[a-z_]+"' | grep -vc '"completed"' || true)"
+    if [ "${vermelhos:-0}" -gt 0 ]; then
+        CI_SITUACAO="vermelho"; CI_DETALHE="$vermelhos de $total verificações reprovaram"
+    elif [ "$total" -eq 0 ]; then
+        CI_SITUACAO="pendente"; CI_DETALHE="o CI ainda não começou"
+    elif [ "${rodando:-0}" -gt 0 ]; then
+        CI_SITUACAO="pendente"; CI_DETALHE="$rodando de $total verificações ainda rodando"
+    else
+        CI_SITUACAO="verde"; CI_DETALHE="$total verificações aprovadas"
+    fi
+}
+
 if docker info >/dev/null 2>&1; then
     PREFIXO_DOCKER=""
 elif command -v sudo >/dev/null 2>&1 && sudo -n docker info >/dev/null 2>&1; then
@@ -121,8 +210,9 @@ fi
 # o horário perdido se a máquina estava desligada. Cron não faz nada disso, e "por que não
 # atualizou ontem?" vira adivinhação.
 PASTA="$(pwd)"
-SERVICO=/etc/systemd/system/loja-atualizar.service
-TIMER=/etc/systemd/system/loja-atualizar.timer
+DIR_SYSTEMD="${DIR_SYSTEMD:-/etc/systemd/system}"
+SERVICO="$DIR_SYSTEMD/loja-atualizar.service"
+TIMER="$DIR_SYSTEMD/loja-atualizar.timer"
 
 sudo_se_preciso() {
     if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo "$@"; fi
@@ -158,11 +248,28 @@ ligar_automatico() {
     fi
     ok "o git fala com o GitHub sem pedir senha"
 
+    # Sozinha, a atualização só sobe commit de CI verde. Token que lê o código mas não lê o
+    # CI faria a loja parar de atualizar para sempre — melhor dizer agora, com alguém olhando.
+    situacao_do_ci "$(git rev-parse HEAD)"
+    if [ "$CI_SITUACAO" = "indisponivel" ]; then
+        aviso "Não consigo ler o CI do GitHub: $CI_DETALHE."
+        aviso "Sozinha, a atualização só sobe commit com CI verde: assim, não subiria nada."
+        printf '  Dê ao token a permissão "Checks: leitura" (fine-grained) ou "repo" (clássico).\n'
+    else
+        ok "o CI do GitHub responde (o commit de agora está $CI_SITUACAO)"
+    fi
+
+    # Falhou? Avisa o dono (ntfy, ou o journal), pela unidade-modelo do notificar.sh.
+    umask 022
+    DIR_SYSTEMD="$DIR_SYSTEMD" ./notificar.sh --instalar \
+        || aviso "não consegui gravar o aviso de falha (loja-aviso@); a atualização liga mesmo assim"
+
     sudo_se_preciso tee "$SERVICO" >/dev/null <<UNIDADE
 [Unit]
 Description=Atualiza o sistema da loja com o que está no GitHub
 After=network-online.target docker.service
 Wants=network-online.target
+OnFailure=loja-aviso@%N.service
 
 [Service]
 Type=oneshot
@@ -281,7 +388,69 @@ git --no-pager log --oneline --no-decorate "$ANTES..$DEPOIS" | sed 's/^/    /' |
 QUANTOS="$(git rev-list --count "$ANTES...$DEPOIS")"
 [ "$QUANTOS" -gt 20 ] && printf '    … e mais %s\n' "$((QUANTOS - 20))"
 
-if [ "$INTERATIVO" -eq 1 ]; then
+# ------------------------------------------------------------------ pode subir?
+
+# Sozinho (o --sim), nada de novo sobe sem resposta: a loja fica na versão que já roda, a
+# tela passa a dizer que há uma nova esperando, e a próxima conferida pergunta de novo.
+nao_sobe() {
+    anotar_versao false "$ANTES"
+    printf '  Nada foi mudado: a loja continua na versão de antes.\n'
+}
+
+JA_CONFIRMOU=0
+# A versão que já subiu aqui e não respondeu não muda sozinha: tentar de novo é derrubar a
+# loja de novo. Só um commit NOVO no GitHub (a correção) faz o --sim seguir.
+if [ -s "$FALHOU" ] && [ "$(head -1 "$FALHOU")" = "$DEPOIS" ]; then
+    aviso "A versão $(git rev-parse --short "$DEPOIS") já subiu neste servidor, não respondeu e foi desfeita."
+    if [ "$INTERATIVO" -eq 1 ]; then
+        printf '  Tentar de novo mesmo assim? [s/N] '
+        read -r resposta </dev/tty || resposta="n"
+        case "${resposta:-n}" in [Ss]*) JA_CONFIRMOU=1 ;; *) printf '  Cancelado.\n'; exit 0 ;; esac
+    else
+        nao_sobe
+        printf '  A próxima tentativa é quando chegar um commit novo no GitHub.\n\n'
+        exit 0
+    fi
+fi
+
+titulo "Conferindo o CI no GitHub"
+situacao_do_ci "$DEPOIS"
+CURTO="$(git rev-parse --short "$DEPOIS")"
+case "$CI_SITUACAO" in
+    verde)    ok "CI verde em $CURTO ($CI_DETALHE)" ;;
+    vermelho) aviso "CI VERMELHO em $CURTO: $CI_DETALHE. Esta versão reprovou nos testes." ;;
+    pendente) aviso "CI de $CURTO ainda sem resposta final: $CI_DETALHE." ;;
+    *)        aviso "Não deu para conferir o CI de $CURTO: $CI_DETALHE." ;;
+esac
+if [ "$CI_SITUACAO" != "verde" ]; then
+    if [ "$IGNORAR_CI" -eq 1 ]; then
+        aviso "--ignorar-ci: subindo mesmo assim."
+    elif [ "$INTERATIVO" -eq 1 ]; then
+        printf '  Atualizar mesmo assim, sem o CI verde? [s/N] '
+        read -r resposta </dev/tty || resposta="n"
+        case "${resposta:-n}" in [Ss]*) JA_CONFIRMOU=1 ;; *) printf '  Cancelado.\n'; exit 0 ;; esac
+    elif [ "$CI_SITUACAO" = "indisponivel" ]; then
+        # Não deu nem para PERGUNTAR (token antigo sem "Checks", origem fora do GitHub):
+        # segue como sempre seguiu antes desta conferência existir — a volta atrás
+        # automática continua de guarda — e avisa, no journal e no celular. Parar aqui
+        # deixava as lojas instaladas com o token que o README pedia sem atualizar nunca
+        # mais, caladas. Vermelho e pendente, sim, seguram: ali o CI respondeu "não".
+        aviso "Subindo sem conferir o CI (o mesmo de antes desta checagem existir)."
+        printf '  Para o CI valer aqui, o token do GitHub precisa ler o CI:\n'
+        printf '  permissão "Checks: leitura" (token fine-grained) ou "repo" (clássico).\n'
+        if [ -x ./notificar.sh ]; then
+            ./notificar.sh --assunto ci-indisponivel "Atualização sem conferir o CI" \
+                "O atualizar.sh não conseguiu ler o CI do GitHub ($CI_DETALHE) e atualizou sem essa conferência. Dê ao token a permissão Checks: leitura." \
+                >/dev/null 2>&1 || true
+        fi
+    else
+        nao_sobe
+        printf '  A próxima conferida pergunta de novo ao GitHub.\n\n'
+        exit 0
+    fi
+fi
+
+if [ "$INTERATIVO" -eq 1 ] && [ "$JA_CONFIRMOU" -eq 0 ]; then
     printf '\n  Atualizar agora? A loja fica fora do ar por cerca de um minuto. [S/n] '
     read -r resposta </dev/tty || resposta="s"
     case "${resposta:-s}" in [Nn]*) printf '  Cancelado.\n'; exit 0 ;; esac
@@ -312,8 +481,11 @@ if [ "$SEM_BACKUP" -eq 0 ]; then
     ARQUIVO_BACKUP="loja-backup-antes-de-atualizar-$(date +%Y%m%d-%H%M%S).dump"
     # `pg_dump -Fc` dentro do contêiner e depois `cp` para fora: o formato comprimido do
     # Postgres restaura com pg_restore e não depende da versão do cliente na máquina.
+    # `chmod 600`: é o banco inteiro (CPF, telefones, hashes de senha), e o `docker cp` traz
+    # a permissão de dentro do contêiner, legível por qualquer usuário da máquina.
     if dk compose exec -T db pg_dump -U loja -d loja -Fc -f /tmp/backup.dump 2>/dev/null \
         && dk compose cp db:/tmp/backup.dump "$ARQUIVO_BACKUP" 2>/dev/null \
+        && chmod 600 "$ARQUIVO_BACKUP" \
         && dump_abre "$ARQUIVO_BACKUP"; then
         ok "$ARQUIVO_BACKUP ($(du -h "$ARQUIVO_BACKUP" | cut -f1)) — e ela abre"
     else
@@ -392,6 +564,10 @@ revisao_do_banco() {
 voltar_atras() {
     local revisao_agora=""
     erro "A atualização falhou. Voltando para a versão anterior."
+    # Antes de tudo: mesmo que a volta morra no meio, a próxima conferida já sabe que esta
+    # versão não sobe aqui, e não derruba a loja de novo para descobrir outra vez.
+    mkdir -p "$ESTADO"
+    printf '%s\n' "$DEPOIS" > "$FALHOU"
     git reset --hard --quiet "$ANTES"
     # Agora a instalada é a velha e existe uma nova parada no GitHub: a tela precisa dizer
     # isso, senão ninguém descobre que a loja ficou para trás numa madrugada.
@@ -427,6 +603,9 @@ voltar_atras() {
         printf '  Veja o que aconteceu com: %sdocker compose logs --tail 50 api%s\n' "$FORTE" "$NORMAL"
         [ -n "$ARQUIVO_BACKUP" ] && printf '  A cópia do banco de antes está em %s\n' "$ARQUIVO_BACKUP"
     fi
+    printf '  A versão %s não será tentada de novo sozinha: a próxima é quando chegar um commit\n' \
+        "$(git rev-parse --short "$DEPOIS")"
+    printf '  novo no GitHub.\n'
     printf '  Mande a mensagem de erro acima para quem cuida do sistema.\n\n'
     exit 1
 }
@@ -483,6 +662,7 @@ fi
 ok "migrations aplicadas e a API respondeu: $SAUDE"
 # Só agora a versão nova é a que está no ar.
 gravar_implantado "$DEPOIS"
+rm -f "$FALHOU"
 anotar_versao true
 
 # Cada `--build` deixa a imagem antiga para trás, sem nome, ocupando disco. Vinte

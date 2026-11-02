@@ -92,6 +92,8 @@
   <li><strong>Senha</strong> (o registro cifrado dela).</li>
 </ul>
 
+<p>O e-mail também sai do <strong>diário de auditoria</strong>: onde ele aparecia por extenso (em tentativas de login antigas), passa a aparecer só uma máscara, como <code>an***@l***.com</code>. Tentativas de login novas já não gravam o e-mail de uma conta existente — gravam a conta, que some na exclusão.</p>
+
 <p>Com isso, a pessoa desaparece da lista de usuários e não há mais como entrar no sistema com aquela conta.</p>
 
 <h2>O que é mantido, e por quê</h2>
@@ -113,13 +115,13 @@
 
 <p>Se você comprou fiado em uma loja que usa este sistema e quer que seus dados sejam apagados, peça diretamente na loja ou escreva para <strong>privacidade@sistemaobras.com.br</strong> informando seu nome completo, o telefone ou documento que a loja cadastrou e o nome da loja.</p>
 
-<p>O cadastro de cliente pode ser excluído dentro do sistema pela própria loja. Ao excluir, nome, telefone e documento saem das listas e das buscas.</p>
+<p>O cadastro de cliente pode ser excluído dentro do sistema pela própria loja, na tela do crediário. Ao excluir, o cadastro é <strong>anonimizado na hora</strong>: telefone, CPF ou documento e a observação são apagados do banco, e o nome é trocado por "Cliente removido" seguido de um número. As compras continuam no histórico da loja, ligadas a esse cadastro anônimo, sem o seu nome. A exclusão não tem volta: a loja não consegue recuperar os dados apagados.</p>
 
 <p>Uma ressalva importante, dita sem rodeio:</p>
 
 <ul>
   <li><strong>Dívida em aberto não é apagada a pedido.</strong> Enquanto houver saldo devedor, a loja mantém os dados necessários para cobrar e para provar a compra, com base legal na <strong>execução do contrato</strong> entre você e a loja (art. 7º, V, da LGPD). Pagar o que se deve não é uma exigência nossa: é o contrato que você fez com a loja.</li>
-  <li><strong>Depois de quitada a dívida</strong>, os dados de identificação do cliente podem ser excluídos a pedido.</li>
+  <li><strong>Depois de quitada a dívida</strong>, os dados de identificação do cliente podem ser excluídos a pedido, do jeito descrito acima. O sistema recusa a exclusão enquanto houver saldo devedor.</li>
   <li><strong>As vendas em si permanecem</strong>, pelo mesmo motivo explicado acima: são o registro fiscal e contábil da loja.</li>
 </ul>
 
@@ -129,8 +131,9 @@
   <li><strong>Enquanto a conta ou o cadastro existir:</strong> os dados ficam no servidor da própria loja, e em nenhum outro lugar. Não há analytics, publicidade, rastreamento, relatórios de erro de terceiros nem compartilhamento com terceiros.</li>
   <li><strong>Na exclusão:</strong> os dados pessoais da conta são apagados imediatamente do sistema em uso.</li>
   <li><strong>Cópias de segurança:</strong> o servidor guarda cópias do banco por um período curto (no padrão do sistema, 14 dias; a loja pode ajustar) e as apaga automaticamente. Nesse intervalo, os dados excluídos ainda podem existir dentro dessas cópias, que servem apenas para restaurar o sistema em caso de falha — nunca para consulta comum.</li>
-  <li><strong>Registros fiscais e contábeis</strong> (vendas, pagamentos, devoluções, despesas) e <strong>linhas de auditoria</strong>: guardados pelo prazo exigido pela legislação fiscal e civil aplicável à loja, em geral cinco anos.</li>
-  <li><strong>Tentativas de login</strong> (e-mail digitado, endereço IP, sucesso ou falha): existem apenas para travar ataques de força bruta; o bloqueio considera somente os últimos 15 minutos.</li>
+  <li><strong>Registros fiscais e contábeis</strong> (vendas, pagamentos, devoluções, despesas): guardados pelo prazo exigido pela legislação fiscal e civil aplicável à loja, em geral cinco anos.</li>
+  <li><strong>Linhas de auditoria</strong> (quem fez o quê, quando e de qual endereço IP): apagadas automaticamente depois de <strong>dois anos</strong> no padrão do sistema; a loja pode ajustar esse prazo. Quando alguém erra o login com um e-mail que não tem conta, o diário guarda esse e-mail só mascarado.</li>
+  <li><strong>Tentativas de login</strong> (e-mail digitado, endereço IP, sucesso ou falha): existem apenas para travar ataques de força bruta; o bloqueio considera somente os últimos 15 minutos, e elas são apagadas depois de um dia.</li>
   <li><strong>Fotos de peça:</strong> são imagens de mercadoria, enviadas pela loja, e ficam no servidor dela. A câmera do aplicativo é usada só para ler código de barras e fotografar peça; nada disso é enviado a terceiros.</li>
 </ul>
 

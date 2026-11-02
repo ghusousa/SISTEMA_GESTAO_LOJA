@@ -20,13 +20,15 @@ RUN if ls /usr/local/share/ca-certificates/*.crt >/dev/null 2>&1; then \
     fi
 
 # As dependências vêm antes do código: mexer numa view não reinstala o SQLAlchemy inteiro.
-# A lista sai do próprio pyproject.toml, para não existir uma segunda cópia que envelhece.
-COPY api/pyproject.toml ./
-RUN python -c "import tomllib, pathlib; \
-    deps = tomllib.load(open('pyproject.toml','rb'))['project']['dependencies']; \
-    pathlib.Path('/tmp/req.txt').write_text('\n'.join(deps))" \
-    && PIP_CERT=/etc/ssl/certs/ca-certificates.crt pip install --no-cache-dir -r /tmp/req.txt \
-    && rm /tmp/req.txt
+# Versões EXATAS do requirements.lock — as mesmas que o CI instala e testa —, e não o `>=`
+# do pyproject: com ele cada build resolvia a versão do DIA, e a volta atrás do
+# ./atualizar.sh podia reconstruir o código velho com as bibliotecas novas que derrubaram a
+# loja. `--no-deps` porque a trava já é o fecho inteiro: nada entra sem estar escrito lá. E o
+# `pip check` reprova a imagem se faltar alguém na trava, em vez de a API cair no import.
+COPY api/requirements.lock ./
+RUN PIP_CERT=/etc/ssl/certs/ca-certificates.crt \
+        pip install --no-cache-dir --no-deps -r requirements.lock \
+    && pip check
 
 COPY api/ /srv/api/
 COPY web/ /srv/web/

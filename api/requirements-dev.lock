@@ -1,0 +1,16 @@
+# Versões EXATAS do que só os testes usam (pytest, pytest-asyncio, httpx), além do
+# requirements.lock. O CI instala os dois e depois `pip install -e . --no-deps`.
+#
+# Gerado do mesmo api/.venv que o requirements.lock; o que já está lá (httpx, anyio…) não se
+# repete aqui, para as duas listas nunca discordarem sobre a mesma biblioteca.
+# Foi uma versão nova do pytest-asyncio, resolvida sozinha, que quebrou 162 testes de uma vez.
+iniconfig==2.3.1
+    # via pytest
+packaging==26.3
+    # via pytest
+pluggy==1.7.0
+    # via pytest
+pytest==9.1.1
+    # via pyproject.toml, pytest-asyncio
+pytest-asyncio==1.4.1
+    # via pyproject.toml

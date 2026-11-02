@@ -231,8 +231,30 @@ export async function render(raiz, _params, consulta) {
             ${temMais(extrato)
               ? cru('<button class="botao botao--neutro botao--largo" style="margin-top:12px" data-mais>Carregar mais</button>')
               : ''}
+            ${Number(extrato.deve) > 0
+              ? ''
+              : cru('<button class="botao botao--fantasma botao--pequeno" style="margin-top:16px" data-excluir>Excluir cadastro (pedido da cliente)</button>')}
         `,
-        aoAbrir: (corpo) => {
+        aoAbrir: (corpo, fechar) => {
+          // LGPD: só quitada. A API anonimiza (nome, telefone, CPF e observação somem) e as
+          // vendas ficam — a mensagem diz exatamente isso, que é o que a página pública promete.
+          corpo.querySelector('[data-excluir]')?.addEventListener('click', async () => {
+            fechar();
+            const ok = await confirmar({
+              titulo: 'Excluir o cadastro',
+              mensagem: `Nome, telefone, CPF e observação de ${extrato.cliente.nome} serão apagados de vez. As compras continuam no histórico, sem o nome. Não tem volta.`,
+              confirmarTexto: 'Excluir',
+              perigo: true,
+            });
+            if (!ok) return;
+            try {
+              await api.delete(`/clientes/${clienteId}`);
+              aviso('Cadastro excluído. As vendas ficaram, sem os dados dela.');
+              carregar();
+            } catch (erro) {
+              avisarErro(erro);
+            }
+          });
           const mais = corpo.querySelector('[data-mais]');
           let ultima = extrato;
           mais?.addEventListener('click', async () => {

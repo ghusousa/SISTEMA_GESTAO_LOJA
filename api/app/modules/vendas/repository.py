@@ -123,31 +123,48 @@ class VendaRepository:
         variante_id: int | None = None,
         cliente_id: int | None = None,
     ) -> tuple[list[tuple], int]:
-        stmt = select(Sale, User).join(User, User.id == Sale.seller_id)
+        filtros = []
         if variante_id:
             # É este filtro que torna a devolução possível no balcão: a cliente chega com
             # a blusa na mão e sem nota, e sem ele a vendedora teria que abrir venda por
             # venda de um sábado de quarenta. Sem isso, a devolução não acontece pelo
             # sistema — acontece um AJUSTE de estoque e dinheiro saindo da gaveta.
-            stmt = stmt.where(
+            filtros.append(
                 exists().where(
                     SaleItem.sale_id == Sale.id, SaleItem.variant_id == variante_id
                 )
             )
         if cliente_id:
-            stmt = stmt.where(Sale.customer_id == cliente_id)
+            filtros.append(Sale.customer_id == cliente_id)
         if inicio is not None:
-            stmt = stmt.where(Sale.sold_at >= inicio)
+            filtros.append(Sale.sold_at >= inicio)
         if fim is not None:
             # `<` porque `fim` é 00:00 do dia SEGUINTE (app/core/datas.py). Intervalo
             # meio-aberto: o último instante do dia entra, o primeiro de amanhã não.
-            stmt = stmt.where(Sale.sold_at < fim)
+            filtros.append(Sale.sold_at < fim)
         if status:
-            stmt = stmt.where(Sale.status == status)
+            filtros.append(Sale.status == status)
         if vendedor_id:
-            stmt = stmt.where(Sale.seller_id == vendedor_id)
-        total = await self.session.scalar(select(func.count()).select_from(stmt.subquery()))
-        stmt = stmt.order_by(Sale.id.desc()).offset(p.offset).limit(p.limit)
+            filtros.append(Sale.seller_id == vendedor_id)
+        # A contagem só olha `sales`: o JOIN com o vendedor é 1:1 por FK obrigatória e não
+        # muda o total — contar o JOIN fazia o banco montá-lo para o histórico inteiro a
+        # cada página.
+        total = await self.session.scalar(
+            select(func.count()).select_from(Sale).where(*filtros)
+        )
+        # Mais recente primeiro pelo INSTANTE da venda, e o id só desempata. Ordenar por id
+        # com o filtro em `sold_at` fazia o banco descer o índice da chave desde a venda
+        # mais nova e descartar tudo até chegar ao período: "março do ano passado"
+        # descartava 170 mil vendas para mostrar 20. Assim desce `ix_sales_sold_at` direto
+        # do fim do período — e a ordem é a do relógio, que é a que a tela promete.
+        stmt = (
+            select(Sale, User)
+            .join(User, User.id == Sale.seller_id)
+            .where(*filtros)
+            .order_by(Sale.sold_at.desc(), Sale.id.desc())
+            .offset(p.offset)
+            .limit(p.limit)
+        )
         return list((await self.session.execute(stmt)).all()), int(total or 0)
 
     async def resumo_de_vendas(self, venda_ids: list[int]) -> dict[int, tuple[int, list[str]]]:

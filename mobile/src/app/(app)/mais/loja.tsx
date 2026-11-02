@@ -22,14 +22,14 @@ import {
 import { mensagemDoErro } from '@/api/client';
 import { sistema } from '@/api/endpoints';
 import { Botao, Campo } from '@/components/ui';
-import { useLoja } from '@/hooks/useLoja';
+import { CHAVE_CONFIGURACAO_COMPLETA, useDadosDaLoja } from '@/hooks/useLoja';
 import { chaves } from '@/lib/queryClient';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
 
 export default function ConfiguracaoDaLoja() {
   const router = useRouter();
   const cliente = useQueryClient();
-  const atual = useLoja();
+  const atual = useDadosDaLoja();
 
   const [nome, setNome] = useState(atual.nome);
   const [segmento, setSegmento] = useState(atual.segmento);
@@ -58,7 +58,9 @@ export default function ConfiguracaoDaLoja() {
     mutationFn: () =>
       sistema.salvarConfiguracao({ nome: nome.trim(), segmento, documento, telefone, endereco }),
     onSuccess: (salvo) => {
+      // A resposta do PATCH é a configuração inteira: serve às duas leituras.
       cliente.setQueryData(chaves.configuracao, salvo);
+      cliente.setQueryData(CHAVE_CONFIGURACAO_COMPLETA, salvo);
       Alert.alert('Pronto', `A loja agora se chama ${salvo.nome}.`, [
         { text: 'Ok', onPress: () => router.back() },
       ]);
@@ -138,6 +140,9 @@ export default function ConfiguracaoDaLoja() {
             salvar.mutate();
           }}
           carregando={salvar.isPending}
+          // Antes de o documento chegar, os campos estão vazios por falta de resposta, não
+          // por escolha: salvar ali apagaria o CNPJ do recibo sem ninguém pedir.
+          desabilitado={!atual.carregado}
         />
       </ScrollView>
     </KeyboardAvoidingView>

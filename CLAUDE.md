@@ -24,7 +24,11 @@ contratos, ADRs). Mudou algo? Atualize o doc no mesmo commit.**
 ./backup.sh                                               # dump validado + cópia fora (BACKUP_REMOTO)
 ./backup.sh --automatico                                  # passa a fazer sozinho, todo dia (timer)
 ./backup.sh --listar / --restaurar ARQUIVO                # restaurar tira um dump de segurança antes
+./backup.sh --mostrar-chave                               # a chave das cópias de fora (cifradas)
 ./atualizar.sh --automatico                               # passa a se atualizar sozinho (timer do systemd)
+./atualizar.sh --ignorar-ci                               # sobe sem CI verde (o --sim nunca sobe)
+./vigia.sh / --automatico                                 # /health, disco e backup; avisa (5 em 5 min)
+./notificar.sh --testar                                   # aviso de teste no ntfy (NOTIFICAR_URL)
 
 # API (dentro de api/)
 .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0    # servidor
@@ -56,7 +60,9 @@ npm run publicar     # ficha inteira na App Store via API (mobile/publicar/, -- 
   (só o service público). `relatorios` e `caixa` são exceção documentada: leem via SQL próprio.
 - `HTTPException` só no router. Domínio lança `AppError` (`app/core/exceptions.py`), traduzida
   pelo handler global em `{code, message, detail}`.
-- Toda listagem é paginada: `?page=&size=` → `{items, total, page, size}`.
+- Toda listagem é paginada: `?page=&size=` → `{items, total, page, size}` — inclusive
+  relatório (`/relatorios/estoque-baixo`); quem só quer o número pede `size=1` e lê `total`.
+  A contagem conta só a tabela base quando os JOINs são 1:1 por FK obrigatória (ADR-31).
 - Dinheiro: `Numeric(14,2)` / `Decimal`. **Nunca float.** No fio trafega como string ("149.90").
 - Datas em UTC (`TIMESTAMPTZ`); agrupamento por dia usa `settings.tz_loja` (America/Sao_Paulo).
 - Soft delete = `deleted_at` + UNIQUE parcial `WHERE deleted_at IS NULL`; a API expõe `ativo`.
@@ -75,7 +81,11 @@ npm run publicar     # ficha inteira na App Store via API (mobile/publicar/, -- 
   garantia de que um dia alguém esquece. O mapa `auditoria/classificar.py` traduz
   `(método, caminho)` na frase que o dono lê; rota nova de mutação → uma linha nova ali. Nome
   e papel de quem agiu são **congelados** na linha (renomear depois não reescreve o passado).
-  Login (sucesso/falha) é gravado pelo `AuthService`, que conhece o e-mail mesmo sem conta.
+  Login (sucesso/falha) é gravado pelo `AuthService`, pela porta pública `AuditoriaService`.
+  **LGPD x auditoria**: o nome congelado de quem AGIU nunca muda, mas e-mail não fica à toa —
+  `LOGIN_FALHOU` grava `user_id`+nome se a conta existe e o e-mail MASCARADO se não existe;
+  excluir usuário mascara o e-mail dele nas linhas antigas; `RETENCAO_AUDITORIA_DIAS` (730,
+  0 = tudo) apaga o velho na faxina do login. São as duas únicas escritas depois do INSERT.
 - **Força bruta (ADR-24)**: o login conta as falhas recentes por e-mail e por IP
   (`login_attempts`, janela de 15 min) e responde 429 com `Retry-After` quando passa do teto.
   A resposta de e-mail real e falso é idêntica — a trava não vaza se a conta existe, nem pelo
@@ -85,15 +95,24 @@ npm run publicar     # ficha inteira na App Store via API (mobile/publicar/, -- 
   congela a loja inteira.
 - **Fora de dev o app se blinda**: `settings.producao` esconde `/docs` e `/openapi.json`, e
   todo request leva `X-Content-Type-Options`, `X-Frame-Options` e `Referrer-Policy`.
-  `api/scripts/pentest.py` roda a bateria de ataques contra a API no ar (17 vetores).
+  `api/scripts/pentest.py` roda a bateria de ataques contra a API no ar.
+  **CSP, HSTS e Permissions-Policy moram no Caddy** (`docker/Caddyfile`): `script-src 'self'`
+  sem inline — atributo `onclick=""` em template é bloqueado; use delegação (`data-*`). Origem
+  de fora nova (CDN, imagem) tem de entrar na CSP. O pentest confere no proxy com
+  `PENTEST_PROXY=http://...`, ou no Caddyfile sem ele.
 - Tempo real: `WS /api/v1/tempo-real`. Quem avisa é o commit do SQLAlchemy
   (`core/eventos.py`), não os services — mudou tabela, sai aviso. O que trafega é o
   ASSUNTO ("estoque"), nunca o dado: a tela refaz a consulta pela rota REST, e o filtro
-  por papel continua inteiro. Token vai no primeiro quadro, nunca na URL.
+  por papel continua inteiro. Token vai no primeiro quadro, nunca na URL. Avisos em
+  rajada viram UMA rodada (1 s de silêncio, teto de 2 s: `mobile/src/lib/avisos.ts`, espelho
+  em `web/js/tempo-real.js`); no app só refaz consulta com tela montada
+  (`refetchType: 'active'`), e com app no fundo ou aba escondida a rodada espera a volta.
 - **Identidade da loja (ADR-26)**: nome e ramo moram numa linha de `store_config` (`CHECK id = 1`),
   não no `.env` — o dono corrige na tela, entra no backup, e as duas pontas leem da mesma rota.
-  `GET /configuracao` é **aberto, sem login** (a tela de entrada precisa do nome antes da sessão);
-  `PATCH` exige `CONFIGURAR_LOJA`, que só o dono tem. O ramo troca **só as palavras**:
+  `GET /configuracao` é **aberto, sem login** (a tela de entrada precisa do nome antes da sessão)
+  e por isso só leva nome, ramo, fuso e vocabulário; documento, telefone e endereço (o CPF e a
+  casa do dono MEI) saem por `GET /configuracao/completa`, com qualquer sessão — o recibo
+  imprime. `PATCH` exige `CONFIGURAR_LOJA`, que só o dono tem. O ramo troca **só as palavras**:
   `product_variants.size/color` são dois eixos genéricos, e `app/core/segmentos.py` diz como
   chamá-los (Tamanho/Cor em roupas, Aplicação/Posição em autopeças). Trocar de ramo não move
   um dado. `web/js/loja.js` e `mobile/src/lib/segmento.ts` são espelhos — mudou um, mude os três.
@@ -104,10 +123,25 @@ npm run publicar     # ficha inteira na App Store via API (mobile/publicar/, -- 
   rota nenhuma, nem para o dono — mesma separação do token do GitHub no `atualizar.sh`.
   O timer do systemd bate de 5 em 5 min e o script pergunta ao banco se já passou
   `intervalo_min`; assim mudar o intervalo na tela vale sem `systemctl`.
+  **O que sai da máquina sai cifrado**: `loja:` é um `crypt` do rclone sobre `loja-drive:`
+  (`.dump.bin` no Drive), com a chave só em `backups/.chave-do-backup` — nunca no banco, no
+  `.env` ou em `docker/estado/` (montado na API). Mostrada uma vez, nunca no journal. **E só
+  depois de uma pessoa confirmar que guardou a chave** (`.chave-confirmada`): até lá `loja:` é
+  um `alias` e a cópia sai legível, com aviso — chave que ninguém viu é backup que não abre.
+  Trocar token ou pasta de backup JÁ conectado exige `senha_atual` (422, nunca 401 — 401
+  derrubaria a sessão). `atrasado` (ligado e sem cópia há mais de 2× `intervalo_min`) é
+  decidido no servidor e pintado na tela e no selo do dono (web: lateral; app: aba Mais).
 - Versão: `GET /versao` diz o commit instalado E se é o mais novo. Quem sabe disso é o
   `atualizar.sh` (tem a credencial do GitHub), que grava `docker/estado/versao.json`; a API
   só lê o arquivo montado. **A API nunca fala com o GitHub** — token do código-fonte não
-  entra no contêiner que serve a loja.
+  entra no contêiner que serve a loja. O `atualizar.sh` só sobe commit de **CI verde**
+  (check-runs, com a credencial do `origin`) e anota em `docker/estado/falhou` o que caiu na
+  volta atrás, para o `--sim` não derrubar a loja de novo com ele (ADR-18).
+- **Operação (ADR-32 a 34)**: toda unidade do systemd da loja leva `OnFailure=loja-aviso@%N`
+  (o `notificar.sh` grava o modelo); unidade nova de rotina → a mesma linha. Teste de script
+  que grava unidade usa `DIR_SYSTEMD` de mentira, nunca `/etc`. Dependência Python nova ou
+  versão nova → `api/requirements.lock` (imagem e CI instalam dele, `--no-deps`). IP público
+  no instalador é recusado: HTTP puro só na rede da loja.
 - Mutações idempotentes por `client_uuid`: `POST /vendas`, `POST /estoque/entradas`,
   `POST /vendas/{id}/devolucoes` e `POST /clientes/{id}/pagamentos` (replay → 200 com o existente).
   A mesma chave com OUTRO pedido é 409 `DUPLICADO`, nunca o registro antigo como sucesso; a
@@ -120,6 +154,8 @@ npm run publicar     # ficha inteira na App Store via API (mobile/publicar/, -- 
   condicional, igual ao saldo de estoque). `FORMAS_DE_GAVETA` (dinheiro, PIX, débito, crédito) é o
   que o caixa confere — VALE e FIADO **nunca** entram numa conferência de gaveta. O saldo do
   cliente é sempre calculado, nunca coluna, e o abatimento para onde a dívida acaba.
+  Excluir cliente (só quitada) **anonimiza** (LGPD): telefone, documento e observação viram
+  nulos e o nome vira "Cliente removido #id"; a linha fica para as vendas do passado.
 
 ## Convenções do web (`web/`)
 
@@ -181,6 +217,12 @@ estoque, concorrência do último item, idempotência por `client_uuid`.
   Entrada é da segunda vez em diante — e aí a mercadoria chega SEM a nossa etiqueta, porque o
   código interno nasceu aqui. Por isso a busca por nome não é conveniência: sem ela a reposição
   não tem como ser registrada. `GET /variantes?q=` acha por nome, cor ou código, sem acento.
+- **Índice só entra medido (ADR-31)**: `EXPLAIN` com volume de anos de loja, não numa tabela
+  de teste de três linhas, e a consulta escreve a expressão do índice letra por letra. Busca
+  por nome usa `achatar()` de `catalogo/busca.py`, que manda as tabelas de acento LITERAIS:
+  com parâmetro no meio, o plano genérico do asyncpg não casa com o índice trigram e cada
+  tecla volta a varrer o catálogo. Teste de índice olha o plano da consulta REAL
+  (`tests/planos.py`). A API tem `statement_timeout` por conexão (30 s).
 - **Mutação que muda relatório**: invalide as chaves `relatorio-*` também, ou a aba Financeiro
   mostra o resultado de antes.
 - **`response_model` por papel**: rota cuja resposta muda com o papel usa `response_model=None`,

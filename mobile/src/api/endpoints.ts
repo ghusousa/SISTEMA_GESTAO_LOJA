@@ -5,7 +5,9 @@
 
 import { api } from './client';
 import type {
+  Backup,
   ConfiguracaoLoja,
+  ConfiguracaoPublica,
   Categoria,
   CategoriaDespesa,
   Despesa,
@@ -95,7 +97,15 @@ export const sistema = {
    * falando com o servidor da loja certa.
    */
   async configuracao() {
-    const { data } = await api.get<ConfiguracaoLoja>('/configuracao');
+    const { data } = await api.get<ConfiguracaoPublica>('/configuracao');
+    return data;
+  },
+  /**
+   * Documento, telefone e endereço da loja, que o recibo imprime. Exige sessão (qualquer
+   * papel): abertos, entregavam o CPF e o endereço de casa do dono MEI a qualquer um.
+   */
+  async configuracaoCompleta() {
+    const { data } = await api.get<ConfiguracaoLoja>('/configuracao/completa');
     return data;
   },
   /** Os ramos que o sistema conhece, para a tela montar o seletor sem lista própria. */
@@ -110,6 +120,28 @@ export const sistema = {
     Pick<ConfiguracaoLoja, 'nome' | 'segmento' | 'documento' | 'telefone' | 'endereco'>
   >) {
     const { data } = await api.patch<ConfiguracaoLoja>('/configuracao', dados);
+    return data;
+  },
+};
+
+// -------------------------------------------------------------------- backup
+/** Só o dono (`GERIR_BACKUP`). O token entra e nunca sai — nem para o dono. */
+export const backup = {
+  async obter() {
+    const { data } = await api.get<Backup>('/backup');
+    return data;
+  },
+  /**
+   * Trocar o token ou a pasta de um backup já conectado exige `senha_atual` (422 com
+   * `detail.campo = 'senha_atual'` sem ela). Ligar, desligar e intervalo não exigem.
+   */
+  async salvar(
+    dados: Partial<Pick<Backup, 'ativo' | 'pasta' | 'manter' | 'intervalo_min'>> & {
+      rclone_token?: string;
+      senha_atual?: string;
+    },
+  ) {
+    const { data } = await api.put<Backup>('/backup', dados);
     return data;
   },
 };
@@ -358,6 +390,13 @@ export const clientes = {
     const { data } = await api.post<PagamentoCliente>(`/clientes/${id}/pagamentos`, dados);
     return data;
   },
+  /**
+   * Exclui a pedido da cliente (LGPD), só quitada. O servidor ANONIMIZA: nome, telefone,
+   * documento e observação somem; as vendas ficam, sem o nome.
+   */
+  async excluir(id: number) {
+    await api.delete(`/clientes/${id}`);
+  },
 };
 
 // ------------------------------------------------------------------ despesas
@@ -455,8 +494,14 @@ export const relatorios = {
     );
     return data;
   },
-  async estoqueBaixo() {
-    const { data } = await api.get<EstoqueBaixo[]>('/relatorios/estoque-baixo');
+  /**
+   * Paginado como toda listagem. Para só saber QUANTAS peças estão no mínimo, peça
+   * `size: 1` e leia `total` — a lista inteira passava de 1 MB numa loja grande.
+   */
+  async estoqueBaixo(params: Paginado = {}) {
+    const { data } = await api.get<Pagina<EstoqueBaixo>>('/relatorios/estoque-baixo', {
+      params,
+    });
     return data;
   },
 };

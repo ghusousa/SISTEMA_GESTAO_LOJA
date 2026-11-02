@@ -65,6 +65,7 @@ categories(id, name, deleted_at, created_at)
 products(id, category_id FK→categories RESTRICT, name, description, photo_url,
          deleted_at, created_at, updated_at)
   ix_products_category_id, ix_products_name_lower
+  ix_products_nome_achatado GIN (translate(lower(name), <acentos>) gin_trgm_ops)   -- ADR-31
 
 product_variants(id, product_id FK→products RESTRICT, size, color,
                  barcode, barcode_type CHECK IN ('EAN','INTERNO'),
@@ -74,6 +75,7 @@ product_variants(id, product_id FK→products RESTRICT, size, color,
   uq_product_variants_barcode_active UNIQUE (barcode) WHERE deleted_at IS NULL
   uq_product_variants_combo_active  UNIQUE (product_id, size, color) WHERE deleted_at IS NULL
   ix_product_variants_product_id
+  ix_product_variants_cor_achatada GIN (translate(lower(color), <acentos>) gin_trgm_ops)
 
 SEQUENCE internal_barcode_seq   -- alimenta o código interno
 ```
@@ -97,6 +99,7 @@ stock_movements(id, variant_id FK→product_variants, movement_type CHECK IN
                 user_id FK→users, note, created_at)
   ix_stock_movements_variant_created (variant_id, created_at)
   ix_stock_movements_sale_id, ix_stock_movements_type_created
+  ix_stock_movements_created_at                 -- filtro de período do extrato (ADR-27)
 ```
 
 Append-only: movimentação nunca é editada nem apagada. `balance_after` guarda o saldo após o evento
@@ -115,6 +118,7 @@ sales(id, seller_id FK→users, status CHECK IN ('CONCLUIDA','CANCELADA') DEFAUL
   CHECK (status='CANCELADA' AND cancelled_at IS NOT NULL AND cancelled_by_id IS NOT NULL
          OR status='CONCLUIDA' AND cancelled_at IS NULL AND cancelled_by_id IS NULL)
   ix_sales_sold_at, ix_sales_seller_id, ix_sales_status_sold_at
+  ix_sales_customer_id (customer_id) WHERE customer_id IS NOT NULL   -- dívida por cliente
   ix_sales_business_date ((sold_at AT TIME ZONE 'America/Sao_Paulo')::date)
 
 sale_items(id, sale_id FK→sales CASCADE, variant_id FK→product_variants RESTRICT,
@@ -122,7 +126,8 @@ sale_items(id, sale_id FK→sales CASCADE, variant_id FK→product_variants REST
            unit_price NUMERIC(14,2),   -- CONGELADO na venda
            unit_cost  NUMERIC(14,2),   -- CONGELADO na venda (CMV histórico)
            line_total GENERATED ALWAYS AS (unit_price * quantity) STORED)
-  ix_sale_items_sale_id, ix_sale_items_variant_id
+  ix_sale_items_sale_id (sale_id) INCLUDE (variant_id, quantity, unit_price, unit_cost)
+  ix_sale_items_variant_id
 
 sale_payments(id, sale_id FK→sales CASCADE,
               method CHECK IN ('DINHEIRO','PIX','DEBITO','CREDITO','VALE','FIADO'),
@@ -132,6 +137,7 @@ sale_payments(id, sale_id FK→sales CASCADE,
   CHECK ((method = 'FIADO') = (customer_id IS NOT NULL))   -- ck_fiado_tem_cliente
   FK (sale_id, customer_id) → sales(id, customer_id)       -- é a MESMA cliente da venda
   ix_sale_payments_sale_id
+  ix_sale_payments_fiado (sale_id) INCLUDE (amount) WHERE method = 'FIADO'
 ```
 
 Congelar `unit_price`/`unit_cost` é o que torna o lucro histórico correto: reajustar o preço amanhã
@@ -176,11 +182,15 @@ customers(id, name, phone NULL, document NULL, credit_limit NULL, note NULL,
           deleted_at NULL, created_at, updated_at)
   uq_customers_phone_active UNIQUE (phone) WHERE deleted_at IS NULL
   uq_customers_document_active UNIQUE (document) WHERE deleted_at IS NULL
+  -- excluir (só quitada) ANONIMIZA: phone/document/note = NULL, name = 'Cliente removido #id'.
+  -- Só marcar deleted_at deixava CPF e telefone para sempre no banco e em todo backup (LGPD);
+  -- a linha fica para as vendas e pagamentos do passado seguirem fechando a conta.
 
 customer_payments(id, customer_id FK→customers RESTRICT, user_id FK→users,
                   method CHECK IN ('DINHEIRO','PIX','DEBITO','CREDITO'),
                   amount CHECK > 0, paid_at, note NULL,
                   client_uuid UUID UNIQUE NOT NULL)
+  ix_customer_payments_business_date ((paid_at AT TIME ZONE 'America/Sao_Paulo')::date)
 ```
 
 `returned_quantity` sobe por `UPDATE ... WHERE returned_quantity + :q <= quantity`, a mesma
@@ -264,9 +274,11 @@ login_attempts(id BIGINT, email, ip, sucesso BOOL, created_at)
   ix_login_attempts_ip_created (ip, created_at)
 ```
 
-`audit_log` é append-only e nunca é lido por vendedora — só por quem tem `VER_AUDITORIA`
-(ADR-23). `user_id` fica nulo em falha de login (não há usuário) e vira nulo se a conta for
-apagada; o nome/papel congelados preservam o histórico. `login_attempts` alimenta a trava de
+`audit_log` nunca é editado por tela nenhuma e nunca é lido por vendedora — só por quem tem
+`VER_AUDITORIA` (ADR-23). `user_id` fica nulo em falha de login com e-mail sem conta (e aí
+`user_nome` guarda o e-mail MASCARADO, `ma***@g***.com`) e vira nulo se a conta for apagada; o
+nome/papel congelados preservam o histórico. A faxina do login também apaga, em lotes de 5 mil,
+o diário com mais de `RETENCAO_AUDITORIA_DIAS` (730 por padrão; 0 = guarda tudo). `login_attempts` alimenta a trava de
 força bruta (ADR-24): a contagem é por janela de 15 min. A faxina é oportunista, no login
 bem-sucedido (raro, e já escrevendo): apaga as tentativas com mais de um dia e os
 `refresh_tokens` **vencidos** há mais de um dia. O revogado ainda dentro da validade fica — é a
@@ -477,6 +489,25 @@ disco cheio faz o Postgres parar de aceitar escrita — a loja "para e não volt
 errado aparecer no log da aplicação. Daí as duas metades da correção: o endpoint engole a
 queda (`test_cliente_que_cai_nao_vira_erro_no_log` guarda isso) e o `docker-compose.yml`
 fixa `max-size: 10m` × `max-file: 3` em todo serviço.
+**Rajada vira uma rodada; tela que ninguém olha não recarrega.** Uma venda publica dois
+assuntos (`vendas`, `estoque`), uma devolução três, e num sábado cheio dois balcões vendem
+no mesmo segundo. Tratado aviso por aviso, cada celular aberto refazia o estoque rolado
+(todas as páginas), o resumo do mês e o estoque-baixo uma vez por aviso: 23 avisos de dez
+vendas e uma devolução custavam 89 buscas no celular do dono. Agora o cliente junta os
+avisos que chegam em sequência — fecha a rodada com 1 s de silêncio, nunca depois de 2 s do
+primeiro (`JANELA_RAJADA`/`TETO_RAJADA`) — e aplica a união dos assuntos de uma vez: as
+mesmas 23 viram 1 rodada e 8 buscas. A regra mora em `mobile/src/lib/avisos.ts` (com teste
+de tempo simulado em `avisos.test.ts`) e é espelhada em `web/js/tempo-real.js`, onde a
+rodada vira um redesenho por tela inscrita. No app, a rodada invalida com
+`refetchType: 'active'`: só consulta com tela montada busca de novo; relatório fechado fica
+marcado como velho e é buscado quando abrir. Limite conhecido: as abas do expo-router
+continuam montadas, então a aba Financeiro conta como "tela montada" mesmo com a pessoa no
+PDV; tirar isso pede `subscribed: useIsFocused()` em cada aba, o que é mudança de tela e
+ainda não foi feita. Com o app no fundo (`AppState` →
+`focusManager` do TanStack, em `app/_layout.tsx`) ou a aba do navegador escondida, a rodada
+fica segurada; na volta o cliente já recarrega tudo de uma vez (é o mesmo buraco da
+reconexão), e a rodada segurada é descartada no app ou somada ao redesenho no web.
+O aviso continua sem dado: a rodada só diz QUAIS consultas refazer.
 
 
 **ADR-17 — Achar a peça pelo nome é do fluxo, não conveniência.**
@@ -488,8 +519,9 @@ o caminho existia só para o caso que a loja quase não tem. Agora `GET /variant
 por nome do produto, cor ou código, com o exato à frente, e devolve saldo e nome do produto na
 mesma resposta — o que a tela precisa para decidir sem uma segunda ida ao servidor.
 Acento sai dos dois lados por `translate()` no Postgres, e não pela extensão `unaccent`:
-extensão pede `CREATE EXTENSION`, mais uma migration e mais um privilégio para faltar num
-servidor novo, enquanto para o alfabeto do português a tabela resolve igual. Quem procura
+`unaccent()` não é IMMUTABLE (não entra em índice) e depende de dicionário no servidor,
+enquanto para o alfabeto do português a tabela resolve igual — e `translate(lower())` é
+indexável (o índice trigram do ADR-31 é sobre esta expressão). Quem procura
 escreve "calca jeans", e a peça não pode sumir por causa de uma cedilha — some ela, a pessoa
 cadastra a mesma peça de novo, e aí são dois saldos para uma arara só.
 Na tela é **um campo, não dois**: o leitor USB digita em rajada e fecha com Enter, o dedo
@@ -520,6 +552,20 @@ seguinte dizia "nada a fazer" para sempre. O script grava em `docker/estado/impl
 commit que respondeu ao `/health` — o de antes, antes do reset; o novo, só depois do `/health`
 — e compara o GitHub com ele. A execução seguinte a uma morte reconstrói, e a volta atrás
 mira esse commit. Sem o arquivo (instalação nova), vale o HEAD, e o primeiro reset já o cria.
+**Só sobe commit de CI verde, e não insiste no que caiu.** Implantar o que estivesse no `main`
+fazia um commit quebrado derrubar a loja por 3 a 4 minutos a cada 10, o dia inteiro, porque a
+volta atrás desfazia e a conferida seguinte tentava de novo. Antes de mexer em qualquer coisa, o
+script pergunta `GET /repos/{dono}/{repo}/commits/{sha}/check-runs` com a MESMA credencial que o
+git usa (a da URL crua do `origin`, ou o ajudante de credenciais; o token vai por `curl -K -`,
+nunca na linha de comando). Verde = todas terminaram e nenhuma reprovou; zero verificações conta
+como "ainda rodando". Sozinho (`--sim`), vermelho ou rodando não sobem (a tela passa a mostrar
+versão nova esperando, e a próxima conferida pergunta de novo); **sem resposta** (token sem
+"Checks: leitura", GitHub fora) também não sobe e sai com erro, para o `OnFailure=` avisar em vez
+de a loja parar de atualizar calada. Interativo, pergunta; `--ignorar-ci` é a saída explícita.
+A volta atrás grava o commit em `docker/estado/falhou` antes de tudo, e o `--sim` não tenta esse
+commit de novo — só um commit NOVO no GitHub (a correção) o faz seguir; o arquivo some quando um
+commit sobe bem. O JSON é lido com `grep -o` (a máquina não tem jq nem Python garantidos): as
+chaves `status`/`conclusion` dentro de um texto viriam com as aspas escapadas e não casam.
 
 **ADR-19 — Não existe "modo troca": troca é devolução que vira vale, mais uma venda nova.**
 A troca parece uma operação só, e virou muitas telas em muitos sistemas: escolher o que
@@ -607,6 +653,12 @@ Essa cópia de antes passa pelo mesmo `pg_restore -l` do `backup.sh`, com o `pg_
 contêiner (o da máquina pode ser de outra versão). Sem uma cópia que abra, o `--sim` (o timer)
 **não atualiza**: segue na versão de antes, a tela passa a dizer que há uma nova esperando, e
 só `--sem-backup` explícito pula a cópia. Interativo, o script pergunta.
+**A cópia diária nasce ligada, e só o dono do arquivo a lê.** O instalador termina chamando o
+`./backup.sh --automatico` (systemd no Linux, launchd no Mac; no Windows, uma Tarefa Agendada que
+roda o `backup.ps1`, com "rodar assim que possível" para o computador do balcão que fica
+desligado às 03:15). O `backup.sh` roda com `umask 077`, a pasta `backups/` é 700 e cada dump
+600 — inclusive os do `atualizar.sh` e do `desinstalar.sh`, que recebem `chmod 600` depois do
+`docker cp`, porque o `docker cp` traz a permissão de dentro do contêiner e ignora o umask.
 
 **ADR-23 — Auditoria na borda, com nome e papel congelados na linha.**
 Quem cuida da loja precisa saber o que cada pessoa fez com o login dela — não para
@@ -626,6 +678,20 @@ A gravação é embrulhada em `try/except` largo: auditoria **nunca** derruba a 
 ela observa — registro que falha vira log, não erro para o cliente. A middleware decodifica o
 token ela mesma (o `contextvar` do usuário, setado lá adentro, não volta visível depois do
 `call_next` no Starlette).
+**LGPD x auditoria — o equilíbrio.** O diário prova quem fez o quê, e para isso nome e papel de
+quem AGIU continuam congelados, inclusive depois de a conta ser excluída: é a parte que tem
+finalidade (prestação de contas, e inocentar quem foi acusado sem razão). O que não prova ato
+nenhum deixou de ser guardado por extenso: (1) `LOGIN_FALHOU` de uma conta que existe grava o
+`user_id` e o nome congelado dela, sem e-mail; de um e-mail sem conta, grava só a máscara
+(`mascarar_email`) — pode ser o e-mail de qualquer pessoa, errado por uma letra, e não há conta
+a que ele pertença para um dia ser apagado; (2) ao excluir um usuário, as linhas que ainda traziam
+o e-mail dele (o formato antigo do `LOGIN_FALHOU`) passam a trazer a máscara — no nome e na frase,
+e só ali; (3) nada fica para sempre: `RETENCAO_AUDITORIA_DIAS` (730 dias por padrão, 0 = guarda
+tudo) e uma faxina oportunista no login certo, em lotes de 5 mil linhas, como a de
+`login_attempts`. Livro fiscal é a venda, que não sai daqui; o diário é prestação de contas, e
+dois anos cobrem qualquer conferência de caixa. Essas são as duas únicas escritas depois do
+INSERT, e nenhuma toca em `user_nome`/`user_papel` de quem agiu. O login escreve pelo
+`AuditoriaService` (porta pública), não pelo repository de outro módulo.
 
 **ADR-24 — Trava de força bruta por e-mail e por IP, sem revelar quem existe.**
 Senha é a única porta, então a porta conta tentativa. Cada login (certo ou errado) grava uma
@@ -644,8 +710,10 @@ ser gravada. E o bcrypt roda numa thread (`verificar_senha_async`/`hash_senha_as
 loop, cada conferência de ~0,3 s parava o servidor inteiro — PDV, bipagem, WebSocket — e uma
 rajada de logins errados, mesmo dentro da trava, travava o balcão. O IP vem do
 `X-Forwarded-For` (a API serve atrás do Caddy);
-falha de login também entra no diário de auditoria (ADR-23) como `LOGIN_FALHOU`, com
-`user_id` nulo. As mesmas contas de tentativa são a matéria-prima do pentest (`scripts/pentest.py`).
+falha de login também entra no diário de auditoria (ADR-23) como `LOGIN_FALHOU`: com o
+`user_id` e o nome da conta quando ela existe, com o e-mail mascarado quando não existe. A
+consulta que descobre qual dos dois é feita nos dois casos, então o tempo da resposta não muda,
+e a resposta HTTP continua idêntica — a diferença só existe no diário, que só o dono lê. As mesmas contas de tentativa são a matéria-prima do pentest (`scripts/pentest.py`).
 
 **ADR-25 — Em produção, a API não conta de si o que ajuda quem ataca.**
 `settings.producao` é verdadeiro em qualquer ambiente que não seja `dev`/`test`/`local`. Nele,
@@ -654,6 +722,17 @@ da loja), e toda resposta sai com `X-Content-Type-Options: nosniff`, `X-Frame-Op
 `Referrer-Policy: strict-origin-when-cross-origin`. Não é segurança de verdade — é não entregar
 de graça o que o atacante teria de descobrir sozinho. A checagem é uma propriedade só
 (`config.py`), para "estamos em produção?" ter uma resposta e não várias.
+CSP, HSTS e `Permissions-Policy` moram no **proxy** (`docker/Caddyfile`), que é quem fala com o
+navegador. A CSP é a segunda barreira contra XSS (o access token mora em memória): `script-src
+'self'` sem `'unsafe-inline'` — o único atributo de evento que existia (`onclick` do
+`erroBloco`) virou delegação em `ui.js` —, `style-src 'self' 'unsafe-inline'` (estilo inline
+existe nas telas e no recibo impresso), `img-src 'self' data: blob:` (ícone e prévia da foto),
+`connect-src 'self'` mais o WebSocket da mesma origem, `frame-ancestors 'none'`. `/docs` e
+`/redoc` ficam fora dela: o Swagger vem de CDN e só existe fora de produção. HSTS vai sempre
+(o navegador o ignora em HTTP), por um ano e sem `includeSubDomains`. `scripts/pentest.py`
+confere os três no Caddy quando `PENTEST_PROXY` aponta para ele, e no `docker/Caddyfile` quando
+não aponta. Rota nova que precise de origem de fora tem de entrar na CSP, ou o navegador a
+bloqueia calado.
 
 **ADR-26 — Nome e ramo da loja no banco, e o ramo troca palavras, não dados.**
 O sistema nasceu para uma loja de roupas e o vocabulário foi junto ("peça", "tamanho", "cor").
@@ -665,8 +744,12 @@ lugar, e é por isso que a tela pode oferecer a troca sem medo — está escrito
 A identidade mora em `store_config`, uma linha só garantida por `CHECK (id = 1)`: no `.env` ela
 exigiria acesso ao servidor para corrigir um acento, não entraria no `pg_dump` e cada ponta
 precisaria de uma cópia. `GET /configuracao` é **aberto, sem login** — a tela de entrada mostra o
-nome antes de existir sessão, e o que sai por ali já está na fachada (nome, ramo, contato do
-recibo); nenhum número, nenhum cliente. `PATCH` é `CONFIGURAR_LOJA`, só do dono: o nome vai
+nome antes de existir sessão —, e por isso devolve só a fachada: nome, ramo, fuso e as palavras
+da tela. Documento, telefone e endereço saem por `GET /configuracao/completa`, que pede sessão de
+qualquer papel (a vendedora imprime o recibo, que leva os três). Abertos, eles entregavam a quem
+digitasse a URL o CPF e o endereço de casa do dono MEI. O web lê a completa quando a sessão nasce
+e a esquece quando ela cai (`loja.js`, `garantirDadosDaLoja` antes de imprimir); o app usa
+`useDadosDaLoja` só dentro do grupo logado. `PATCH` é `CONFIGURAR_LOJA`, só do dono: o nome vai
 impresso no papel que o cliente leva. A migration semeia a linha para a loja que já existia — sem
 ela, um `GET` aberto teria de ESCREVER no banco para a tela se desenhar. Espelhos obrigatórios:
 `web/js/loja.js` e `mobile/src/lib/segmento.ts`.
@@ -713,6 +796,45 @@ diário ela levava junto as diárias e o dump de segurança do `--restaurar`. As
 levam `Environment=HOME=/root` — serviço sem `User=` não recebe HOME, e o script usa `set -u`.
 Os campos `ultimo_*` existem porque "ligado" e "ligado e quebrado" são a mesma tela sem eles: o
 que dá confiança é "há 12 minutos, 4,2 MB, 10 cópias no Drive".
+**O que sai da máquina sai cifrado, com uma chave que só a máquina tem.** O dump ia em claro para
+o Drive e para o `BACKUP_REMOTO`: quem entrasse no Google do dono levava CPF e telefone das
+clientes, hashes de senha, o diário com IPs — e o próprio `rclone_token`, que mora numa coluna
+e vai dentro do dump. Agora `loja:` é um remote `crypt` do rclone por cima de `loja-drive:` (e o
+`BACKUP_REMOTO` ganha um `crypt` definido por variável de ambiente, sem mexer no rclone de quem
+cuida do servidor). `filename_encryption = off`: no Drive o arquivo é
+`loja-AAAAMMDD-HHMMSS.dump.bin`, o nome mostra a data e a rotação por nome continua igual; o
+conteúdo é que não abre. A chave nasce na máquina (`backups/.chave-do-backup`, 600, 24 letras
+sem as que se confundem no papel) e **não** vai para o banco (iria dentro do dump que protege),
+nem para o `.env` (o `instalar.sh --forcar` o reescreve), nem para `docker/estado/` (montado na
+API, que nunca vê credencial). Sem ela a cópia não abre, então ela é mostrada UMA vez ao nascer
+com alguém no terminal (o instalador), nunca no journal (pelo timer sai só o recado, também no
+celular), e `--mostrar-chave` a mostra de novo. `--restaurar` reconhece a cópia cifrada pelo
+cabeçalho `RCLONE` e a abre ANTES de perguntar e de parar a API — chave errada não custa a loja
+fora do ar —, tentando a `CHAVE_DO_BACKUP` do ambiente, a da máquina e a digitada; numa máquina
+nova, a chave que abriu passa a ser a dela. Limite conhecido: as cópias de antes, em claro, o
+crypt não enxerga — continuam legíveis no Drive até o dono apagá-las à mão.
+
+**A cifra só liga com a chave confirmada por uma pessoa** (`backups/.chave-confirmada`, gravado
+pelo "SIM" do `--mostrar-chave` interativo, pelo `--confirmar-chave` ou por uma restauração que
+abriu a cópia com a chave digitada). Nas lojas já instaladas a chave nasce pelo TIMER, sem
+terminal, e ninguém a vê: cifrar com ela trocava "backup legível no Drive" por "backup que não
+abre" — o disco morre e leva a única chave junto, no dia exato em que a cópia de fora importa.
+Até a confirmação, `loja:` é um `alias` do Drive (e o `BACKUP_REMOTO` recebe o dump direto):
+a cópia sai como sempre saiu, e cada cópia repete o aviso, no journal e pelo `notificar.sh`.
+**Trocar o destino pede a senha de novo.** Com uma sessão do dono esquecida aberta no balcão,
+colar o próprio token mandava o banco inteiro para o Drive de outra pessoa a cada 30 min — e
+continuava depois de o dono trocar a senha. `PUT /backup` que troque o token ou a pasta de um
+backup JÁ conectado exige `senha_atual` (conferida por `verificar_senha_async`); sem ela, ou
+errada, é `422 VALIDACAO` com `detail.campo = "senha_atual"` — 422 e não 401, porque um 401
+derrubaria a sessão de quem só errou a senha. Ligar, desligar, intervalo e quantas cópias
+seguem sem senha: não levam o banco a lugar nenhum novo. A primeira conexão (sem token gravado)
+ainda não pede; segundo fator para o dono também não existe — os dois são decisão do dono.
+**"Atrasado" é do servidor.** O selo dizia "Funcionando" olhando SE a última cópia deu certo,
+nunca QUANDO: um timer parado ou um rclone travado não gravam nada. `BackupOut.atrasado` é
+verdadeiro quando o backup está ligado e a última cópia (ou, sem nenhuma, a última vez que a
+configuração foi salva) passou de 2× `intervalo_min`. A tela (web e app) mostra "Atrasado" em
+tom de alerta, e a barra lateral do web e a aba Mais do app ganham um selo para o dono, no
+desenho do selo de versão, só quando há problema (atrasado ou falhou).
 
 **ADR-29 — Mercadoria entra por uma porta só; o cadastro não põe estoque.**
 O cadastro tinha `estoque_inicial` e existia a Entrada: duas portas para o mesmo efeito. O dono
@@ -761,6 +883,85 @@ Limites conhecidos: o desvio para a peça de mesma etiqueta pode travar fora da 
 duas devoluções cruzadas de várias peças podem, em tese, cair num deadlock, que o Postgres
 desfaz abortando uma delas (que se refaz). A categoria excluída não volta junto com o produto:
 o produto reaparece com o nome da categoria, só fora do filtro por categoria.
+
+**ADR-31 — Índice só entra medido, e a consulta escreve a expressão do índice letra por letra.**
+Num banco de três anos simulados (200 mil vendas, 400 mil itens, 15 mil peças, 20 mil
+clientes) a tela Clientes ("quem está devendo", a que abre por padrão) levava 49 s: a dívida de
+cada cliente somava as vendas dela por um índice onde `customer_id` era a 2ª coluna. A
+migration `3f9c1a7e5b20` cria só o que o `EXPLAIN` mostrou valer: `sales(customer_id)` parcial
+(49 s → 0,5 s), `sale_items(sale_id) INCLUDE (...)` (CMV de 30 dias 32 → 10 ms, sai do índice),
+`sale_payments ... WHERE method = 'FIADO'` (vendido a prazo 13 → 5 ms), `customer_payments` pelo
+dia da loja (caixa do dia 5 + 6 → 0,04 ms), `stock_movements(created_at)` (contar um mês do
+extrato 23 → 1,5 ms; o ADR-27 já contava com ele) e o trigram do nome e da cor achatados.
+Medidas no scratch da revisão; o que não mudou o plano ficou de fora.
+**Busca por nome**: `pg_trgm` (extensão *trusted* desde o PG 13: o dono do banco instala sem
+superusuário, e vem no `postgres:16-alpine`) com GIN sobre `translate(lower(...))` — a MESMA
+expressão de `catalogo/busca.py`. As tabelas de acento vão no SQL como **literal**, nunca
+como parâmetro: com `$2`/`$3` no meio, o plano genérico que o asyncpg reaproveita depois da
+quinta execução não casa com índice de expressão nenhum. E o produto é filtrado antes de
+encostar nas peças (`id IN (UNION de ids)`, cada ramo numa tabela só, cada um no seu índice):
+o `OR` sobre o JOIN achatava o catálogo inteiro a cada tecla. "calca" 47 + 34 ms → 13 + 14 ms
+(página + contagem); termo que não existe 34 + 38 → 1 + 1 ms. Mudar a tabela de acentos pede
+migration que recrie os dois índices; `test_busca_por_nome_usa_o_indice_trigram` (plano
+genérico da consulta REAL, `tests/planos.py`) quebra se esquecerem.
+**Contagem da paginação conta só a tabela base** quando os JOINs são 1:1 por FK obrigatória
+(vendas → vendedor; extrato → peça, produto, usuário; saldos → categoria): o total é o mesmo
+e o extrato sem filtro caiu de 107 para 19 ms. JOIN que FILTRA (produto excluído, nome) fica.
+**Vendas listam pelo instante** (`sold_at DESC, id DESC`): por id, "março do ano passado"
+descia a chave desde a venda mais nova e descartava 170 mil linhas (43 ms) — agora desce
+`ix_sales_sold_at` direto do período (0,1 ms).
+**`statement_timeout` por conexão da API** (`DB_STATEMENT_TIMEOUT_MS`, 30 s): o app desiste em
+15 s e o retry manda a mesma consulta; sem teto, a primeira seguia ocupando o banco. A
+migration e o `pg_dump` usam conexão própria e não herdam o teto.
+Limites conhecidos: termo de 1 ou 2 letras não tem trigrama e continua varrendo (~30 ms);
+página funda (`page=5000`) ainda paga o OFFSET; o extrato ainda ordena por id com o filtro em
+`created_at` (o mesmo desenho que as vendas tinham — não pesou no banco simulado, mas é o
+próximo candidato); `dia_da_loja` manda o fuso como parâmetro, e os índices de dia casam no
+plano com os valores, que é o que o Postgres mantém enquanto o genérico sair mais caro.
+
+**ADR-32 — Aviso sai da máquina, sem virar barulho.**
+Loja caída, disco enchendo, backup parado e atualização falhando só existiam no journal, e quem
+descobria era a vendedora com fila no caixa. Três peças, todas na máquina (a API continua sem
+saber de canal nenhum): o `notificar.sh` manda para o tópico do ntfy em `NOTIFICAR_URL` (no
+`.env`, perguntado pelo instalador; sem ele, fica em `journalctl -t loja-aviso`), com o título em
+RFC 2047 porque cabeçalho HTTP é ASCII; toda unidade da loja leva `OnFailure=loja-aviso@%N.service`,
+uma unidade-modelo só, gravada pelo próprio `notificar.sh --instalar`; e o `vigia.sh`, de 5 em 5
+minutos, confere o `/health` (de dentro do contêiner, como o atualizar), o disco (>90%, o maior
+entre a pasta do sistema e a do Docker) e o backup da nuvem (ligado e sem cópia há mais de 2× o
+intervalo, lido do banco; sem cópia nenhuma, conta desde o `updated_at`). Contra o barulho: o
+mesmo assunto não se repete antes de uma hora (carimbo em `docker/estado/avisos/`, gravado só
+quando o envio deu certo — ntfy fora do ar não silencia o próximo), o vigia lembra a cada 6 h
+enquanto durar e avisa quando volta, e a API fora só avisa na **segunda** conferida seguida:
+uma atualização normal fica fora um ou dois minutos e não pode virar alarme. O vigia não tem
+`OnFailure=` (ele mesmo avisa), e o `desinstalar.sh` desliga as rotinas, senão o celular de quem
+acabou de desligar a loja receberia "loja fora do ar" — e a atualização sozinha a ligaria de novo.
+
+**ADR-33 — IP da rede da loja é instalação local; IP público exige domínio.**
+O instalador tratava QUALQUER IP como "sem DNS", e sem DNS virava `AMBIENTE=local`: numa VPS
+acessada pelo IP público, `/docs` aberto na internet, CORS refletindo qualquer origem com
+credenciais, e senha, token e CPF em HTTP puro. Ser um IP não diz que o ambiente é de
+desenvolvimento; dizer que a rede é da loja, sim. Local é vazio, `localhost` ou 10/8,
+172.16/12, 192.168/16 e 127/8 — ali HTTP é o esperado, não há certificado público para o que a
+internet não alcança. Qualquer outro IP é **recusado** (não "instalado com aviso": o aviso no
+fim não fecha a porta que a instalação abriu), inclusive num `.env` reaproveitado, com o caminho
+na mensagem: um domínio, ou `<ip>.sslip.io`, que aponta para o IP e deixa o Caddy emitir o
+certificado. O `instalar.ps1` espelha a regra (`IpDeRedeLocal`) — mudou um, mude o outro.
+
+**ADR-34 — O que vai para a loja é o que o CI testou, uma vez por commit.**
+O `pyproject.toml` só tinha `>=`, e o Dockerfile instalava a versão do DIA: o que rodava na loja
+dependia de quando o build aconteceu, e a volta atrás podia reconstruir o código velho com as
+bibliotecas novas que o derrubaram (foi uma resolução nova do pytest-asyncio que quebrou 162
+testes de uma vez). Agora `api/requirements.lock` tem as versões exatas do fecho de
+`[project.dependencies]` (com os extras usados), gerado do venv em que a suíte passou e
+conferido para o Python 3.12 da imagem; `requirements-dev.lock` tem só o que os testes somam. A
+imagem instala com `--no-deps` e roda `pip check` (faltou alguém na trava, o build reprova, não a
+API no import); o CI instala as duas travas e o projeto com `--no-deps`. O pyproject segue com
+`>=` (é o que o código aceita); quem decide o que vai para a loja é a trava. Sem hashes por ora:
+gerá-los pede baixar as distribuições. O CI roda uma vez por commit (push só no `main`, mais
+pull request; PR cancela a rodada velha, o `main` não, porque o atualizar depende da resposta) e
+cobre o que ficava de fora e já quebrou: `npm test` e o bundle do app, a imagem Docker, o
+`shellcheck -S warning` dos scripts e um job com a API no ar rodando `e2e.py` e `pentest.py`
+(qualquer achado reprova). É dessa resposta que o ADR-18 depende.
 
 ## 4. Contratos de API
 
@@ -859,7 +1060,7 @@ conferência feita, e a devolução entra no caixa de hoje (ADR-19).
 | GET | `/clientes` | `?q=&somente_devendo=`; `deve` e `acima_do_limite` vêm calculados |
 | POST | `/clientes` | `{nome, telefone?, documento?, limite?}` |
 | GET/PATCH | `/clientes/{id}` | |
-| DELETE | `/clientes/{id}` | soft delete; recusa quem ainda deve |
+| DELETE | `/clientes/{id}` | recusa quem ainda deve (409). Quitada, **anonimiza** (LGPD): `phone`, `document` e `note` viram nulos e `name` vira "Cliente removido #id"; a linha fica, e vendas, pagamentos e devoluções continuam apontando para ela. Sem volta |
 | GET | `/clientes/{id}/extrato` | `?page=&size=` pagina as DUAS listas juntas: `vendas` (compras no fiado) e `pagamentos` vêm cada uma em `{items, total, page, size}`, mais recentes primeiro; os três totais que fecham a conta (e o `deve`) são da conta inteira, nunca da página |
 | POST | `/clientes/{id}/pagamentos` | `{forma, valor, client_uuid, observacao?}`; só formas de gaveta, e não aceita mais do que a dívida. Replay → 200; mesma chave com outra cliente, forma ou valor → 409 (ADR-2) |
 
@@ -885,7 +1086,11 @@ Todos com `?inicio=&fim=` (≤ 366 dias), exceto `estoque-baixo` (sem período �
 - `/relatorios/vendas-por-dia` → série diária (faturamento, nº de vendas)
 - `/relatorios/mais-vendidos?limite=10` → ranking por quantidade (valor bruto, sem rateio de desconto)
 - `/relatorios/despesas-por-categoria`
-- `/relatorios/estoque-baixo` → variantes com `saldo <= min_stock`
+- `/relatorios/estoque-baixo` → variantes com `saldo <= min_stock`, **paginado** (`?page=&size=` →
+  `{items, total, page, size}`), as mais urgentes primeiro (com mínimo definido e mais abaixo
+  dele; `variante_id` desempata). Quem só mostra "N peças no mínimo" (aba Financeiro do app)
+  pede `size=1` e lê `total` — a lista inteira passava de 7 mil linhas e 1,5 MB, baixados a
+  cada venda.
 
 ### 4.10 `auditoria` (VER_AUDITORIA: só o dono)
 `GET /auditoria?usuario_id=&acao=&inicio=YYYY-MM-DD&fim=YYYY-MM-DD&page=&size=` → paginado, mais
@@ -897,7 +1102,8 @@ congelados (ADR-23). `inicio`/`fim` recortam pelo dia no fuso da loja. Nem o ger
 ### 4.11 `configuracao`
 | método | rota | papel | notas |
 |---|---|---|---|
-| GET | `/configuracao` | **aberto** | nome, ramo, contato do recibo e o `vocabulario` já resolvido |
+| GET | `/configuracao` | **aberto** | só a fachada: `nome`, `segmento`, `timezone` e o `vocabulario` já resolvido |
+| GET | `/configuracao/completa` | qualquer logado | a fachada mais `documento`, `telefone` e `endereco` (o cabeçalho do recibo) |
 | GET | `/configuracao/segmentos` | **aberto** | os ramos que o sistema conhece, para a tela montar o seletor |
 | PATCH | `/configuracao` | CONFIGURAR_LOJA | só o dono; campos opcionais (mudar o telefone não reenvia o nome) |
 
@@ -910,7 +1116,9 @@ congelados (ADR-23). `inicio`/`fim` recortam pelo dia no fuso da loja. Nem o ger
 | método | rota | notas |
 |---|---|---|
 | GET | `/backup` | situação + configuração. **Nunca** devolve o token; devolve `configurado: bool` |
-| PUT | `/backup` | `{ativo?, rclone_token?, pasta?, manter?, intervalo_min?}`; token ausente NÃO apaga o gravado |
+| PUT | `/backup` | `{ativo?, rclone_token?, pasta?, manter?, intervalo_min?, senha_atual?}`; token ausente NÃO apaga o gravado. Trocar token ou pasta de um backup já conectado exige `senha_atual` (422 sem ela) |
+
+`GET /backup` traz também `atrasado: bool` (ligado e sem cópia nova há mais de 2× o intervalo).
 
 Ligar com `ativo: true` sem token gravado é `409 OPERACAO_INVALIDA` — tela dizendo "ativo" sem
 backup acontecendo é pior do que não ter tela.

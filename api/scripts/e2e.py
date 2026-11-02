@@ -224,7 +224,7 @@ with httpx.Client(base_url=BASE, timeout=30) as c:
 
     secao("14. Estoque baixo")
     r = c.get("/relatorios/estoque-baixo", headers=admin)
-    baixos = {p["tamanho"] for p in r.json()}
+    baixos = {p["tamanho"] for p in r.json()["items"]}
     # P=7, M=5, G=10, todos com mínimo 2: nada precisa de reposição ainda.
     checar(not baixos, "nada abaixo do mínimo agora", f"listados: {baixos or 'nenhum'}")
 
@@ -233,7 +233,7 @@ with httpx.Client(base_url=BASE, timeout=30) as c:
         "motivo": "peças manchadas no provador",
     })
     r = c.get("/relatorios/estoque-baixo", headers=admin)
-    baixos = {p["tamanho"]: p for p in r.json()}
+    baixos = {p["tamanho"]: p for p in r.json()["items"]}
     checar("M" in baixos, "peça cai no alerta ao chegar no mínimo", f"listados: {list(baixos)}")
     checar(baixos.get("M", {}).get("saldo") == 1, "alerta mostra o saldo real")
 

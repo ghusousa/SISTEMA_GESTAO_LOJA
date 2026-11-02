@@ -436,13 +436,13 @@ export interface Auditoria {
   quando: string;
 }
 
-/** Identidade da loja: o nome no recibo e as palavras que o ramo dela traz. */
-export interface ConfiguracaoLoja {
+/**
+ * Identidade da loja como a porta mostra, SEM login: nome, ramo e as palavras do ramo.
+ * Documento e contato não vêm aqui — ver `ConfiguracaoLoja`.
+ */
+export interface ConfiguracaoPublica {
   nome: string;
   segmento: string;
-  documento: string | null;
-  telefone: string | null;
-  endereco: string | null;
   vocabulario: {
     icone: string;
     exemplo_produto: string;
@@ -455,4 +455,33 @@ export interface ConfiguracaoLoja {
     eixo2: string;
     eixo2_exemplos: string;
   };
+}
+
+/**
+ * A configuração inteira, só com sessão (`GET /configuracao/completa`): o recibo imprime
+ * documento, endereço e telefone — para MEI, o CPF e o endereço de casa do dono.
+ */
+export interface ConfiguracaoLoja extends ConfiguracaoPublica {
+  documento: string | null;
+  telefone: string | null;
+  endereco: string | null;
+}
+
+/**
+ * Backup na nuvem (`GET /backup`, só o dono). O token do Google NUNCA vem: a tela só sabe
+ * se ele existe (`configurado`).
+ */
+export interface Backup {
+  ativo: boolean;
+  configurado: boolean;
+  pasta: string;
+  manter: number;
+  intervalo_min: number;
+  ultimo_em: string | null;
+  ultimo_ok: boolean | null;
+  ultimo_erro: string | null;
+  ultimo_bytes: number | null;
+  copias_na_nuvem: number | null;
+  /** Ligado e sem cópia nova há mais de 2× o intervalo. Quem decide é o servidor. */
+  atrasado: boolean;
 }

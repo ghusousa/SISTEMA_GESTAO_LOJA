@@ -74,6 +74,15 @@ class Sale(Base):
         Index("ix_sales_sold_at", "sold_at"),
         Index("ix_sales_seller_id", "seller_id"),
         Index("ix_sales_status_sold_at", "status", "sold_at"),
+        # "Quanto a cliente deve" soma as vendas DELA, e a lista de Clientes faz essa conta
+        # para cada cliente. O UNIQUE (id, customer_id) acima não serve: customer_id é a
+        # segunda coluna, então cada cliente varria o índice inteiro — 70 s para abrir a
+        # tela com 20 mil clientes. Parcial porque a maioria das vendas não tem cliente.
+        Index(
+            "ix_sales_customer_id",
+            "customer_id",
+            postgresql_where=text("customer_id IS NOT NULL"),
+        ),
         # "Dia" do comércio no fuso da loja: usado por relatórios e fechamento de caixa.
         Index(
             "ix_sales_business_date",
@@ -141,7 +150,14 @@ class SaleItem(Base):
         # OUTRA venda ou variante trocada. Quatro linhas de DDL no lugar de uma classe
         # inteira de bug no service.
         UniqueConstraint("id", "sale_id", "variant_id", name="id_sale_id_variant_id"),
-        Index("ix_sale_items_sale_id", "sale_id"),
+        # INCLUDE: o CMV, as peças por dia e os mais vendidos leem só estas colunas dos
+        # itens de um período. Com elas no índice, a soma do mês sai do índice (Index Only
+        # Scan) em vez de varrer os anos de `sale_items` atrás de dez mil linhas.
+        Index(
+            "ix_sale_items_sale_id",
+            "sale_id",
+            postgresql_include=["variant_id", "quantity", "unit_price", "unit_cost"],
+        ),
         Index("ix_sale_items_variant_id", "variant_id"),
     )
 
@@ -186,6 +202,14 @@ class SalePayment(Base):
             name="sale_id_customer_id_sales",
         ),
         Index("ix_sale_payments_sale_id", "sale_id"),
+        # Só o fiado: "vendido a prazo" no resumo do mês e a dívida de cada cliente somam
+        # exatamente isto, e é uma fração pequena dos pagamentos.
+        Index(
+            "ix_sale_payments_fiado",
+            "sale_id",
+            postgresql_include=["amount"],
+            postgresql_where=text("method = 'FIADO'"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

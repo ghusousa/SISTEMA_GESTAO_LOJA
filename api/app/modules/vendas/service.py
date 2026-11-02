@@ -221,7 +221,7 @@ class VendaService:
         """
         from app.modules.clientes.service import ClienteService
 
-        await ClienteService(self.session).obter(cliente_id)
+        await ClienteService(self.session).conferir_ativa_para_venda(cliente_id)
 
     async def _consumir_vale(self, codigo: str, valor: Decimal) -> int:
         """Gasta `valor` do vale, ou recusa. A trava é o UPDATE, não uma leitura antes.

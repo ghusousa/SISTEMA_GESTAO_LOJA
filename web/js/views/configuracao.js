@@ -21,7 +21,7 @@ export async function render(raiz) {
   let segmentos;
   try {
     [config, segmentos] = await Promise.all([
-      api.get('/configuracao'),
+      api.get('/configuracao/completa'),
       api.get('/configuracao/segmentos'),
     ]);
   } catch (erro) {

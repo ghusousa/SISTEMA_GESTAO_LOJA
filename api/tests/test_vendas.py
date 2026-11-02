@@ -3,10 +3,17 @@ import uuid
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
 
+from app.core.config import settings
+from app.core.db import SessionLocal
+from app.core.pagination import Paginacao
 from app.main import app
+from app.modules.clientes.service import ClienteService
+from app.modules.vendas.repository import VendaRepository
 
 from conftest import criar_produto
+from planos import capturar_sql, planos
 
 
 @pytest.fixture
@@ -607,3 +614,47 @@ async def test_vendedor_nao_abre_venda_de_outro_pelo_id(
     ).json()["id"]
     resp = await client.get(f"/vendas/{venda_id}", headers=auth_vendedor)
     assert resp.status_code == 404
+
+
+# ------------------------------------------------- desempenho: o banco não pode travar
+
+
+async def test_conexao_da_api_tem_teto_de_tempo_por_consulta() -> None:
+    """O app desiste em 15 s e o retry manda a MESMA consulta de novo.
+
+    Sem teto no banco, a primeira continuava rodando sozinha — a lista de Clientes sem
+    índice prendia o Postgres por 70 s a cada abertura, duas vezes. Com o teto, o próprio
+    Postgres cancela o que passou do limite.
+    """
+    async with SessionLocal() as s:
+        teto = await s.scalar(text("SHOW statement_timeout"))
+    assert teto == f"{settings.db_statement_timeout_ms // 1000}s"
+    assert teto != "0", "sem teto, uma consulta lenta segura o banco depois que o app desistiu"
+
+
+async def test_divida_das_clientes_acha_as_vendas_pelo_indice_da_cliente(session) -> None:
+    """A lista "quem está devendo" calcula a dívida de cada cliente somando as vendas DELA.
+
+    O único índice com customer_id era o UNIQUE (id, customer_id), onde ele é a 2ª
+    coluna: cada cliente varria o índice inteiro, e a tela levava 49 s com 20 mil
+    clientes. O plano da consulta real tem de achar as vendas pelo índice da cliente.
+    """
+    resultado = await planos(
+        session, lambda: ClienteService(session).listar(Paginacao(1, 20), None, True)
+    )
+    contagem = resultado[0][1]
+    assert "ix_sales_customer_id" in contagem, contagem
+
+
+async def test_contagem_da_lista_de_vendas_nao_monta_o_join_do_vendedor(
+    session, loja: dict
+) -> None:
+    """O vendedor entra por FK obrigatória, um para um: não muda o total.
+
+    Contar o JOIN fazia o banco montá-lo para o histórico inteiro a cada página.
+    """
+    consultas = await capturar_sql(
+        lambda: VendaRepository(session).listar(Paginacao(1, 20), None, None, None, None)
+    )
+    contagem = next(sql for sql, _ in consultas if "count(" in sql.lower())
+    assert "users" not in contagem and "JOIN" not in contagem.upper(), contagem

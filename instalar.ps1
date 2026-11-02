@@ -15,6 +15,7 @@
 .NOTES
     Se o Docker Desktop não estiver instalado, o instalador instala pelo winget.
     Use -SemDocker para impedir.
+    No fim, agenda a cópia diária do banco (Tarefa Agendada que roda o backup.ps1).
 #>
 [CmdletBinding()]
 param(
@@ -111,9 +112,41 @@ function EmailValido($e) { return $e -match '^[^@\s]+@[^@\s]+\.[^@\s]+$' }
 # Ninguém digita esta senha no dia a dia; 32 caracteres alfanuméricos sobram de força.
 function SenhaBancoValida($s) { return $s -match '^[A-Za-z0-9_-]{8,}$' }
 
-# Endereço sem DNS: localhost, vazio ou um IP. Decide HTTP puro em vez de HTTPS.
+function EhIp($d) { return ($d -match '^\d{1,3}(\.\d{1,3}){3}$') }
+
+# IP que só existe dentro da loja (ou da própria máquina): 10/8, 172.16/12, 192.168/16 e
+# 127/8. Ali HTTP puro é o esperado: não há certificado público para o que a internet não
+# alcança. Espelho do ip_de_rede_local do instalar.sh — mudou lá, mude aqui.
+function IpDeRedeLocal($d) {
+    if (-not (EhIp $d)) { return $false }
+    $p = $d.Split('.') | ForEach-Object { [int]$_ }
+    if (($p | Where-Object { $_ -gt 255 }).Count -gt 0) { return $false }
+    if ($p[0] -eq 10 -or $p[0] -eq 127) { return $true }
+    if ($p[0] -eq 192 -and $p[1] -eq 168) { return $true }
+    if ($p[0] -eq 172 -and $p[1] -ge 16 -and $p[1] -le 31) { return $true }
+    # CGNAT/Tailscale (100.64/10) e link-local (169.254/16): fora do alcance da internet.
+    if ($p[0] -eq 100 -and $p[1] -ge 64 -and $p[1] -le 127) { return $true }
+    if ($p[0] -eq 169 -and $p[1] -eq 254) { return $true }
+    return $false
+}
+
+# Endereço que decide HTTP puro em vez de HTTPS: vazio, localhost ou IP da rede da loja.
+# Era "qualquer IP", e o IP PÚBLICO de uma máquina na internet virava AMBIENTE=local: /docs
+# aberto, CORS para qualquer origem e senha trafegando sem criptografia.
 function EnderecoLocal($d) {
-    return (-not $d) -or ($d -eq "localhost") -or ($d -match '^\d+(\.\d+){3}$')
+    return (-not $d) -or ($d -eq "localhost") -or (IpDeRedeLocal $d)
+}
+
+function IpPublico($d) { return (EhIp $d) -and -not (IpDeRedeLocal $d) }
+
+function ExplicarIpPublico($d) {
+    return ("`"$d`" é um IP PÚBLICO: a loja ficaria aberta na internet em HTTP puro - senha,`n" +
+            "      token e CPF trafegando sem criptografia.`n" +
+            "      Use um domínio apontado para este computador (o HTTPS é pedido sozinho):`n" +
+            "          .\instalar.bat -Dominio loja.seudominio.com.br`n" +
+            "      Sem domínio? O sslip.io dá um de graça, que já aponta para este IP:`n" +
+            "          .\instalar.bat -Dominio $d.sslip.io`n" +
+            "      Com um .env de antes, acrescente -Forcar (os dados do banco não são apagados).")
 }
 
 # ---------------------------------------------------------------- verificações
@@ -276,8 +309,14 @@ if ((Test-Path .env) -and (-not $Forcar)) {
 } else {
     Titulo "1. Endereço do sistema"
     Write-Host "  Se a loja tem um domínio apontado para este computador, informe-o: o certificado"
-    Write-Host "  HTTPS é pedido e renovado sozinho. Deixe 'localhost' para usar só nesta máquina."
-    $Dominio = Perguntar "Domínio (DNS)" "localhost" $Dominio
+    Write-Host "  HTTPS é pedido e renovado sozinho. Deixe 'localhost' para usar só nesta máquina;"
+    Write-Host "  o IP da rede da loja (ex.: 192.168.0.10) também serve, sem HTTPS."
+    while ($true) {
+        $Dominio = Perguntar "Domínio (DNS)" "localhost" $Dominio
+        if ($Sim -or -not (IpPublico $Dominio)) { break }
+        Alerta (ExplicarIpPublico $Dominio)
+        $Dominio = ""
+    }
 
     Titulo "2. Dono da loja"
     Write-Host "  É a conta de administrador: vê custo, lucro, despesas e relatórios."
@@ -317,6 +356,10 @@ if ((Test-Path .env) -and (-not $Forcar)) {
 }
 
 # ---------------------------------------------------------------- endereço
+
+# Recusa em vez de avisar: um aviso no fim não fecha a porta que a instalação abriu. Vale
+# também para o .env reaproveitado.
+if (IpPublico $Dominio) { Morrer (ExplicarIpPublico $Dominio) }
 
 if (EnderecoLocal $Dominio) {
     # HTTP puro: aqui o AMBIENTE precisa ser 'local', senão o cookie de sessão sai marcado
@@ -484,6 +527,40 @@ if ($Email -and $Senha) {
     Write-Host "    docker compose exec api python -m app.cli create-admin --nome ... --email ... --senha ..."
 }
 
+# ---------------------------------------------------------------- cópia diária
+
+# A instalação terminava sem cópia NENHUMA do banco, e no Windows nem havia como ligar uma:
+# o ./backup.sh --automatico depende do systemd. Agora uma Tarefa Agendada roda o
+# backup.ps1 todo dia às 03:15 — e, com o computador do balcão desligado nessa hora (o caso
+# comum), assim que ele ligar. Na sessão de quem instalou, que é onde o Docker Desktop roda.
+function AgendarBackupDiario {
+    if (-not $EhWindows) {
+        Alerta "fora do Windows, a cópia diária é do ./backup.sh --automatico."
+        return
+    }
+    try {
+        $copiador = Join-Path $PSScriptRoot "backup.ps1"
+        $acao = New-ScheduledTaskAction -Execute "powershell.exe" `
+            -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$copiador`"" `
+            -WorkingDirectory $PSScriptRoot
+        $gatilho = New-ScheduledTaskTrigger -Daily -At "03:15"
+        $ajustes = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries `
+            -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
+        $quem = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" `
+            -LogonType Interactive -RunLevel Limited
+        Register-ScheduledTask -TaskName "Loja - copia diaria do banco" -Action $acao `
+            -Trigger $gatilho -Settings $ajustes -Principal $quem -Force `
+            -Description "Copia o banco da loja para a pasta backups (backup.ps1)." | Out-Null
+        Certo "cópia diária do banco às 03:15 (ou assim que o computador ligar), em backups\"
+    } catch {
+        Alerta "não consegui agendar a cópia diária: $($_.Exception.Message)"
+        Alerta "faça uma cópia à mão quando quiser: powershell -ExecutionPolicy Bypass -File backup.ps1"
+    }
+}
+
+Titulo "Cópia diária do banco"
+AgendarBackupDiario
+
 # ---------------------------------------------------------------- fim
 
 Titulo "Pronto - o sistema está rodando"
@@ -498,6 +575,7 @@ Write-Host "    docker compose logs -f api      acompanhar o que acontece"
 Write-Host "    docker compose restart          reiniciar"
 Write-Host "    docker compose down             desligar (os dados ficam guardados)"
 Write-Host "    .\instalar.bat                  religar depois de um down"
+Write-Host "    powershell -ExecutionPolicy Bypass -File backup.ps1   uma cópia do banco agora"
 Write-Host ""
 
 if ($ambiente -eq "producao") {

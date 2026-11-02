@@ -6,11 +6,15 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import text
 
+from app.core.datas import fim_exclusivo_do_dia, hoje_na_loja, inicio_do_dia
 from app.core.db import SessionLocal, engine
+from app.core.pagination import Paginacao
 from app.modules.estoque import movimentos
+from app.modules.estoque.repository import EstoqueRepository
 from app.modules.estoque.models import TipoMovimento
 
 from conftest import criar_produto
+from planos import capturar_sql, planos
 
 
 @pytest.fixture
@@ -458,3 +462,55 @@ async def test_busca_de_saldos_ignora_acento(
         resp = await client.get("/estoque/saldos", headers=auth_admin, params={"q": termo})
         assert resp.status_code == 200
         assert resp.json()["total"] == 2, f"'{termo}' não achou a calça"
+
+
+async def test_busca_de_saldos_por_nome_usa_o_indice_trigram(
+    client: AsyncClient, auth_admin: dict[str, str], grade: dict, session
+) -> None:
+    """A mesma busca de `/variantes?q=`, e o mesmo índice: o nome achatado do produto é
+    filtrado antes de encostar nas peças, em vez de achatado linha a linha do JOIN."""
+    plano_da_contagem, plano_da_pagina = [
+        plano
+        for _, plano in await planos(
+            session,
+            lambda: EstoqueRepository(session).listar_saldos(
+                Paginacao(1, 20), "calca", None, False
+            ),
+        )
+    ][:2]
+    assert "ix_products_nome_achatado" in plano_da_contagem, plano_da_contagem
+    assert "ix_products_nome_achatado" in plano_da_pagina, plano_da_pagina
+
+
+async def test_contagem_do_extrato_conta_so_os_movimentos(
+    client: AsyncClient, auth_admin: dict[str, str], grade: dict, session
+) -> None:
+    """Peça, produto e usuário entram por FK obrigatória, um para um: não mudam o total.
+
+    Contar o JOIN era 99% do tempo do extrato (119 ms de 120 num histórico de três anos),
+    e o filtro de período não tinha índice na coluna crua: contar um mês lia tudo.
+    """
+    hoje = hoje_na_loja()
+    repo = EstoqueRepository(session)
+    consultas = await capturar_sql(
+        lambda: repo.listar_movimentos(Paginacao(1, 20), None, None, None, None)
+    )
+    contagem = next(sql for sql, _ in consultas if "count(" in sql.lower())
+    assert "JOIN" not in contagem.upper(), contagem
+
+    pagina = (
+        await client.get(
+            "/estoque/movimentacoes",
+            headers=auth_admin,
+            params={"inicio": str(hoje), "fim": str(hoje)},
+        )
+    ).json()
+    assert pagina["total"] == len(pagina["items"]) > 0, "o total contado bate com a lista"
+
+    do_dia = await planos(
+        session,
+        lambda: repo.listar_movimentos(
+            Paginacao(1, 20), None, None, inicio_do_dia(hoje), fim_exclusivo_do_dia(hoje)
+        ),
+    )
+    assert "ix_stock_movements_created_at" in do_dia[0][1], do_dia[0][1]

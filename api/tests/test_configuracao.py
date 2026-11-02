@@ -26,6 +26,68 @@ async def test_nome_da_loja_e_lido_sem_login(client: AsyncClient) -> None:
     assert corpo["vocabulario"]["eixo1"]
 
 
+async def test_porta_sem_login_nao_mostra_documento_telefone_nem_endereco(
+    client: AsyncClient, auth_admin: dict, auth_vendedor: dict
+) -> None:
+    """Para MEI, o "CNPJ ou CPF" é o CPF do dono e o endereço é o de casa. A rota aberta
+    devolvia os três a quem digitasse a URL; agora eles só saem com sessão — de qualquer
+    papel, porque a vendedora imprime o recibo."""
+    salvo = await client.patch(
+        "/configuracao",
+        json={
+            "documento": "123.456.789-00",
+            "telefone": "(11) 98888-7777",
+            "endereco": "Rua de Casa, 10",
+        },
+        headers=auth_admin,
+    )
+    assert salvo.status_code == 200, salvo.text
+
+    aberta = (await client.get("/configuracao")).json()
+    for campo in ("documento", "telefone", "endereco"):
+        assert campo not in aberta, f"{campo} vazou na rota sem login"
+    # a tela de entrada continua tendo o que precisa
+    assert aberta["nome"] and aberta["timezone"] and aberta["vocabulario"]["eixo1"]
+
+    sem_login = await client.get("/configuracao/completa")
+    assert sem_login.status_code == 401, sem_login.text
+
+    completa = await client.get("/configuracao/completa", headers=auth_vendedor)
+    assert completa.status_code == 200, completa.text
+    assert completa.json()["documento"] == "123.456.789-00"
+    assert completa.json()["endereco"] == "Rua de Casa, 10"
+    assert completa.json()["telefone"] == "(11) 98888-7777"
+
+
+async def test_app_antigo_logado_continua_recebendo_e_nao_apaga_os_contatos(
+    client: AsyncClient, auth_admin: dict
+) -> None:
+    """Os apps instalados antes do `/completa` leem documento, telefone e endereço do
+    `GET /configuracao` e os reenviam no `PATCH` da tela "A loja". Recebendo a versão
+    pública, mandariam os três vazios e apagariam o CNPJ do recibo. Com sessão, o `GET`
+    devolve tudo; token vencido ou inválido cai no modo aberto, sem 401."""
+    contatos = {
+        "documento": "12.345.678/0001-90",
+        "telefone": "(11) 3333-4444",
+        "endereco": "Rua da Loja, 1",
+    }
+    assert (await client.patch("/configuracao", json=contatos, headers=auth_admin)).status_code == 200
+
+    lida = (await client.get("/configuracao", headers=auth_admin)).json()
+    for campo, valor in contatos.items():
+        assert lida[campo] == valor
+
+    # o app antigo reenvia o que leu: nada se perde
+    reenvio = {k: lida[k] for k in ("nome", "segmento", *contatos)}
+    assert (await client.patch("/configuracao", json=reenvio, headers=auth_admin)).status_code == 200
+    depois = (await client.get("/configuracao/completa", headers=auth_admin)).json()
+    assert {k: depois[k] for k in contatos} == contatos
+
+    invalido = await client.get("/configuracao", headers={"Authorization": "Bearer lixo"})
+    assert invalido.status_code == 200
+    assert "documento" not in invalido.json()
+
+
 async def test_dono_muda_o_nome_e_o_ramo(client: AsyncClient, auth_admin: dict) -> None:
     resp = await client.patch(
         "/configuracao",

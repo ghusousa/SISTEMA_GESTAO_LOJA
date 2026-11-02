@@ -31,6 +31,11 @@ function situacao(c) {
   if (!c.configurado) return { texto: 'Conta do Google não conectada', tom: 'alerta' };
   if (!c.ativo) return { texto: 'Desligado', tom: 'info' };
   if (c.ultimo_ok === false) return { texto: 'A última cópia FALHOU', tom: 'perigo' };
+  // Quem decide o atraso é o servidor (`atrasado`: passou de 2× o intervalo sem cópia
+  // nova). Olhar só `ultimo_ok` dizia "Funcionando" com a cópia parada havia dias.
+  if (c.atrasado) {
+    return { texto: c.ultimo_em ? 'Atrasado' : 'Atrasado: nenhuma cópia ainda', tom: 'alerta' };
+  }
   if (c.ultimo_ok === true) return { texto: 'Funcionando', tom: 'ok' };
   return { texto: 'Ligado, primeira cópia ainda não rodou', tom: 'info' };
 }
@@ -82,6 +87,15 @@ export async function render(raiz) {
             ? cru(html`
                 <p class="texto-suave" style="margin-top:10px;color:var(--perigo)">
                   <strong>O que deu errado:</strong> ${c.ultimo_erro}
+                </p>
+              `)
+            : ''}
+          ${c.atrasado
+            ? cru(html`
+                <p class="texto-suave" style="margin-top:10px">
+                  <strong>A cópia passou da hora.</strong> Ela deveria sair a cada
+                  ${c.intervalo_min} min. Confira se o servidor está ligado e se a cópia
+                  automática foi ativada nele; o <code>./diagnostico.sh</code> mostra o resto.
                 </p>
               `)
             : ''}
@@ -163,6 +177,14 @@ export async function render(raiz) {
                 <span style="margin:0">Backup ligado ${ajuda('Sem a conta do Google conectada ele não liga. Ligado, a cópia sobe sozinha no horário — ninguém precisa deixar esta tela aberta.')}</span>
               </label>
 
+              <label class="campo" data-campo-senha hidden>
+                <span>
+                  Sua senha
+                  <span class="campo__dica">trocar a conta ou a pasta pede a senha de novo</span>
+                </span>
+                <input name="senha_atual" type="password" autocomplete="current-password" />
+              </label>
+
               <button class="botao botao--largo" type="submit">Salvar</button>
             </form>
           </div>
@@ -179,6 +201,19 @@ export async function render(raiz) {
 
   const form = raiz.querySelector('[data-form]');
   const campoToken = raiz.querySelector('[name="rclone_token"]');
+  const campoSenha = raiz.querySelector('[data-campo-senha]');
+
+  // Trocar PARA ONDE o banco vai (outro token ou outra pasta, com uma conta já conectada)
+  // pede a senha de novo: é o caminho de quem acha uma sessão do dono aberta no balcão e
+  // desvia as cópias para o próprio Drive. O campo só aparece quando vai ser pedido.
+  const mudaDestino = () =>
+    c.configurado &&
+    (String(campoToken.value || '').trim() !== '' || String(form.pasta.value).trim() !== c.pasta);
+  const mostrarSenha = () => {
+    campoSenha.hidden = !mudaDestino();
+  };
+  campoToken.addEventListener('input', mostrarSenha);
+  form.pasta.addEventListener('input', mostrarSenha);
 
   // Quantas horas de história as cópias cobrem. É a conta que ninguém faz sozinho e que
   // muda a decisão: 10 cópias de 30 em 30 min são 5 horas — se o problema for percebido
@@ -223,6 +258,7 @@ export async function render(raiz) {
     };
     // Só manda o token quando há um novo: mandar vazio apagaria a conta conectada.
     if (token) corpo.rclone_token = token;
+    if (!campoSenha.hidden) corpo.senha_atual = String(form.senha_atual.value);
 
     const botao = form.querySelector('button[type="submit"]');
     botao.disabled = true;
@@ -233,6 +269,11 @@ export async function render(raiz) {
       render(raiz); // redesenha com a situação nova
     } catch (erro) {
       avisarErro(erro);
+      if (erro?.detail?.campo === 'senha_atual') {
+        campoSenha.hidden = false;
+        form.senha_atual.value = '';
+        form.senha_atual.focus();
+      }
     } finally {
       botao.disabled = false;
       botao.textContent = 'Salvar';

@@ -50,8 +50,11 @@ export const chaves = {
   devolucoesDaVenda: (vendaId: number) => ['devolucoes', vendaId] as const,
 };
 
-/** Tudo que depende de faturamento, custo ou resultado. */
-const CHAVES_RELATORIO = [
+/**
+ * Tudo que depende de faturamento, custo ou resultado. Exportado porque o tempo real
+ * (`lib/avisos.ts`) derruba a mesma lista: duas cópias divergem no primeiro relatório novo.
+ */
+export const CHAVES_RELATORIO = [
   ['relatorio-resumo'],
   ['relatorio-vendas-dia'],
   ['relatorio-mais-vendidos'],

@@ -41,6 +41,12 @@ engine = create_async_engine(
     pool_pre_ping=True,
     pool_size=10,
     max_overflow=20,
+    # `statement_timeout` por CONEXÃO (vai no startup do asyncpg, antes do primeiro
+    # comando): consulta que passa do teto é cancelada pelo próprio Postgres e volta como
+    # erro, em vez de seguir ocupando o banco depois que o celular já desistiu dela.
+    connect_args={
+        "server_settings": {"statement_timeout": str(settings.db_statement_timeout_ms)}
+    },
 )
 
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)

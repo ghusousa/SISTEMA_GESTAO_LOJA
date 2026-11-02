@@ -1,4 +1,4 @@
-from sqlalchemy import Select, case, delete, func, or_, select, update
+from sqlalchemy import Select, case, delete, func, select, union, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -72,12 +72,20 @@ class CatalogoRepository:
             # Sem acento, como `/variantes?q=`: "calca" acha a "Calça Jeans".
             termo = f"%{achatar_termo(q)}%"
             # Busca pelo nome do produto ou por um código de barras da grade — no balcão
-            # o vendedor tanto digita o nome quanto tem o código na mão.
-            sub = select(ProductVariant.product_id).where(
-                ProductVariant.barcode.like(f"%{q.strip()}%"),
-                ProductVariant.deleted_at.is_(None),
+            # o vendedor tanto digita o nome quanto tem o código na mão. UNION de ids, e
+            # não OR: cada ramo sozinho usa o seu índice (o trigram do nome achatado);
+            # no OR o banco achatava o nome de todo o catálogo a cada tecla.
+            stmt = stmt.where(
+                Product.id.in_(
+                    union(
+                        select(Product.id).where(_achatar(Product.name).like(termo)),
+                        select(ProductVariant.product_id).where(
+                            ProductVariant.barcode.like(f"%{q.strip()}%"),
+                            ProductVariant.deleted_at.is_(None),
+                        ),
+                    )
+                )
             )
-            stmt = stmt.where(or_(_achatar(Product.name).like(termo), Product.id.in_(sub)))
         total = await self.session.scalar(select(func.count()).select_from(stmt.subquery()))
         # Product.id como desempate: nome não é único e o OFFSET repetiria registros.
         stmt = stmt.order_by(Product.name, Product.id).offset(p.offset).limit(p.limit)
@@ -113,34 +121,58 @@ class CatalogoRepository:
         gerado aqui — então não existe o que bipar, e sem busca por nome a tela não tinha
         como registrar a reposição.
         """
-        stmt = (
-            select(ProductVariant)
-            # `selectinload` e não lazy: quem lê a lista precisa do NOME do produto, e no
-            # async um relacionamento preguiçoso estoura em MissingGreenlet.
-            .options(selectinload(ProductVariant.product))
-            .join(Product, Product.id == ProductVariant.product_id)
-            .where(ProductVariant.deleted_at.is_(None), Product.deleted_at.is_(None))
-        )
+        filtros = [ProductVariant.deleted_at.is_(None), Product.deleted_at.is_(None)]
         if produto_id:
-            stmt = stmt.where(ProductVariant.product_id == produto_id)
+            filtros.append(ProductVariant.product_id == produto_id)
 
         ordem = [Product.name, ProductVariant.size, ProductVariant.id]
         if q:
             termo = q.strip()
             achatado = f"%{achatar_termo(termo)}%"
-            stmt = stmt.where(
-                or_(
-                    ProductVariant.barcode.like(f"%{termo}%"),
-                    _achatar(Product.name).like(achatado),
-                    _achatar(ProductVariant.color).like(achatado),
+            # O produto é filtrado ANTES de encostar nas peças: cada ramo do UNION olha
+            # uma tabela só e usa o seu índice (trigram do nome e da cor achatados,
+            # ADR-31). O OR sobre o JOIN achatava nome e cor das 15 mil peças a cada
+            # tecla digitada — duas vezes, com a contagem.
+            filtros.append(
+                ProductVariant.id.in_(
+                    union(
+                        select(ProductVariant.id).where(
+                            ProductVariant.barcode.like(f"%{termo}%")
+                        ),
+                        select(ProductVariant.id).where(
+                            _achatar(ProductVariant.color).like(achatado)
+                        ),
+                        select(ProductVariant.id).where(
+                            ProductVariant.product_id.in_(
+                                select(Product.id).where(_achatar(Product.name).like(achatado))
+                            )
+                        ),
+                    )
                 )
             )
             # Código exato primeiro: quem digitou os 13 dígitos inteiros quer AQUELA peça
             # no topo, não a que vem antes no alfabeto.
             ordem = [case((ProductVariant.barcode == termo, 0), else_=1), *ordem]
 
-        total = await self.session.scalar(select(func.count()).select_from(stmt.subquery()))
-        stmt = stmt.order_by(*ordem).offset(p.offset).limit(p.limit)
+        # A contagem é só peça + produto (o produto filtra excluídos e nome); sem as
+        # colunas e o carregamento da página.
+        total = await self.session.scalar(
+            select(func.count())
+            .select_from(ProductVariant)
+            .join(Product, Product.id == ProductVariant.product_id)
+            .where(*filtros)
+        )
+        stmt = (
+            select(ProductVariant)
+            # `selectinload` e não lazy: quem lê a lista precisa do NOME do produto, e no
+            # async um relacionamento preguiçoso estoura em MissingGreenlet.
+            .options(selectinload(ProductVariant.product))
+            .join(Product, Product.id == ProductVariant.product_id)
+            .where(*filtros)
+            .order_by(*ordem)
+            .offset(p.offset)
+            .limit(p.limit)
+        )
         return list((await self.session.execute(stmt)).scalars().all()), int(total or 0)
 
     async def proxima_sequencia_interna(self) -> int:

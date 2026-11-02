@@ -14,7 +14,7 @@
 # custa uma manhã de loja fechada.
 
 set -uo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")" || exit 1
 
 VERDE=$'\033[32m'; AMARELO=$'\033[33m'; VERMELHO=$'\033[31m'; AZUL=$'\033[36m'
 FORTE=$'\033[1m'; NORMAL=$'\033[0m'

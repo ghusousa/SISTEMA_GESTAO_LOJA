@@ -126,9 +126,86 @@ async def test_falha_de_login_aparece_no_diario(client, auth_admin):
     await client.post("/auth/login", json={"email": "ana@loja.com", "senha": "errada"})
     diario = (await client.get("/auditoria?acao=LOGIN_FALHOU", headers=auth_admin)).json()
     assert diario["total"] >= 1
-    assert "errou a senha" in diario["items"][0]["descricao"]
-    # Não vaza se a conta existe: registra o e-mail digitado, sem papel.
+    # Sem conta com esse e-mail: nem papel, nem o e-mail por extenso (ver abaixo).
     assert diario["items"][0]["papel"] is None
+    assert diario["items"][0]["usuario_id"] is None
+
+
+async def test_falha_de_login_de_conta_real_grava_quem_e_nao_o_email(
+    client, auth_admin, vendedor
+):
+    """LGPD (ADR-23): o e-mail digitado ia por extenso no nome e na frase, para sempre. Com
+    conta, a linha leva o id e o nome congelado, como qualquer ato — o e-mail mora na conta
+    e some com ela."""
+    resp = await client.post("/auth/login", json={"email": vendedor.email, "senha": "errada"})
+    assert resp.status_code == 401
+    diario = (await client.get("/auditoria?acao=LOGIN_FALHOU", headers=auth_admin)).json()
+    linha = diario["items"][0]
+    assert linha["usuario_id"] == vendedor.id
+    assert linha["usuario"] == vendedor.name
+    assert linha["papel"] == "VENDEDOR"
+    assert "errou a senha" in linha["descricao"]
+    assert vendedor.email not in linha["descricao"]
+
+
+async def test_falha_de_login_sem_conta_guarda_o_email_mascarado(client, auth_admin):
+    """E-mail sem conta pode ser o de qualquer pessoa, errado por uma letra. Fica a máscara:
+    dá para ver que as 40 tentativas foram do mesmo endereço, não para ler o endereço."""
+    await client.post(
+        "/auth/login", json={"email": "Fulana.de.Tal@gmail.com", "senha": "errada"}
+    )
+    diario = (await client.get("/auditoria?acao=LOGIN_FALHOU", headers=auth_admin)).json()
+    linha = diario["items"][0]
+    assert linha["usuario"] == "Fu***@g***.com"
+    assert "fulana.de.tal" not in (linha["usuario"] + linha["descricao"]).lower()
+    assert "Fu***@g***.com" in linha["descricao"]
+
+
+async def test_retencao_apaga_o_diario_velho_no_login(client, admin, session):
+    """Nada no diário fica para sempre: passou de RETENCAO_AUDITORIA_DIAS (730 por padrão),
+    a faxina do login apaga. O recente fica."""
+    from app.core.config import settings
+
+    dias = settings.retencao_auditoria_dias
+    assert dias == 730
+    for idade, acao in ((dias + 30, "VELHA"), (dias - 30, "RECENTE")):
+        await session.execute(
+            text(
+                "INSERT INTO audit_log (user_nome, acao, descricao, created_at) "
+                "VALUES ('Alguém', :a, 'linha de teste', now() - make_interval(days => :d))"
+            ).bindparams(a=acao, d=idade)
+        )
+    await session.commit()
+
+    entrou = await client.post("/auth/login", json={"email": admin.email, "senha": "senha1234"})
+    assert entrou.status_code == 200, entrou.text
+
+    restam = {
+        linha.acao
+        for linha in (
+            await session.execute(
+                text("SELECT acao FROM audit_log WHERE acao IN ('VELHA', 'RECENTE')")
+            )
+        ).all()
+    }
+    assert restam == {"RECENTE"}
+
+
+async def test_retencao_zero_guarda_tudo(client, admin, session, monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "retencao_auditoria_dias", 0)
+    await session.execute(
+        text(
+            "INSERT INTO audit_log (user_nome, acao, descricao, created_at) "
+            "VALUES ('Alguém', 'ANTIGA', 'linha de teste', now() - interval '20 years')"
+        )
+    )
+    await session.commit()
+    await client.post("/auth/login", json={"email": admin.email, "senha": "senha1234"})
+    assert await session.scalar(
+        text("SELECT count(*) FROM audit_log WHERE acao = 'ANTIGA'")
+    ) == 1
 
 
 async def test_filtro_por_usuario(client, auth_admin, auth_vendedor, admin, vendedor):

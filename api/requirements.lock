@@ -1,0 +1,158 @@
+# Versões EXATAS das dependências da API em produção — o que o Dockerfile instala.
+#
+# Gerado do api/.venv em que a suíte passou: o fecho de [project.dependencies] do
+# pyproject.toml (com os extras que ele pede: fastapi[standard], sqlalchemy[asyncio],
+# python-jose[cryptography]), com os marcadores avaliados para o Python 3.12 da imagem e o
+# 3.13 do venv. Sem esta trava, a versão que roda na loja dependia do DIA do build: cada
+# `up -d --build` resolvia o `>=` do pyproject de novo, e a volta atrás do ./atualizar.sh
+# podia reconstruir a versão velha do código com as bibliotecas novas que a derrubaram.
+#
+# Subir uma versão: mude aqui E no venv, rode a suíte, e o CI confere o resto (ele instala
+# deste arquivo). O pyproject continua com `>=`, que é o que o código aceita; quem decide o
+# que vai para a loja é este arquivo.
+agent-detector==2.0.0
+    # via fastapi-cloud-cli
+alembic==1.20.1
+    # via pyproject.toml
+annotated-doc==0.0.5
+    # via fastapi, typer
+annotated-types==0.8.0
+    # via pydantic
+anyio==4.15.1
+    # via httpx, httpx2, starlette, watchfiles
+asyncpg==0.32.0
+    # via pyproject.toml
+bcrypt==5.0.0
+    # via pyproject.toml
+certifi==2026.10.23
+    # via httpcore, httpx, requests, sentry-sdk
+cffi==2.1.1
+    # via cryptography
+charset-normalizer==3.5.2
+    # via requests
+click==8.5.0
+    # via rich-toolkit, uvicorn
+cryptography==50.0.2
+    # via python-jose[cryptography]
+detect-installer==0.2.1
+    # via fastapi-cloud-cli
+dnspython==2.9.0
+    # via email-validator
+ecdsa==0.19.2
+    # via python-jose
+email-validator==2.3.0
+    # via fastapi[standard], pydantic[email]
+fastapi==0.162.0
+    # via pyproject.toml
+fastapi-cli==0.0.32
+    # via fastapi[standard]
+fastapi-cloud-cli==0.26.0
+    # via fastapi-cli[standard]
+fastar==0.12.0
+    # via fastapi-cloud-cli, fastapi[standard]
+googleapis-common-protos==1.76.0
+    # via opentelemetry-exporter-otlp-proto-http
+greenlet==3.5.6
+    # via sqlalchemy[asyncio]
+h11==0.16.0
+    # via httpcore, httpcore2, uvicorn
+httpcore==1.0.9
+    # via httpx
+httpcore2==2.16.0
+    # via httpx2
+httptools==0.9.0
+    # via uvicorn[standard]
+httpx==0.28.1
+    # via fastapi-cloud-cli, fastapi[standard]
+httpx2==2.16.0
+    # via fastapi[standard]
+idna==3.20
+    # via anyio, email-validator, httpx, httpx2, requests
+Jinja2==3.1.6
+    # via fastapi[standard]
+Mako==1.4.3
+    # via alembic
+markdown-it-py==4.2.0
+    # via rich
+MarkupSafe==3.0.4
+    # via jinja2, mako
+mdurl==0.1.2
+    # via markdown-it-py
+opentelemetry-api==1.45.1
+    # via fastapi, opentelemetry-exporter-http-transport, opentelemetry-exporter-otlp-proto-http, opentelemetry-sdk, opentelemetry-semantic-conventions
+opentelemetry-exporter-http-transport==0.66b1
+    # via opentelemetry-exporter-otlp-proto-http
+opentelemetry-exporter-otlp-common==0.66b1
+    # via opentelemetry-exporter-otlp-proto-http
+opentelemetry-exporter-otlp-proto-common==1.45.1
+    # via opentelemetry-exporter-otlp-proto-http
+opentelemetry-exporter-otlp-proto-http==1.45.1
+    # via fastapi[standard]
+opentelemetry-proto==1.45.1
+    # via opentelemetry-exporter-otlp-proto-common, opentelemetry-exporter-otlp-proto-http
+opentelemetry-sdk==1.45.1
+    # via fastapi[standard], opentelemetry-exporter-otlp-common, opentelemetry-exporter-otlp-proto-http
+opentelemetry-semantic-conventions==0.66b1
+    # via opentelemetry-sdk
+protobuf==7.36.2
+    # via googleapis-common-protos, opentelemetry-proto
+pyasn1==0.6.4
+    # via python-jose, rsa
+pycparser==3.12
+    # via cffi
+pydantic==2.14.1
+    # via fastapi, fastapi-cloud-cli, pydantic-extra-types, pydantic-settings, pyproject.toml
+pydantic_core==2.50.1
+    # via pydantic
+pydantic-extra-types==2.11.1
+    # via fastapi[standard]
+pydantic-settings==2.16.1
+    # via fastapi[standard], pyproject.toml
+Pygments==2.21.0
+    # via rich
+python-dotenv==1.2.4
+    # via pydantic-settings, uvicorn[standard]
+python-jose==3.5.0
+    # via pyproject.toml
+python-multipart==0.0.32
+    # via fastapi[standard], pyproject.toml
+PyYAML==6.0.3
+    # via uvicorn[standard]
+requests==2.34.2
+    # via opentelemetry-exporter-http-transport[requests], opentelemetry-exporter-otlp-proto-http
+rich==15.0.0
+    # via rich-toolkit, typer
+rich-toolkit==0.20.6
+    # via fastapi-cli, fastapi-cloud-cli
+rignore==0.8.1
+    # via fastapi-cloud-cli
+rsa==4.9.1
+    # via python-jose
+sentry-sdk==2.73.0
+    # via fastapi-cloud-cli
+shellingham==1.5.4
+    # via typer
+six==1.17.0
+    # via ecdsa
+SQLAlchemy==2.1.6
+    # via alembic, pyproject.toml
+starlette==1.10.0
+    # via fastapi
+truststore==0.10.5
+    # via httpcore2, httpx2
+typer==0.27.3
+    # via fastapi-cli, fastapi-cloud-cli
+typing_extensions==4.16.0
+    # via alembic, anyio, fastapi, httpx2, opentelemetry-api, opentelemetry-exporter-otlp-proto-http, opentelemetry-sdk, opentelemetry-semantic-conventions, pydantic, pydantic-core, pydantic-extra-types, pydantic-settings, rich-toolkit, sqlalchemy, starlette, typing-inspection
+typing-inspection==0.4.4
+    # via fastapi, pydantic, pydantic-settings
+urllib3==2.8.0
+    # via requests, sentry-sdk
+uvicorn==0.54.0
+    # via fastapi-cli, fastapi-cli[standard], fastapi-cloud-cli, fastapi[standard]
+uvloop==0.23.0
+    # via uvicorn[standard]
+watchfiles==1.3.0
+    # via uvicorn[standard]
+websockets==17.3
+    # via uvicorn[standard]

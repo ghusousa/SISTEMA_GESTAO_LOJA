@@ -136,14 +136,23 @@ class ClienteService:
         return await self._com_saldo(cliente)
 
     async def excluir(self, cliente_id: int) -> None:
-        """Some da lista, mas só se não estiver devendo.
+        """Some da lista e leva junto o dado pessoal, mas só se não estiver devendo.
 
         Excluir cliente com dívida em aberto apagaria da conta da loja um dinheiro que
         existe — e o UNIQUE parcial ainda deixaria recadastrar a mesma pessoa do zero,
         limpinha, devendo nada.
+
+        Quitada, a exclusão ANONIMIZA (LGPD): telefone, documento e observação viram nulos
+        e o nome vira "Cliente removido #id". Só marcar `deleted_at` deixava CPF e telefone
+        para sempre no banco — e em todo backup dali em diante —, ao contrário do que a
+        página pública de exclusão promete. A linha fica, com o mesmo id: vendas,
+        pagamentos e devoluções continuam apontando para ela, e o caixa e os relatórios
+        de meses passados não mudam um centavo. Não há volta: o cadastro não se restaura.
         """
         cliente = await self._obter(cliente_id)
-        deve = await self.quanto_deve(cliente_id)
+        # Travado: uma venda no fiado que entrasse entre a conta e a anonimização deixaria
+        # uma dívida pendurada num cadastro sem nome nem telefone para cobrar.
+        deve = await self.quanto_deve(cliente_id, travar=True)
         if deve > ZERO:
             raise OperacaoInvalida(
                 "Este cliente ainda deve. Receba ou perdoe a dívida antes de excluir.",
@@ -152,6 +161,10 @@ class ClienteService:
         from datetime import UTC, datetime
 
         cliente.deleted_at = datetime.now(UTC)
+        cliente.name = f"Cliente removido #{cliente.id}"
+        cliente.phone = None
+        cliente.document = None
+        cliente.note = None
         await self.session.commit()
 
     async def _recusar_repetido(
@@ -249,6 +262,25 @@ class ClienteService:
 
     async def obter(self, cliente_id: int) -> ClienteOut:
         return await self._com_saldo(await self._obter(cliente_id))
+
+    async def conferir_ativa_para_venda(self, cliente_id: int) -> None:
+        """A cliente existe e está ativa — e segue assim até o commit de quem pergunta.
+
+        `FOR SHARE`: a venda no fiado espera uma exclusão em andamento terminar (o `excluir`
+        trava a linha com FOR UPDATE) e relê a linha depois do commit dela. Ler sem trava
+        deixava a venda passar com a cliente já anonimizada: dívida nova numa ficha que
+        ninguém mais vê.
+        """
+        cliente = (
+            await self.session.execute(
+                select(Customer)
+                .where(Customer.id == cliente_id, Customer.deleted_at.is_(None))
+                .with_for_update(read=True)
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
+        if cliente is None:
+            raise NaoEncontrado("Cliente não encontrado.")
 
     # -------------------------------------------------------------- extrato
     async def _contar(self, stmt: Select) -> int:

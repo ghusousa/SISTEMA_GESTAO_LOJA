@@ -4,7 +4,7 @@
  * inteira de charts para mostrar sete a trinta e um números.
  */
 
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { endOfMonth, format, startOfMonth, subDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useState } from 'react';
@@ -12,7 +12,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { mensagemDoErro } from '@/api/client';
 import { relatorios } from '@/api/endpoints';
-import { Carregando, Cartao, ErroEstado, Etiqueta } from '@/components/ui';
+import { Botao, Carregando, Cartao, ErroEstado, Etiqueta } from '@/components/ui';
 import { formatar, formatarPercentual, paraCentavos } from '@/lib/money';
 import { chaves } from '@/lib/queryClient';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
@@ -52,10 +52,18 @@ export default function Relatorios() {
     queryKey: chaves.relatorioDespesas(inicio, fim),
     queryFn: () => relatorios.despesasPorCategoria(inicio, fim),
   });
-  const estoqueBaixo = useQuery({
-    queryKey: chaves.estoqueBaixo,
-    queryFn: () => relatorios.estoqueBaixo(),
+  // Paginado no servidor, as mais urgentes primeiro: a lista inteira de uma loja grande
+  // passava de sete mil peças, desenhadas de uma vez dentro do ScrollView. Aqui vêm vinte
+  // e o resto sob demanda ("Ver mais").
+  const estoqueBaixo = useInfiniteQuery({
+    queryKey: [...chaves.estoqueBaixo, 'lista'],
+    initialPageParam: 1,
+    queryFn: ({ pageParam }) => relatorios.estoqueBaixo({ page: pageParam, size: 20 }),
+    getNextPageParam: (ultima) =>
+      ultima.page * ultima.size < ultima.total ? ultima.page + 1 : undefined,
   });
+  const pecasParaRepor = estoqueBaixo.data?.pages.flatMap((p) => p.items) ?? [];
+  const totalParaRepor = estoqueBaixo.data?.pages[0]?.total ?? 0;
 
   if (porDia.isPending) return <Carregando />;
   if (porDia.isError) {
@@ -166,10 +174,15 @@ export default function Relatorios() {
 
       <Cartao>
         <Text style={s.titulo}>Hora de repor</Text>
-        {(estoqueBaixo.data?.length ?? 0) === 0 ? (
+        {totalParaRepor > 0 && (
+          <Text style={s.legenda}>
+            {totalParaRepor} peça(s) no mínimo · mostrando {pecasParaRepor.length}
+          </Text>
+        )}
+        {pecasParaRepor.length === 0 ? (
           <Text style={s.vazio}>Todo o estoque está acima do mínimo.</Text>
         ) : (
-          estoqueBaixo.data!.map((peca) => (
+          pecasParaRepor.map((peca) => (
             <View key={peca.variante_id} style={s.linha}>
               <View style={s.linhaInfo}>
                 <Text style={s.linhaNome} numberOfLines={1}>
@@ -186,6 +199,15 @@ export default function Relatorios() {
               />
             </View>
           ))
+        )}
+        {estoqueBaixo.hasNextPage && (
+          <Botao
+            titulo="Ver mais"
+            variante="secundario"
+            carregando={estoqueBaixo.isFetchingNextPage}
+            onPress={() => void estoqueBaixo.fetchNextPage()}
+            estilo={{ marginTop: espaco.sm }}
+          />
         )}
       </Cartao>
     </ScrollView>

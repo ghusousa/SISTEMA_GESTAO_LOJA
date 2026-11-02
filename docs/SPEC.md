@@ -58,7 +58,9 @@ A loja consegue operar 100% sem celular.
 - **Vale de troca** — papel com código, gerado quando o valor não pode voltar pela forma que
   entrou. Vale como pagamento na próxima compra, inteiro ou em parte.
 - **Cliente do crediário** — quem leva no fiado. Tem nome, telefone e um limite **combinado**
-  que avisa, mas não bloqueia. Quanto deve é sempre calculado, nunca guardado.
+  que avisa, mas não bloqueia. Quanto deve é sempre calculado, nunca guardado. Quitada, pode ter
+  o cadastro excluído a pedido dela: nome, telefone, documento e observação são apagados na hora
+  (o cadastro vira "Cliente removido") e as compras ficam no histórico, sem o nome.
 - **Despesa** — saída de dinheiro que não é compra de mercadoria (aluguel, energia, salário...),
   com categoria e marcação de recorrente.
 - **Fechamento de caixa** — conferência diária: quanto o sistema esperava por forma de pagamento
@@ -70,7 +72,9 @@ A loja consegue operar 100% sem celular.
 - **Registro de auditoria** — uma linha para cada ação que alguém faz logado (vender, cancelar,
   dar entrada, editar cadastro, entrar no sistema, errar a senha). Guarda quem, o quê, quando e
   de onde, com o nome e o cargo **congelados** no momento — renomear a pessoa depois não reescreve
-  o histórico. Só o dono lê.
+  o histórico. Só o dono lê. Não guarda e-mail à toa (erro de login com e-mail sem conta fica
+  mascarado; excluir a conta mascara o e-mail dela) e apaga o que passou do prazo (dois anos por
+  padrão).
 
 ## Casos de uso principais
 
@@ -141,7 +145,19 @@ A loja consegue operar 100% sem celular.
 - Trocar o ramo da loja não altera nenhum produto, preço, estoque ou venda: muda só o rótulo
   que a tela dá às duas variações.
 - Só o dono muda o nome e o ramo da loja; o nome é legível sem login (a tela de entrada precisa
-  dele antes de existir sessão).
+  dele antes de existir sessão), mas documento, telefone e endereço da loja só com login.
+- Cliente que ainda deve não tem o cadastro excluído; quitada, a exclusão apaga os dados
+  pessoais e mantém as vendas.
+- Trocar a conta do Google ou a pasta do backup na nuvem pede a senha de quem está salvando, e
+  a tela do backup diz "Atrasado" quando a cópia passou de duas vezes o intervalo.
+- A instalação termina com a cópia diária do banco ligada (Linux, Mac e Windows). O que sai do
+  servidor (Drive, `BACKUP_REMOTO`) sai cifrado, com uma chave que só existe na máquina e onde o
+  dono a guardou; a restauração abre a cópia cifrada com ela.
+- A atualização sozinha só implanta versão com o CI verde, e não tenta de novo uma versão que já
+  caiu neste servidor — só a próxima.
+- Loja fora do ar, disco quase cheio, backup da nuvem atrasado ou rotina da máquina que falhou
+  avisam o dono (ntfy), sem repetir o mesmo aviso antes de uma hora.
+- Instalar pelo IP público é recusado: HTTP puro só dentro da rede da loja.
 
 ## Fora do escopo do v1
 

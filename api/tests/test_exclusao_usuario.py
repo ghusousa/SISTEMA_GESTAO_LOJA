@@ -48,6 +48,55 @@ async def test_excluir_nao_apaga_a_auditoria_nem_reescreve_o_passado(
     assert linha.user_nome == vendedor.name  # história intacta
 
 
+async def test_excluir_tira_o_email_do_diario_mas_nao_o_nome_de_quem_agiu(
+    client: AsyncClient, auth_admin: dict, auth_vendedor: dict, vendedor, session: AsyncSession
+) -> None:
+    """A página de exclusão promete que o e-mail deixa de existir. O diário o guardava por
+    extenso em cada login que falhou (formato antigo do LOGIN_FALHOU) — ao excluir a conta,
+    ele vira máscara. O nome congelado dos atos fica (ADR-23)."""
+    await client.post("/categorias", headers=auth_vendedor, json={"nome": "Ato da Ana"})
+    # Linha no formato antigo: e-mail no lugar do nome e dentro da frase, com maiúscula.
+    await session.execute(
+        text(
+            "INSERT INTO audit_log (user_nome, acao, descricao) "
+            "VALUES (:e, 'LOGIN_FALHOU', :d)"
+        ).bindparams(
+            e=vendedor.email.upper(),
+            d=f"Tentou entrar e errou a senha ({vendedor.email.upper()})",
+        )
+    )
+    # O e-mail de OUTRA pessoa contém o dela ("mariana@…" contém "ana@…"): a máscara não
+    # pode comer o meio dele — a frase da Mariana tem de sair intacta.
+    outra = "Tentou entrar e errou a senha (mari" + vendedor.email + ")"
+    await session.execute(
+        text(
+            "INSERT INTO audit_log (user_nome, acao, descricao) VALUES ('x', 'LOGIN_FALHOU', :d)"
+        ).bindparams(d=outra)
+    )
+    await session.commit()
+
+    assert (await client.delete(f"/usuarios/{vendedor.id}", headers=auth_admin)).status_code == 204
+
+    com_email = await session.scalar(
+        text(
+            "SELECT count(*) FROM audit_log "
+            "WHERE user_nome ILIKE :p OR descricao ILIKE :p"
+        ).bindparams(p=f"%{vendedor.email}%")
+    )
+    assert com_email == 1  # só a frase da Mariana, intacta
+    assert await session.scalar(
+        text("SELECT count(*) FROM audit_log WHERE descricao = :d").bindparams(d=outra)
+    ) == 1
+    mascarada = await session.scalar(
+        text("SELECT count(*) FROM audit_log WHERE user_nome = 'an***@l***.com'")
+    )
+    assert mascarada == 1
+    # os atos dela continuam com o nome de quando aconteceram
+    assert await session.scalar(
+        text("SELECT count(*) FROM audit_log WHERE user_nome = :n").bindparams(n=vendedor.name)
+    ) >= 1
+
+
 async def test_ninguem_exclui_a_propria_conta(
     client: AsyncClient, auth_admin: dict, admin
 ) -> None:

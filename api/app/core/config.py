@@ -23,6 +23,12 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/loja"
     db_echo: bool = False
+    #: Teto de cada consulta da API, em milissegundos (0 = sem teto). O app desiste em 15 s
+    #: e o retry dispara a MESMA consulta de novo; sem teto no banco, a primeira continua
+    #: rodando sozinha e as duas disputam o mini-PC da loja — foi assim que a tela de
+    #: Clientes, sem índice, prendia o banco por 70 s a cada abertura. Vale só para as
+    #: conexões da API: a migration e o pg_dump usam conexão própria e não herdam o teto.
+    db_statement_timeout_ms: int = 30_000
 
     # Segurança. Em produção JWT_SECRET é obrigatório e vem do .env (nunca do código).
     jwt_secret: str = JWT_SECRET_EXEMPLO
@@ -42,6 +48,12 @@ class Settings(BaseSettings):
     #: GitHub, para não precisar de credencial do repositório dentro do contêiner.
     estado_dir: str = "estado"
     max_upload_bytes: int = 5 * 1024 * 1024
+
+    #: Quantos dias o diário de auditoria guarda (0 = para sempre). A faxina é oportunista,
+    #: no login certo, como a das tentativas de login. O diário prova quem fez o quê; não
+    #: é livro fiscal (esse é a própria venda, que não sai daqui), e e-mail e IP de cada
+    #: tentativa guardados para sempre são dado pessoal sem finalidade (ADR-23).
+    retencao_auditoria_dias: int = Field(default=730, ge=0)
 
     @field_validator("cors_origins", mode="before")
     @classmethod

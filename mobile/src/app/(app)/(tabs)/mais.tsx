@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import { Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { baseAtual } from '@/api/client';
-import { sistema } from '@/api/endpoints';
+import { backup, sistema } from '@/api/endpoints';
 import { Cartao, Etiqueta } from '@/components/ui';
 import { PODE, pode, titulo, type Capacidade } from '@/lib/permissoes';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
@@ -12,6 +12,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useServidorStore } from '@/stores/servidorStore';
 import { useLoja } from '@/hooks/useLoja';
 import { ROTULOS, type Segmento } from '@/lib/segmento';
+import { backupPrecisaDeAtencao, CHAVE_BACKUP } from '@/lib/backup';
 
 interface Opcao {
   rotulo: string;
@@ -65,6 +66,13 @@ const OPCOES: Opcao[] = [
     pode: PODE.VER_AUDITORIA,
   },
   {
+    rotulo: 'Backup na nuvem',
+    descricao: 'A cópia do banco no seu Google Drive',
+    icone: 'cloud-upload-outline',
+    rota: '/mais/backup',
+    pode: PODE.GERIR_BACKUP,
+  },
+  {
     rotulo: 'A loja',
     descricao: 'Nome, ramo e o que sai no recibo',
     icone: 'storefront-outline',
@@ -115,6 +123,37 @@ function SeloDeVersao() {
   );
 }
 
+/**
+ * "O backup parou?" — para o dono, logo abaixo do selo de versão e no mesmo desenho, mas
+ * só quando há problema (atrasado ou falhou). Quem decide o atraso é o servidor. Sem isto,
+ * a cópia parada só aparecia para quem abrisse a tela do backup: no dia de precisar dela.
+ */
+function SeloDoBackup() {
+  const router = useRouter();
+  const consulta = useQuery({
+    queryKey: CHAVE_BACKUP,
+    queryFn: backup.obter,
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+  if (!consulta.data || !backupPrecisaDeAtencao(consulta.data)) return null;
+  const falhou = consulta.data.ultimo_ok === false;
+  const quando = consulta.data.ultimo_em
+    ? new Date(consulta.data.ultimo_em).toLocaleString('pt-BR')
+    : 'nunca';
+  return (
+    <Pressable style={s.versao} onPress={() => router.push('/mais/backup' as never)}>
+      <View style={[s.versaoPonto, { backgroundColor: falhou ? cores.perigo : cores.alerta }]} />
+      <View style={{ flex: 1 }}>
+        <Text style={[s.versaoTitulo, { color: falhou ? cores.perigo : cores.alerta }]}>
+          {falhou ? 'Backup falhou' : 'Backup atrasado'}
+        </Text>
+        <Text style={s.versaoDetalhe}>Última cópia: {quando}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
 export default function Mais() {
   const router = useRouter();
   const usuario = useAuthStore((e) => e.usuario);
@@ -153,6 +192,7 @@ export default function Mais() {
         </View>
 
         <SeloDeVersao />
+        {pode(usuario?.papel, PODE.GERIR_BACKUP) ? <SeloDoBackup /> : null}
       </Cartao>
 
       {OPCOES.filter((o) => !o.pode || pode(usuario?.papel, o.pode)).map((opcao) => (

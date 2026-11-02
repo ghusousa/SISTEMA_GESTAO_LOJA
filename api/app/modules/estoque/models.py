@@ -76,6 +76,9 @@ class StockMovement(Base):
         Index("ix_stock_movements_entry_id", "entry_id"),
         Index("ix_stock_movements_return_id", "return_id"),
         Index("ix_stock_movements_movement_type_created_at", "movement_type", "created_at"),
+        # O extrato filtra por período (`created_at >= inicio AND < fim`, ADR-27) e conta o
+        # total: sem índice na coluna crua, contar um mês lia o histórico inteiro.
+        Index("ix_stock_movements_created_at", "created_at"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

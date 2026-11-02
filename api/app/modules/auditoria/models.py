@@ -10,7 +10,9 @@ desativar o login NÃO reescreve o passado. Auditoria que muda com o presente n�
 auditoria. Por isso `user_id` é só uma ponte para a tela (pode virar nulo se o usuário for
 removido um dia), e o que vale é `user_nome`/`user_papel` gravados na hora.
 
-A linha nunca é editada nem apagada pela aplicação — é só INSERT e SELECT.
+Nenhuma tela edita uma linha. As duas únicas escritas depois do INSERT são de LGPD, não
+de conteúdo: a faxina que apaga o que passou de `RETENCAO_AUDITORIA_DIAS`, e a máscara do
+e-mail de quem teve a conta excluída. O nome e o papel de quem agiu não são tocados.
 """
 
 from datetime import datetime
@@ -37,7 +39,8 @@ class AuditLog(Base):
     user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )
-    #: Congelados no momento do ato. Numa falha de login sem conta, guarda o e-mail digitado.
+    #: Congelados no momento do ato. Numa falha de login sem conta, guarda o e-mail
+    #: digitado MASCARADO (`ma***@g***.com`); com conta, o nome dela, como em todo ato.
     user_nome: Mapped[str] = mapped_column(String(160), nullable=False)
     user_papel: Mapped[str | None] = mapped_column(String(20))
 

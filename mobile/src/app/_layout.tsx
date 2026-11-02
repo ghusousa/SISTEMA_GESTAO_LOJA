@@ -1,4 +1,4 @@
-import { QueryClientProvider } from '@tanstack/react-query';
+import { focusManager, QueryClientProvider } from '@tanstack/react-query';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
@@ -35,7 +35,13 @@ export default function RootLayout() {
     // Celular dorme no bolso, entra no elevador, troca Wi-Fi por 4G. Enquanto esteve
     // fora, o servidor avisou de mudanças que este aparelho não ouviu — voltar ao ativo
     // reconecta e recarrega, senão a pessoa olharia dados de horas atrás sem saber.
+    //
+    // No celular não existe `visibilitychange`: o TanStack só sabe que o app foi para o
+    // fundo se alguém contar. Contado, ele pausa as novas tentativas de consulta, e o tempo
+    // real segura a rodada de avisos enquanto ninguém olha a tela (`lib/tempoReal.ts`).
+    // O foco volta ANTES de acordar: é ele que libera a recarga.
     const assinatura = AppState.addEventListener('change', (estado) => {
+      focusManager.setFocused(estado === 'active');
       if (estado === 'active') acordarTempoReal();
     });
     return () => assinatura.remove();

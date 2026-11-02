@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import Validacao
 from app.core.datas import dia_da_loja
+from app.core.pagination import Pagina, Paginacao
 from app.modules.catalogo.models import Product, ProductVariant
 from app.modules.despesas.models import Expense, ExpenseCategory
 from app.modules.estoque.models import StockBalance
@@ -302,9 +303,27 @@ class RelatorioService:
             for categoria_id, nome, total, quantidade in linhas
         ]
 
-    async def estoque_baixo(self) -> list[EstoqueBaixoOut]:
-        """Fotografia do agora: peças no mínimo ou abaixo. Não tem período por natureza."""
+    async def estoque_baixo(self, p: Paginacao) -> Pagina[EstoqueBaixoOut]:
+        """Fotografia do agora: peças no mínimo ou abaixo. Não tem período por natureza.
+
+        Paginada como toda listagem: numa loja com milhares de peças esgotadas (mínimo 0 e
+        saldo 0 entram) eram 7 mil linhas e 1,5 MB a cada venda, só para a aba Financeiro
+        mostrar "N peças no mínimo". O total sai contado pelo banco; quem só quer o número
+        pede `size=1` e lê `total`.
+        """
         saldo = func.coalesce(StockBalance.quantity, 0)
+        filtros = (
+            ProductVariant.deleted_at.is_(None),
+            Product.deleted_at.is_(None),
+            saldo <= ProductVariant.min_stock,
+        )
+        total = await self.session.scalar(
+            select(func.count())
+            .select_from(ProductVariant)
+            .join(Product, Product.id == ProductVariant.product_id)
+            .outerjoin(StockBalance, StockBalance.variant_id == ProductVariant.id)
+            .where(*filtros)
+        )
         linhas = (
             await self.session.execute(
                 select(
@@ -319,19 +338,21 @@ class RelatorioService:
                 )
                 .join(Product, Product.id == ProductVariant.product_id)
                 .outerjoin(StockBalance, StockBalance.variant_id == ProductVariant.id)
-                .where(
-                    ProductVariant.deleted_at.is_(None),
-                    Product.deleted_at.is_(None),
-                    saldo <= ProductVariant.min_stock,
-                )
+                .where(*filtros)
+                # Mais urgente primeiro: quem tem mínimo definido e está mais abaixo dele.
+                # O id desempata — sem ele, duas peças empatadas podiam trocar de lugar
+                # entre uma página e outra, e uma aparecia duas vezes enquanto a outra sumia.
                 .order_by(
                     case((ProductVariant.min_stock == 0, 1), else_=0),
                     saldo - ProductVariant.min_stock,
                     Product.name,
+                    ProductVariant.id,
                 )
+                .offset(p.offset)
+                .limit(p.limit)
             )
         ).all()
-        return [
+        itens = [
             EstoqueBaixoOut(
                 variante_id=variante_id,
                 produto=produto,
@@ -345,3 +366,4 @@ class RelatorioService:
             )
             for variante_id, produto, tamanho, cor, codigo, quantidade, minimo, custo in linhas
         ]
+        return Pagina.montar(itens, int(total or 0), p)

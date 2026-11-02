@@ -20,5 +20,6 @@ async def obter(session: SessionDep, _: ExigeBackup) -> BackupOut:
 
 
 @router.put("", response_model=BackupOut)
-async def atualizar(dados: BackupUpdate, session: SessionDep, _: ExigeBackup) -> BackupOut:
-    return BackupOut.de_modelo(await BackupService(session).atualizar(dados))
+async def atualizar(dados: BackupUpdate, session: SessionDep, usuario: ExigeBackup) -> BackupOut:
+    """Trocar o token ou a pasta exige `senha_atual` (a de quem está salvando)."""
+    return BackupOut.de_modelo(await BackupService(session).atualizar(dados, usuario))

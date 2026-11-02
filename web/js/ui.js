@@ -218,6 +218,12 @@ function esconderAjuda() {
 // A guarda de `document` existe para o arquivo continuar importável fora do navegador —
 // é assim que dá para conferir o módulo por linha de comando sem subir uma página.
 if (typeof document !== 'undefined') {
+  // O "Tentar de novo" do `erroBloco`. Era `onclick="location.reload()"`, e atributo de
+  // evento é script inline: a Content-Security-Policy do Caddy (`script-src 'self'`) o
+  // bloqueia, e o botão morreria calado justamente na tela de erro.
+  document.addEventListener('click', (e) => {
+    if (e.target.closest?.('[data-recarregar]')) location.reload();
+  });
   document.addEventListener('mouseover', (e) => {
     const g = e.target.closest?.('[data-ajuda]');
     if (g) mostrarAjuda(g);
@@ -392,7 +398,7 @@ export const erroBloco = (mensagem) => html`
   <div class="vazio vazio--erro">
     <p class="vazio__titulo">Não deu para carregar</p>
     <p class="texto-suave">${mensagem}</p>
-    <button class="botao botao--neutro" onclick="location.reload()">Tentar de novo</button>
+    <button class="botao botao--neutro" data-recarregar>Tentar de novo</button>
   </div>
 `;
 

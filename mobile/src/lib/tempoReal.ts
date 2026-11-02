@@ -14,20 +14,12 @@
  * não martelar um servidor que caiu.
  */
 
+import { focusManager } from '@tanstack/react-query';
+
 import { baseAtual } from '@/api/client';
 import { lerAccessToken } from '@/api/sessao';
-import { chaves, queryClient } from '@/lib/queryClient';
-
-/** Os mesmos assuntos de `api/app/core/eventos.py`. Mudou lá, mude aqui. */
-export type Assunto =
-  | 'catalogo'
-  | 'estoque'
-  | 'vendas'
-  | 'despesas'
-  | 'caixa'
-  | 'usuarios'
-  | 'conectado'
-  | 'ping';
+import { aplicarRodada, criarAgrupador, type Assunto } from '@/lib/avisos';
+import { queryClient } from '@/lib/queryClient';
 
 const ESPERA_INICIAL = 1000;
 const ESPERA_MAXIMA = 30_000;
@@ -38,54 +30,26 @@ let religar: ReturnType<typeof setTimeout> | null = null;
 /** Enquanto for false, qualquer queda é definitiva: ninguém está logado. */
 let ligado = false;
 
-/** O que recarregar quando cada assunto chega. */
-function aoReceber(assunto: Assunto): void {
-  switch (assunto) {
-    case 'catalogo':
-      queryClient.invalidateQueries({ queryKey: chaves.produtos });
-      queryClient.invalidateQueries({ queryKey: chaves.categorias });
-      // O lookup por código de barras guarda a peça bipada: preço editado no balcão
-      // precisa valer no próximo bipe, não no próximo login.
-      queryClient.invalidateQueries({ queryKey: ['variante-codigo'] });
-      break;
-    case 'estoque':
-      queryClient.invalidateQueries({ queryKey: chaves.saldos });
-      queryClient.invalidateQueries({ queryKey: chaves.movimentacoes });
-      queryClient.invalidateQueries({ queryKey: chaves.produtos });
-      queryClient.invalidateQueries({ queryKey: chaves.estoqueBaixo });
-      queryClient.invalidateQueries({ queryKey: ['variante-codigo'] });
-      break;
-    case 'vendas':
-      queryClient.invalidateQueries({ queryKey: chaves.vendas });
-      queryClient.invalidateQueries({ queryKey: ['caixa-dia'] });
-      invalidarRelatorios();
-      break;
-    case 'despesas':
-      queryClient.invalidateQueries({ queryKey: chaves.despesas });
-      queryClient.invalidateQueries({ queryKey: chaves.categoriasDespesa });
-      invalidarRelatorios();
-      break;
-    case 'caixa':
-      queryClient.invalidateQueries({ queryKey: ['caixa-dia'] });
-      queryClient.invalidateQueries({ queryKey: chaves.fechamentos });
-      break;
-    case 'usuarios':
-      queryClient.invalidateQueries({ queryKey: chaves.usuarios });
-      break;
-    default:
-      break; // 'conectado' e 'ping' são só sinal de vida
-  }
-}
+/**
+ * Avisos que chegam juntos viram UMA rodada de invalidação (`lib/avisos.ts`). Com o app no
+ * fundo a rodada fica segurada: ninguém está olhando, e o celular no bolso do gerente não
+ * tem por que recalcular o resumo do mês a cada venda. Na volta, `acordarTempoReal`
+ * recarrega tudo de uma vez — e a rodada segurada, que viraria uma segunda busca das
+ * mesmas coisas, é descartada.
+ *
+ * Quem diz se o app está no fundo é o `focusManager` do TanStack, ligado ao `AppState` em
+ * `app/_layout.tsx`: uma fonte só, a mesma que pausa as novas tentativas de consulta.
+ */
+const rajada = criarAgrupador<Assunto>((assuntos) => aplicarRodada(assuntos), {
+  segurar: () => !focusManager.isFocused(),
+});
 
-function invalidarRelatorios(): void {
-  for (const chave of [
-    ['relatorio-resumo'],
-    ['relatorio-vendas-dia'],
-    ['relatorio-mais-vendidos'],
-    ['relatorio-despesas'],
-  ]) {
-    queryClient.invalidateQueries({ queryKey: chave });
-  }
+/** Ficamos um tempo sem ouvir: recarrega o que está na tela, de uma vez. */
+function recarregarTudo(): void {
+  rajada.descartar(); // o "tudo" já cobre o que estava pendente
+  // No fundo, nada: a volta ao primeiro plano chama `acordarTempoReal`, que faz isto.
+  if (!focusManager.isFocused()) return;
+  void queryClient.invalidateQueries({ refetchType: 'active' });
 }
 
 function urlDoCanal(): string {
@@ -132,10 +96,11 @@ async function abrir(): Promise<void> {
         tentativas = 0; // só zera depois de o servidor aceitar, não ao abrir o socket
         // Ficamos um tempo sem ouvir: o que mudou nesse meio-tempo não gerou aviso para
         // este aparelho. Recarregar tudo agora é o que fecha o buraco da reconexão.
-        void queryClient.invalidateQueries();
+        recarregarTudo();
         return;
       }
-      aoReceber(assunto);
+      if (assunto === 'ping') return; // só sinal de vida
+      rajada.avisar(assunto);
     } catch {
       // Mensagem estranha não derruba o canal: ignorar é melhor do que reconectar.
     }
@@ -160,6 +125,8 @@ export function conectarTempoReal(): void {
 /** Desliga de vez: logout, ou troca de servidor. */
 export function desconectarTempoReal(): void {
   ligado = false;
+  // Rodada pendente do usuário anterior não dispara depois do logout.
+  rajada.descartar();
   if (religar) {
     clearTimeout(religar);
     religar = null;
@@ -174,9 +141,12 @@ export function acordarTempoReal(): void {
   if (!ligado) return;
   if (socket && socket.readyState === WebSocket.OPEN) {
     // Conexão de pé, mas o aparelho pode ter passado horas dormindo e perdido avisos.
-    void queryClient.invalidateQueries();
+    recarregarTudo();
     return;
   }
+  // Canal caído: o que se ouviu antes da queda e ficou segurado no fundo vale agora, sem
+  // esperar a reconexão (que pode demorar se o servidor estiver fora).
+  rajada.descarregar();
   if (religar) {
     clearTimeout(religar);
     religar = null;

@@ -147,6 +147,7 @@ function molduraHtml(usuario) {
             <button class="lateral__sair" data-sair title="Sair do sistema" aria-label="Sair do sistema">⏻</button>
           </div>
           <div class="lateral__versao" data-versao hidden></div>
+          <a class="lateral__versao is-atencao" data-backup href="#/backup" style="text-decoration:none;color:inherit" hidden></a>
           <a class="lateral__privacidade" href="/privacidade" target="_blank" rel="noopener">Privacidade</a>
         </div>
       </nav>
@@ -198,6 +199,41 @@ async function pintarVersao(raizMoldura) {
   }
 }
 
+/**
+ * "O backup parou?" — para o dono, na mesma barra e no mesmo desenho do selo de versão,
+ * mas só quando há problema: o backup em dia não precisa ocupar a barra de ninguém.
+ * Quem decide o atraso é o servidor (`atrasado`: ligado e sem cópia nova há mais de 2× o
+ * intervalo). Sem isto, a cópia parada só aparecia para quem abrisse a tela do backup —
+ * isto é, no dia em que precisasse dela.
+ */
+let backupPintadoEm = 0;
+async function pintarBackup(raizMoldura) {
+  const area = raizMoldura.querySelector('[data-backup]');
+  if (!area || !pode(PODE.GERIR_BACKUP)) return;
+  backupPintadoEm = Date.now();
+  try {
+    const b = await api.get('/backup');
+    const falhou = b.ativo && b.ultimo_ok === false;
+    area.hidden = !(b.atrasado || falhou);
+    if (area.hidden) return;
+    area.title = 'Abrir a tela do backup';
+    area.innerHTML = html`
+      <span class="lateral__versao-ponto" aria-hidden="true"></span>
+      <span>
+        <strong>${falhou ? 'Backup falhou' : 'Backup atrasado'}</strong>
+        <span>última cópia ${b.ultimo_em ? desdeQuando(b.ultimo_em) : 'nunca'}</span>
+      </span>
+    `;
+  } catch {
+    area.hidden = true;
+  }
+}
+
+// O PDV fica aberto o dia inteiro: o selo se refaz na navegação, no máximo a cada 5 min.
+document.addEventListener('rota-trocada', () => {
+  if (Date.now() - backupPintadoEm > 5 * 60_000) void pintarBackup(raiz);
+});
+
 /* --------------------------------------------------------------------- moldura */
 
 const raiz = document.getElementById('raiz');
@@ -229,6 +265,7 @@ function areaDeConteudo(caminho, usuario) {
     if (usuario) {
       raiz.innerHTML = molduraHtml(usuario);
       void pintarVersao(raiz);
+      void pintarBackup(raiz);
       raiz.querySelector('[data-sair]').addEventListener('click', async () => {
         const confirmou = await confirmar({
           titulo: 'Sair do sistema',

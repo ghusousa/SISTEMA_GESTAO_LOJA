@@ -50,6 +50,17 @@ export default function ClienteDetalhe() {
   const podeReceber = pode(useAuthStore((e) => e.usuario?.papel), PODE.GERIR_CREDIARIO);
   const [recebendo, setRecebendo] = useState(false);
 
+  // LGPD: excluir a pedido da cliente. O servidor anonimiza e mantém as vendas; a frase do
+  // diálogo diz exatamente isso, que é o que a página pública de exclusão promete.
+  const excluir = useMutation({
+    mutationFn: () => clientes.excluir(clienteId),
+    onSuccess: () => {
+      invalidarAposCrediario();
+      router.back();
+    },
+    onError: (erro) => Alert.alert('Não deu para excluir', mensagemDoErro(erro)),
+  });
+
   // Compras e pagamentos vêm paginados juntos (o mesmo ?page=&size=): "Carregar mais" traz
   // a próxima leva das duas listas. A caderneta de anos não desce numa resposta só, e os
   // totais continuam sendo da conta inteira — iguais em toda página.
@@ -163,6 +174,25 @@ export default function ClienteDetalhe() {
             variante="secundario"
             carregando={extrato.isFetchingNextPage}
             onPress={() => void extrato.fetchNextPage()}
+          />
+        )}
+
+        {podeReceber && deve <= 0 && (
+          <Botao
+            titulo="Excluir cadastro (pedido da cliente)"
+            variante="secundario"
+            carregando={excluir.isPending}
+            onPress={() =>
+              Alert.alert(
+                'Excluir o cadastro',
+                `Nome, telefone, CPF e observação de ${e.cliente.nome} serão apagados de vez. ` +
+                  'As compras continuam no histórico, sem o nome. Não tem volta.',
+                [
+                  { text: 'Cancelar', style: 'cancel' },
+                  { text: 'Excluir', style: 'destructive', onPress: () => excluir.mutate() },
+                ],
+              )
+            }
           />
         )}
       </ScrollView>

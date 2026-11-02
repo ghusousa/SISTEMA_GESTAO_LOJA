@@ -8,11 +8,14 @@ from httpx import AsyncClient
 from sqlalchemy import text
 
 from app.core.db import SessionLocal, engine
+from app.core.pagination import Paginacao
 from app.modules.catalogo.barcode import ean13_valido, montar_codigo_interno
+from app.modules.catalogo.repository import CatalogoRepository
 from app.modules.estoque import movimentos
 from app.modules.estoque.models import TipoMovimento
 
 from conftest import criar_produto, dar_entrada
+from planos import planos
 
 
 @pytest.fixture
@@ -348,6 +351,38 @@ async def test_busca_de_produtos_ignora_acento(
         resp = await client.get("/produtos", headers=auth_admin, params={"q": termo})
         assert resp.status_code == 200
         assert resp.json()["total"] == 1, f"'{termo}' não achou o produto"
+
+
+async def test_busca_por_nome_usa_o_indice_trigram(client, auth_admin, session) -> None:
+    """A busca de cada tecla não pode achatar o catálogo inteiro (ADR-31).
+
+    Era `translate(lower(nome))` aplicado às 15 mil peças a cada tecla, duas vezes (página
+    e contagem), com as tabelas de acento indo como PARÂMETRO — e no plano genérico que o
+    asyncpg reaproveita nenhum índice de expressão casa com parâmetro. Agora o nome e a cor
+    achatados têm índice trigram, a expressão vai literal, e o produto é filtrado antes de
+    encostar nas peças. Se a tabela de acentos de `catalogo/busca.py` mudar sem uma
+    migration que recrie os índices, é aqui que quebra.
+    """
+    categoria = (
+        await client.post("/categorias", headers=auth_admin, json={"nome": "Calças"})
+    ).json()
+    await _peca(client, auth_admin, categoria["id"], "Calça Rosé", "Rosé", "7891000000062")
+
+    # Nome e cor casam com a mesma peça: ela conta uma vez só.
+    achou = await client.get("/variantes", headers=auth_admin, params={"q": "rose"})
+    assert achou.json()["total"] == 1 and len(achou.json()["items"]) == 1
+
+    repo = CatalogoRepository(session)
+    variantes = await planos(
+        session, lambda: repo.listar_variantes(Paginacao(1, 20), None, "calca")
+    )
+    for _, plano in variantes[:2]:  # a contagem e a página
+        assert "ix_products_nome_achatado" in plano, plano
+        assert "ix_product_variants_cor_achatada" in plano, plano
+    produtos = await planos(
+        session, lambda: repo.listar_produtos(Paginacao(1, 20), "calca", None)
+    )
+    assert "ix_products_nome_achatado" in produtos[0][1], produtos[0][1]
 
 
 # ------------------------------------------- peça que volta de produto excluído (ADR-30)

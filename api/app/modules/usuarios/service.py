@@ -16,6 +16,7 @@ from app.core.exceptions import (
 )
 from app.core.pagination import Pagina, Paginacao
 from app.core.security import HASH_DE_MENTIRA, hash_senha_async, verificar_senha_async
+from app.modules.auditoria.service import AuditoriaService
 from app.modules.usuarios.models import Papel, User
 from app.modules.usuarios.repository import UsuarioRepository
 from app.modules.usuarios.schemas import UsuarioCreate, UsuarioOut, UsuarioUpdate
@@ -31,6 +32,11 @@ class UsuarioService:
         if user is None:
             raise NaoEncontrado("Usuário não encontrado.")
         return user
+
+    async def por_email(self, email: str) -> User | None:
+        """A conta deste e-mail, ou `None`. Público: o login precisa saber de quem foi a
+        tentativa errada para anotar no diário o id em vez do e-mail digitado."""
+        return await self.repo.por_email(email)
 
     async def autenticar(self, email: str, senha: str) -> User:
         user = await self.repo.por_email(email)
@@ -144,6 +150,9 @@ class UsuarioService:
         # Sessão aberta com refresh token válido sobreviveria à exclusão da linha se os
         # tokens não caíssem antes: o FK deles é para o usuário que está indo embora.
         await self._derrubar_sessoes(user.id)
+        # O e-mail sai também do diário (as tentativas de login antigas o traziam por
+        # extenso). O nome congelado de quem agiu fica: é o que a auditoria prova (ADR-23).
+        await AuditoriaService(self.session).esquecer_email(user.email)
         await self.session.delete(user)
         await self.session.commit()
 

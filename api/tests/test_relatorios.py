@@ -4,9 +4,16 @@ from datetime import UTC, datetime
 import pytest
 from httpx import AsyncClient
 
+from sqlalchemy import text
+
 from app.core.config import settings
+from app.core.datas import hoje_na_loja
+from app.core.db import engine
+from app.modules.caixa.service import CaixaService
+from app.modules.relatorios.service import RelatorioService
 
 from conftest import criar_produto
+from planos import planos
 
 
 def _hoje_loja() -> str:
@@ -236,7 +243,9 @@ async def test_estoque_baixo_lista_o_que_precisa_repor(
 ) -> None:
     """Camiseta: 10-3=7 acima do mínimo 5. Calça: 3-1=2, igual ao mínimo 2 -> entra."""
     resp = await client.get("/relatorios/estoque-baixo", headers=auth_admin)
-    linhas = resp.json()
+    pagina = resp.json()
+    assert pagina["total"] == 1
+    linhas = pagina["items"]
     assert [linha["variante_id"] for linha in linhas] == [loja_com_movimento["calca"]]
     assert linhas[0]["saldo"] == 2
     assert linhas[0]["estoque_minimo"] == 2
@@ -300,3 +309,94 @@ async def test_margem_bruta_e_sobre_o_faturamento_liquido(
     assert r["faturamento_liquido"] == "100.00"
     assert r["lucro_bruto"] == "50.00"
     assert r["margem_bruta_pct"] == "50.00"
+
+
+async def test_estoque_baixo_e_paginado_e_contado_no_servidor(
+    client: AsyncClient, auth_admin: dict[str, str]
+) -> None:
+    """Toda listagem pagina: eram 7 mil peças e 1,5 MB a CADA venda numa loja de anos.
+
+    A aba Financeiro só quer "N peças no mínimo": pede `size=1` e lê o `total`. A tela de
+    relatório pagina, as mais urgentes primeiro — e nenhuma peça repete ou some entre
+    uma página e outra.
+    """
+    categoria = (
+        await client.post("/categorias", headers=auth_admin, json={"nome": "Repor"})
+    ).json()["id"]
+    produto = await criar_produto(client, auth_admin, {
+        "categoria_id": categoria,
+        "nome": "Blusa",
+        "variantes": [
+            # Sem estoque inicial: todas zeradas. Só a G tem mínimo — é a mais urgente.
+            {"tamanho": t, "cor": "Preta", "preco_custo": "10.00", "preco_venda": "30.00",
+             "estoque_minimo": 3 if t == "G" else 0}
+            for t in ("PP", "P", "M", "G", "GG")
+        ],
+    })
+    ids = {v["tamanho"]: v["id"] for v in produto["variantes"]}
+
+    contagem = (
+        await client.get("/relatorios/estoque-baixo", headers=auth_admin, params={"size": 1})
+    ).json()
+    assert contagem["total"] == 5
+    assert len(contagem["items"]) == 1
+    assert contagem["items"][0]["variante_id"] == ids["G"], "a mais urgente vem primeiro"
+
+    vistas = []
+    for page in (1, 2, 3):
+        resp = await client.get(
+            "/relatorios/estoque-baixo", headers=auth_admin, params={"page": page, "size": 2}
+        )
+        assert resp.status_code == 200, resp.text
+        corpo = resp.json()
+        assert (corpo["total"], corpo["page"], corpo["size"]) == (5, page, 2)
+        vistas += [item["variante_id"] for item in corpo["items"]]
+    assert sorted(vistas) == sorted(ids.values()), "nenhuma peça repete nem some entre páginas"
+
+
+async def _vacuum(*tabelas: str) -> None:
+    """Index Only Scan depende do mapa de visibilidade, que só o VACUUM preenche."""
+    async with engine.connect() as conn:
+        conn = await conn.execution_options(isolation_level="AUTOCOMMIT")
+        for tabela in tabelas:
+            await conn.execute(text(f"VACUUM ANALYZE {tabela}"))
+
+
+async def test_resumo_do_mes_soma_os_itens_e_o_fiado_pelos_indices(
+    session, loja_com_movimento: dict
+) -> None:
+    """O CMV do mês lia os anos de `sale_items`, e o "vendido a prazo" todos os pagamentos.
+
+    Com as colunas que o relatório lê dentro do índice, a soma sai do índice (Index Only
+    Scan); o fiado tem índice próprio, parcial.
+    """
+    await _vacuum("sale_items", "sale_payments", "sales")
+    hoje = hoje_na_loja()
+    resultado = await planos(
+        session, lambda: RelatorioService(session).resumo(hoje, hoje), generico=False
+    )
+    cmv = next(
+        p for sql, p in resultado if "sale_items.unit_cost" in sql and "sale_return" not in sql
+    )
+    a_prazo = next(p for sql, p in resultado if "sum(sale_payments.amount)" in sql)
+    assert "Index Only Scan using ix_sale_items_sale_id" in cmv, cmv
+    assert "ix_sale_payments_fiado" in a_prazo, a_prazo
+
+
+async def test_recebimentos_do_dia_saem_do_indice_do_dia_da_loja(
+    session, loja_com_movimento: dict
+) -> None:
+    """O caixa de hoje lia TODOS os recebimentos de fiado já feitos para achar os de hoje.
+
+    Mesmo desenho de `ix_sales_business_date`: índice sobre a expressão exata de
+    `dia_da_loja(paid_at)`.
+    """
+    hoje = hoje_na_loja()
+    resultado = await planos(session, lambda: CaixaService(session).dia(hoje), generico=False)
+    resultado += await planos(
+        session, lambda: RelatorioService(session).resumo(hoje, hoje), generico=False
+    )
+    recebimentos = [p for sql, p in resultado if "FROM customer_payments" in sql]
+    assert recebimentos, "o caixa e o resumo consultam os recebimentos do dia"
+    for plano in recebimentos:
+        assert "ix_customer_payments_business_date" in plano, plano

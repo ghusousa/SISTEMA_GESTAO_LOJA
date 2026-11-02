@@ -8,9 +8,10 @@
 #   ./instalar.sh
 #   ./instalar.sh --dominio loja.exemplo.com.br --email dona@loja.com \
 #                 --nome "Dona Maria" --senha "..." --senha-banco "..." \
-#                 --loja "Boutique da Ana" --segmento ROUPAS --sim
+#                 --loja "Boutique da Ana" --segmento ROUPAS --avisos loja-k3x9q --sim
 #
 # Se o Docker não estiver instalado, o instalador instala. Use --sem-docker para impedir.
+# No fim, liga a cópia diária do banco (e, no Linux, o vigia que avisa quando a loja cai).
 #
 set -euo pipefail
 
@@ -28,7 +29,7 @@ morrer()  { printf '\n%s✗ %s%s\n\n' "$VERMELHO" "$1" "$NORMAL" >&2; exit 1; }
 
 # ------------------------------------------------------------------ argumentos
 
-DOMINIO=""; EMAIL=""; NOME=""; SENHA=""; SENHA_BANCO=""
+DOMINIO=""; EMAIL=""; NOME=""; SENHA=""; SENHA_BANCO=""; NOTIFICAR_URL=""
 FUSO="America/Sao_Paulo"; PORTA_HTTP="80"; PORTA_HTTPS="443"
 INTERATIVO=1; FORCAR=0; INSTALAR_DOCKER=1
 
@@ -44,10 +45,11 @@ while [ $# -gt 0 ]; do
         --segmento)     SEGMENTO="${2:-}"; shift 2 ;;
         --porta-http)   PORTA_HTTP="${2:-}"; shift 2 ;;
         --porta-https)  PORTA_HTTPS="${2:-}"; shift 2 ;;
+        --avisos)       NOTIFICAR_URL="${2:-}"; shift 2 ;;
         --sim|-y)       INTERATIVO=0; shift ;;
         --forcar)       FORCAR=1; shift ;;
         --sem-docker)   INSTALAR_DOCKER=0; shift ;;
-        -h|--help)      sed -n '3,11p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help)      sed -n '3,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *)              morrer "opção desconhecida: $1" ;;
     esac
 done
@@ -160,15 +162,56 @@ email_valido() { printf '%s' "$1" | grep -Eq '^[^@[:space:]]+@[^@[:space:]]+\.[^
 # 32 caracteres alfanuméricos sobram de força.
 senha_banco_valida() { printf '%s' "$1" | grep -Eq '^[A-Za-z0-9_-]{8,}$'; }
 
-# Endereço sem DNS: localhost, vazio ou um IP. Decide HTTP puro em vez de HTTPS.
+eh_ip() { printf '%s' "$1" | grep -Eq '^[0-9]{1,3}(\.[0-9]{1,3}){3}$'; }
+
+# IP que só existe dentro da loja (ou da própria máquina): 10/8, 172.16/12, 192.168/16 e
+# 127/8. Quem chega nele já está na rede da loja, e ali HTTP puro é o esperado — não há
+# certificado público para um endereço que a internet não alcança.
+ip_de_rede_local() {
+    local a b c d
+    eh_ip "$1" || return 1
+    IFS=. read -r a b c d <<< "$1"
+    [ "$a" -le 255 ] && [ "$b" -le 255 ] && [ "$c" -le 255 ] && [ "$d" -le 255 ] || return 1
+    case "$a" in
+        10|127) return 0 ;;
+        192)    [ "$b" -eq 168 ] ;;
+        172)    [ "$b" -ge 16 ] && [ "$b" -le 31 ] ;;
+        # CGNAT e redes sobrepostas como o Tailscale (100.64/10) e link-local (169.254/16):
+        # não se alcançam da internet, e não há como tirar certificado para eles.
+        100)    [ "$b" -ge 64 ] && [ "$b" -le 127 ] ;;
+        169)    [ "$b" -eq 254 ] ;;
+        *)      return 1 ;;
+    esac
+}
+
+# Endereço que decide HTTP puro em vez de HTTPS: vazio, localhost ou IP da rede da loja.
+#
+# Era "qualquer IP", e o IP PÚBLICO de uma VPS caía aqui: AMBIENTE=local, /docs aberto na
+# internet, CORS para qualquer origem e senha, token e CPF trafegando sem criptografia. Ser
+# um IP não diz que o ambiente é de desenvolvimento; dizer que a rede é da loja, sim.
 endereco_local() {
-    [ -z "$1" ] || [ "$1" = "localhost" ] || printf '%s' "$1" | grep -Eq '^[0-9]+(\.[0-9]+){3}$'
+    [ -z "$1" ] || [ "$1" = "localhost" ] || ip_de_rede_local "$1"
+}
+
+ip_publico() { eh_ip "$1" && ! ip_de_rede_local "$1"; }
+
+explicar_ip_publico() {
+    printf '%s' "\"$1\" é um IP PÚBLICO: a loja ficaria aberta na internet em HTTP puro — senha,
+  token e CPF trafegando sem criptografia, e a documentação da API à vista de quem passar.
+  Use um domínio apontado para este servidor; o HTTPS é pedido e renovado sozinho:
+      ./instalar.sh --dominio loja.seudominio.com.br
+  Sem domínio? O sslip.io dá um de graça, que já aponta para este IP:
+      ./instalar.sh --dominio $1.sslip.io
+  Com um .env de antes, acrescente --forcar (os dados do banco não são apagados)."
 }
 
 # Deriva tudo que depende do endereço. Existe uma vez só porque três caminhos precisam
 # disso (instalação nova interativa, por parâmetro, e reaproveitando um .env), e uma cópia
 # esquecida deixava o resumo final quebrar com "URL_FINAL: unbound variable".
 definir_endereco() {
+    # Recusa em vez de "instalar e avisar": um aviso no fim da instalação não fecha a porta
+    # que a instalação acabou de abrir. Vale também para o .env reaproveitado.
+    ip_publico "$DOMINIO" && morrer "$(explicar_ip_publico "$DOMINIO")"
     if endereco_local "$DOMINIO"; then
         # HTTP puro: aqui o AMBIENTE precisa ser 'local', senão o cookie de sessão sai
         # marcado como Secure, o navegador se recusa a guardá-lo em http:// e ninguém
@@ -414,8 +457,15 @@ else
 
     titulo "2. Endereço do sistema"
     echo "  Se a loja tem um domínio apontado para este servidor, informe-o: o certificado"
-    echo "  HTTPS é pedido e renovado sozinho. Deixe 'localhost' para usar só nesta máquina."
-    perguntar "Domínio (DNS)" "localhost" DOMINIO
+    echo "  HTTPS é pedido e renovado sozinho. Deixe 'localhost' para usar só nesta máquina;"
+    echo "  o IP da rede da loja (ex.: 192.168.0.10) também serve, sem HTTPS."
+    while :; do
+        perguntar "Domínio (DNS)" "localhost" DOMINIO
+        ip_publico "$DOMINIO" || break
+        [ "$INTERATIVO" -eq 1 ] || break   # sem teclado, quem recusa é o definir_endereco
+        alerta "$(explicar_ip_publico "$DOMINIO")"
+        DOMINIO=""
+    done
 
     definir_endereco
 
@@ -453,7 +503,20 @@ else
     titulo "5. Fuso horário"
     echo "  Define o que é 'hoje' no caixa e nos relatórios."
     perguntar "Fuso" "America/Sao_Paulo" FUSO
+
+    titulo "6. Avisos no celular (opcional)"
+    echo "  Loja fora do ar, disco enchendo, backup parado, atualização que falhou: o sistema"
+    echo "  avisa pelo ntfy, um app gratuito (Android e iPhone). Instale-o, toque em '+' e"
+    echo "  assine um tópico com nome difícil de adivinhar — quem souber o nome lê os avisos."
+    echo "  Sugestão de tópico: loja-$(sortear 12 | tr '[:upper:]' '[:lower:]')"
+    perguntar "Tópico do ntfy (vazio = os avisos ficam só no registro do servidor)" "" NOTIFICAR_URL
 fi
+
+# Só o nome do tópico também vale: vira o endereço no ntfy.sh, que é o que o notificar.sh usa.
+case "$NOTIFICAR_URL" in
+    ''|http://*|https://*) ;;
+    *) NOTIFICAR_URL="https://ntfy.sh/$NOTIFICAR_URL" ;;
+esac
 
 # --------------------------------------------------- validação do modo não-interativo
 
@@ -502,8 +565,12 @@ TIMEZONE_LOJA=$FUSO
 
 # Para onde o ./backup.sh manda a cópia de fora do servidor. Qualquer destino do rclone
 # (rclone.org): gdrive:loja-backups, s3:meu-bucket/loja, b2:loja... Vazio = a cópia fica
-# só neste servidor, e morre junto com ele.
+# só neste servidor, e morre junto com ele. Ela sai CIFRADA: ./backup.sh --mostrar-chave.
 BACKUP_REMOTO=
+
+# Para onde vão os avisos (loja fora do ar, disco, backup, atualização que falhou): o
+# endereço de um tópico do ntfy. Vazio = os avisos ficam só no journal deste servidor.
+NOTIFICAR_URL=$NOTIFICAR_URL
 FIM
     chmod 600 .env
     certo ".env gravado (só você consegue ler)"
@@ -655,6 +722,68 @@ elif [ "$REAPROVEITADO" -eq 1 ]; then
     echo "    ${PREFIXO_DOCKER:+sudo }docker compose exec api python -m app.cli create-admin --nome ... --email ... --senha ..."
 fi
 
+# ------------------------------------------------------------------ cópia diária e vigia
+
+# A instalação oficial terminava sem cópia NENHUMA do banco: o `./backup.sh --automatico`
+# existia, mas só ligava por SSH, e o ADR-28 conta o servidor que ficou meses assim. Agora
+# ela nasce ligada (systemd no Linux, launchd no Mac), e no Linux o vigia junto: de 5 em 5
+# minutos ele confere o /health, o disco e o backup da nuvem, e avisa pelo NOTIFICAR_URL.
+# Falhar aqui não desfaz a instalação: a loja já está no ar, e o recado diz o que rodar.
+# O `./desinstalar.sh --manter-dados` anota as rotinas que estavam ligadas (o backup do
+# Drive e a atualização sozinha, com o intervalo) para elas voltarem iguais: sem isto, a loja
+# religada ficava com o backup do Drive "ligado" na tela e nenhum timer para fazê-lo.
+religar_rotinas_anotadas() {
+    local anotadas="docker/estado/rotinas" nome minutos
+    [ -s "$anotadas" ] || return 0
+    while read -r nome minutos; do
+        case "$nome" in
+            loja-backup-nuvem)
+                ./backup.sh --nuvem-automatico \
+                    || alerta "o backup do Drive não religou; ligue com ./backup.sh --nuvem-automatico" ;;
+            loja-atualizar)
+                ./atualizar.sh --automatico "${minutos:-10}" \
+                    || alerta "a atualização sozinha não religou; ligue com ./atualizar.sh --automatico" ;;
+        esac
+    done < "$anotadas"
+    rm -f "$anotadas"
+}
+
+ligar_rotinas() {
+    titulo "Cópia diária do banco e vigia da loja"
+    case "$(uname -s)" in
+        Darwin)
+            ./backup.sh --automatico \
+                || alerta "a cópia diária não ligou (veja acima); ligue depois com ./backup.sh --automatico"
+            ;;
+        Linux)
+            # `/run/systemd/system` só existe com o systemd no comando (não em contêiner, WSL1…).
+            if ! command -v systemctl >/dev/null 2>&1 || [ ! -d "${DIR_SYSTEMD_RODANDO:-/run/systemd/system}" ]; then
+                alerta "Este servidor não usa systemd: a cópia diária NÃO foi ligada."
+                alerta "Agende no cron do root: 15 3 * * * cd $(pwd) && ./backup.sh --sim"
+                return 0
+            fi
+            ./backup.sh --automatico \
+                || alerta "a cópia diária não ligou (veja acima); ligue depois com ./backup.sh --automatico"
+            ./vigia.sh --automatico \
+                || alerta "o vigia não ligou (veja acima); ligue depois com ./vigia.sh --automatico"
+            religar_rotinas_anotadas
+            ;;
+        *)
+            alerta "Não sei agendar a cópia diária em $(uname -s); rode ./backup.sh todo dia."
+            ;;
+    esac
+    # O aviso de teste só quando o tópico acabou de ser informado: religar a loja (rodar o
+    # instalador de novo com o .env de antes) não precisa apitar o celular toda vez.
+    if [ -n "${NOTIFICAR_URL:-}" ] && [ "$REAPROVEITADO" -eq 0 ]; then
+        if ./notificar.sh --testar >/dev/null 2>&1; then
+            certo "aviso de teste enviado para $NOTIFICAR_URL — confira o celular"
+        else
+            alerta "o aviso de teste não saiu para $NOTIFICAR_URL (o endereço está certo?)"
+        fi
+    fi
+}
+ligar_rotinas
+
 # ------------------------------------------------------------------ fim
 
 titulo "Pronto — o sistema está rodando"
@@ -672,6 +801,9 @@ cat <<FIM
     ${CMD_DOCKER} compose restart          reiniciar
     ${CMD_DOCKER} compose down             desligar (os dados ficam guardados)
     ./instalar.sh                   religar depois de um down
+    ./backup.sh --listar            as cópias do banco (uma por dia, às 03:15)
+    ./backup.sh --mostrar-chave     a chave das cópias de fora: guarde FORA daqui
+    ./vigia.sh                      conferir agora se está tudo de pé
 
 FIM
 if [ "$AMBIENTE" = "producao" ]; then

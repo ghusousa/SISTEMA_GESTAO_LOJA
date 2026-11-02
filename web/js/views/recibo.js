@@ -16,7 +16,7 @@
 import { api } from '../api.js';
 import { formatar, paraCentavos } from '../dinheiro.js';
 import { avisarErro, cru, dataHora, grade, html, numero, plural } from '../ui.js';
-import { loja } from '../loja.js';
+import { garantirDadosDaLoja, loja } from '../loja.js';
 
 const FORMAS = {
   DINHEIRO: 'Dinheiro',
@@ -32,7 +32,9 @@ export async function render(raiz, params) {
 
   let venda;
   try {
-    venda = await api.get(`/vendas/${params.id}`);
+    // O cabeçalho do recibo (documento, endereço, telefone) só vem com sessão; aberto pelo
+    // F5, ele ainda não chegou. Pedir junto não atrasa nada.
+    [venda] = await Promise.all([api.get(`/vendas/${params.id}`), garantirDadosDaLoja()]);
   } catch (erro) {
     avisarErro(erro);
     raiz.innerHTML = '<div class="vazio"><p class="vazio__titulo">Venda não encontrada</p></div>';

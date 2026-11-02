@@ -28,6 +28,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.config import settings
 from app.core.db import Base, TimestampMixin
 from app.modules.vendas.models import _GAVETA
 
@@ -78,6 +79,13 @@ class CustomerPayment(Base):
         UniqueConstraint("client_uuid", name="client_uuid"),
         Index("ix_customer_payments_customer_id", "customer_id"),
         Index("ix_customer_payments_paid_at", "paid_at"),
+        # O caixa do dia e o resumo somam os recebimentos POR DIA da loja
+        # (`dia_da_loja(paid_at)`, app/core/datas.py). Índice sobre a mesma expressão, como
+        # `ix_sales_business_date`: sem ele, achar os de hoje lia todos os já recebidos.
+        Index(
+            "ix_customer_payments_business_date",
+            text(f"((paid_at AT TIME ZONE '{settings.timezone_loja}')::date)"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

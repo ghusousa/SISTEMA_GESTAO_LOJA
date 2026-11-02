@@ -8,6 +8,21 @@ Como colocar a API no ar num VPS Ubuntu e o app na mão da equipe.
 > sistema web e HTTPS automático em um comando — veja [Instalação](../README.md#instalação). Este
 > capítulo é a instalação **manual**, sem Docker: útil quando o servidor já tem um PostgreSQL
 > compartilhado, quando a hospedagem não permite Docker, ou para entender o que o instalador faz.
+>
+> O que o instalador já entrega e aqui é por sua conta: a **cópia diária ligada** (com a cópia de
+> fora **cifrada**), o **vigia** que avisa no celular quando a loja cai, o disco enche ou o backup
+> atrasa, a **atualização que só sobe commit de CI verde** e a recusa de instalar pelo **IP
+> público** em HTTP puro. Os scripts (`backup.sh`, `vigia.sh`, `notificar.sh`, `atualizar.sh`)
+> supõem o Docker; o raciocínio de cada um está no [README](../README.md#backup-automático-todo-dia)
+> e no [ARQUITETURA.md](ARQUITETURA.md) (ADR-18, ADR-22, ADR-28 e seguintes).
+
+## Antes de tudo: domínio, não IP
+
+Em servidor com IP **público**, use um domínio e HTTPS — HTTP puro só é aceitável dentro da rede
+da loja (`10.…`, `172.16–31.…`, `192.168.…`). Na internet, senha, token e CPF passam em texto
+claro, e com `AMBIENTE` diferente de `producao` a API ainda abre o `/docs` e o CORS para qualquer
+origem. Sem domínio próprio, `SEU.IP.sslip.io` (gratuito) aponta para o IP e o certificado sai do
+mesmo jeito. O `./instalar.sh` recusa o IP público pelo mesmo motivo.
 
 ## Parte 1 — API em VPS Ubuntu
 
@@ -50,7 +65,9 @@ sudo mkdir -p /opt/loja && sudo chown loja:loja /opt/loja
 git clone SEU_REPOSITORIO /opt/loja/app
 cd /opt/loja/app/api
 python3 -m venv .venv
-.venv/bin/pip install -e .
+# Versões EXATAS da trava (as que o CI testou), e só então o projeto, sem resolver nada de novo.
+.venv/bin/pip install -r requirements.lock
+.venv/bin/pip install -e . --no-deps
 ```
 
 `/opt/loja/app/api/.env` (permissão `600`, nunca versionado):
@@ -198,6 +215,15 @@ sudo crontab -e
 
 Teste a restauração pelo menos uma vez: `gunzip -c arquivo.sql.gz | psql -d loja_restore`.
 
+Dois cuidados que o `./backup.sh` do instalador já toma e este script, não:
+
+- **A cópia local é o banco inteiro** (CPF, telefones, hashes de senha): ponha `umask 077` no
+  começo do script e `chmod 700` na pasta, para nenhum outro usuário da máquina lê-la.
+- **A cópia de fora tem de sair cifrada.** Com o rclone, crie um remote `crypt` por cima do
+  destino (`rclone config` → *crypt*, `filename_encryption = off`) e copie para ele; guarde a
+  senha **fora do servidor** — sem ela a cópia não abre. Quem já mandava em claro: as cópias
+  antigas continuam legíveis no destino até serem apagadas à mão.
+
 ### 7. Atualizar
 
 `/opt/loja/deploy.sh` (idempotente — rodar duas vezes não quebra nada):
@@ -208,7 +234,7 @@ set -euo pipefail
 cd /opt/loja/app
 git pull --ff-only
 cd api
-.venv/bin/pip install -e . --quiet
+.venv/bin/pip install -q -r requirements.lock && .venv/bin/pip install -q -e . --no-deps
 .venv/bin/alembic upgrade head
 
 # Sistema web: são arquivos estáticos, o git pull acima já os atualizou. Este rsync só
@@ -220,7 +246,8 @@ sleep 2
 curl -fsS http://localhost/health > /dev/null && echo "no ar" || (echo "FALHOU"; exit 1)
 ```
 
-Faça um backup antes de qualquer atualização que traga migration.
+Faça um backup antes de qualquer atualização que traga migration, e só implante commit com o
+CI verde no GitHub — é o que o `./atualizar.sh` do instalador confere sozinho antes de mexer.
 
 ---
 
