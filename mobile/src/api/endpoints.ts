@@ -26,11 +26,13 @@ import type {
   Replicacao,
   ResumoFinanceiro,
   Saldo,
+  TaxaCartao,
   TipoMovimento,
   Tokens,
   Usuario,
   Auditoria,
   Cliente,
+  ClienteBalcao,
   Devolucao,
   ExtratoCliente,
   PagamentoCliente,
@@ -299,7 +301,14 @@ export const vendas = {
     observacao?: string | null;
     cliente_id?: number | null;
     itens: { variante_id: number; quantidade: number }[];
-    pagamentos: { forma: FormaPagamento; valor: string; codigo_vale?: string }[];
+    pagamentos: {
+      forma: FormaPagamento;
+      valor: string;
+      codigo_vale?: string;
+      /** Só no crédito, de 1 a 12 (ADR-35). */
+      parcelas?: number;
+      bandeira?: string | null;
+    }[];
   }) {
     const { data } = await api.post<Venda>('/vendas', dados);
     return data;
@@ -371,8 +380,32 @@ export const clientes = {
     documento?: string | null;
     /** Limite combinado, string decimal. Avisa na venda, nunca bloqueia (ADR-20). */
     limite?: string | null;
+    nascimento?: string | null;
+    preferencias?: string | null;
   }) {
     const { data } = await api.post<Cliente>('/clientes', dados);
+    return data;
+  },
+  /** A porta do balcão (ATENDER_CLIENTE): busca sem saldo nem limite (ADR-36). */
+  async buscarNoBalcao(params: Paginado & { q?: string } = {}) {
+    const { data } = await api.get<Pagina<ClienteBalcao>>('/clientes/balcao', { params });
+    return data;
+  },
+  /** Idempotente por `client_uuid`: a rede caindo não faz a cliente nascer duas vezes. */
+  async cadastrarNoBalcao(dados: {
+    client_uuid: string;
+    nome: string;
+    telefone?: string | null;
+    nascimento?: string | null;
+    preferencias?: string | null;
+  }) {
+    const { data } = await api.post<ClienteBalcao>('/clientes/balcao', dados);
+    return data;
+  },
+  async aniversariantes(params: Paginado & { mes?: number } = {}) {
+    const { data } = await api.get<Pagina<ClienteBalcao>>('/clientes/aniversariantes', {
+      params,
+    });
     return data;
   },
   async detalhe(id: number) {
@@ -503,5 +536,25 @@ export const relatorios = {
       params,
     });
     return data;
+  },
+};
+
+// ------------------------------------------------------------------ taxas da maquininha
+/** Ler é de quem vê dinheiro; mudar, só do dono (ADR-35). */
+export const taxasCartao = {
+  async listar(params: Paginado = {}) {
+    const { data } = await api.get<Pagina<TaxaCartao>>('/taxas-cartao', { params });
+    return data;
+  },
+  async criar(dados: Omit<TaxaCartao, 'id'>) {
+    const { data } = await api.post<TaxaCartao>('/taxas-cartao', dados);
+    return data;
+  },
+  async atualizar(id: number, dados: Partial<Omit<TaxaCartao, 'id' | 'forma'>>) {
+    const { data } = await api.patch<TaxaCartao>(`/taxas-cartao/${id}`, dados);
+    return data;
+  },
+  async excluir(id: number) {
+    await api.delete(`/taxas-cartao/${id}`);
   },
 };

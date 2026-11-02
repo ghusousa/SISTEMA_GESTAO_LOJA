@@ -133,11 +133,22 @@ sale_payments(id, sale_id FK→sales CASCADE,
               method CHECK IN ('DINHEIRO','PIX','DEBITO','CREDITO','VALE','FIADO'),
               amount NUMERIC(14,2) CHECK > 0,
               voucher_id FK→vouchers NULL,      -- qual vale pagou
-              customer_id FK→customers NULL)    -- de quem é a dívida
+              customer_id FK→customers NULL,    -- de quem é a dívida
+              parcelas SMALLINT DEFAULT 1,      -- > 1 só no CREDITO (ck_parcelas)
+              bandeira VARCHAR(20) NULL,        -- só no cartão (ck_bandeira_so_cartao)
+              taxa_percentual NUMERIC(5,2) DEFAULT 0,  -- FOTOGRAFADA na venda (ADR-35)
+              prazo_dias SMALLINT NULL)         -- obrigatório no cartão, nulo fora dele
   CHECK ((method = 'FIADO') = (customer_id IS NOT NULL))   -- ck_fiado_tem_cliente
   FK (sale_id, customer_id) → sales(id, customer_id)       -- é a MESMA cliente da venda
   ix_sale_payments_sale_id
   ix_sale_payments_fiado (sale_id) INCLUDE (amount) WHERE method = 'FIADO'
+
+card_fees(id, forma CHECK IN ('DEBITO','CREDITO'), parcelas_de, parcelas_ate,
+          percentual NUMERIC(5,2) CHECK 0 <= p < 100, prazo_dias CHECK 0..366,
+          created_at, updated_at)
+  -- débito é sempre 1x (ck_debito_a_vista); faixas da mesma forma não se sobrepõem — o
+  -- service confere com a forma travada (pg_advisory_xact_lock). Apagar é DELETE de verdade:
+  -- nenhuma venda aponta para cá, a taxa vai copiada no pagamento (ADR-35).
 ```
 
 Congelar `unit_price`/`unit_cost` é o que torna o lucro histórico correto: reajustar o preço amanhã
@@ -179,10 +190,13 @@ vouchers(id, code UNIQUE, value NUMERIC(14,2) CHECK > 0,
   -- estoque: conferir antes deixaria o mesmo vale pagar duas vendas simultâneas.
 
 customers(id, name, phone NULL, document NULL, credit_limit NULL, note NULL,
+          nascimento DATE NULL, preferencias VARCHAR(200) NULL,   -- ADR-36
+          client_uuid UUID NULL UNIQUE,     -- chave do cadastro feito no balcão
           deleted_at NULL, created_at, updated_at)
   uq_customers_phone_active UNIQUE (phone) WHERE deleted_at IS NULL
   uq_customers_document_active UNIQUE (document) WHERE deleted_at IS NULL
-  -- excluir (só quitada) ANONIMIZA: phone/document/note = NULL, name = 'Cliente removido #id'.
+  -- excluir (só quitada) ANONIMIZA: phone/document/note/nascimento/preferencias = NULL,
+  -- name = 'Cliente removido #id'.
   -- Só marcar deleted_at deixava CPF e telefone para sempre no banco e em todo backup (LGPD);
   -- a linha fica para as vendas e pagamentos do passado seguirem fechando a conta.
 
@@ -963,6 +977,47 @@ cobre o que ficava de fora e já quebrou: `npm test` e o bundle do app, a imagem
 `shellcheck -S warning` dos scripts e um job com a API no ar rodando `e2e.py` e `pentest.py`
 (qualquer achado reprova). É dessa resposta que o ADR-18 depende.
 
+**ADR-35 — A taxa da maquininha é fotografada no pagamento, e o Resultado a desconta.**
+Débito e crédito custam de 2 a 5% sobre a maior parte do faturamento; sem isso o "Resultado" saía
+inflado todo mês. O dono cadastra o contrato numa tabela (`card_fees`: forma, faixa de parcelas,
+percentual e dias para cair na conta) e a venda **copia** a taxa e o prazo que valiam naquele
+instante para `sale_payments.taxa_percentual` e `prazo_dias` — o mesmo princípio do custo
+congelado em `sale_items`: renegociar o contrato amanhã não reescreve o resultado de ontem, e
+apagar uma linha da tabela não mexe em venda nenhuma (por isso é DELETE de verdade). Sem taxa
+cadastrada para a forma e as parcelas, a venda segue com 0% e o prazo de mercado (débito D+1,
+crédito D+30): a taxa é informação de gestão, nunca trava de balcão — e 0% é exatamente o que o
+resultado já assumia antes. **Quem muda é o dono** (`CONFIGURAR_LOJA`): é o contrato que ele
+assinou e mexe no resultado de toda venda dali em diante; **quem lê é quem vê dinheiro**
+(`VER_DINHEIRO`): o gerente lê o Resultado que já desconta a taxa e precisa conferir de onde ela
+veio. A vendedora escolhe parcelas (1 a 12, só no crédito — o banco recusa "débito em 3x") e
+bandeira (texto livre, opcional), mas não vê taxa: ela sai só no schema de quem vê dinheiro.
+`taxas_cartao` no resumo é Σ `round(valor × taxa / 100, 2)` por pagamento — o mesmo
+arredondamento que a venda mostra, para os dois baterem centavo a centavo —, e a devolução
+devolve a taxa da parte que voltou pelo cartão **no período da devolução** (ADR-19), pela taxa
+média que aquela forma pagou naquela venda (a devolução diz por qual forma voltou, não por qual
+pagamento). A agenda de recebíveis (`/relatorios/recebiveis`) quebra o crédito em parcelas — a
+1ª em D+prazo, as outras de 30 em 30 dias, o centavo da divisão na 1ª, como faz a credenciadora —
+e debita o estorno no dia da devolução; é uma simplificação (há credenciadora que cancela as
+parcelas futuras em vez de debitar), mas a soma fecha e o passado não muda. Ficou de fora:
+taxa por bandeira, antecipação de recebíveis e taxa no recebimento de fiado em cartão.
+
+**ADR-36 — Cliente em qualquer venda, por uma porta de balcão que não vê dinheiro.**
+A cliente só existia para o fiado, e só o gerente cadastrava: a loja não formava base de
+clientes ("chegou a coleção no seu tamanho", aniversariante do mês). A venda já aceitava
+`customer_id` em qualquer forma; faltava o balcão poder buscar e cadastrar. A capacidade nova
+`ATENDER_CLIENTE` é de todos os papéis (a vendedora deixa de ter tabela vazia) e abre só
+`/clientes/balcao` e `/clientes/aniversariantes`, que respondem `ClienteBalcaoOut` — um schema
+**próprio**, que não herda de `ClienteOut`: herdar traria `deve`, `limite` e `acima_do_limite`
+para a tela da vendedora no primeiro campo novo que alguém pusesse lá. Também ficam de fora o
+documento (busca por CPF funciona, mas ele não volta) e a observação do crediário, que guarda
+combinados de cobrança. O fiado continua sendo `GERIR_CREDIARIO`: vender fiado é abrir uma dívida
+que alguém vai cobrar. O cadastro de balcão é idempotente por `client_uuid` (a rede caindo depois
+de gravar não faz a cliente nascer duas vezes; a mesma chave com outra pessoa é 409), e
+`nascimento` e `preferencias` entram na anonimização da exclusão (LGPD). No PDV, tirar o fiado
+não tira mais a cliente da venda: ela continua sendo quem comprou. O histórico de compras é
+`GET /vendas?cliente_id=`, com o escopo de sempre — a vendedora vê só as que ela fez. Editar
+preferências pelo balcão ficou de fora (é do crediário, por enquanto).
+
 ## 4. Contratos de API
 
 Prefixo `/api/v1`. Auth: `Authorization: Bearer <access_token>`.
@@ -1054,15 +1109,21 @@ cancelamento deixaria o saldo da cliente negativo (porque ela já pagou) também
 devolve-se (ADR-21). E venda de um dia cujo caixa já foi fechado, idem: cancelar reescreveria a
 conferência feita, e a devolução entra no caixa de hoje (ADR-19).
 
-### 4.6 `clientes` (GERIR_CREDIARIO: dono e gerente)
+### 4.6 `clientes` (GERIR_CREDIARIO: dono e gerente; o balcão é ATENDER_CLIENTE: todos)
 | método | rota | notas |
 |---|---|---|
 | GET | `/clientes` | `?q=&somente_devendo=`; `deve` e `acima_do_limite` vêm calculados |
-| POST | `/clientes` | `{nome, telefone?, documento?, limite?}` |
-| GET/PATCH | `/clientes/{id}` | |
-| DELETE | `/clientes/{id}` | recusa quem ainda deve (409). Quitada, **anonimiza** (LGPD): `phone`, `document` e `note` viram nulos e `name` vira "Cliente removido #id"; a linha fica, e vendas, pagamentos e devoluções continuam apontando para ela. Sem volta |
+| POST | `/clientes` | `{nome, telefone?, documento?, limite?, nascimento?, preferencias?}` |
+| GET | `/clientes/balcao` | **ATENDER_CLIENTE**. `?q=` (nome sem acento, telefone ou documento), paginado. Responde `ClienteBalcaoOut` `{id, nome, telefone, nascimento, preferencias}` — sem `deve`, `limite`, `observacao` nem `documento` (ADR-36) |
+| POST | `/clientes/balcao` | **ATENDER_CLIENTE**. `{client_uuid, nome, telefone?, nascimento?, preferencias?}` → 201 `ClienteBalcaoOut`. Replay → 200; mesma chave com outro nome ou telefone → 409. Telefone de cliente ativa → 422 |
+| GET | `/clientes/aniversariantes` | **ATENDER_CLIENTE**. `?mes=1..12` (sem ele, o mês de hoje na loja), paginado, na ordem do dia; `ClienteBalcaoOut` |
+| GET/PATCH | `/clientes/{id}` | o PATCH aceita `nascimento` e `preferencias` (`""` apaga a preferência) |
+| DELETE | `/clientes/{id}` | recusa quem ainda deve (409). Quitada, **anonimiza** (LGPD): `phone`, `document`, `note`, `nascimento` e `preferencias` viram nulos e `name` vira "Cliente removido #id"; a linha fica, e vendas, pagamentos e devoluções continuam apontando para ela. Sem volta |
 | GET | `/clientes/{id}/extrato` | `?page=&size=` pagina as DUAS listas juntas: `vendas` (compras no fiado) e `pagamentos` vêm cada uma em `{items, total, page, size}`, mais recentes primeiro; os três totais que fecham a conta (e o `deve`) são da conta inteira, nunca da página |
 | POST | `/clientes/{id}/pagamentos` | `{forma, valor, client_uuid, observacao?}`; só formas de gaveta, e não aceita mais do que a dívida. Replay → 200; mesma chave com outra cliente, forma ou valor → 409 (ADR-2) |
+
+O histórico de compras da cliente (todas, não só o fiado) é `GET /vendas?cliente_id=`, com o
+escopo de sempre: a vendedora vê só as que ela fez.
 
 ### 4.7 `despesas` (LANCAR_DESPESA: dono e gerente)
 `GET/POST /despesas/categorias`, `PATCH/DELETE /despesas/categorias/{id}`,
@@ -1079,10 +1140,18 @@ da loja) + fechamento existente, se houver.
 ### 4.9 `relatorios` (VER_DINHEIRO: dono e gerente)
 Todos com `?inicio=&fim=` (≤ 366 dias), exceto `estoque-baixo` (sem período — é fotografia do agora).
 
-- `/relatorios/resumo` → faturamento, CMV, lucro bruto, despesas, resultado, nº de vendas, ticket médio.
+- `/relatorios/resumo` → faturamento, CMV, lucro bruto, despesas, `taxas_cartao`, resultado, nº de
+  vendas, ticket médio.
   `lucro_bruto = faturamento_liquido − (CMV − CMV devolvido)` e `margem_bruta_pct = lucro_bruto /
   faturamento_liquido` — as duas pontas líquidas de devolução; sobre o bruto, a margem encolheria
-  na proporção do que voltou
+  na proporção do que voltou. `resultado = lucro_bruto − despesas − taxas_cartao`, com
+  `taxas_cartao` = Σ `round(valor × taxa_percentual / 100, 2)` dos pagamentos no cartão das vendas
+  concluídas do período, menos a taxa da parte devolvida pelo cartão no período (ADR-35)
+- `/relatorios/recebiveis?inicio=&fim=&page=&size=` → agenda do cartão, paginada por DATA PREVISTA
+  de crédito (o período é o da data prevista, não o da venda): `{items: [{data, bruto, taxa,
+  liquido}], total, page, size}`. Débito em D+`prazo_dias`; crédito em N parcelas, a 1ª em
+  D+`prazo_dias` e as outras de 30 em 30 dias, com o centavo da divisão na 1ª. Estorno no
+  cartão sai negativo no dia da devolução (ADR-35)
 - `/relatorios/vendas-por-dia` → série diária (faturamento, nº de vendas)
 - `/relatorios/mais-vendidos?limite=10` → ranking por quantidade (valor bruto, sem rateio de desconto)
 - `/relatorios/despesas-por-categoria`
@@ -1091,6 +1160,19 @@ Todos com `?inicio=&fim=` (≤ 366 dias), exceto `estoque-baixo` (sem período �
   dele; `variante_id` desempata). Quem só mostra "N peças no mínimo" (aba Financeiro do app)
   pede `size=1` e lê `total` — a lista inteira passava de 7 mil linhas e 1,5 MB, baixados a
   cada venda.
+
+### 4.9.1 `taxas-cartao` (ler: VER_DINHEIRO; mudar: CONFIGURAR_LOJA)
+| método | rota | notas |
+|---|---|---|
+| GET | `/taxas-cartao` | paginado: `{id, forma, parcelas_de, parcelas_ate, percentual, prazo_dias}` |
+| POST | `/taxas-cartao` | só o dono. `forma` DEBITO/CREDITO; débito é sempre 1x; faixa sobreposta à de outra linha da mesma forma → 422 |
+| PATCH | `/taxas-cartao/{id}` | só o dono; a forma não muda. Vale para as vendas dali em diante |
+| DELETE | `/taxas-cartao/{id}` | só o dono. As vendas de antes não mudam: a taxa delas está fotografada |
+
+`POST /vendas` aceita em cada pagamento `parcelas` (1..12, > 1 só no CREDITO) e `bandeira`
+(texto, só no cartão). A resposta traz `parcelas` e `bandeira` para todos; `taxa_percentual`,
+`taxa` e o `taxas_cartao` da venda, só no schema de quem vê dinheiro. Parcelas e bandeira entram
+na comparação do replay: "crédito 1x" reenviado como "3x" é 409.
 
 ### 4.10 `auditoria` (VER_AUDITORIA: só o dono)
 `GET /auditoria?usuario_id=&acao=&inicio=YYYY-MM-DD&fim=YYYY-MM-DD&page=&size=` → paginado, mais

@@ -29,6 +29,10 @@ class Pode(StrEnum):
     DEVOLVER_VENDA = "DEVOLVER_VENDA"
     #: Cadastrar cliente, vender fiado e receber o que devem.
     GERIR_CREDIARIO = "GERIR_CREDIARIO"
+    #: Buscar e cadastrar cliente no balcão, para pôr o nome dela em qualquer venda, e ver
+    #: os aniversariantes do mês. Sem saldo, sem limite, sem dinheiro: o schema de resposta
+    #: é outro (`ClienteBalcaoOut`), e o fiado continua sendo `GERIR_CREDIARIO` (ADR-36).
+    ATENDER_CLIENTE = "ATENDER_CLIENTE"
     #: Ver as vendas de toda a equipe, não só as próprias.
     VER_VENDAS_DE_TODOS = "VER_VENDAS_DE_TODOS"
     #: Ajuste manual de saldo e inventário — as duas portas de mexer no estoque sem venda.
@@ -51,12 +55,14 @@ class Pode(StrEnum):
     GERIR_BACKUP = "GERIR_BACKUP"
 
 
-VENDEDORA: frozenset[Pode] = frozenset()
+VENDEDORA: frozenset[Pode] = frozenset({Pode.ATENDER_CLIENTE})
 """Vende, consulta preço e saldo, cadastra peça nova e dá entrada de mercadoria.
 
 Tudo isso é aberto a qualquer usuário autenticado e por isso não aparece como capacidade.
+A única capacidade nomeada é atender cliente (buscar e cadastrar no balcão), porque ela
+existe ao lado de uma irmã mais forte — o crediário — e as duas precisam ser ditas.
 O que a vendedora NÃO faz está no que falta aqui: nada de custo, de estorno, de correção
-de estoque e de despesa.
+de estoque, de despesa e de fiado.
 """
 
 SUPERVISORA: frozenset[Pode] = VENDEDORA | {

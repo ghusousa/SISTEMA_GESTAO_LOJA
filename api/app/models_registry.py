@@ -13,6 +13,7 @@ from app.modules.catalogo.models import Category, Product, ProductVariant
 from app.modules.clientes.models import Customer, CustomerPayment
 from app.modules.despesas.models import Expense, ExpenseCategory
 from app.modules.estoque.models import StockBalance, StockEntry, StockMovement
+from app.modules.taxas.models import CardFee
 from app.modules.usuarios.models import User
 from app.modules.vendas.models import (
     Sale,
@@ -29,6 +30,7 @@ __all__ = [
     "StoreConfig",
     "BackupConfig",
     "Base",
+    "CardFee",
     "CashClosing",
     "CashClosingLine",
     "Category",

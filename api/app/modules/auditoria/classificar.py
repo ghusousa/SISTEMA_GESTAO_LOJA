@@ -42,6 +42,7 @@ _REGRAS: list[tuple[str, re.Pattern[str], str, str, str | None]] = [
     ("DELETE", re.compile(r"^/categorias/(\d+)$"), "CATEGORIA_EXCLUIDA", "Excluiu a categoria #{id}", "categoria"),
     # crediário
     ("POST", re.compile(r"^/clientes$"), "CLIENTE_CRIADO", "Cadastrou um cliente no crediário", "cliente"),
+    ("POST", re.compile(r"^/clientes/balcao$"), "CLIENTE_CRIADO_BALCAO", "Cadastrou um cliente no balcão", "cliente"),
     ("PATCH", re.compile(r"^/clientes/(\d+)$"), "CLIENTE_EDITADO", "Editou o cliente #{id}", "cliente"),
     ("DELETE", re.compile(r"^/clientes/(\d+)$"), "CLIENTE_EXCLUIDO", "Excluiu o cliente #{id}", "cliente"),
     ("POST", re.compile(r"^/clientes/(\d+)/pagamentos$"), "FIADO_RECEBIDO", "Recebeu um pagamento de fiado do cliente #{id}", "cliente"),
@@ -64,6 +65,10 @@ _REGRAS: list[tuple[str, re.Pattern[str], str, str, str | None]] = [
     # identidade da loja
     ("PATCH", re.compile(r"^/configuracao$"), "LOJA_CONFIGURADA", "Mudou o nome ou o ramo da loja", "loja"),
     ("PUT", re.compile(r"^/backup$"), "BACKUP_CONFIGURADO", "Mexeu na configuração do backup", "backup"),
+    # taxa da maquininha — muda o resultado de toda venda no cartão dali em diante
+    ("POST", re.compile(r"^/taxas-cartao$"), "TAXA_CRIADA", "Cadastrou uma taxa da maquininha", "taxa"),
+    ("PATCH", re.compile(r"^/taxas-cartao/(\d+)$"), "TAXA_EDITADA", "Mudou a taxa da maquininha #{id}", "taxa"),
+    ("DELETE", re.compile(r"^/taxas-cartao/(\d+)$"), "TAXA_EXCLUIDA", "Excluiu a taxa da maquininha #{id}", "taxa"),
     # sessão
     ("POST", re.compile(r"^/auth/logout$"), "LOGOUT", "Saiu do sistema", None),
 ]

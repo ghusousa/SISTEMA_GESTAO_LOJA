@@ -49,6 +49,7 @@ TABELAS = [
     "expense_categories",
     "store_config",
     "backup_config",
+    "card_fees",
     "audit_log",
     "login_attempts",
     "refresh_tokens",

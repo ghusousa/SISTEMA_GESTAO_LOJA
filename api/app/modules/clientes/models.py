@@ -10,11 +10,12 @@ fiado. Ver `FORMAS_DE_GAVETA` em `vendas/models.py`.
 """
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     Index,
@@ -64,6 +65,16 @@ class Customer(Base, TimestampMixin):
     #: a dívida some da conta de verdade.
     credit_limit: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
     note: Mapped[str | None] = mapped_column(Text)
+    #: Para o "feliz aniversário" e a lista de aniversariantes do mês (ADR-36). Opcional:
+    #: ninguém é obrigado a dizer, e a venda não espera por isso.
+    nascimento: Mapped[date | None] = mapped_column(Date)
+    #: "Veste M, gosta de linho, não usa amarelo." Curto de propósito: é o recado que a
+    #: vendedora lê com a cliente na frente, não um prontuário.
+    preferencias: Mapped[str | None] = mapped_column(String(200))
+    #: Chave do cadastro feito no BALCÃO (`POST /clientes/balcao`). A rede caiu depois de
+    #: gravar e a vendedora tocou de novo: sem a chave, a mesma cliente nascia duas vezes e
+    #: o histórico dela ficava partido ao meio. Nulo no cadastro do crediário.
+    client_uuid: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), unique=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 

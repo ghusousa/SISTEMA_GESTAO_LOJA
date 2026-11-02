@@ -12,7 +12,9 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 
 import { mensagemDoErro, codigoDoErro, detalheDoErro } from '@/api/client';
 import { vendas } from '@/api/endpoints';
-import type { Cliente, FormaPagamento } from '@/api/tipos';
+import type { Cliente, ClienteBalcao, FormaPagamento } from '@/api/tipos';
+import { ModalClienteDaVenda } from '@/components/ClienteDaVenda';
+import { ModalParcelas, type CreditoEscolhido } from '@/components/PagarCredito';
 import { ModalCliente, ModalVale, type ValeEscolhido } from '@/components/PagarValeFiado';
 import { TecladoNumerico } from '@/components/TecladoNumerico';
 import { Botao } from '@/components/ui';
@@ -23,6 +25,7 @@ import {
   percentual,
   type Centavos,
 } from '@/lib/money';
+import { rotuloPagamento } from '@/lib/cartao';
 import { PODE, pode } from '@/lib/permissoes';
 import { invalidarAposVenda } from '@/lib/queryClient';
 import { ALVO_TOQUE, cores, espaco, fonte, raio } from '@/lib/tema';
@@ -38,11 +41,16 @@ const FORMAS: { forma: FormaPagamento; rotulo: string }[] = [
   { forma: 'FIADO', rotulo: 'Fiado' },
 ];
 
-/** Um pagamento montado na tela. `codigoVale` só existe na linha do VALE. */
+/**
+ * Um pagamento montado na tela. `codigoVale` só existe na linha do VALE; `parcelas` e
+ * `bandeira`, na do CRÉDITO (ADR-35).
+ */
 interface Pagamento {
   forma: FormaPagamento;
   valor: Centavos;
   codigoVale?: string;
+  parcelas?: number;
+  bandeira?: string | null;
 }
 
 type Etapa = 'desconto' | 'pagamento';
@@ -63,11 +71,14 @@ export default function Pagamento() {
   const [valorDigitado, setValorDigitado] = useState<Centavos>(0);
   const [recebidoDinheiro, setRecebidoDinheiro] = useState<Centavos>(0);
   const [enviando, setEnviando] = useState(false);
-  // Quem responde pelo fiado. Sem cliente não existe dívida a cobrar depois — por isso a
-  // forma FIADO só entra na lista depois que alguém foi escolhido.
-  const [cliente, setCliente] = useState<Cliente | null>(null);
+  // Quem está comprando: opcional em QUALQUER venda (ADR-36) e obrigatório no fiado — sem
+  // cliente não existe dívida a cobrar depois, por isso o FIADO pergunta antes de entrar.
+  const [cliente, setCliente] = useState<Cliente | ClienteBalcao | null>(null);
   const [perguntandoVale, setPerguntandoVale] = useState(false);
   const [perguntandoCliente, setPerguntandoCliente] = useState(false);
+  const [perguntandoClienteDaVenda, setPerguntandoClienteDaVenda] = useState(false);
+  const [perguntandoParcelas, setPerguntandoParcelas] = useState(false);
+  const podeAtender = pode(useAuthStore((e) => e.usuario?.papel), PODE.ATENDER_CLIENTE);
   // Fiado só para quem cuida do crediário: sem a capacidade, a busca de cliente responde
   // 403 e a vendedora fica travada com a cliente na frente — o caminho de volta para o
   // papel. O vale continua para todos: conferir o papel na mão da cliente é do balcão.
@@ -84,9 +95,9 @@ export default function Pagamento() {
 
   function aplicarDesconto() {
     definirDesconto(descontoDigitado);
-    // Mudou o total: a divisão montada antes não vale mais, e o fiado ia junto com ela.
+    // Mudou o total: a divisão montada antes não vale mais. A cliente fica — ela continua
+    // sendo quem está comprando (ADR-36).
     setPagos([]);
-    setCliente(null);
     setRecebidoDinheiro(0);
     setValorDigitado(0);
     setEtapa('pagamento');
@@ -114,19 +125,24 @@ export default function Pagamento() {
     const valor = valorPretendido();
     if (valor <= 0) return;
 
-    // Vale e fiado precisam de uma pergunta ANTES do valor: qual papel, e de quem é a
-    // dívida. Uma linha de cada por venda — dois vales na mesma compra é caso que não
-    // existe no balcão, e somar em cima estouraria o saldo do primeiro.
-    if (forma === 'VALE' || forma === 'FIADO') {
+    // Vale, fiado e crédito precisam de uma pergunta ANTES do valor: qual papel, de quem é
+    // a dívida, em quantas vezes. Uma linha de cada por venda — dois vales na mesma compra
+    // é caso que não existe no balcão, e somar em cima estouraria o saldo do primeiro.
+    if (forma === 'VALE' || forma === 'FIADO' || forma === 'CREDITO') {
       if (pagos.some((p) => p.forma === forma)) {
         Alert.alert(
-          forma === 'VALE' ? 'Já tem um vale nesta venda' : 'Já tem um fiado nesta venda',
+          forma === 'VALE'
+            ? 'Já tem um vale nesta venda'
+            : forma === 'FIADO'
+              ? 'Já tem um fiado nesta venda'
+              : 'Já tem crédito nesta venda',
           'Remova o que já está lançado para trocar.',
         );
         return;
       }
       if (forma === 'VALE') setPerguntandoVale(true);
-      else setPerguntandoCliente(true);
+      else if (forma === 'FIADO') setPerguntandoCliente(true);
+      else setPerguntandoParcelas(true);
       return;
     }
 
@@ -177,10 +193,17 @@ export default function Pagamento() {
     somar({ forma: 'FIADO', valor });
   }
 
+  function aplicarCredito(escolha: CreditoEscolhido) {
+    setPerguntandoParcelas(false);
+    const valor = valorPretendido();
+    if (valor <= 0) return;
+    somar({ forma: 'CREDITO', valor, parcelas: escolha.parcelas, bandeira: escolha.bandeira });
+  }
+
   function removerPagamento(forma: FormaPagamento) {
     setPagos((atuais) => atuais.filter((p) => p.forma !== forma));
     if (forma === 'DINHEIRO') setRecebidoDinheiro(0);
-    if (forma === 'FIADO') setCliente(null);
+    // Tirar o fiado NÃO tira a cliente: ela continua sendo quem comprou (ADR-36).
   }
 
   async function confirmar() {
@@ -196,6 +219,8 @@ export default function Pagamento() {
           forma: p.forma,
           valor: paraDecimalString(p.valor),
           ...(p.codigoVale ? { codigo_vale: p.codigoVale } : {}),
+          ...(p.parcelas ? { parcelas: p.parcelas } : {}),
+          ...(p.bandeira ? { bandeira: p.bandeira } : {}),
         })),
       });
 
@@ -280,6 +305,32 @@ export default function Pagamento() {
       </View>
 
       <ScrollView contentContainerStyle={s.corpo} keyboardShouldPersistTaps="handled">
+        {cliente ? (
+          <View style={[s.pagoItem, s.clienteItem]}>
+            <View style={s.pagoTexto}>
+              <Text style={s.clienteNome}>{cliente.nome}</Text>
+              {!!cliente.preferencias && (
+                <Text style={s.pagoDetalhe}>{cliente.preferencias}</Text>
+              )}
+            </View>
+            {/* Com fiado lançado a cliente é obrigatória: tira-se o fiado primeiro. */}
+            {!pagos.some((p) => p.forma === 'FIADO') && (
+              <Pressable onPress={() => setCliente(null)} hitSlop={12}>
+                <Text style={s.pagoRemover}>tirar</Text>
+              </Pressable>
+            )}
+          </View>
+        ) : (
+          podeAtender && (
+            <Pressable
+              style={({ pressed }) => [s.porCliente, pressed && s.formaPressionada]}
+              onPress={() => setPerguntandoClienteDaVenda(true)}
+            >
+              <Text style={s.porClienteTexto}>Pôr o nome da cliente (opcional)</Text>
+            </Pressable>
+          )
+        )}
+
         {pagos.length > 0 && (
           <View style={s.pagos}>
             {pagos.map((p) => (
@@ -290,7 +341,9 @@ export default function Pagamento() {
               >
                 <View style={s.pagoTexto}>
                   <Text style={s.pagoForma}>
-                    {FORMAS.find((f) => f.forma === p.forma)?.rotulo}
+                    {p.forma === 'CREDITO'
+                      ? rotuloPagamento(p)
+                      : FORMAS.find((f) => f.forma === p.forma)?.rotulo}
                   </Text>
                   {!!p.codigoVale && <Text style={s.pagoDetalhe}>{p.codigoVale}</Text>}
                   {p.forma === 'FIADO' && !!cliente && (
@@ -383,6 +436,20 @@ export default function Pagamento() {
         aoEscolher={aplicarFiado}
         aoCancelar={() => setPerguntandoCliente(false)}
       />
+      <ModalClienteDaVenda
+        visivel={perguntandoClienteDaVenda}
+        aoEscolher={(escolhida) => {
+          setPerguntandoClienteDaVenda(false);
+          setCliente(escolhida);
+        }}
+        aoCancelar={() => setPerguntandoClienteDaVenda(false)}
+      />
+      <ModalParcelas
+        visivel={perguntandoParcelas}
+        valor={Math.max(0, valorPretendido())}
+        aoEscolher={aplicarCredito}
+        aoCancelar={() => setPerguntandoParcelas(false)}
+      />
     </View>
   );
 }
@@ -425,6 +492,18 @@ const s = StyleSheet.create({
   pagoValor: { fontSize: fonte.media, fontWeight: '800', color: cores.acaoEscura },
   pagoRemover: { fontSize: fonte.micro, color: cores.perigo },
   trocoItem: { backgroundColor: cores.alertaFraco },
+  clienteItem: { backgroundColor: cores.primariaFraca, paddingVertical: espaco.sm },
+  clienteNome: { fontSize: fonte.base, fontWeight: '700', color: cores.primaria },
+  porCliente: {
+    minHeight: ALVO_TOQUE,
+    borderRadius: raio.md,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: cores.bordaForte,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  porClienteTexto: { fontSize: fonte.base, fontWeight: '600', color: cores.primaria },
   trocoRotulo: { fontSize: fonte.base, fontWeight: '700', color: '#7A5A00' },
   trocoValor: { fontSize: fonte.grande, fontWeight: '800', color: '#7A5A00' },
 

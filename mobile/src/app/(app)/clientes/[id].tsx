@@ -25,8 +25,10 @@ import {
 import { mensagemDoErro } from '@/api/client';
 import { clientes } from '@/api/endpoints';
 import { FORMAS_DE_GAVETA, type FormaPagamento } from '@/api/tipos';
+import { ComprasDaCliente } from '@/components/ComprasDaCliente';
 import { TecladoNumerico } from '@/components/TecladoNumerico';
 import { Botao, Carregando, Cartao, ErroEstado, Etiqueta, Separador } from '@/components/ui';
+import { dataBR } from '@/lib/aniversario';
 import { formatar, paraCentavos, paraDecimalString, type Centavos } from '@/lib/money';
 import { PODE, pode } from '@/lib/permissoes';
 import { chaves, invalidarAposCrediario } from '@/lib/queryClient';
@@ -107,6 +109,16 @@ export default function ClienteDetalhe() {
           <Text style={s.destaqueRotulo}>{deve > 0 ? 'Está devendo' : 'Em dia'}</Text>
           <Text style={s.destaqueValor}>{formatar(deve)}</Text>
           {!!e.cliente.telefone && <Text style={s.destaqueAjuda}>{e.cliente.telefone}</Text>}
+          {(!!e.cliente.nascimento || !!e.cliente.preferencias) && (
+            <Text style={s.destaqueAjuda}>
+              {[
+                e.cliente.nascimento ? `Aniversário ${dataBR(e.cliente.nascimento)}` : '',
+                e.cliente.preferencias ?? '',
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+            </Text>
+          )}
           {e.cliente.acima_do_limite && (
             <Etiqueta
               texto="acima do limite combinado"
@@ -177,6 +189,8 @@ export default function ClienteDetalhe() {
           />
         )}
 
+        <ComprasDaCliente clienteId={clienteId} />
+
         {podeReceber && deve <= 0 && (
           <Botao
             titulo="Excluir cadastro (pedido da cliente)"
@@ -185,7 +199,8 @@ export default function ClienteDetalhe() {
             onPress={() =>
               Alert.alert(
                 'Excluir o cadastro',
-                `Nome, telefone, CPF e observação de ${e.cliente.nome} serão apagados de vez. ` +
+                `Nome, telefone, CPF, aniversário, preferências e observação de ${e.cliente.nome} ` +
+                  'serão apagados de vez. ' +
                   'As compras continuam no histórico, sem o nome. Não tem volta.',
                 [
                   { text: 'Cancelar', style: 'cancel' },

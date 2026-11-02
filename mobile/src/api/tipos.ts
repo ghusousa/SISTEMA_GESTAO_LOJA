@@ -179,6 +179,12 @@ export interface ItemVenda {
 export interface Pagamento {
   forma: FormaPagamento;
   valor: string;
+  /** Em quantas vezes no crédito; 1 em toda outra forma (ADR-35). */
+  parcelas?: number;
+  bandeira?: string | null;
+  /** Só para quem vê dinheiro: a taxa da maquininha fotografada na venda. */
+  taxa_percentual?: string;
+  taxa?: string;
 }
 
 export interface Venda {
@@ -194,7 +200,7 @@ export interface Venda {
   cancelada_em: string | null;
   motivo_cancelamento: string | null;
   observacao: string | null;
-  /** Nome de quem levou no fiado. Nulo na venda à vista. */
+  /** Nome de quem comprou, em qualquer venda (ADR-36). Nulo na venda sem nome. */
   cliente: string | null;
   cliente_id: number | null;
   itens: ItemVenda[];
@@ -202,6 +208,8 @@ export interface Venda {
   /** Só para ADMIN. */
   custo_total?: string;
   lucro_bruto?: string;
+  /** Só para quem vê dinheiro: soma das taxas da maquininha desta venda. */
+  taxas_cartao?: string;
 }
 
 export interface VendaResumo {
@@ -390,6 +398,32 @@ export interface Cliente {
   /** Calculado no servidor: não existe coluna guardando isto. */
   deve: string;
   acima_do_limite: boolean;
+  /** "1990-03-14" — sem hora, sem fuso. */
+  nascimento: string | null;
+  preferencias: string | null;
+}
+
+/**
+ * A cliente vista do BALCÃO (ADR-36): quem ela é e do que gosta. Sem saldo, limite ou
+ * observação — o servidor nem manda.
+ */
+export interface ClienteBalcao {
+  id: number;
+  nome: string;
+  telefone: string | null;
+  nascimento: string | null;
+  preferencias: string | null;
+}
+
+/** Uma linha do contrato com a credenciadora (ADR-35). */
+export interface TaxaCartao {
+  id: number;
+  forma: 'DEBITO' | 'CREDITO';
+  parcelas_de: number;
+  parcelas_ate: number;
+  /** String decimal: "3.19" = 3,19%. */
+  percentual: string;
+  prazo_dias: number;
 }
 
 export interface PagamentoCliente {

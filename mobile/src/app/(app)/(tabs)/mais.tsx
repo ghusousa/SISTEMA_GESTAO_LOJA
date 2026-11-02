@@ -45,6 +45,20 @@ const OPCOES: Opcao[] = [
     pode: PODE.GERIR_CREDIARIO,
   },
   {
+    rotulo: 'Aniversariantes',
+    descricao: 'Quem faz aniversário no mês',
+    icone: 'cake-variant-outline',
+    rota: '/mais/aniversariantes',
+    pode: PODE.ATENDER_CLIENTE,
+  },
+  {
+    rotulo: 'Taxas do cartão',
+    descricao: 'Quanto a maquininha cobra e quando paga',
+    icone: 'credit-card-outline',
+    rota: '/mais/taxas',
+    pode: PODE.VER_DINHEIRO,
+  },
+  {
     rotulo: 'Categorias de produto',
     descricao: 'Organizar o catálogo',
     icone: 'shape-outline',

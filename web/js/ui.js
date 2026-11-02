@@ -516,6 +516,15 @@ export const FORMAS = {
   FIADO: 'Fiado',
 };
 
+/**
+ * "Crédito 3x · Visa": a forma com o que a cliente combinou no cartão (ADR-35).
+ * `formas` deixa o recibo usar os nomes longos ("Cartão de crédito").
+ */
+export function rotuloPagamento(p, formas = FORMAS) {
+  const forma = `${formas[p.forma] || p.forma}${p.parcelas > 1 ? ` ${p.parcelas}x` : ''}`;
+  return p.bandeira ? `${forma} · ${p.bandeira}` : forma;
+}
+
 export const TIPOS_MOVIMENTO = {
   ENTRADA: 'Entrada',
   AJUSTE: 'Ajuste',
