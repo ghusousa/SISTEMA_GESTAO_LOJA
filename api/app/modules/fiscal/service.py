@@ -95,31 +95,7 @@ class FiscalService:
             raise OperacaoInvalida("Venda cancelada não emite NFC-e.")
 
         nota_para_emitir = await self._preparar(venda)
-
-        # A referência fica gravada ANTES do primeiro envio (ver models.py): se o processo
-        # cair no meio da chamada, a próxima tentativa acha o que o emissor já fez.
-        await self.repo.garantir(venda_id, emissor=emissor.nome, ambiente=emissor.ambiente)
-        await self.session.commit()
-
-        nota = await self.repo.por_venda(venda_id, travar=True)
-        assert nota is not None
-        # Relida COM a nota travada: um cancelamento que terminou enquanto este pedido
-        # esperava não pode ganhar uma nota de presente.
-        venda = await vendas.obter(venda_id, usuario)
-        if venda.status != StatusVenda.CONCLUIDA:
-            await self.session.rollback()
-            raise OperacaoInvalida("Venda cancelada não emite NFC-e.")
-
-        if not self._mesma_origem(nota, emissor):
-            if not self._pode_recomecar(nota):
-                await self.session.rollback()
-                raise OperacaoInvalida(
-                    f"A NFC-e desta venda é do emissor '{nota.emissor}' em {nota.ambiente} "
-                    f"(situação: {nota.status}). Emitir por outro emissor ou ambiente "
-                    "deixaria a venda com duas notas: confira no painel dele primeiro.",
-                    {"nfce": _resumo(nota)},
-                )
-            self._recomecar(nota, emissor)
+        nota = await self._travar_para_emitir(venda_id, emissor, vendas, usuario)
 
         if nota.status == StatusNota.AUTORIZADA:
             # Outro pedido autorizou enquanto este esperava a trava.
@@ -141,6 +117,40 @@ class FiscalService:
         self._aplicar(nota, await emissor.emitir(nota.referencia, nota_para_emitir))
         await self.session.commit()
         return await self._out(venda_id, nota)
+
+    async def _travar_para_emitir(
+        self, venda_id: int, emissor: Emissor, vendas: VendaService, usuario: User
+    ) -> NotaFiscal:
+        """A nota da venda, travada (`FOR UPDATE`) até o fim do pedido, com a referência do
+        emissor de agora JÁ gravada e commitada: nenhuma referência sai para o emissor antes
+        de estar no banco (ver models.py). Se o processo cair no meio do envio, a próxima
+        tentativa acha o que o emissor já fez em vez de sortear outra — duas notas."""
+        await self.repo.garantir(venda_id, emissor=emissor.nome, ambiente=emissor.ambiente)
+        await self.session.commit()
+        while True:
+            nota = await self.repo.por_venda(venda_id, travar=True)
+            assert nota is not None
+            # Relida COM a nota travada: um cancelamento que terminou enquanto este pedido
+            # esperava não pode ganhar uma nota de presente.
+            venda = await vendas.obter(venda_id, usuario)
+            if venda.status != StatusVenda.CONCLUIDA:
+                await self.session.rollback()
+                raise OperacaoInvalida("Venda cancelada não emite NFC-e.")
+            if self._mesma_origem(nota, emissor):
+                return nota
+            if not self._pode_recomecar(nota):
+                await self.session.rollback()
+                raise OperacaoInvalida(
+                    f"A NFC-e desta venda é do emissor '{nota.emissor}' em {nota.ambiente} "
+                    f"(situação: {nota.status}). Emitir por outro emissor ou ambiente "
+                    "deixaria a venda com duas notas: confira no painel dele primeiro.",
+                    {"nfce": _resumo(nota)},
+                )
+            # Troca de emissor/ambiente (homologação → produção): a referência nova segue a
+            # mesma regra da linha nova — commit antes do envio — e a volta do laço retrava
+            # a linha e relê a venda, como na primeira passada.
+            self._recomecar(nota, emissor)
+            await self.session.commit()
 
     async def emitir_pelo_sistema(self, venda_id: int, vendedor_id: int) -> NfceOut:
         """Emissão automática depois da venda, em nome de quem vendeu (`automatico.py`)."""
@@ -202,7 +212,9 @@ class FiscalService:
             )
 
         if nota.status == StatusNota.PENDENTE:
-            # Sem resposta definitiva: pode ter sido autorizada. Pergunta antes.
+            # Sem resposta definitiva: pode ter sido autorizada. Pergunta antes. Só resposta
+            # definitiva do emissor libera a venda — "não existe" (404 documentado) ou
+            # "recusada pela SEFAZ"; 429, 5xx, rede caída voltam PENDENTE e travam abaixo.
             consulta = await emissor.consultar(nota.referencia)
             if not consulta.encontrada or consulta.status == StatusNota.REJEITADA:
                 nota.status = StatusNota.REJEITADA
@@ -215,9 +227,10 @@ class FiscalService:
                 return
             if nota.status != StatusNota.AUTORIZADA:
                 raise OperacaoInvalida(
-                    "A NFC-e desta venda ainda não tem resposta definitiva do emissor "
-                    "(processando na SEFAZ, ou sem internet). Espere um minuto e cancele de "
-                    "novo — cancelar agora poderia deixar uma nota valendo.",
+                    "Não deu para confirmar com o emissor fiscal se a NFC-e desta venda foi "
+                    "autorizada (processando na SEFAZ, emissor ocupado ou sem internet), "
+                    "então a venda NÃO foi cancelada. Tente de novo em um minuto — cancelar "
+                    "agora poderia deixar uma nota valendo.",
                     {"nfce": _resumo(nota)},
                 )
 

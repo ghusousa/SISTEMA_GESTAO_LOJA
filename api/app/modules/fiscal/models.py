@@ -21,12 +21,14 @@ from app.core.db import Base
 
 
 class StatusNota(StrEnum):
-    #: Gravada, ainda sem resposta definitiva: nunca enviada, sem rede, ou a SEFAZ ainda
-    #: processando. "Tentar de novo" consulta antes de reenviar.
+    #: Gravada, ainda sem resposta definitiva: nunca enviada, sem rede, emissor ocupado ou
+    #: fora do ar (429, 5xx, 4xx que ele não documenta), ou a SEFAZ ainda processando.
+    #: "Tentar de novo" consulta antes de reenviar.
     PENDENTE = "PENDENTE"
     AUTORIZADA = "AUTORIZADA"
-    #: A SEFAZ (ou o emissor) recusou. Corrige-se o que a mensagem diz e emite-se de novo,
-    #: com a mesma referência.
+    #: A SEFAZ (ou o emissor, numa recusa documentada do pedido) recusou: resposta
+    #: definitiva, e por isso libera cancelar a venda sem falar com o emissor. Corrige-se o
+    #: que a mensagem diz e emite-se de novo, com a mesma referência.
     REJEITADA = "REJEITADA"
     #: Era autorizada e foi cancelada junto com a venda.
     CANCELADA = "CANCELADA"

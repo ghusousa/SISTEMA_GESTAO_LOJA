@@ -1205,16 +1205,25 @@ reinstalação que recomeça os ids) é gravada e **commitada antes** do primeir
 roda com a linha travada (`FOR UPDATE`), então dois cliques esperam um pelo outro e a venda é
 relida com a trava (cancelamento que terminou no meio não ganha nota). Rede caída nunca vira
 exceção: vira PENDENTE com a mensagem, e o "Tentar de novo" **consulta antes de reenviar** —
-resposta perdida não vira duas notas; `already_processed` também vira consulta. *Cancelamento:*
+resposta perdida não vira duas notas; `already_processed` também vira consulta. **Só resposta
+definitiva muda o veredito**: REJEITADA vem do `erro_autorizacao`/`denegado` da SEFAZ ou de
+uma recusa do pedido que a Focus documenta (`_RECUSAS_DA_NOTA`), e "não encontrada" só do 404
+`nfce_nao_encontrada`. 429 (limite de pedidos), 408, 409, 5xx, 404/4xx de proxy e qualquer 4xx
+fora da tabela ficam PENDENTE — REJEITADA libera cancelar a venda sem falar com o emissor, e
+dada por engano deixava uma NFC-e autorizada numa venda cancelada. *Cancelamento:*
 `VendaService.cancelar` chama `FiscalService.cancelar_nota_da_venda` depois de todas as recusas
 da venda (caixa fechado, fiado pago, corrida) e antes dos estornos (a chamada HTTP não segura a
 trava dos saldos). Nota AUTORIZADA é cancelada no emissor (justificativa ≥ 15, até 255); se ele
 recusar — o prazo de 30 minutos da SEFAZ é o caso comum —, a transação inteira volta e a venda
 **não** é cancelada, com a mensagem dizendo isso e apontando a Devolução. Nota PENDENTE é
-consultada antes (pode ter sido autorizada); nota de homologação, sem valor fiscal, só vai ao
+consultada antes (pode ter sido autorizada); consulta sem resposta definitiva recusa o
+cancelamento (409, "não deu para confirmar com o emissor; tente de novo"), nunca o libera.
+Nota de homologação, sem valor fiscal, só vai ao
 emissor se a homologação ainda estiver ligada — senão, não segura a venda. *Emissão automática* (`FISCAL_EMITIR_AUTOMATICO=1`) nasce no `after_commit` da
 venda, numa tarefa com sessão própria, em nome de quem vendeu: falha fiscal nunca impede vender.
-Ir de homologação para produção reemite as notas de teste com referência nova; trocar de emissor
+Ir de homologação para produção reemite as notas de teste com referência nova — gravada e
+commitada antes do envio pelo mesmo caminho da linha nova (`_travar_para_emitir`), senão um
+processo que caísse entre a autorização e o commit sortearia outra; trocar de emissor
 com nota pendente em produção é recusado (poderia haver duas notas). Telas: o cartão da NFC-e no
 detalhe da venda (status, chave, DANFE, Emitir/Tentar de novo — `web/js/nfce.js` ↔
 `mobile/src/lib/fiscal.ts`) e a chave no recibo. *Fica com o dono:* contratar o emissor,
@@ -1290,12 +1299,12 @@ com o valor atual. No `PATCH`, ausente = não mexe, `meta_diaria: null` tira a m
 | POST | `/vendas` | A/V | `{client_uuid, desconto?, observacao?, cliente_id?, itens:[{variante_id, quantidade}], pagamentos:[{forma, valor, codigo_vale?}]}` → venda completa. Atômico. Replay → 200; mesma chave com outras peças ou pagamentos → 409 (ADR-2) |
 | GET | `/vendas` | todos | `?inicio=YYYY-MM-DD&fim=YYYY-MM-DD` (dias no fuso da loja, ADR-27) `&status=&vendedor_id=&variante_id=&cliente_id=`; sem VER_VENDAS_DE_TODOS, o service força as próprias |
 | GET | `/vendas/{id}` | A/V | idem escopo |
-| POST | `/vendas/{id}/cancelamento` | CANCELAR_VENDA | `{motivo}`; dono e gerente — quem vende não desfaz. Recusa (409) venda de dia com caixa fechado: devolve-se (ADR-19). Com NFC-e AUTORIZADA, cancela a nota no emissor ANTES (motivo ≥ 15 → senão 422); emissor recusou/sem rede/desligado → 409 e a venda segue concluída (ADR-41) |
+| POST | `/vendas/{id}/cancelamento` | CANCELAR_VENDA | `{motivo}`; dono e gerente — quem vende não desfaz. Recusa (409) venda de dia com caixa fechado: devolve-se (ADR-19). Com NFC-e AUTORIZADA, cancela a nota no emissor ANTES (motivo ≥ 15 → senão 422); emissor recusou/sem rede/sem resposta definitiva (429, 5xx...)/desligado → 409 e a venda segue concluída (ADR-41) |
 | POST | `/vendas/{id}/devolucoes` | DEVOLVER_VENDA | `{client_uuid, motivo?, itens:[{item_id, quantidade, voltar_ao_estoque?}]}` → devolução com os valores decididos pelo servidor. Replay → 200; mesma chave com outra venda ou outras peças → 409 (ADR-2) |
 | GET | `/vendas/{id}/devolucoes` | DEVOLVER_VENDA | o que já voltou desta venda |
 | GET | `/vendas/vales/{codigo}` | A/V | consulta o vale: `{codigo, valor, usado, saldo}` |
 | GET | `/vendas/{id}/nfce` | quem vê a venda | `{venda_id, emissor:{nome, ambiente, configurado, faltando[], emitir_automatico}, nota: NotaOut \| null}` — 200 mesmo com emissor desligado (a tela decide se mostra) |
-| POST | `/vendas/{id}/nfce` | quem vê a venda | emite (ADR-41). Idempotente: nota AUTORIZADA devolve a mesma, sem chamar o emissor. 409 `EMISSOR_NAO_CONFIGURADO` (`detail.faltando`), 409 `DADOS_FISCAIS_INCOMPLETOS` (`detail.faltando`, `detail.produtos_sem_ncm`), 409 venda cancelada. Rede caída/SEFAZ processando → 200 com nota PENDENTE |
+| POST | `/vendas/{id}/nfce` | quem vê a venda | emite (ADR-41). Idempotente: nota AUTORIZADA devolve a mesma, sem chamar o emissor. 409 `EMISSOR_NAO_CONFIGURADO` (`detail.faltando`), 409 `DADOS_FISCAIS_INCOMPLETOS` (`detail.faltando`, `detail.produtos_sem_ncm`), 409 venda cancelada. Rede caída/SEFAZ processando/429/4xx fora da tabela da Focus → 200 com nota PENDENTE |
 | GET | `/fiscal/emissor` | qualquer logado | o mesmo bloco `emissor`; o token nunca, só se existe |
 
 Troco não trafega: é calculado no app a partir do valor recebido em dinheiro. No web, o

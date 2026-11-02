@@ -16,8 +16,10 @@ import pytest
 from conftest import criar_produto
 from httpx import AsyncClient
 from pydantic import SecretStr
+from sqlalchemy import text
 
 from app.core.config import settings
+from app.core.db import engine
 from app.modules.catalogo.schemas import DadosFiscaisPecaOut
 from app.modules.fiscal import automatico, emissores
 from app.modules.fiscal.focusnfe import DESCRICAO_HOMOLOGACAO, FocusNFe, montar_payload
@@ -46,6 +48,9 @@ class FocusFalsa:
         self.ao_cancelar = "cancelar"
         #: A consulta de uma nota "processando" já devolve autorizada.
         self.processamento_termina = True
+        #: `(status HTTP, kwargs do httpx.Response)` que a consulta devolve no lugar da nota:
+        #: limite de pedidos, proxy no caminho... Nada disso diz se a nota existe.
+        self.consulta_falha: tuple[int, dict] | None = None
         self.numero = 0
 
     def _autorizar(self, ref: str) -> dict:
@@ -80,6 +85,12 @@ class FocusFalsa:
                 return httpx.Response(401, text="HTTP Basic: Access denied.")
             if self.ao_emitir == "fora_do_ar":
                 return httpx.Response(503, text="<html>Service Unavailable</html>")
+            if self.ao_emitir == "limite":
+                # 100 pedidos por minuto por token; a doc não define corpo.
+                return httpx.Response(429, text="Retry later")
+            if self.ao_emitir == "proxy":
+                # 4xx que a Focus não documenta (página de erro de um proxy no caminho).
+                return httpx.Response(400, text="<html>Bad Request</html>")
             if self.ao_emitir == "sem_csc":
                 return httpx.Response(
                     422, json={"codigo": "erro_validacao", "mensagem": "CSC não configurado"}
@@ -107,6 +118,9 @@ class FocusFalsa:
 
         ref = request.url.path.rsplit("/", 1)[-1]
         if request.method == "GET":
+            if self.consulta_falha is not None:
+                status_http, kwargs = self.consulta_falha
+                return httpx.Response(status_http, **kwargs)
             nota = self.notas.get(ref)
             if nota is None:
                 return httpx.Response(
@@ -547,13 +561,17 @@ async def test_sem_rede_fica_pendente_para_tentar_de_novo(client, auth_admin, pe
         ("token_errado", "PENDENTE", "confira o token"),
         ("fora_do_ar", "PENDENTE", "HTTP 503"),
         ("sem_csc", "REJEITADA", "CSC não configurado"),
+        ("limite", "PENDENTE", "HTTP 429"),
+        ("proxy", "PENDENTE", "HTTP 400"),
     ],
 )
 async def test_recusa_do_emissor_vira_mensagem_na_nota(
     client, auth_admin, pecas, focus, falha, status, trecho
 ) -> None:
     """Token errado e emissor fora do ar ficam PENDENTE (o problema não é a nota: acertado
-    o painel, tenta-se de novo); erro de cadastro no emissor vira REJEITADA com o motivo."""
+    o painel, tenta-se de novo); erro de cadastro no emissor vira REJEITADA com o motivo.
+    Limite de pedidos (429) e 4xx que a Focus não documenta também são PENDENTE: REJEITADA
+    é resposta definitiva, e libera cancelar a venda sem perguntar ao emissor."""
     await _configurar_loja(client, auth_admin)
     venda = await _vender(client, auth_admin, [(pecas["camiseta"], 1)], [("PIX", "49.90")])
     focus.ao_emitir = falha
@@ -575,6 +593,29 @@ async def test_resposta_perdida_nao_vira_duas_notas(client, auth_admin, pecas, f
     assert nota["status"] == "PENDENTE"
 
     focus.ao_emitir = "autorizar"
+    nota = (await client.post(f"/vendas/{venda['id']}/nfce", headers=auth_admin)).json()["nota"]
+    assert nota["status"] == "AUTORIZADA" and nota["chave"] == _chave(1)
+    assert len(focus.de("POST")) == 1 and focus.numero == 1
+
+
+async def test_tentar_de_novo_com_o_emissor_no_limite_nao_rejeita_nem_reenvia(
+    client, auth_admin, pecas, focus
+) -> None:
+    """O "Tentar de novo" consulta antes de reenviar. Consulta com 429 não diz nada da nota:
+    fica PENDENTE, sem POST novo. Antes virava REJEITADA aqui com a nota autorizada lá, e o
+    cancelamento da venda depois nem falava com o emissor."""
+    await _configurar_loja(client, auth_admin)
+    venda = await _vender(client, auth_admin, [(pecas["camiseta"], 1)], [("PIX", "49.90")])
+    focus.ao_emitir = "perder_resposta"
+    await client.post(f"/vendas/{venda['id']}/nfce", headers=auth_admin)
+
+    focus.ao_emitir = "limite"
+    focus.consulta_falha = (429, {"json": {"codigo": "limite", "mensagem": "Aguarde."}})
+    nota = (await client.post(f"/vendas/{venda['id']}/nfce", headers=auth_admin)).json()["nota"]
+    assert nota["status"] == "PENDENTE" and "HTTP 429" in nota["mensagem"]
+    assert len(focus.de("POST")) == 1  # não reenviou às cegas
+
+    focus.consulta_falha = None
     nota = (await client.post(f"/vendas/{venda['id']}/nfce", headers=auth_admin)).json()["nota"]
     assert nota["status"] == "AUTORIZADA" and nota["chave"] == _chave(1)
     assert len(focus.de("POST")) == 1 and focus.numero == 1
@@ -918,6 +959,50 @@ async def test_nota_pendente_que_nunca_chegou_nao_impede_cancelar(
     assert nota["status"] == "REJEITADA" and "nenhuma nota vale" in nota["mensagem"]
 
 
+@pytest.mark.parametrize(
+    "falha",
+    [
+        pytest.param((429, {"json": {"codigo": "limite", "mensagem": "Aguarde."}}), id="429"),
+        pytest.param((429, {"text": "Retry later"}), id="429-sem-corpo"),
+        pytest.param((408, {"text": "Request Timeout"}), id="408"),
+        pytest.param((400, {"json": {"codigo": "novo", "mensagem": "?"}}), id="4xx-desconhecido"),
+        pytest.param((404, {"text": "<html>Not Found</html>"}), id="404-de-proxy"),
+        pytest.param((503, {"text": "<html>Service Unavailable</html>"}), id="503"),
+    ],
+)
+async def test_consulta_sem_resposta_definitiva_nao_libera_cancelar_a_venda(
+    client, auth_admin, pecas, focus, falha
+) -> None:
+    """A 1ª emissão foi autorizada lá e a resposta se perdeu (PENDENTE). Ao cancelar a
+    venda, a consulta leva 429, 4xx que a Focus não documenta ou 5xx — nada disso diz que a
+    nota não existe. Antes virava REJEITADA ("nenhuma nota vale"), sem DELETE, e a venda
+    cancelava com a NFC-e AUTORIZADA na SEFAZ. Só o 404 `nfce_nao_encontrada` libera."""
+    await _configurar_loja(client, auth_admin)
+    venda = await _vender(client, auth_admin, [(pecas["camiseta"], 1)], [("PIX", "49.90")])
+    focus.ao_emitir = "perder_resposta"
+    nota = (await client.post(f"/vendas/{venda['id']}/nfce", headers=auth_admin)).json()["nota"]
+    assert nota["status"] == "PENDENTE"
+    assert focus.notas[nota["referencia"]]["status"] == "autorizado"
+
+    focus.consulta_falha = falha
+    motivo = {"motivo": "cliente desistiu da compra"}
+    resp = await client.post(f"/vendas/{venda['id']}/cancelamento", headers=auth_admin, json=motivo)
+    assert resp.status_code == 409, resp.text
+    assert "Não deu para confirmar com o emissor" in resp.json()["message"]
+    assert focus.de("DELETE") == []
+    depois = (await client.get(f"/vendas/{venda['id']}/nfce", headers=auth_admin)).json()["nota"]
+    assert depois["status"] == "PENDENTE"
+    venda_agora = (await client.get(f"/vendas/{venda['id']}", headers=auth_admin)).json()
+    assert venda_agora["status"] == "CONCLUIDA"
+
+    # O emissor voltou a responder: a consulta acha a nota autorizada e ela cai antes.
+    focus.consulta_falha = None
+    resp = await client.post(f"/vendas/{venda['id']}/cancelamento", headers=auth_admin, json=motivo)
+    assert resp.status_code == 200, resp.text
+    assert len(focus.de("DELETE")) == 1
+    assert focus.notas[nota["referencia"]]["status"] == "cancelado"
+
+
 # ------------------------------------------------------------------ homologação → produção
 async def test_ir_para_producao_reemite_a_nota_de_homologacao(
     client, auth_admin, pecas, focus, monkeypatch
@@ -930,6 +1015,53 @@ async def test_ir_para_producao_reemite_a_nota_de_homologacao(
     ultimo = focus.de("POST")[-1]
     assert str(ultimo.url).startswith("https://api.focusnfe.com.br/v2/nfce")
     assert json.loads(ultimo.content)["items"][0]["descricao"] == "Camiseta Lisa P Branca"
+
+
+async def test_ir_para_producao_grava_a_referencia_nova_antes_do_primeiro_envio(
+    client, auth_admin, pecas, focus, monkeypatch
+) -> None:
+    """A referência de produção só sai para o emissor depois de commitada, como a da linha
+    nova (`garantir`). Antes, `_recomecar` a sorteava só em memória: se o processo caísse
+    entre a autorização e o commit, o próximo clique sorteava outra — duas NFC-e em
+    produção para a mesma venda."""
+    venda = await _venda_com_nota(client, auth_admin, pecas)  # autorizada em homologação
+    monkeypatch.setattr(settings, "focusnfe_ambiente", "producao")
+
+    no_banco: list[tuple[str, str, str]] = []
+    original = FocusFalsa.__call__
+
+    async def cai_depois_de_autorizar(self, request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            # Outra conexão: só enxerga o que já foi commitado.
+            async with engine.connect() as conn:
+                linha = (
+                    await conn.execute(
+                        text("SELECT referencia, ambiente FROM notas_fiscais WHERE sale_id = :v"),
+                        {"v": venda["id"]},
+                    )
+                ).one()
+            no_banco.append((request.url.params["ref"], linha.referencia, linha.ambiente))
+        resp = await original(self, request)
+        if request.method == "POST" and len(no_banco) == 1:
+            raise RuntimeError("o processo caiu depois de o emissor autorizar")
+        return resp
+
+    monkeypatch.setattr(FocusFalsa, "__call__", cai_depois_de_autorizar)
+    with pytest.raises(RuntimeError):
+        await client.post(f"/vendas/{venda['id']}/nfce", headers=auth_admin)
+    ref, ref_no_banco, ambiente = no_banco[0]
+    assert ref != venda["nota"]["referencia"]
+    assert (ref_no_banco, ambiente) == (ref, "producao")
+
+    nota = (await client.post(f"/vendas/{venda['id']}/nfce", headers=auth_admin)).json()["nota"]
+    assert nota["status"] == "AUTORIZADA" and nota["ambiente"] == "producao"
+    assert nota["referencia"] == ref  # a mesma: o emissor respondeu already_processed
+    em_producao = {
+        p.url.params["ref"]
+        for p in focus.de("POST")
+        if str(p.url).startswith("https://api.focusnfe.com.br")
+    }
+    assert em_producao == {ref}  # uma NFC-e em produção, não duas
 
 
 # ------------------------------------------------------------------ emissão automática
