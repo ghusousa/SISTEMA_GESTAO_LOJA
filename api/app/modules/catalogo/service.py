@@ -10,8 +10,10 @@ from app.modules.catalogo.barcode import eh_codigo_interno, montar_codigo_intern
 from app.modules.catalogo.models import Category, Product, ProductVariant, TipoCodigo
 from app.modules.catalogo.repository import CatalogoRepository
 from app.modules.catalogo.schemas import (
+    CFOP_PADRAO,
     CategoriaIn,
     CategoriaOut,
+    DadosFiscaisPecaOut,
     ProdutoAdminOut,
     ProdutoIn,
     ProdutoOut,
@@ -123,6 +125,10 @@ class CatalogoService:
             foto_url=produto.photo_url,
             categoria_id=produto.category_id,
             categoria=produto.category.name,
+            ncm=produto.ncm,
+            cest=produto.cest,
+            origem=produto.origem,
+            cfop=produto.cfop,
             variantes=variantes,
             saldo_total=sum(saldos.get(v.id, 0) for v in produto.variants),
         )
@@ -167,7 +173,13 @@ class CatalogoService:
         codigos = await self._resolver_codigos(dados.variantes)
 
         produto = Product(
-            category_id=dados.categoria_id, name=dados.nome, description=dados.descricao
+            category_id=dados.categoria_id,
+            name=dados.nome,
+            description=dados.descricao,
+            ncm=dados.ncm,
+            cest=dados.cest,
+            origem=dados.origem if dados.origem is not None else 0,
+            cfop=dados.cfop or CFOP_PADRAO,
         )
         self.session.add(produto)
         await self.session.flush()
@@ -217,6 +229,17 @@ class CatalogoService:
             produto.name = dados.nome.strip()
         if dados.descricao is not None:
             produto.description = dados.descricao
+        # Fiscais pelo `exclude_unset`: `null` em NCM/CEST apaga (código errado tem de poder
+        # sair); origem e CFOP nunca ficam vazios — `null` neles volta ao padrão.
+        fiscais = dados.model_dump(include={"ncm", "cest", "origem", "cfop"}, exclude_unset=True)
+        if "ncm" in fiscais:
+            produto.ncm = fiscais["ncm"]
+        if "cest" in fiscais:
+            produto.cest = fiscais["cest"]
+        if "origem" in fiscais:
+            produto.origem = fiscais["origem"] if fiscais["origem"] is not None else 0
+        if "cfop" in fiscais:
+            produto.cfop = fiscais["cfop"] or CFOP_PADRAO
         await self.session.commit()
         return await self.obter_produto(produto_id, usuario)
 
@@ -249,6 +272,28 @@ class CatalogoService:
         produto.photo_url = url
         await self.session.commit()
         return None
+
+    async def dados_fiscais_das_pecas(
+        self, variante_ids: list[int]
+    ) -> dict[int, DadosFiscaisPecaOut]:
+        """NCM, CFOP e origem de cada peça, para a NFC-e (ADR-41). Porta pública do
+        catálogo para o módulo fiscal, que não lê o repositório daqui (CLAUDE.md)."""
+        linhas = await self.repo.dados_fiscais_das_pecas(variante_ids)
+        return {
+            variante.id: DadosFiscaisPecaOut(
+                variante_id=variante.id,
+                produto_id=produto.id,
+                produto=produto.name,
+                tamanho=variante.size,
+                cor=variante.color,
+                codigo_barras=variante.barcode,
+                ncm=produto.ncm,
+                cest=produto.cest,
+                origem=produto.origem,
+                cfop=produto.cfop,
+            )
+            for variante, produto in linhas
+        }
 
     # ------------------------------------------------------------ variantes
     async def obter_variante(self, variante_id: int) -> ProductVariant:

@@ -103,6 +103,20 @@ class CatalogoRepository:
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
+    async def dados_fiscais_das_pecas(
+        self, variante_ids: list[int]
+    ) -> list[tuple[ProductVariant, Product]]:
+        """Peça e produto, INCLUSIVE excluídos: a nota é da venda, que aconteceu antes."""
+        if not variante_ids:
+            return []
+        stmt = (
+            select(ProductVariant, Product)
+            .join(Product, Product.id == ProductVariant.product_id)
+            .where(ProductVariant.id.in_(variante_ids))
+            .execution_options(populate_existing=True)
+        )
+        return [(v, p) for v, p in (await self.session.execute(stmt)).all()]
+
     async def codigos_existentes(self, codigos: list[str]) -> set[str]:
         if not codigos:
             return set()

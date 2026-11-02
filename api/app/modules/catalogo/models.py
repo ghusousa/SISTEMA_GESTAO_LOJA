@@ -10,6 +10,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     Sequence,
+    SmallInteger,
     String,
     Text,
     func,
@@ -62,6 +63,13 @@ class Product(Base, TimestampMixin):
             postgresql_using="gin",
             postgresql_ops={"nome_achatado": "gin_trgm_ops"},
         ),
+        # Formato dos dados fiscais (ADR-41). Nulo passa: a peça nasce sem NCM e a emissão
+        # da NFC-e é quem recusa, listando o que falta — exigir no cadastro travaria a loja
+        # que ainda não emite nota. O banco só garante que, preenchido, está no formato.
+        CheckConstraint("ncm ~ '^[0-9]{8}$'", name="ncm_formato"),
+        CheckConstraint("cest ~ '^[0-9]{7}$'", name="cest_formato"),
+        CheckConstraint("origem BETWEEN 0 AND 8", name="origem_faixa"),
+        CheckConstraint("cfop ~ '^[0-9]{4}$'", name="cfop_formato"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -71,6 +79,20 @@ class Product(Base, TimestampMixin):
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     photo_url: Mapped[str | None] = mapped_column(Text)
+    #: Classificação fiscal da mercadoria (8 dígitos, tabela da Receita). Sem ele não há
+    #: NFC-e — e é o contador quem diz qual é, não o sistema.
+    ncm: Mapped[str | None] = mapped_column(String(8))
+    #: Código da substituição tributária (7 dígitos). Só existe para mercadoria com ST.
+    cest: Mapped[str | None] = mapped_column(String(7))
+    #: Origem da mercadoria (0 = nacional; 1, 2, 3, 8 = importada em graus diferentes).
+    origem: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=0, server_default=text("0")
+    )
+    #: CFOP da venda dentro do estado. 5102 = mercadoria comprada de terceiros; 5405 =
+    #: com ICMS já recolhido por substituição tributária.
+    cfop: Mapped[str] = mapped_column(
+        String(4), nullable=False, default="5102", server_default=text("'5102'")
+    )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     category: Mapped[Category] = relationship(lazy="joined")

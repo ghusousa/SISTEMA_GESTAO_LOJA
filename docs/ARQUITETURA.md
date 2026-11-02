@@ -63,6 +63,8 @@ categories(id, name, deleted_at, created_at)
   uq_categories_name_active UNIQUE (lower(name)) WHERE deleted_at IS NULL
 
 products(id, category_id FK→categories RESTRICT, name, description, photo_url,
+         ncm CHECK ~ '^[0-9]{8}$', cest CHECK ~ '^[0-9]{7}$',            -- ADR-41, opcionais
+         origem SMALLINT DEFAULT 0 CHECK 0..8, cfop DEFAULT '5102' CHECK ~ '^[0-9]{4}$',
          deleted_at, created_at, updated_at)
   ix_products_category_id, ix_products_name_lower
   ix_products_nome_achatado GIN (translate(lower(name), <acentos>) gin_trgm_ops)   -- ADR-31
@@ -288,7 +290,10 @@ recusado pelo `exp` antes de qualquer consulta.
 ### 2.9 Identidade da loja
 
 ```sql
-store_config(id, nome, segmento, documento, telefone, endereco, created_at, updated_at)
+store_config(id, nome, segmento, documento, telefone, endereco,
+             regime_tributario CHECK IN (1,2,3), inscricao_estadual CHECK ~ '^[0-9]{2,14}$',
+             serie_nfce INT DEFAULT 1 CHECK 0..889,                       -- ADR-41
+             created_at, updated_at)
   ck_store_config_singleton CHECK (id = 1)   -- uma linha só, garantida pelo banco
 ```
 
@@ -296,6 +301,20 @@ store_config(id, nome, segmento, documento, telefone, endereco, created_at, upda
 uma linha numa tabela Python, não uma migration. Ramo desconhecido cai no vocabulário neutro em
 vez de estourar — uma linha estranha (restauração antiga, edição na mão) não pode derrubar a tela
 de login.
+
+### 2.10 NFC-e (ADR-41)
+
+```sql
+notas_fiscais(id, sale_id FK→sales RESTRICT UNIQUE,              -- uma nota por venda
+              status CHECK IN ('PENDENTE','AUTORIZADA','REJEITADA','CANCELADA'),
+              ambiente CHECK IN ('homologacao','producao'), emissor,
+              referencia UNIQUE,                                  -- o `ref` no emissor
+              numero, serie, chave(44), protocolo, url_danfe, url_xml, mensagem,
+              tentativas CHECK >= 0, autorizada_em, cancelada_em, created_at, updated_at)
+  ck_notas_fiscais_autorizada_tem_chave CHECK (status NOT IN ('AUTORIZADA','CANCELADA') OR chave IS NOT NULL)
+```
+
+A credencial do emissor **não** está aqui nem em tabela nenhuma: é `FOCUSNFE_TOKEN` no `.env`.
 
 ---
 
@@ -963,6 +982,50 @@ cobre o que ficava de fora e já quebrou: `npm test` e o bundle do app, a imagem
 `shellcheck -S warning` dos scripts e um job com a API no ar rodando `e2e.py` e `pentest.py`
 (qualquer achado reprova). É dessa resposta que o ADR-18 depende.
 
+**ADR-41 — NFC-e por emissor terceirizado, ligado só pelo `.env`; a nota cai antes da venda.**
+A loja não fala com a SEFAZ: quem assina e transmite é um emissor contratado pelo dono (Focus
+NFe, NFE.io, PlugNotas...), que guarda o certificado A1 e o CSC. O módulo `fiscal` tem a
+interface `Emissor` (emitir, consultar, cancelar) e um adaptador, o da **Focus NFe** (API v2 de
+NFC-e, `focusnfe.py`). O padrão é **desligado**: as rotas respondem 409
+`EMISSOR_NAO_CONFIGURADO` com `detail.faltando`. Liga-se por `FISCAL_EMISSOR=focusnfe`,
+`FOCUSNFE_TOKEN` e `FOCUSNFE_AMBIENTE=homologacao|producao` — e **o token nunca vai ao banco nem
+sai por rota**, nem para o dono (`SecretStr`; mesma régua do ADR-28): quem tem esse token emite
+nota no CNPJ da loja. *Dados fiscais:* NCM, CEST, origem e CFOP no PRODUTO (a grade é a mesma
+mercadoria); regime (CRT), IE e série na `store_config`, só o dono muda. Todos opcionais no
+cadastro — a loja que não emite não é obrigada a nada — e é a **emissão** que recusa (409
+`DADOS_FISCAIS_INCOMPLETOS`) com a lista em frase: "NCM do produto “Boné” (#12)", CNPJ (CPF não
+emite), IE, regime. Só o regime 1 (Simples Nacional, CSOSN 102; 500 quando o CFOP é 5405) é
+emitido: regime 2 e 3 tributam ICMS por alíquota, que o cadastro não tem, e são recusados com
+essa frase em vez de sair uma nota errada. *Mapeamento:* a venda inteira, como foi feita; o
+desconto da venda é rateado pelo valor de cada item, fechando ao centavo (`ratear_desconto`);
+`data_emissao` é a hora da EMISSÃO (a SEFAZ recusa mais de 5 min de diferença); em homologação
+o 1º item leva a descrição exigida pela SEFAZ. Formas → tPag: dinheiro 01, crédito 03, débito
+04, PIX 17 (os três com `tipo_integracao` 2, maquininha não integrada), **FIADO 05 "Crédito
+Loja"** (é o crediário próprio) e **VALE 99 "Outros" com descrição "Vale-troca"** (crédito de
+uma devolução, não um vale-presente vendido; 99 sem descrição é a rejeição 441). As duas
+últimas são para o contador confirmar — mudar é uma linha em `nfce.TPAG`. *Uma nota por venda:*
+`sale_id` UNIQUE e a `referencia` (`venda-<id>-<aleatório>`, o sufixo protege de uma
+reinstalação que recomeça os ids) é gravada e **commitada antes** do primeiro envio; o envio
+roda com a linha travada (`FOR UPDATE`), então dois cliques esperam um pelo outro e a venda é
+relida com a trava (cancelamento que terminou no meio não ganha nota). Rede caída nunca vira
+exceção: vira PENDENTE com a mensagem, e o "Tentar de novo" **consulta antes de reenviar** —
+resposta perdida não vira duas notas; `already_processed` também vira consulta. *Cancelamento:*
+`VendaService.cancelar` chama `FiscalService.cancelar_nota_da_venda` depois de todas as recusas
+da venda (caixa fechado, fiado pago, corrida) e antes dos estornos (a chamada HTTP não segura a
+trava dos saldos). Nota AUTORIZADA é cancelada no emissor (justificativa ≥ 15, até 255); se ele
+recusar — o prazo de 30 minutos da SEFAZ é o caso comum —, a transação inteira volta e a venda
+**não** é cancelada, com a mensagem dizendo isso e apontando a Devolução. Nota PENDENTE é
+consultada antes (pode ter sido autorizada); nota de homologação, sem valor fiscal, só vai ao
+emissor se a homologação ainda estiver ligada — senão, não segura a venda. *Emissão automática* (`FISCAL_EMITIR_AUTOMATICO=1`) nasce no `after_commit` da
+venda, numa tarefa com sessão própria, em nome de quem vendeu: falha fiscal nunca impede vender.
+Ir de homologação para produção reemite as notas de teste com referência nova; trocar de emissor
+com nota pendente em produção é recusado (poderia haver duas notas). Telas: o cartão da NFC-e no
+detalhe da venda (status, chave, DANFE, Emitir/Tentar de novo — `web/js/nfce.js` ↔
+`mobile/src/lib/fiscal.ts`) e a chave no recibo. *Fica com o dono:* contratar o emissor,
+cadastrar nele o A1 e o CSC, testar em homologação, e acertar regime/NCM/CFOP com o contador.
+*Fora, por ora:* CPF na nota, NF-e de devolução, regimes 2 e 3, tributos aproximados (IBPT) e a
+guarda dos XMLs na loja (ficam no emissor; aqui só os links).
+
 ## 4. Contratos de API
 
 Prefixo `/api/v1`. Auth: `Authorization: Bearer <access_token>`.
@@ -980,6 +1043,8 @@ Erros: `{"code": "...", "message": "...", "detail": {...}}`.
 | `OPERACAO_INVALIDA` | 409 | ex.: cancelar venda já cancelada |
 | `PAGAMENTO_DIVERGENTE` | 422 | soma dos pagamentos ≠ total |
 | `VALIDACAO` | 422 | payload inválido |
+| `EMISSOR_NAO_CONFIGURADO` | 409 | NFC-e sem emissor ligado no `.env`; `detail.faltando` (ADR-41) |
+| `DADOS_FISCAIS_INCOMPLETOS` | 409 | NFC-e sem NCM, CNPJ, IE ou regime; `detail.faltando`, `detail.produtos_sem_ncm` |
 | `MUITAS_TENTATIVAS` | 429 | logins errados demais na janela; `detail.retry_after` em segundos, header `Retry-After` |
 
 ### 4.1 `auth`
@@ -1026,10 +1091,13 @@ Desativar = `PATCH {ativo:false}`. Bootstrap do primeiro admin: `python -m app.c
 | POST | `/vendas` | A/V | `{client_uuid, desconto?, observacao?, cliente_id?, itens:[{variante_id, quantidade}], pagamentos:[{forma, valor, codigo_vale?}]}` → venda completa. Atômico. Replay → 200; mesma chave com outras peças ou pagamentos → 409 (ADR-2) |
 | GET | `/vendas` | todos | `?inicio=YYYY-MM-DD&fim=YYYY-MM-DD` (dias no fuso da loja, ADR-27) `&status=&vendedor_id=&variante_id=&cliente_id=`; sem VER_VENDAS_DE_TODOS, o service força as próprias |
 | GET | `/vendas/{id}` | A/V | idem escopo |
-| POST | `/vendas/{id}/cancelamento` | CANCELAR_VENDA | `{motivo}`; dono e gerente — quem vende não desfaz. Recusa (409) venda de dia com caixa fechado: devolve-se (ADR-19) |
+| POST | `/vendas/{id}/cancelamento` | CANCELAR_VENDA | `{motivo}`; dono e gerente — quem vende não desfaz. Recusa (409) venda de dia com caixa fechado: devolve-se (ADR-19). Com NFC-e AUTORIZADA, cancela a nota no emissor ANTES (motivo ≥ 15 → senão 422); emissor recusou/sem rede/desligado → 409 e a venda segue concluída (ADR-41) |
 | POST | `/vendas/{id}/devolucoes` | DEVOLVER_VENDA | `{client_uuid, motivo?, itens:[{item_id, quantidade, voltar_ao_estoque?}]}` → devolução com os valores decididos pelo servidor. Replay → 200; mesma chave com outra venda ou outras peças → 409 (ADR-2) |
 | GET | `/vendas/{id}/devolucoes` | DEVOLVER_VENDA | o que já voltou desta venda |
 | GET | `/vendas/vales/{codigo}` | A/V | consulta o vale: `{codigo, valor, usado, saldo}` |
+| GET | `/vendas/{id}/nfce` | quem vê a venda | `{venda_id, emissor:{nome, ambiente, configurado, faltando[], emitir_automatico}, nota: NotaOut \| null}` — 200 mesmo com emissor desligado (a tela decide se mostra) |
+| POST | `/vendas/{id}/nfce` | quem vê a venda | emite (ADR-41). Idempotente: nota AUTORIZADA devolve a mesma, sem chamar o emissor. 409 `EMISSOR_NAO_CONFIGURADO` (`detail.faltando`), 409 `DADOS_FISCAIS_INCOMPLETOS` (`detail.faltando`, `detail.produtos_sem_ncm`), 409 venda cancelada. Rede caída/SEFAZ processando → 200 com nota PENDENTE |
+| GET | `/fiscal/emissor` | qualquer logado | o mesmo bloco `emissor`; o token nunca, só se existe |
 
 Troco não trafega: é calculado no app a partir do valor recebido em dinheiro. No web, o
 "Dinheiro recebido" vem **sugerido** igual à parte em dinheiro e a acompanha nos dois sentidos
@@ -1103,7 +1171,7 @@ congelados (ADR-23). `inicio`/`fim` recortam pelo dia no fuso da loja. Nem o ger
 | método | rota | papel | notas |
 |---|---|---|---|
 | GET | `/configuracao` | **aberto** | só a fachada: `nome`, `segmento`, `timezone` e o `vocabulario` já resolvido |
-| GET | `/configuracao/completa` | qualquer logado | a fachada mais `documento`, `telefone` e `endereco` (o cabeçalho do recibo) |
+| GET | `/configuracao/completa` | qualquer logado | a fachada mais `documento`, `telefone` e `endereco` (o cabeçalho do recibo) e os fiscais `regime_tributario`, `inscricao_estadual`, `serie_nfce` (ADR-41) |
 | GET | `/configuracao/segmentos` | **aberto** | os ramos que o sistema conhece, para a tela montar o seletor |
 | PATCH | `/configuracao` | CONFIGURAR_LOJA | só o dono; campos opcionais (mudar o telefone não reenvia o nome) |
 

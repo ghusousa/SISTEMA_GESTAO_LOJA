@@ -87,6 +87,11 @@ class ConfiguracaoOut(ConfiguracaoPublicaOut):
     documento: str | None = None
     telefone: str | None = None
     endereco: str | None = None
+    #: Dados fiscais da NFC-e (ADR-41). Saem para qualquer logado: estão impressos em toda
+    #: nota que a loja emite. A credencial do emissor NUNCA passa por aqui — mora no .env.
+    regime_tributario: int | None = None
+    inscricao_estadual: str | None = None
+    serie_nfce: int = 1
 
     @classmethod
     def de_modelo(cls, config) -> "ConfiguracaoOut":  # noqa: ANN001
@@ -97,6 +102,9 @@ class ConfiguracaoOut(ConfiguracaoPublicaOut):
             documento=config.documento,
             telefone=config.telefone,
             endereco=config.endereco,
+            regime_tributario=config.regime_tributario,
+            inscricao_estadual=config.inscricao_estadual,
+            serie_nfce=config.serie_nfce,
             vocabulario=_vocabulario_out(config.segmento),
         )
 
@@ -109,6 +117,23 @@ class ConfiguracaoUpdate(BaseModel):
     documento: str | None = Field(default=None, max_length=24)
     telefone: str | None = Field(default=None, max_length=32)
     endereco: str | None = Field(default=None, max_length=200)
+    #: 1 = Simples Nacional · 2 = Simples, excesso de sublimite · 3 = Regime Normal.
+    regime_tributario: int | None = Field(default=None, ge=1, le=3)
+    inscricao_estadual: str | None = Field(default=None, max_length=30)
+    serie_nfce: int | None = Field(default=None, ge=0, le=889)
+
+    @field_validator("inscricao_estadual")
+    @classmethod
+    def _ie_so_digitos(cls, v: str | None) -> str | None:
+        # Vem como está no cartão do CNPJ ("110.042.490.114"); guardamos os dígitos.
+        if v is None:
+            return None
+        limpo = "".join(c for c in v if not c.isspace() and c not in ".-/")
+        if not limpo:
+            return None
+        if not limpo.isdigit() or not 2 <= len(limpo) <= 14:
+            raise ValueError("A inscrição estadual tem só números (até 14 dígitos).")
+        return limpo
 
     @field_validator("nome")
     @classmethod

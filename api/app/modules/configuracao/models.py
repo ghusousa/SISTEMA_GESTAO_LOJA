@@ -13,7 +13,7 @@ primeira) é o tipo de coisa que fura no dia em que alguém roda o seed duas vez
 
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, String, func
+from sqlalchemy import CheckConstraint, DateTime, Integer, SmallInteger, String, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -25,6 +25,11 @@ class StoreConfig(Base):
     __table_args__ = (
         # A linha é única por construção, não por convenção.
         CheckConstraint("id = 1", name="singleton"),
+        # Dados fiscais (ADR-41): o código do regime é o CRT da NF-e (1, 2 ou 3).
+        CheckConstraint("regime_tributario IN (1, 2, 3)", name="regime_tributario"),
+        CheckConstraint("inscricao_estadual ~ '^[0-9]{2,14}$'", name="inscricao_estadual"),
+        # 0 a 889: 890+ são séries reservadas da SEFAZ (avulsa, SCAN).
+        CheckConstraint("serie_nfce BETWEEN 0 AND 889", name="serie_nfce"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=False, default=1)
@@ -38,6 +43,17 @@ class StoreConfig(Base):
     documento: Mapped[str | None] = mapped_column(String(24))
     telefone: Mapped[str | None] = mapped_column(String(32))
     endereco: Mapped[str | None] = mapped_column(String(200))
+
+    #: Para a NFC-e (ADR-41). Quem escolhe é o contador; a tela só guarda. Nulo até o dono
+    #: preencher — e a emissão recusa dizendo que falta, em vez de chutar um regime.
+    #: 1 = Simples Nacional · 2 = Simples, excesso de sublimite · 3 = Regime Normal.
+    regime_tributario: Mapped[int | None] = mapped_column(SmallInteger)
+    #: Só dígitos. Quem emite NFC-e é contribuinte do ICMS: tem IE.
+    inscricao_estadual: Mapped[str | None] = mapped_column(String(14))
+    #: Série das NFC-e desta loja. Tem de ser a mesma cadastrada no painel do emissor.
+    serie_nfce: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default=text("1")
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

@@ -13,6 +13,7 @@ from app.modules.catalogo.models import Category, Product, ProductVariant
 from app.modules.clientes.models import Customer, CustomerPayment
 from app.modules.despesas.models import Expense, ExpenseCategory
 from app.modules.estoque.models import StockBalance, StockEntry, StockMovement
+from app.modules.fiscal.models import NotaFiscal
 from app.modules.usuarios.models import User
 from app.modules.vendas.models import (
     Sale,
@@ -37,6 +38,7 @@ __all__ = [
     "Expense",
     "ExpenseCategory",
     "LoginAttempt",
+    "NotaFiscal",
     "Product",
     "ProductVariant",
     "RefreshToken",

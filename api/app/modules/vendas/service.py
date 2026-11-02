@@ -312,6 +312,20 @@ class VendaService:
 
         await self._recusar_se_o_fiado_ja_foi_pago(venda)
 
+        # NFC-e autorizada se cancela no emissor ANTES de a venda mudar de vez (ADR-41).
+        # Fica depois de todas as recusas da venda (caixa fechado, fiado pago, corrida):
+        # cancelar a nota e depois recusar a venda deixaria a venda valendo sem nota. E
+        # antes dos estornos, para a chamada ao emissor não segurar a trava dos saldos.
+        # Se o emissor recusar, nada desta transação fica: a venda segue concluída.
+        from app.core.exceptions import AppError
+        from app.modules.fiscal.service import FiscalService
+
+        try:
+            await FiscalService(self.session).cancelar_nota_da_venda(venda_id, motivo)
+        except AppError:
+            await self.session.rollback()
+            raise
+
         quantidades = {item.variant_id: item.quantity for item in venda.items}
         for variante_id in movimentos.ordenar_para_evitar_deadlock(list(quantidades)):
             await movimentos.aplicar_movimento(

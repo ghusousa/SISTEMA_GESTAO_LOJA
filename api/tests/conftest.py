@@ -36,6 +36,7 @@ TABELAS = [
     "vouchers",
     "customer_payments",
     "customers",
+    "notas_fiscais",
     "sale_payments",
     "sale_items",
     "stock_movements",

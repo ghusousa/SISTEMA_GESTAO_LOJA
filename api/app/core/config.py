@@ -1,10 +1,10 @@
 """Configuração da aplicação (12-factor: tudo por variável de ambiente)."""
 
 from functools import lru_cache
-from typing import Annotated
+from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # Valor de exemplo do .env.example. Serve para desenvolvimento e é recusado em produção:
@@ -54,6 +54,21 @@ class Settings(BaseSettings):
     #: é livro fiscal (esse é a própria venda, que não sai daqui), e e-mail e IP de cada
     #: tentativa guardados para sempre são dado pessoal sem finalidade (ADR-23).
     retencao_auditoria_dias: int = Field(default=730, ge=0)
+
+    # NFC-e (ADR-41). O emissor é contratado pelo dono e ligado AQUI, no .env da máquina —
+    # nunca na tela nem no banco. Mesma régua do backup (ADR-28) e do token do GitHub: a
+    # credencial que assina nota em nome do CNPJ da loja não passa por rota nenhuma, não
+    # entra no backup e não aparece para ninguém logado, nem para o dono.
+    #: "desligado" (padrão) ou o nome de um adaptador de `modules/fiscal/emissores.py`.
+    #: Valor desconhecido derruba o boot: emissor com nome errado é nota que não sai.
+    fiscal_emissor: Literal["desligado", "focusnfe"] = "desligado"
+    #: Token da empresa no painel da Focus NFe. `SecretStr`: não sai nem num `repr`/log.
+    focusnfe_token: SecretStr = SecretStr("")
+    #: Homologação primeiro, sempre: nota de homologação não tem valor fiscal.
+    focusnfe_ambiente: Literal["homologacao", "producao"] = "homologacao"
+    #: Emitir sozinho logo depois de cada venda, fora da transação dela. Desligado, a nota
+    #: sai pelo botão "Emitir NFC-e" do detalhe da venda.
+    fiscal_emitir_automatico: bool = False
 
     @field_validator("cors_origins", mode="before")
     @classmethod

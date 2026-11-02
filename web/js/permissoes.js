@@ -86,7 +86,7 @@ const EM_PORTUGUES = {
   [PODE.FECHAR_CAIXA]: 'conferir e fechar o caixa do dia',
   [PODE.GERIR_USUARIOS]: 'administrar os logins da equipe',
   [PODE.VER_AUDITORIA]: 'ver o diário de auditoria',
-  [PODE.CONFIGURAR_LOJA]: 'mudar o nome e o ramo da loja',
+  [PODE.CONFIGURAR_LOJA]: 'mudar os dados da loja (nome, ramo e fiscais)',
   [PODE.GERIR_BACKUP]: 'ligar e configurar o backup na nuvem',
 };
 

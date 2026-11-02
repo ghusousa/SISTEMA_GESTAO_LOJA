@@ -11,12 +11,16 @@
  *
  * O que NÃO entra aqui: custo, margem e qualquer número de dentro da loja. O papel vai
  * para a mão da cliente.
+ *
+ * Com NFC-e autorizada (ADR-41), o recibo diz a chave: a cliente consulta a nota na SEFAZ
+ * com ela. O documento fiscal continua sendo o DANFE, aberto pelo detalhe da venda.
  */
 
 import { api } from '../api.js';
 import { formatar, paraCentavos } from '../dinheiro.js';
 import { avisarErro, cru, dataHora, grade, html, numero, plural } from '../ui.js';
 import { garantirDadosDaLoja, loja } from '../loja.js';
+import { linhaDoRecibo, situacaoDaNfce } from '../nfce.js';
 
 const FORMAS = {
   DINHEIRO: 'Dinheiro',
@@ -31,10 +35,15 @@ export async function render(raiz, params) {
   raiz.innerHTML = '<div class="carregando">Carregando…</div>';
 
   let venda;
+  let nfce;
   try {
     // O cabeçalho do recibo (documento, endereço, telefone) só vem com sessão; aberto pelo
     // F5, ele ainda não chegou. Pedir junto não atrasa nada.
-    [venda] = await Promise.all([api.get(`/vendas/${params.id}`), garantirDadosDaLoja()]);
+    [venda, , nfce] = await Promise.all([
+      api.get(`/vendas/${params.id}`),
+      garantirDadosDaLoja(),
+      situacaoDaNfce(params.id),
+    ]);
   } catch (erro) {
     avisarErro(erro);
     raiz.innerHTML = '<div class="vazio"><p class="vazio__titulo">Venda não encontrada</p></div>';
@@ -114,7 +123,8 @@ export async function render(raiz, params) {
         <div class="recibo__rodape">
           <span>${plural(venda.quantidade_pecas, 'peça', 'peças')}</span>
           <span>Troca em até 30 dias, com este recibo e a etiqueta na peça.</span>
-          <span class="recibo__miudo">Documento sem valor fiscal.</span>
+          ${cru(linhaDoRecibo(nfce))}
+          <span class="recibo__miudo">Este recibo não tem valor fiscal${nfce?.nota?.status === 'AUTORIZADA' ? ': a nota é a NFC-e acima' : ''}.</span>
         </div>
       </div>
     </div>

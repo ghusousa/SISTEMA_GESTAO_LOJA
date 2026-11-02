@@ -77,6 +77,7 @@ def _montar_rotas() -> None:
     from app.modules.catalogo.router import router as catalogo_router
     from app.modules.despesas.router import router as despesas_router
     from app.modules.estoque.router import router as estoque_router
+    from app.modules.fiscal.router import router as fiscal_router
     from app.modules.relatorios.router import router as relatorios_router
     from app.modules.tempo_real.router import router as tempo_real_router
     from app.modules.usuarios.router import router as usuarios_router
@@ -90,6 +91,7 @@ def _montar_rotas() -> None:
         catalogo_router,
         estoque_router,
         vendas_router,
+        fiscal_router,
         despesas_router,
         caixa_router,
         relatorios_router,
@@ -107,6 +109,10 @@ _montar_rotas()
 
 # Toda escrita que passa pelo ORM vira aviso para as telas abertas (ver core/eventos.py).
 registrar_avisos_automaticos()
+# NFC-e sozinha depois da venda, quando FISCAL_EMITIR_AUTOMATICO=1 (ADR-41).
+from app.modules.fiscal.automatico import registrar_emissao_automatica  # noqa: E402
+
+registrar_emissao_automatica()
 
 # Fotos de produto. Em produção o Nginx serve /media direto do disco.
 _media = Path(settings.media_dir)
