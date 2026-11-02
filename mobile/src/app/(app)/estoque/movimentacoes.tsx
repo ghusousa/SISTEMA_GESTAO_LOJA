@@ -25,6 +25,8 @@ const FILTROS: { rotulo: string; tipo?: TipoMovimento }[] = [
   { rotulo: 'Inventário', tipo: 'INVENTARIO' },
   { rotulo: 'Estornos', tipo: 'ESTORNO' },
   { rotulo: 'Devoluções', tipo: 'DEVOLUCAO' },
+  { rotulo: 'Saiu em condicional', tipo: 'CONDICIONAL_SAIDA' },
+  { rotulo: 'Voltou da condicional', tipo: 'CONDICIONAL_RETORNO' },
 ];
 
 const CORES_TIPO: Record<TipoMovimento, { fundo: string; texto: string }> = {
@@ -34,6 +36,14 @@ const CORES_TIPO: Record<TipoMovimento, { fundo: string; texto: string }> = {
   VENDA: { fundo: cores.primariaFraca, texto: cores.primaria },
   AJUSTE: { fundo: cores.alertaFraco, texto: '#7A5A00' },
   INVENTARIO: { fundo: cores.superficieAlt, texto: cores.textoSuave },
+  CONDICIONAL_SAIDA: { fundo: cores.alertaFraco, texto: '#7A5A00' },
+  CONDICIONAL_RETORNO: { fundo: cores.sucessoFraco, texto: cores.acaoEscura },
+};
+
+/** A frase da etiqueta. Tipo sem frase aqui aparece pelo nome técnico, em minúsculas. */
+const ROTULO_TIPO: Partial<Record<TipoMovimento, string>> = {
+  CONDICIONAL_SAIDA: 'saiu em condicional',
+  CONDICIONAL_RETORNO: 'voltou da condicional',
 };
 
 /** Cor de um tipo que o app ainda não conhece — cinza, mas VISÍVEL. */
@@ -128,6 +138,7 @@ function LinhaMovimento({ movimento }: { movimento: Movimento }) {
         <Text style={s.linhaData}>
           {format(new Date(movimento.criado_em), "dd/MM 'às' HH:mm", { locale: ptBR })}
           {movimento.venda_id ? ` · venda #${movimento.venda_id}` : ''}
+          {movimento.condicional_id ? ` · condicional #${movimento.condicional_id}` : ''}
         </Text>
         {!!movimento.observacao && (
           <Text style={s.linhaObs} numberOfLines={2}>
@@ -137,7 +148,11 @@ function LinhaMovimento({ movimento }: { movimento: Movimento }) {
       </View>
 
       <View style={s.linhaNumeros}>
-        <Etiqueta texto={movimento.tipo.toLowerCase()} cor={cor.fundo} corTexto={cor.texto} />
+        <Etiqueta
+          texto={ROTULO_TIPO[movimento.tipo] ?? movimento.tipo.toLowerCase()}
+          cor={cor.fundo}
+          corTexto={cor.texto}
+        />
         <Text style={[s.quantidade, entrada ? s.entrada : s.saida]}>
           {entrada ? '+' : ''}
           {movimento.quantidade}

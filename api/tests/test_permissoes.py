@@ -16,6 +16,7 @@ A leitura é a própria tabela:
     editar catálogo       ✓       ✓          ✓           ✗
     fechar caixa          ✓       ✓          ✓           ✗
     vendas de todos       ✓       ✓          ✓           ✗
+    condicional           ✓       ✓          ✓           ✓
     vender e bipar        ✓       ✓          ✓           ✓
 """
 
@@ -49,6 +50,8 @@ TODOS = [Papel.ADMIN, Papel.GERENTE, Papel.SUPERVISORA, Papel.VENDEDOR]
         (Pode.CORRIGIR_ESTOQUE, {Papel.ADMIN, Papel.GERENTE, Papel.SUPERVISORA}),
         (Pode.EDITAR_CATALOGO, {Papel.ADMIN, Papel.GERENTE, Papel.SUPERVISORA}),
         (Pode.FECHAR_CAIXA, {Papel.ADMIN, Papel.GERENTE, Papel.SUPERVISORA}),
+        # A condicional é atendimento de balcão: da vendedora em diante (ADR-39).
+        (Pode.FAZER_CONDICIONAL, set(TODOS)),
     ],
 )
 def test_tabela_de_permissoes(capacidade: Pode, quem_pode: set[Papel]) -> None:
@@ -56,9 +59,10 @@ def test_tabela_de_permissoes(capacidade: Pode, quem_pode: set[Papel]) -> None:
         assert pode(papel, capacidade) is (papel in quem_pode), f"{papel} x {capacidade}"
 
 
-def test_vendedora_nao_tem_capacidade_nenhuma() -> None:
-    """O papel mais baixo vende e consulta; qualquer poder além disso é engano."""
-    assert PERMISSOES[Papel.VENDEDOR] == frozenset()
+def test_vendedora_so_tem_a_condicional() -> None:
+    """O papel mais baixo vende, consulta e leva peça em condicional; qualquer poder além
+    disso é engano (ADR-39)."""
+    assert PERMISSOES[Papel.VENDEDOR] == frozenset({Pode.FAZER_CONDICIONAL})
 
 
 def test_a_hierarquia_nao_tem_buraco() -> None:

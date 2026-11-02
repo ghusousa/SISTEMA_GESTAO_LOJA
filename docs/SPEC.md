@@ -13,7 +13,7 @@ o superior não tenha.
 
 | Cargo | Além do degrau anterior | O que NÃO alcança |
 |---|---|---|
-| **Vendedora** (`VENDEDOR`) | Vende no PDV, bipa e consulta preço, cadastra peça nova, dá entrada de mercadoria | Custo, lucro, despesas, relatórios, estorno, ajuste de estoque, inventário, vendas das colegas |
+| **Vendedora** (`VENDEDOR`) | Vende no PDV, bipa e consulta preço, cadastra peça nova, dá entrada de mercadoria (sem a nota do fornecedor), leva peça em condicional e a fecha | Custo, lucro, despesas, relatórios, estorno, ajuste de estoque, inventário, vendas das colegas |
 | **Supervisora** (`SUPERVISORA`) | Ajusta estoque, faz inventário, edita e exclui produtos e categorias, confere e fecha o caixa do dia, vê as vendas de toda a equipe | Custo, lucro, despesas, relatórios, estorno, devolução, crediário, logins da equipe |
 | **Gerente** (`GERENTE`) | Vê custo, lucro e margem; lança despesas; abre relatórios; cancela venda concluída; recebe peça de volta (devolução) e cuida do crediário; administra os logins da equipe | A conta do dono (não cria, não promove, não edita, não redefine a senha dele), o **diário de auditoria** e o **nome da loja** — a identidade do negócio é do dono |
 | **Dono** (`ADMIN`) | Tudo, inclusive criar e promover outro dono, o **diário de auditoria** (tudo que cada login fez) e o **nome e ramo da loja** | — |
@@ -63,6 +63,12 @@ A loja consegue operar 100% sem celular.
   (o cadastro vira "Cliente removido") e as compras ficam no histórico, sem o nome.
 - **Despesa** — saída de dinheiro que não é compra de mercadoria (aluguel, energia, salário...),
   com categoria e marcação de recorrente.
+- **Condicional** — as peças que a cliente leva para provar em casa, com prazo para voltar.
+  Enquanto estão com ela, saem do saldo: ninguém as vende de novo no balcão. Fechada, o que
+  voltou é estoque de novo e o que ficou vira uma venda comum, ligada à condicional.
+- **Conta a pagar** — uma parcela que a loja deve ao fornecedor (valor, vencimento, número da
+  nota, paga ou aberta). Nasce com a Entrada da mercadoria. **Não é despesa e não entra no
+  Resultado**: o custo da mercadoria já entra pelo CMV quando a peça é vendida.
 - **Fechamento de caixa** — conferência diária: quanto o sistema esperava por forma de pagamento
   versus quanto foi contado.
 - **A loja** — o nome do negócio e o ramo dele. O nome sai na tela de entrada e no recibo do
@@ -110,6 +116,12 @@ A loja consegue operar 100% sem celular.
    resultado do período; produtos mais vendidos; peças com estoque abaixo do mínimo; curva de vendas
    por dia.
 10. **Fechar o caixa do dia** — conferir o esperado por forma de pagamento contra o contado.
+11. **Levar em condicional** — escolher a cliente, bipar (ou buscar pelo nome) as peças que ela
+    vai provar e combinar o prazo; as peças saem do estoque. Na volta, dizer quantas voltaram de
+    cada peça e cobrar o que ficou, como no PDV. A lista de vencidas é a das ligações do dia.
+12. **Pagar o fornecedor** — na Entrada, quem vê dinheiro informa o valor da nota e as parcelas
+    (o sistema sugere 30/60/90); elas aparecem em Contas a pagar, com o aviso do que venceu e do
+    que vence nos próximos 7 dias. Pagou, marca como paga (dia e forma).
 
 ## Regras de negócio que não podem ser violadas
 
@@ -137,6 +149,13 @@ A loja consegue operar 100% sem celular.
   a diferença sai em vale. Pelo mesmo motivo, venda no fiado cujo cancelamento deixaria o saldo
   negativo (porque a cliente já pagou) não se cancela — devolve-se.
 - O mesmo vale não paga duas vendas.
+- Peça em condicional não está disponível: sai do saldo na abertura e só volta no fechamento.
+  Fechar duas vezes (toque duplo, dois aparelhos, resposta perdida) não devolve a peça duas
+  vezes nem cobra a cliente duas vezes; o que ficou com ela é sempre uma venda comum, com caixa
+  e recibo, registrada junto com o retorno — ou nada acontece.
+- Conta a pagar do fornecedor nunca entra no Resultado nem nas Despesas. A nota só entra junto
+  com a mercadoria da Entrada (ou nenhuma das duas), e as parcelas têm de somar a nota. Só quem
+  vê dinheiro vê, lança e paga; a mesma conta não é paga duas vezes.
 - Toda ação de quem está logado que muda alguma coisa fica registrada na auditoria, com o nome
   e o cargo congelados; o registro não pode derrubar a operação que ele observa.
 - O login trava depois de erros de senha demais (por e-mail e por endereço), e a trava responde
@@ -162,10 +181,11 @@ A loja consegue operar 100% sem celular.
 ## Fora do escopo do v1
 
 Funcionamento offline com sincronização (v2 — já preparado pelo `client_uuid`), emissão fiscal
-(NF-e/NFC-e), fidelidade e pontos, condicional, múltiplas lojas, e-commerce, limite de desconto por
+(NF-e/NFC-e), fidelidade e pontos, múltiplas lojas, e-commerce, limite de desconto por
 vendedor, sessões de inventário compartilhadas no servidor, contagem cega, foto por variante,
 notificações push, parcelamento do crediário em datas fixas (hoje é dívida única, recebida em
 qualquer valor), cobrança automática por mensagem.
 
 *Saíram de "fora do escopo" e hoje existem:* impressão de etiquetas, recibo da venda, cadastro de
-clientes, trocas com vale, e o sistema servir a outros ramos além de roupas.
+clientes, trocas com vale, o sistema servir a outros ramos além de roupas, condicional e contas a
+pagar do fornecedor.

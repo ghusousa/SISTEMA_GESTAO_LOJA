@@ -11,6 +11,8 @@ from app.modules.auth.models import LoginAttempt, RefreshToken
 from app.modules.caixa.models import CashClosing, CashClosingLine
 from app.modules.catalogo.models import Category, Product, ProductVariant
 from app.modules.clientes.models import Customer, CustomerPayment
+from app.modules.condicionais.models import Consignment, ConsignmentItem
+from app.modules.contas_pagar.models import Payable
 from app.modules.despesas.models import Expense, ExpenseCategory
 from app.modules.estoque.models import StockBalance, StockEntry, StockMovement
 from app.modules.usuarios.models import User
@@ -32,11 +34,14 @@ __all__ = [
     "CashClosing",
     "CashClosingLine",
     "Category",
+    "Consignment",
+    "ConsignmentItem",
     "Customer",
     "CustomerPayment",
     "Expense",
     "ExpenseCategory",
     "LoginAttempt",
+    "Payable",
     "Product",
     "ProductVariant",
     "RefreshToken",

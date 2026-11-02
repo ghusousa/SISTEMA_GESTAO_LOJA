@@ -62,6 +62,12 @@ class Assunto(StrEnum):
     USUARIOS = "usuarios"
     """Alguém entrou, saiu ou mudou de cargo."""
 
+    CONDICIONAIS = "condicionais"
+    """Condicional aberta ou fechada (o saldo que ela move sai também como `estoque`)."""
+
+    CONTAS_PAGAR = "contas_pagar"
+    """Conta de fornecedor lançada, corrigida, paga ou excluída."""
+
 
 @dataclass(slots=True)
 class Evento:
@@ -153,6 +159,9 @@ ASSUNTO_POR_TABELA: dict[str, Assunto] = {
     "sale_returns": Assunto.VENDAS,
     "sale_return_items": Assunto.ESTOQUE,
     "vouchers": Assunto.VENDAS,
+    "consignments": Assunto.CONDICIONAIS,
+    "consignment_items": Assunto.CONDICIONAIS,
+    "payables": Assunto.CONTAS_PAGAR,
 }
 
 _CHAVE = "_tabelas_tocadas"

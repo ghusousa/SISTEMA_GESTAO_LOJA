@@ -29,6 +29,10 @@ class Pode(StrEnum):
     DEVOLVER_VENDA = "DEVOLVER_VENDA"
     #: Cadastrar cliente, vender fiado e receber o que devem.
     GERIR_CREDIARIO = "GERIR_CREDIARIO"
+    #: Levar peça para a casa da cliente provar (condicional) e fechar quando ela volta.
+    #: Da vendedora em diante: é atendimento de balcão. Fechar com fiado continua pedindo
+    #: o crediário, e o preço é o de venda — nada de custo (ADR-39).
+    FAZER_CONDICIONAL = "FAZER_CONDICIONAL"
     #: Ver as vendas de toda a equipe, não só as próprias.
     VER_VENDAS_DE_TODOS = "VER_VENDAS_DE_TODOS"
     #: Ajuste manual de saldo e inventário — as duas portas de mexer no estoque sem venda.
@@ -51,10 +55,12 @@ class Pode(StrEnum):
     GERIR_BACKUP = "GERIR_BACKUP"
 
 
-VENDEDORA: frozenset[Pode] = frozenset()
+VENDEDORA: frozenset[Pode] = frozenset({Pode.FAZER_CONDICIONAL})
 """Vende, consulta preço e saldo, cadastra peça nova e dá entrada de mercadoria.
 
 Tudo isso é aberto a qualquer usuário autenticado e por isso não aparece como capacidade.
+A condicional é nomeada porque é capacidade nova e precisa aparecer na tabela; a nota do
+fornecedor na Entrada, não: ela é de quem vê dinheiro (ADR-40).
 O que a vendedora NÃO faz está no que falta aqui: nada de custo, de estorno, de correção
 de estoque e de despesa.
 """

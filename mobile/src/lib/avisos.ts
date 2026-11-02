@@ -27,6 +27,8 @@ export type Assunto =
   | 'clientes'
   | 'caixa'
   | 'usuarios'
+  | 'condicionais'
+  | 'contas_pagar'
   | 'conectado'
   | 'ping';
 
@@ -63,6 +65,8 @@ const CHAVES_POR_ASSUNTO: Record<Assunto, readonly QueryKey[]> = {
   clientes: [chaves.clientes],
   caixa: [['caixa-dia'], chaves.fechamentos],
   usuarios: [chaves.usuarios],
+  condicionais: [chaves.condicionais],
+  contas_pagar: [chaves.contasPagar],
   // Sinais de vida, não mudança: quem trata `conectado` é a reconexão, que recarrega tudo.
   conectado: [],
   ping: [],

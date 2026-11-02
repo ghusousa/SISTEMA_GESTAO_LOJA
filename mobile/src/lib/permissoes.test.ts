@@ -29,6 +29,8 @@ const TABELA: [Capacidade, Papel[]][] = [
   [PODE.CORRIGIR_ESTOQUE, [DONO, GERENTE, SUPERVISORA]],
   [PODE.EDITAR_CATALOGO, [DONO, GERENTE, SUPERVISORA]],
   [PODE.FECHAR_CAIXA, [DONO, GERENTE, SUPERVISORA]],
+  // A condicional é atendimento de balcão: da vendedora em diante (ADR-39).
+  [PODE.FAZER_CONDICIONAL, [DONO, GERENTE, SUPERVISORA, VENDEDORA]],
 ];
 
 for (const [capacidade, quemPode] of TABELA) {
@@ -39,9 +41,9 @@ for (const [capacidade, quemPode] of TABELA) {
   });
 }
 
-test('a vendedora não tem capacidade nenhuma além de vender e consultar', () => {
+test('a vendedora só tem a condicional além de vender e consultar', () => {
   for (const capacidade of Object.values(PODE)) {
-    assert.equal(pode(VENDEDORA, capacidade), false, capacidade);
+    assert.equal(pode(VENDEDORA, capacidade), capacidade === PODE.FAZER_CONDICIONAL, capacidade);
   }
 });
 

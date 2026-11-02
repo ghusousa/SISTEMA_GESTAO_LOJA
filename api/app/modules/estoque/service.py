@@ -4,7 +4,13 @@ from decimal import Decimal
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import Duplicado, EstoqueInsuficiente, NaoEncontrado, Validacao
+from app.core.exceptions import (
+    Duplicado,
+    EstoqueInsuficiente,
+    NaoEncontrado,
+    SemPermissao,
+    Validacao,
+)
 from app.core.pagination import Pagina, Paginacao
 from app.modules.estoque import movimentos
 from app.modules.estoque.models import StockEntry, TipoMovimento
@@ -43,6 +49,13 @@ class EstoqueService:
         # Lido já: o ramo do IntegrityError faz rollback, que expira o `usuario`, e tocar
         # `usuario.role` depois estoura MissingGreenlet.
         grava_custo = pode(usuario.role, Pode.VER_DINHEIRO)
+        if dados.nota is not None and not grava_custo:
+            # Recusa, em vez de ignorar como o custo: ignorar a nota em silêncio deixaria a
+            # loja achando que o boleto entrou em Contas a pagar — e ele venceria esquecido.
+            raise SemPermissao(
+                "A nota do fornecedor (valor e vencimentos) é de quem vê o dinheiro da loja. "
+                "Dê a entrada sem ela."
+            )
         existente = await self.repo.entrada_por_client_uuid(dados.client_uuid)
         if existente is not None:
             return await self._replay(existente, dados, grava_custo)
@@ -88,8 +101,21 @@ class EstoqueService:
                 entry_id=entrada.id,
                 observacao=f"Fornecedor: {dados.fornecedor}" if dados.fornecedor else None,
             )
+        if dados.nota is not None:
+            # Mesma transação: a mercadoria e a dívida dela entram juntas, ou nenhuma entra.
+            await self._contas().lancar_da_entrada(
+                entrada_id=entrada.id,
+                fornecedor=(dados.fornecedor or "").strip(),
+                nota=dados.nota,
+                usuario_id=usuario.id,
+            )
         await self.session.commit()
         return await self._montar_entrada(entrada)
+
+    def _contas(self):  # noqa: ANN202 — ContaPagarService (import tardia, sem ciclo)
+        from app.modules.contas_pagar.service import ContaPagarService
+
+        return ContaPagarService(self.session)
 
     async def _replay(
         self, entrada: StockEntry, dados: EntradaIn, grava_custo: bool
@@ -111,7 +137,13 @@ class EstoqueService:
         pedido = sorted((i.variante_id, i.quantidade) for i in dados.itens)
         gravado = sorted((m.variant_id, m.quantity) for m in movs)
         mesmo_fornecedor = (dados.fornecedor or "").strip() == (entrada.supplier or "").strip()
-        mesmo_pedido = pedido == gravado and mesmo_fornecedor
+        # A nota faz parte do pedido: o reenvio com outro valor ou outro vencimento não pode
+        # sair como sucesso com as parcelas antigas (ADR-40).
+        contas = self._contas()
+        mesma_nota = await contas.nota_da_entrada(entrada.id) == contas.assinatura_do_pedido(
+            dados.nota
+        )
+        mesmo_pedido = pedido == gravado and mesmo_fornecedor and mesma_nota
         custos = {
             i.variante_id: i.custo_unitario for i in dados.itens if i.custo_unitario is not None
         }
@@ -127,8 +159,8 @@ class EstoqueService:
             # da entrada gravada (10 P + 7 M viravam +20 P em vez de +10).
             raise Duplicado(
                 f"Esta entrada já foi gravada (entrada #{entrada.id}, {pecas} "
-                f"{'peça' if pecas == 1 else 'peças'}), com outras peças ou outro "
-                "fornecedor.",
+                f"{'peça' if pecas == 1 else 'peças'}), com outras peças, outro "
+                "fornecedor ou outra nota.",
                 {
                     "entrada_id": entrada.id,
                     "itens": [
@@ -148,6 +180,7 @@ class EstoqueService:
             criada_em=entrada.created_at,
             itens=[MovimentoOut.model_validate(m) for m in movs],
             total_pecas=sum(m.quantity for m in movs),
+            contas_a_pagar=await self._contas().contar_da_entrada(entrada.id),
         )
 
     # ------------------------------------------------------------ ajuste

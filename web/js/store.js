@@ -81,10 +81,13 @@ export function limparCarrinho() {
  * sacola inteira — o que na prática ensina a não cadastrar. Itens são
  * `{ variante_id, produto, tamanho, cor, codigo_barras, quantidade, custo }`.
  */
-export const conferencia = criarStore({ itens: [], fornecedor: '', observacao: '', clientUuid: null });
+export const conferencia = criarStore({
+  itens: [], fornecedor: '', observacao: '', clientUuid: null, nota: null,
+});
 
+/** A nota do fornecedor vai junto: o próximo turno não herda o boleto de outra compra. */
 export function limparConferencia() {
-  conferencia.set({ itens: [], fornecedor: '', observacao: '', clientUuid: null });
+  conferencia.set({ itens: [], fornecedor: '', observacao: '', clientUuid: null, nota: null });
 }
 
 export function limparTudoDaSessao() {

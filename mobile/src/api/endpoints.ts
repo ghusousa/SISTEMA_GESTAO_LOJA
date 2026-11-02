@@ -10,6 +10,14 @@ import type {
   ConfiguracaoPublica,
   Categoria,
   CategoriaDespesa,
+  ClienteDoBalcao,
+  Condicional,
+  ContaPagar,
+  FiltroCondicionais,
+  FiltroContas,
+  FormaPagamentoConta,
+  NotaFornecedor,
+  ResumoContas,
   Despesa,
   DespesaPorCategoria,
   DiaCaixa,
@@ -274,6 +282,8 @@ export const estoque = {
     fornecedor?: string | null;
     observacao?: string | null;
     itens: { variante_id: number; quantidade: number; custo_unitario?: string }[];
+    /** Só quem vê dinheiro: o servidor recusa com 403 a nota vinda de outro papel. */
+    nota?: NotaFornecedor;
   }) {
     const { data } = await api.post<Entrada>('/estoque/entradas', dados);
     return data;
@@ -502,6 +512,67 @@ export const relatorios = {
     const { data } = await api.get<Pagina<EstoqueBaixo>>('/relatorios/estoque-baixo', {
       params,
     });
+    return data;
+  },
+};
+
+// ------------------------------------------------------------------ condicional (ADR-39)
+export const condicionais = {
+  async listar(params: Paginado & { situacao?: FiltroCondicionais; cliente_id?: number } = {}) {
+    const { data } = await api.get<Pagina<Condicional>>('/condicionais', { params });
+    return data;
+  },
+  async obter(id: number) {
+    const { data } = await api.get<Condicional>(`/condicionais/${id}`);
+    return data;
+  },
+  async abrir(dados: {
+    client_uuid: string;
+    cliente_id: number;
+    prazo: string;
+    observacao?: string | null;
+    itens: { variante_id: number; quantidade: number }[];
+  }) {
+    const { data } = await api.post<Condicional>('/condicionais', dados);
+    return data;
+  },
+  async fechar(
+    id: number,
+    dados: {
+      client_uuid: string;
+      itens: { variante_id: number; devolvida: number }[];
+      desconto?: string;
+      pagamentos: { forma: FormaPagamento; valor: string; codigo_vale?: string }[];
+    },
+  ) {
+    const { data } = await api.post<Condicional>(`/condicionais/${id}/fechamento`, dados);
+    return data;
+  },
+  /** A busca de balcão (frente B1, `ATENDER_CLIENTE`): sem saldo nem limite. */
+  async buscarCliente(q: string) {
+    const { data } = await api.get<Pagina<ClienteDoBalcao>>('/clientes/balcao', {
+      params: { q, size: 10 },
+    });
+    return data;
+  },
+};
+
+// ------------------------------------------------------------------ contas a pagar (ADR-40)
+export const contasPagar = {
+  async listar(params: Paginado & { situacao?: FiltroContas; fornecedor?: string } = {}) {
+    const { data } = await api.get<Pagina<ContaPagar>>('/contas-pagar', { params });
+    return data;
+  },
+  async resumo() {
+    const { data } = await api.get<ResumoContas>('/contas-pagar/resumo');
+    return data;
+  },
+  async pagar(id: number, dados: { forma: FormaPagamentoConta; pago_em?: string | null }) {
+    const { data } = await api.post<ContaPagar>(`/contas-pagar/${id}/pagamento`, dados);
+    return data;
+  },
+  async desfazerPagamento(id: number) {
+    const { data } = await api.delete<ContaPagar>(`/contas-pagar/${id}/pagamento`);
     return data;
   },
 };
