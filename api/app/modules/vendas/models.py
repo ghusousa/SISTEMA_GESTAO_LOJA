@@ -67,6 +67,10 @@ class Sale(Base):
         CheckConstraint("discount <= subtotal", name="discount_max"),
         CheckConstraint("total = subtotal - discount", name="total_math"),
         CheckConstraint(
+            "comissao_percentual >= 0 AND comissao_percentual <= 100",
+            name="comissao_percentual",
+        ),
+        CheckConstraint(
             "(status = 'CANCELADA' AND cancelled_at IS NOT NULL AND cancelled_by_id IS NOT NULL)"
             " OR (status = 'CONCLUIDA' AND cancelled_at IS NULL AND cancelled_by_id IS NULL)",
             name="cancel_consistency",
@@ -99,6 +103,10 @@ class Sale(Base):
     subtotal: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     discount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0)
     total: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    #: A % da comissão de quem vendeu, FOTOGRAFADA na venda (ADR-37) — como o custo em
+    #: `sale_items` e a taxa em `sale_payments`. O dono mudar a % amanhã não reescreve a
+    #: folha de um mês já pago. Sem padrão: venda que esquecesse a % viraria comissão zero.
+    comissao_percentual: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
     sold_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

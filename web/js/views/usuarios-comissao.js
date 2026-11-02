@@ -20,7 +20,7 @@ export const podeDefinirComissao = () => pode(PODE.DEFINIR_COMISSAO);
 /** "5% · meta R$ 1.500,00" para a lista; vazio quando não há nenhum dos dois. */
 export function resumoComissao(u) {
   const partes = [];
-  if (paraCentavos(u.comissao_percentual) > 0) partes.push(formatarPercentual(u.comissao_percentual));
+  if (paraCentavos(u.comissao_percentual) > 0) partes.push(formatarPercentual(u.comissao_percentual, 2));
   if (u.meta_diaria) partes.push(`meta ${formatar(paraCentavos(u.meta_diaria))}`);
   return partes.join(' · ');
 }

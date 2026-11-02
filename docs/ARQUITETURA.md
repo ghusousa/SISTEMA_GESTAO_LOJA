@@ -117,9 +117,11 @@ Append-only: movimentação nunca é editada nem apagada. `balance_after` guarda
 ```sql
 sales(id, seller_id FK→users, status CHECK IN ('CONCLUIDA','CANCELADA') DEFAULT 'CONCLUIDA',
       subtotal, discount DEFAULT 0, total,
+      comissao_percentual NUMERIC(5,2) NOT NULL,   -- % de quem vendeu, CONGELADA na venda (ADR-37)
       sold_at, cancelled_at NULL, cancelled_by_id FK→users NULL, cancel_reason NULL,
       client_uuid UUID UNIQUE NOT NULL, note NULL, created_at)
   CHECK (subtotal >= 0 AND discount >= 0 AND total >= 0)
+  CHECK (comissao_percentual >= 0 AND comissao_percentual <= 100)
   CHECK (discount <= subtotal)
   CHECK (total = subtotal - discount)
   CHECK (status='CANCELADA' AND cancelled_at IS NOT NULL AND cancelled_by_id IS NOT NULL
@@ -1086,13 +1088,22 @@ em que aconteceu (ADR-19) e na conta de quem fez a venda ORIGINAL — quem só a
 perde nada. Assim um mês fechado nunca muda (a folha paga continua certa) e a blusa vendida em
 outubro que voltou em novembro estorna a comissão em novembro; um período só de devolução tem
 líquido e comissão **negativos**, de propósito: é o estorno, e escondê-lo daria a comissão de
-graça. Cancelada não conta (cancelar desfaz a venda inteira). `comissao = líquido × % ÷ 100`,
-meio centavo para cima. Ticket médio = vendido ÷ nº de vendas, a mesma conta do resumo. A soma
-da equipe fecha **centavo por centavo** com o `faturamento_liquido` do resumo (teste). Cada
-fonte é somada por vendedora antes de juntar (três `GROUP BY seller_id` num `UNION ALL`), e a
-equipe inteira vem numa consulta: são dezenas de pessoas, então a página é recortada em Python
-e os totais (`faturamento_liquido_total`, `comissao_total`) valem para o período todo — a folha
-paga a equipe, não a página. No banco de três anos: mês 1,6 ms, ano 79 ms.
+graça. Cancelada não conta (cancelar desfaz a venda inteira). **A % é a da VENDA**, não a de
+hoje: `sales.comissao_percentual` fotografa a % de quem vende no `registrar` — como o custo em
+`sale_items` e a taxa da maquininha em `sale_payments` (ADR-35) —, e as vendas de antes da
+coluna herdaram a % que a pessoa tinha na migration (a conta que o relatório já fazia). Sem
+isso, o dono baixar a % de 5 para 3 reescrevia o mês já pago (R$ 50 viravam R$ 30) e a blusa
+que voltasse depois estornava 3% do que tinha pago 5%. `comissao = (Σ total × % da venda −
+Σ refund_amount × % da venda ORIGINAL) ÷ 100`, somado exato no banco e arredondado **uma vez
+por pessoa**, meio centavo para cima (por venda, a soma derivaria meio centavo a cada uma). A
+coluna `comissao_percentual` da resposta continua sendo a % de HOJE — a que o dono configurou
+e mudaria; a % da venda não sai em resposta nenhuma de venda (a vendedora não a vê). Ticket
+médio = vendido ÷ nº de vendas, a mesma conta do resumo. A soma da equipe fecha **centavo por
+centavo** com o `faturamento_liquido` do resumo (teste). Cada fonte é somada por vendedora
+antes de juntar (três `GROUP BY seller_id` num `UNION ALL`), e a equipe inteira vem numa
+consulta: são dezenas de pessoas, então a página é recortada em Python e os totais
+(`faturamento_liquido_total`, `comissao_total`) valem para o período todo — a folha paga a
+equipe, não a página. No banco de três anos: mês 1,6 ms, ano 79 ms.
 **Quem define**: capacidade nova `DEFINIR_COMISSAO`, só do dono. `GERIR_USUARIOS` não basta: o
 gerente também recebe comissão, e um PATCH no próprio id dobraria o próprio salário — a mesma
 lógica do `_barrar_escalada`. Mandar o campo sem a capacidade é **403**, mesmo com o valor de
@@ -1125,8 +1136,11 @@ venda depois cancelada continua contando como venda (o movimento existe).
 **Curva ABC** (`?inicio&fim`): produto (não variante) por faturamento líquido no período — o
 item com o desconto da venda rateado (`preço × qtd × total ÷ subtotal`, a mesma conta do
 `refund_amount`) menos o devolvido no período. Somar o preço cheio contra a devolução rateada
-inflaria quem vende com desconto. Só entra quem teve líquido > 0 (produto só com devolução
-puxaria o acumulado acima de 100% e de volta). A classe vai pelo acumulado ANTES do produto: A
+inflaria quem vende com desconto. Só entra quem teve líquido > 0 **no centavo**
+(`round(líquido, 2) > 0`): o rateio do vendido não arredonda (para a soma fechar com o total da
+venda) e o `refund_amount` já vem arredondado, então a peça vendida com desconto e devolvida
+inteira sobrava com R$ 0,0033 e aparecia com 0 peças e R$ 0,00. Produto só com devolução
+puxaria o acumulado acima de 100% e de volta. A classe vai pelo acumulado ANTES do produto: A
 enquanto ele é < 80%, B < 95%, C o resto — quem cruza a linha dos 80% ainda é A; pelo acumulado
 "inclusive", um campeão que sozinho faz 90% seria B e a loja ficaria sem nenhum A. Janela
 (`sum() OVER`) antes do `OFFSET`, então a página 2 continua o acumulado da 1. Ano: 127 ms.

@@ -211,6 +211,8 @@ estoque, concorrência do último item, idempotência por `client_uuid`.
   repositório compara `>= inicio AND < fim`. `fim: datetime` era o bug — `fim=2026-08-23` virava
   meia-noite do COMEÇO do dia e escondia o dia inteiro. No navegador, hora sai por `dataHora` do
   `ui.js`, que formata no fuso vindo de `GET /configuracao` — nunca no do aparelho de quem olha.
+  Só o DIA de um instante (`TIMESTAMPTZ`) sai por `diaNaLoja`; `data()` é para data pura e fatia
+  o ISO — num instante daria o dia em UTC (a venda das 23h30 viraria o dia seguinte).
 - **Estado que muda de status**: cancelar venda troca o status com `UPDATE ... WHERE status =
   'CONCLUIDA'` antes de estornar. Checar em memória deixa dois cliques estornarem duas vezes.
   Venda de dia com caixa já FECHADO não se cancela (reescreveria a conferência) e venda no

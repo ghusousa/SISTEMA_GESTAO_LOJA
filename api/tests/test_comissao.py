@@ -304,6 +304,72 @@ async def test_devolucao_de_venda_antiga_estorna_no_periodo_da_devolucao(
     assert linha["ticket_medio"] == "0.00"
 
 
+async def test_mudar_a_comissao_nao_reescreve_o_mes_pago_nem_o_estorno(
+    client: AsyncClient,
+    auth_admin: dict[str, str],
+    auth_vendedor: dict[str, str],
+    vendedor: User,
+) -> None:
+    """A % é a da VENDA, congelada quando ela aconteceu. Ana vendia a 5% no mês passado
+    (R$ 50,00 pagos); o dono baixou para 3%. O mês pago continua R$ 50,00, a blusa que
+    voltou hoje estorna R$ 5,00 — o que foi pago por ela, não 3% — e a venda nova de hoje
+    sai a 3%. A coluna % do relatório é a de hoje; a vendedora não vê % nenhuma na venda."""
+    await client.patch(
+        f"/usuarios/{vendedor.id}", headers=auth_admin, json={"comissao_percentual": "5"}
+    )
+    peca = await _peca(client, auth_admin)
+    venda = await _vender(client, auth_vendedor, peca, 10, "1000.00")
+    async with engine.begin() as conn:
+        await conn.execute(
+            text("UPDATE sales SET sold_at = sold_at - interval '40 days' WHERE id = :id"),
+            {"id": venda["id"]},
+        )
+    passado = hoje_na_loja() - timedelta(days=40)
+    assert (await _relatorio(client, auth_admin, passado, passado))["comissao_total"] == "50.00"
+
+    resp = await client.patch(
+        f"/usuarios/{vendedor.id}", headers=auth_admin, json={"comissao_percentual": "3"}
+    )
+    assert resp.status_code == 200, resp.text
+    await _devolver(client, auth_admin, venda, 1)
+    await _vender(client, auth_vendedor, peca, 2, "200.00")
+
+    pago = await _relatorio(client, auth_admin, passado, passado)
+    assert pago["comissao_total"] == "50.00"
+    assert pago["items"][0]["comissao_percentual"] == "3.00"
+
+    hoje = hoje_na_loja()
+    linha = (await _relatorio(client, auth_admin, hoje, hoje))["items"][0]
+    assert linha["faturamento_liquido"] == "100.00"  # 200 vendidos − 100 devolvidos
+    assert linha["comissao"] == "1.00"  # 200 × 3% − 100 × 5% da venda original
+
+    for caminho in (f"/vendas/{venda['id']}", "/vendas"):
+        resp = await client.get(caminho, headers=auth_vendedor)
+        assert resp.status_code == 200, resp.text
+        assert "comissao" not in resp.text
+
+
+async def test_comissao_arredonda_uma_vez_por_pessoa_no_periodo(
+    client: AsyncClient,
+    auth_admin: dict[str, str],
+    auth_vendedor: dict[str, str],
+    vendedor: User,
+) -> None:
+    """Duas vendas de R$ 10,10 a 2,5%: cada uma dá R$ 0,2525. Arredondar venda a venda
+    pagaria R$ 0,50; a conta é sobre o período, R$ 0,505, que fecha em R$ 0,51."""
+    await client.patch(
+        f"/usuarios/{vendedor.id}", headers=auth_admin, json={"comissao_percentual": "2.5"}
+    )
+    peca = await _peca(client, auth_admin, preco="10.10")
+    await _vender(client, auth_vendedor, peca, 1, "10.10")
+    await _vender(client, auth_vendedor, peca, 1, "10.10")
+
+    hoje = hoje_na_loja()
+    r = await _relatorio(client, auth_admin, hoje, hoje)
+    assert r["items"][0]["faturamento_liquido"] == "20.20"
+    assert r["comissao_total"] == "0.51"
+
+
 async def test_relatorio_da_equipe_e_paginado_com_totais_do_periodo_inteiro(
     client: AsyncClient,
     auth_admin: dict[str, str],

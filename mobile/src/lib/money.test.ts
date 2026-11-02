@@ -11,6 +11,7 @@ import {
   digitar,
   dividir,
   formatar,
+  formatarPercentual,
   paraCentavos,
   paraDecimalString,
   percentual,
@@ -106,4 +107,16 @@ test('divisão de pagamento não perde nem inventa centavo', () => {
       assert.equal(somar(dividir(total, n)), total, `${total} em ${n} partes`);
     }
   }
+});
+
+test('percentual sai com uma casa; a comissão pede as duas que o dono digitou', () => {
+  assert.equal(formatarPercentual('12.30'), '12,3%');
+  assert.equal(formatarPercentual('5.00'), '5%');
+  assert.equal(formatarPercentual('2.25'), '2,3%');
+  // 2,25% aparecia como 2,3% na tela do dono, contra a comissão calculada com 2,25.
+  assert.equal(formatarPercentual('2.25', 2), '2,25%');
+  assert.equal(formatarPercentual('1.75', 2), '1,75%');
+  assert.equal(formatarPercentual('0.25', 2), '0,25%');
+  assert.equal(formatarPercentual('2.50', 2), '2,5%');
+  assert.equal(formatarPercentual('5.00', 2), '5%');
 });

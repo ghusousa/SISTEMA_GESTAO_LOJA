@@ -51,7 +51,7 @@ const linha = (v) => html`
     <td class="direita texto-suave">${paraCentavos(v.devolucoes) ? dinheiro(v.devolucoes) : '—'}</td>
     <td class="direita celula-principal">${dinheiro(v.faturamento_liquido)}</td>
     <td class="direita">${dinheiro(v.ticket_medio)}</td>
-    <td class="direita texto-suave">${formatarPercentual(v.comissao_percentual)}</td>
+    <td class="direita texto-suave">${formatarPercentual(v.comissao_percentual, 2)}</td>
     <td class="direita">${dinheiro(v.comissao, 'positivo')}</td>
   </tr>
 `;

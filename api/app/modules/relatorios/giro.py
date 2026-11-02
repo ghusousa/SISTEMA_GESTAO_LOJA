@@ -216,8 +216,11 @@ class GiroService:
             )
             .group_by(fontes.c.produto_id)
             # Só quem trouxe dinheiro entra na curva: produto só com devolução no período
-            # puxaria o acumulado para trás (passaria de 100% e voltaria).
-            .having(liquido > 0)
+            # puxaria o acumulado para trás (passaria de 100% e voltaria). A régua é o
+            # CENTAVO: o rateio do vendido não arredonda (assim a soma fecha com o total
+            # da venda) e o `refund_amount` já vem arredondado — peça vendida com desconto
+            # e devolvida inteira sobraria com R$ 0,0033 e entraria com R$ 0,00.
+            .having(func.round(liquido, 2) > 0)
         ).subquery()
 
     async def curva_abc(self, inicio: date, fim: date, p: Paginacao) -> Pagina[CurvaAbcOut]:

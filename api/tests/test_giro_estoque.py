@@ -343,6 +343,33 @@ async def test_produto_so_com_devolucao_no_periodo_fica_fora_da_curva(
     assert [(i["produto"], i["percentual_acumulado"]) for i in r["items"]] == [("Nova", "100.00")]
 
 
+async def test_produto_com_desconto_devolvido_inteiro_fica_fora_da_curva(
+    client: AsyncClient, auth_admin: dict[str, str]
+) -> None:
+    """Blusa de 10 + calça de 20 com 2 de desconto: o rateio da blusa é 9,3333… e o
+    reembolso dela, no centavo, 9,33. A blusa volta inteira: os R$ 0,0033 que sobram não
+    são dinheiro, e ela não pode aparecer na curva com 0 peças e R$ 0,00."""
+    (blusa,) = await _produto(client, auth_admin, "Blusa", [("U", "1.00", "10.00", 5)])
+    (calca,) = await _produto(client, auth_admin, "Calça", [("U", "1.00", "20.00", 5)])
+    venda = await _vender(client, auth_admin, [(blusa, 1), (calca, 1)], "28.00", desconto="2.00")
+    item_blusa = next(i for i in venda["itens"] if i["variante_id"] == blusa)
+    resp = await client.post(
+        f"/vendas/{venda['id']}/devolucoes",
+        headers=auth_admin,
+        json={
+            "client_uuid": str(uuid.uuid4()),
+            "itens": [{"item_id": item_blusa["id"], "quantidade": 1}],
+        },
+    )
+    assert resp.status_code == 201, resp.text
+
+    r = await _curva(client, auth_admin)
+    assert [(i["produto"], i["pecas"], i["faturamento_liquido"]) for i in r["items"]] == [
+        ("Calça", 1, "18.67"),
+    ]
+    assert r["total"] == 1
+
+
 # -------------------------------------------------------------- valor do estoque
 async def test_valor_do_estoque_e_a_loja_inteira(
     client: AsyncClient, auth_admin: dict[str, str]
