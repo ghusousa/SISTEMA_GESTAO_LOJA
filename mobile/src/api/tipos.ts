@@ -90,6 +90,11 @@ export interface Produto {
   foto_url: string | null;
   categoria_id: number;
   categoria: string;
+  /** Dados fiscais da NFC-e (ADR-41). NCM nulo = a nota com esta peça não sai. */
+  ncm: string | null;
+  cest: string | null;
+  origem: number;
+  cfop: string;
   variantes: Variante[];
   saldo_total: number;
 }
@@ -599,6 +604,51 @@ export interface ConfiguracaoLoja extends ConfiguracaoPublica {
   documento: string | null;
   telefone: string | null;
   endereco: string | null;
+  /** NFC-e (ADR-41): 1 Simples Nacional · 2 Simples, excesso de sublimite · 3 Normal. */
+  regime_tributario: number | null;
+  inscricao_estadual: string | null;
+  serie_nfce: number;
+}
+
+// ------------------------------------------------------------------ NFC-e (ADR-41)
+export type StatusNota = 'PENDENTE' | 'AUTORIZADA' | 'REJEITADA' | 'CANCELADA';
+export type AmbienteFiscal = 'homologacao' | 'producao';
+
+/** O emissor ligado no `.env` do servidor. O token nunca vem — só se ele existe. */
+export interface EmissorFiscal {
+  nome: string;
+  ambiente: AmbienteFiscal | null;
+  configurado: boolean;
+  faltando: string[];
+  emitir_automatico: boolean;
+}
+
+export interface NotaFiscal {
+  id: number;
+  venda_id: number;
+  status: StatusNota;
+  ambiente: AmbienteFiscal;
+  emissor: string;
+  referencia: string;
+  numero: number | null;
+  serie: number | null;
+  chave: string | null;
+  protocolo: string | null;
+  url_danfe: string | null;
+  url_xml: string | null;
+  mensagem: string | null;
+  tentativas: number;
+  autorizada_em: string | null;
+  cancelada_em: string | null;
+  criada_em: string;
+  atualizada_em: string;
+}
+
+/** `GET /vendas/{id}/nfce`: a nota (se já houve tentativa) e o emissor. */
+export interface Nfce {
+  venda_id: number;
+  emissor: EmissorFiscal;
+  nota: NotaFiscal | null;
 }
 
 /**

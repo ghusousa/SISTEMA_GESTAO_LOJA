@@ -31,6 +31,7 @@ import {
   plural,
 } from '../ui.js';
 import { ajustarEstoque } from './ajuste.js';
+import { camposFiscais, lerCamposFiscais, resumoFiscal } from '../campos-fiscais.js';
 
 export async function render(raiz, { id }) {
   raiz.innerHTML = `<div class="pagina">${carregando()}</div>`;
@@ -83,6 +84,7 @@ export async function render(raiz, { id }) {
         </div>
 
         ${produto.descricao ? cru(html`<p class="texto-suave">${produto.descricao}</p>`) : ''}
+        <p class="texto-suave">${cru(produto.ncm ? '' : etiqueta('Fiscal', 'alerta'))} ${resumoFiscal(produto)}</p>
         ${saldoBaixo
           ? cru(html`
               <p>${etiqueta(`${numero(saldoBaixo)} ${saldoBaixo === 1 ? 'peça no estoque mínimo' : 'peças no estoque mínimo'}`, 'alerta')}</p>
@@ -426,6 +428,7 @@ export async function render(raiz, { id }) {
           <span>Descrição</span>
           <textarea data-descricao maxlength="2000">${produto.descricao || ''}</textarea>
         </label>
+        ${camposFiscais(produto, { aberto: !produto.ncm })}
         <div class="modal__acoes">
           <button class="botao botao--perigo" data-excluir style="margin-right:auto">Excluir produto</button>
           <button class="botao botao--neutro" data-nao>Cancelar</button>
@@ -457,6 +460,7 @@ export async function render(raiz, { id }) {
               nome: corpo.querySelector('[data-nome]').value.trim(),
               categoria_id: Number(corpo.querySelector('[data-categoria]').value),
               descricao: corpo.querySelector('[data-descricao]').value.trim() || null,
+              ...lerCamposFiscais(corpo),
             });
             aviso('Produto atualizado.');
             fechar(true);

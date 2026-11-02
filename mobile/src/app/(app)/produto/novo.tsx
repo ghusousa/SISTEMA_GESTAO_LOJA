@@ -33,6 +33,7 @@ import { chaves, invalidarAposMovimentoEstoque, queryClient } from '@/lib/queryC
 import { useAuthStore } from '@/stores/authStore';
 import { PODE, pode } from '@/lib/permissoes';
 import { NovaCategoria } from '@/components/NovaCategoria';
+import { CamposFiscais, paraPayload, valoresIniciais } from '@/components/CamposFiscais';
 import { SeletorDeFoto } from '@/components/SeletorDeFoto';
 import type { FotoEscolhida } from '@/lib/foto';
 import { ALVO_TOQUE, cores, espaco, fonte, raio } from '@/lib/tema';
@@ -75,6 +76,7 @@ export default function NovoProduto() {
   const [grade, setGrade] = useState<LinhaGrade[]>([]);
   const [bipandoPara, setBipandoPara] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  const [fiscais, setFiscais] = useState(valoresIniciais);
 
   const categorias = useQuery({
     queryKey: chaves.categorias,
@@ -159,6 +161,7 @@ export default function NovoProduto() {
       const produto = await catalogo.criarProduto({
         categoria_id: categoriaId!,
         nome: nome.trim(),
+        ...paraPayload(fiscais),
         variantes,
       });
 
@@ -246,6 +249,8 @@ export default function NovoProduto() {
         />
 
         <SeletorDeFoto uri={foto?.uri} aoEscolher={setFoto} />
+
+        <CamposFiscais valores={fiscais} aoMudar={setFiscais} />
 
         <Text style={s.rotulo}>Categoria</Text>
         <View style={s.chips}>

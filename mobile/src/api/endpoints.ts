@@ -49,7 +49,9 @@ import type {
   Cliente,
   ClienteBalcao,
   Devolucao,
+  EmissorFiscal,
   ExtratoCliente,
+  Nfce,
   PagamentoCliente,
   Vale,
   Variante,
@@ -63,6 +65,14 @@ import type {
 interface Paginado {
   page?: number;
   size?: number;
+}
+
+/** Campos fiscais do produto como o servidor recebe: `null` em NCM/CEST apaga. */
+export interface DadosFiscais {
+  ncm: string | null;
+  cest: string | null;
+  origem: number;
+  cfop: string;
 }
 
 // ------------------------------------------------------------------ auth
@@ -152,7 +162,17 @@ export const sistema = {
   },
   /** Só o dono (`CONFIGURAR_LOJA`). */
   async salvarConfiguracao(dados: Partial<
-    Pick<ConfiguracaoLoja, 'nome' | 'segmento' | 'documento' | 'telefone' | 'endereco'>
+    Pick<
+      ConfiguracaoLoja,
+      | 'nome'
+      | 'segmento'
+      | 'documento'
+      | 'telefone'
+      | 'endereco'
+      | 'regime_tributario'
+      | 'inscricao_estadual'
+      | 'serie_nfce'
+    >
   >) {
     const { data } = await api.patch<ConfiguracaoLoja>('/configuracao', dados);
     return data;
@@ -211,13 +231,13 @@ export const catalogo = {
     nome: string;
     descricao?: string | null;
     variantes: VariantePayload[];
-  }) {
+  } & Partial<DadosFiscais>) {
     const { data } = await api.post<Produto>('/produtos', dados);
     return data;
   },
   async atualizarProduto(
     id: number,
-    dados: { categoria_id?: number; nome?: string; descricao?: string | null },
+    dados: { categoria_id?: number; nome?: string; descricao?: string | null } & Partial<DadosFiscais>,
   ) {
     const { data } = await api.patch<Produto>(`/produtos/${id}`, dados);
     return data;
@@ -386,6 +406,24 @@ export const vendas = {
   },
   async consultarVale(codigo: string) {
     const { data } = await api.get<Vale>(`/vendas/vales/${encodeURIComponent(codigo)}`);
+    return data;
+  },
+};
+
+// ------------------------------------------------------------------ NFC-e (ADR-41)
+export const fiscal = {
+  /** A nota da venda (ou `null`) e se há emissor ligado. Quem vê a venda vê a nota. */
+  async nfce(vendaId: number) {
+    const { data } = await api.get<Nfce>(`/vendas/${vendaId}/nfce`);
+    return data;
+  },
+  /** Idempotente: venda com nota autorizada devolve a mesma nota, sem emitir outra. */
+  async emitir(vendaId: number) {
+    const { data } = await api.post<Nfce>(`/vendas/${vendaId}/nfce`);
+    return data;
+  },
+  async emissor() {
+    const { data } = await api.get<EmissorFiscal>('/fiscal/emissor');
     return data;
   },
 };

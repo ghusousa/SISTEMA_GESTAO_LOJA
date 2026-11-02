@@ -115,7 +115,7 @@ A loja consegue operar 100% sem celular.
    toque, já com o valor da dívida preenchido.
 7. **Dar o recibo à cliente** — o papel de sempre: o que levou, quanto pagou, quando, com
    quem. No computador sai na impressora de bobina; no celular vai pelo WhatsApp. Não é nota
-   fiscal, e está escrito no rodapé.
+   fiscal, e está escrito no rodapé; com NFC-e autorizada, o recibo traz a chave dela.
 8. **Lançar despesas** — valor, categoria, data, se é recorrente. Despesas recorrentes podem ser
    replicadas para a competência seguinte sem duplicar; desmarcar "recorrente" no último mês
    faz a conta fixa parar ali.
@@ -135,6 +135,10 @@ A loja consegue operar 100% sem celular.
 12. **Pagar o fornecedor** — na Entrada, quem vê dinheiro informa o valor da nota e as parcelas
     (o sistema sugere 30/60/90); elas aparecem em Contas a pagar, com o aviso do que venceu e do
     que vence nos próximos 7 dias. Pagou, marca como paga (dia e forma).
+13. **Emitir a NFC-e** — com o emissor ligado (ADR-41), um toque no detalhe da venda (ou
+    sozinha, logo depois da venda, se o dono ligar). O que faltar — NCM da peça, CNPJ, IE,
+    regime — aparece em lista; sem rede, fica pendente e tenta-se de novo. Cancelar a venda
+    cancela a nota antes; se a SEFAZ recusar (passou de 30 minutos), a venda não é cancelada.
 
 ## Regras de negócio que não podem ser violadas
 
@@ -204,11 +208,17 @@ A loja consegue operar 100% sem celular.
   recebe comissão, mexe nisso — nem na própria.
 - Cada pessoa vê o próprio dia no PDV (vendido, peças, meta), sem custo, lucro nem o número das
   colegas.
+- Uma venda tem no máximo uma NFC-e, e nota autorizada não é emitida de novo — nem com dois
+  cliques, nem com a resposta do emissor perdida no caminho (ADR-41).
+- Falha fiscal nunca impede vender; e venda com NFC-e autorizada só se cancela se a nota for
+  cancelada antes, no emissor.
+- A credencial do emissor fiscal mora no `.env` do servidor: nunca no banco, nunca numa rota.
 
 ## Fora do escopo do v1
 
-Funcionamento offline com sincronização (v2 — já preparado pelo `client_uuid`), emissão fiscal
-(NF-e/NFC-e), fidelidade e pontos, múltiplas lojas, e-commerce, limite de desconto por
+Funcionamento offline com sincronização (v2 — já preparado pelo `client_uuid`), NF-e (modelo 55,
+inclusive a de devolução), NFC-e nos regimes Normal e Simples com excesso de sublimite, CPF na
+nota, fidelidade e pontos, múltiplas lojas, e-commerce, limite de desconto por
 vendedor, sessões de inventário compartilhadas no servidor, contagem cega, foto por variante,
 notificações push, parcelamento do crediário em datas fixas (hoje é dívida única, recebida em
 qualquer valor), cobrança automática por mensagem.
@@ -218,4 +228,6 @@ clientes, trocas com vale, o sistema servir a outros ramos além de roupas, taxa
 crédito parcelado e agenda de recebíveis (sem TEF integrada: a maquininha segue à parte),
 cliente em qualquer venda, com aniversário, preferências e histórico de compras (sem pontos),
 comissão e meta do dia por vendedora, os relatórios de estoque parado, curva ABC e valor do
-estoque, condicional e contas a pagar do fornecedor.
+estoque, condicional e contas a pagar do fornecedor, e a **NFC-e** no Simples Nacional por
+emissor terceirizado (ADR-41) — o dono contrata o emissor, cadastra nele o certificado A1 e o
+CSC, testa em homologação e liga pelo `.env`.

@@ -57,6 +57,12 @@ services:
       TIMEZONE_LOJA: ${TIMEZONE_LOJA:-America/Sao_Paulo}
       MEDIA_DIR: /srv/media
       ESTADO_DIR: /srv/estado
+      # NFC-e (ADR-41): desligado até o dono contratar o emissor. O token fica no .env da
+      # máquina e entra no contêiner por aqui — nunca no banco, nunca numa rota.
+      FISCAL_EMISSOR: ${FISCAL_EMISSOR:-desligado}
+      FOCUSNFE_TOKEN: ${FOCUSNFE_TOKEN:-}
+      FOCUSNFE_AMBIENTE: ${FOCUSNFE_AMBIENTE:-homologacao}
+      FISCAL_EMITIR_AUTOMATICO: ${FISCAL_EMITIR_AUTOMATICO:-0}
     volumes:
       - fotos-de-produto:/srv/media
       # Só de leitura, e da PASTA do repositório e não de um volume: quem escreve aqui é o

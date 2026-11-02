@@ -25,6 +25,7 @@ _REGRAS: list[tuple[str, re.Pattern[str], str, str, str | None]] = [
     ("POST", re.compile(r"^/vendas$"), "VENDA_CRIADA", "Registrou uma venda", "venda"),
     ("POST", re.compile(r"^/vendas/(\d+)/cancelamento$"), "VENDA_CANCELADA", "Cancelou a venda #{id}", "venda"),
     ("POST", re.compile(r"^/vendas/(\d+)/devolucoes$"), "DEVOLUCAO", "Registrou uma devolução na venda #{id}", "venda"),
+    ("POST", re.compile(r"^/vendas/(\d+)/nfce$"), "NFCE_EMITIDA", "Pediu a NFC-e da venda #{id}", "venda"),
     # estoque
     ("POST", re.compile(r"^/estoque/entradas$"), "ENTRADA", "Deu entrada de mercadoria", "estoque"),
     ("POST", re.compile(r"^/estoque/ajustes$"), "AJUSTE", "Ajustou o estoque à mão", "estoque"),
@@ -72,7 +73,7 @@ _REGRAS: list[tuple[str, re.Pattern[str], str, str, str | None]] = [
     ("PATCH", re.compile(r"^/usuarios/(\d+)$"), "USUARIO_EDITADO", "Editou o usuário #{id} (papel, acesso, comissão ou meta)", "usuario"),
     ("DELETE", re.compile(r"^/usuarios/(\d+)$"), "USUARIO_EXCLUIDO", "Excluiu o usuário #{id}", "usuario"),
     # identidade da loja
-    ("PATCH", re.compile(r"^/configuracao$"), "LOJA_CONFIGURADA", "Mudou o nome ou o ramo da loja", "loja"),
+    ("PATCH", re.compile(r"^/configuracao$"), "LOJA_CONFIGURADA", "Mudou os dados da loja (nome, ramo, contato ou fiscais)", "loja"),
     ("PUT", re.compile(r"^/backup$"), "BACKUP_CONFIGURADO", "Mexeu na configuração do backup", "backup"),
     # taxa da maquininha — muda o resultado de toda venda no cartão dali em diante
     ("POST", re.compile(r"^/taxas-cartao$"), "TAXA_CRIADA", "Cadastrou uma taxa da maquininha", "taxa"),

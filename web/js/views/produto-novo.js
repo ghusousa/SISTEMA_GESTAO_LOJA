@@ -13,6 +13,7 @@ import { TIPOS_ACEITOS, enviarFoto } from '../foto.js';
 import { paraDecimalString } from '../dinheiro.js';
 import { ir } from '../router.js';
 import { conferencia } from '../store.js';
+import { camposFiscais, lerCamposFiscais } from '../campos-fiscais.js';
 import { ajuda, aviso, avisarErro, cru, html, ligarCampoDinheiro, modal } from '../ui.js';
 
 // Os atalhos da grade vêm do ramo da loja (`vocab().eixo1_rapidos`): 'PP, P, M, G' só faz
@@ -67,6 +68,7 @@ export async function render(raiz, _params, consulta) {
             <span>Descrição <span class="campo__dica">opcional</span></span>
             <input data-descricao maxlength="2000" placeholder="Detalhes, marca, observações" />
           </label>
+          ${camposFiscais()}
 
           <div class="campo">
             <span>Foto <span class="campo__dica">opcional</span></span>
@@ -398,6 +400,7 @@ export async function render(raiz, _params, consulta) {
         nome,
         categoria_id: categoriaId,
         descricao: raiz.querySelector('[data-descricao]').value.trim() || null,
+        ...lerCamposFiscais(raiz),
         variantes,
       });
       if (fotoEscolhida) {

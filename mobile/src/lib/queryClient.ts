@@ -27,6 +27,8 @@ export const chaves = {
   variantePorCodigo: (codigo: string) => ['variante-codigo', codigo] as const,
   vendas: ['vendas'] as const,
   venda: (id: number) => ['vendas', id] as const,
+  /** Debaixo da venda: invalidar a venda (ou todas) leva a nota junto. */
+  nfce: (vendaId: number) => ['vendas', vendaId, 'nfce'] as const,
   movimentacoes: ['movimentacoes'] as const,
   categorias: ['categorias'] as const,
   despesas: ['despesas'] as const,

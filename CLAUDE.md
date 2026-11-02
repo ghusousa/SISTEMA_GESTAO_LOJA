@@ -131,6 +131,15 @@ npm run publicar     # ficha inteira na App Store via API (mobile/publicar/, -- 
   Trocar token ou pasta de backup JÁ conectado exige `senha_atual` (422, nunca 401 — 401
   derrubaria a sessão). `atrasado` (ligado e sem cópia há mais de 2× `intervalo_min`) é
   decidido no servidor e pintado na tela e no selo do dono (web: lateral; app: aba Mais).
+- **NFC-e (ADR-41)**: quem emite é um emissor terceirizado (`modules/fiscal/emissores.py`,
+  adaptador Focus NFe), ligado **só** pelo `.env` (`FISCAL_EMISSOR`, `FOCUSNFE_TOKEN`,
+  `FOCUSNFE_AMBIENTE`); desligado, as rotas dão 409 com `detail.faltando`. O token nunca vai ao
+  banco nem sai por rota (`SecretStr`). Rede caída no adaptador vira PENDENTE, nunca exceção; a
+  `referencia` é commitada ANTES do envio e "tentar de novo" consulta antes de reenviar. Emissão
+  automática é fora da transação da venda (`after_commit`). Cancelar venda chama
+  `FiscalService.cancelar_nota_da_venda` depois das recusas da venda e antes dos estornos: emissor
+  recusou → a venda NÃO cancela. Teste de emissor só com `httpx.MockTransport` — nunca internet.
+  `web/js/nfce.js` + `web/js/campos-fiscais.js` e `mobile/src/lib/fiscal.ts` são espelhos.
 - Versão: `GET /versao` diz o commit instalado E se é o mais novo. Quem sabe disso é o
   `atualizar.sh` (tem a credencial do GitHub), que grava `docker/estado/versao.json`; a API
   só lê o arquivo montado. **A API nunca fala com o GitHub** — token do código-fonte não

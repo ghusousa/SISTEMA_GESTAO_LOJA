@@ -146,6 +146,9 @@ ASSUNTO_POR_TABELA: dict[str, Assunto] = {
     "sales": Assunto.VENDAS,
     "sale_items": Assunto.VENDAS,
     "sale_payments": Assunto.VENDAS,
+    # A nota chega segundos depois da venda (ou na emissão automática, sem ninguém clicar):
+    # o detalhe da venda aberto precisa saber que mudou.
+    "notas_fiscais": Assunto.VENDAS,
     "expenses": Assunto.DESPESAS,
     "expense_categories": Assunto.DESPESAS,
     "cash_closings": Assunto.CAIXA,

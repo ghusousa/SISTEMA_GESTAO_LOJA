@@ -3,10 +3,14 @@
  *
  * Cancelar não apaga nada: a venda fica com status CANCELADA e as peças voltam ao estoque
  * por uma movimentação de ESTORNO. O motivo é obrigatório e aparece aqui para sempre.
+ *
+ * Com NFC-e autorizada, o motivo vai para a SEFAZ (mínimo de 15 letras) e a nota é
+ * cancelada ANTES da venda: se o emissor recusar, a venda não é cancelada (ADR-41).
  */
 
 import { api } from '../api.js';
 import { formatar, paraCentavos } from '../dinheiro.js';
+import { cartaoNfce, situacaoDaNfce } from '../nfce.js';
 import { recarregarRota } from '../router.js';
 import { PODE, pode } from '../permissoes.js';
 import {
@@ -31,8 +35,10 @@ export async function render(raiz, { id }) {
   const veDinheiro = pode(PODE.VER_DINHEIRO);
 
   let venda;
+  let nfce;
   try {
-    venda = await api.get(`/vendas/${id}`);
+    // A nota vem junto e nunca derruba a tela: sem ela, o detalhe da venda segue igual.
+    [venda, nfce] = await Promise.all([api.get(`/vendas/${id}`), situacaoDaNfce(id)]);
   } catch (erro) {
     raiz.innerHTML = `<div class="pagina">${erroBloco(erro.textoAmigavel)}</div>`;
     return;
@@ -174,14 +180,22 @@ export async function render(raiz, { id }) {
           ${venda.observacao ? cru(html`<p class="texto-suave">Observação: ${venda.observacao}</p>`) : ''}
         </div>
       </div>
+
+      <div data-nfce></div>
     </div>
   `;
 
+  cartaoNfce(raiz.querySelector('[data-nfce]'), venda, nfce);
+
   raiz.querySelector('[data-cancelar]')?.addEventListener('click', async (evento) => {
+    const comNota = nfce?.nota?.status === 'AUTORIZADA';
     const motivo = await perguntarTexto({
       titulo: `Cancelar a venda #${venda.id}`,
-      rotulo: 'Por que esta venda está sendo cancelada?',
+      rotulo: comNota
+        ? 'Por que esta venda está sendo cancelada? A NFC-e será cancelada junto, e o motivo vai para a SEFAZ (mínimo 15 letras).'
+        : 'Por que esta venda está sendo cancelada?',
       placeholder: 'Ex.: cliente desistiu na hora do pagamento',
+      minimo: comNota ? 15 : 3,
       confirmarTexto: 'Cancelar venda',
     });
     if (!motivo) return;
@@ -191,7 +205,7 @@ export async function render(raiz, { id }) {
     botao.innerHTML = cru('<span class="giro" aria-hidden="true"></span> Cancelando…');
     try {
       await api.post(`/vendas/${venda.id}/cancelamento`, { motivo });
-      aviso('Venda cancelada e peças devolvidas ao estoque.');
+      aviso(comNota ? 'NFC-e e venda canceladas; peças de volta ao estoque.' : 'Venda cancelada e peças devolvidas ao estoque.');
       recarregarRota();
     } catch (erro) {
       avisarErro(erro);

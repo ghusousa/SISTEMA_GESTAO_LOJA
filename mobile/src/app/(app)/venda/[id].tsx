@@ -12,10 +12,12 @@ import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { mensagemDoErro } from '@/api/client';
 import { vendas } from '@/api/endpoints';
 import type { FormaPagamento } from '@/api/tipos';
+import { CartaoNfce } from '@/components/CartaoNfce';
 import { Botao, Carregando, Cartao, ErroEstado, Etiqueta, Linha, Separador } from '@/components/ui';
 import { rotuloPagamento } from '@/lib/cartao';
+import { motivoMinimo } from '@/lib/fiscal';
 import { formatar, paraCentavos } from '@/lib/money';
-import { chaves, invalidarAposVenda } from '@/lib/queryClient';
+import { chaves, invalidarAposVenda, queryClient } from '@/lib/queryClient';
 import { PODE, pode } from '@/lib/permissoes';
 import { cores, espaco, fonte } from '@/lib/tema';
 import { useAuthStore } from '@/stores/authStore';
@@ -82,18 +84,23 @@ export default function DetalheVenda() {
   const jaDevolvido = devolucoes.data ?? [];
 
   function pedirMotivo() {
+    // Com NFC-e autorizada o motivo vai para a SEFAZ e precisa de 15 letras (ADR-41); a
+    // nota é cancelada ANTES da venda, e se o emissor recusar a venda fica como está.
+    const minimo = motivoMinimo(queryClient.getQueryData(chaves.nfce(vendaId)));
     Alert.prompt?.(
       'Cancelar venda',
-      'Por que esta venda está sendo cancelada?',
+      minimo > 3
+        ? 'Por que esta venda está sendo cancelada? A NFC-e é cancelada junto (mínimo 15 letras).'
+        : 'Por que esta venda está sendo cancelada?',
       [
         { text: 'Voltar', style: 'cancel' },
         {
           text: 'Cancelar venda',
           style: 'destructive',
-          // A API exige ao menos 3 caracteres: "ok" viraria 422 e a venda não cancelaria.
+          // A API exige ao menos 3 caracteres (15 com NFC-e): "ok" viraria 422.
           onPress: (motivo?: string) => {
             const texto = (motivo ?? '').trim();
-            cancelar.mutate(texto.length >= 3 ? texto : 'Cancelada no aplicativo');
+            cancelar.mutate(texto.length >= minimo ? texto : 'Cancelada no aplicativo');
           },
         },
       ],
@@ -202,6 +209,8 @@ export default function DetalheVenda() {
           )}
         </Cartao>
       )}
+
+      <CartaoNfce vendaId={venda.id} cancelada={cancelada} />
 
       {jaDevolvido.length > 0 && (
         <Cartao>

@@ -50,7 +50,16 @@ export function useDadosDaLoja(): ConfiguracaoLoja & { carregado: boolean } {
     retry: false,
   });
   if (consulta.data) return { ...consulta.data, carregado: true };
-  return { ...fachada, documento: null, telefone: null, endereco: null, carregado: false };
+  return {
+    ...fachada,
+    documento: null,
+    telefone: null,
+    endereco: null,
+    regime_tributario: null,
+    inscricao_estadual: null,
+    serie_nfce: 1,
+    carregado: false,
+  };
 }
 
 /** Depois de salvar na tela da loja: a resposta do PATCH já é a configuração inteira. */
