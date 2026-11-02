@@ -132,6 +132,25 @@ class ContaPagarService:
             return None
         return _assinatura(contas[0].invoice_number, [(c.due_date, c.amount) for c in contas])
 
+    async def nota_gravada_da_entrada(self, entrada_id: int) -> dict | None:
+        """A nota que a Entrada já lançou, na forma em que ela chega (ou None se foi sem).
+
+        Vai no 409 da Entrada: a tela tira do formulário a nota que a entrada gravada já
+        levou, e o reenvio do que falta não lança as mesmas parcelas outra vez. Conta as
+        parcelas excluídas também, como a assinatura: a nota foi lançada, e reenviá-la
+        recriaria a dívida que o dono apagou.
+        """
+        contas = await self.repo.da_entrada(entrada_id)
+        if not contas:
+            return None
+        return {
+            "numero": contas[0].invoice_number,
+            "valor_total": str(sum((c.amount for c in contas), Decimal("0"))),
+            "parcelas": [
+                {"vencimento": c.due_date.isoformat(), "valor": str(c.amount)} for c in contas
+            ],
+        }
+
     @staticmethod
     def assinatura_do_pedido(nota: NotaFornecedorIn | None) -> tuple | None:
         if nota is None:

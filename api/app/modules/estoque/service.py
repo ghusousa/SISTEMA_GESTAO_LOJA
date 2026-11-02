@@ -157,16 +157,22 @@ class EstoqueService:
             # `itens` vai junto para a tela tirar da lista o que JÁ entrou antes de trocar a
             # chave: só trocar a chave e reenviar a lista inteira somaria de novo as peças
             # da entrada gravada (10 P + 7 M viravam +20 P em vez de +10).
+            detalhe: dict = {
+                "entrada_id": entrada.id,
+                "itens": [{"variante_id": m.variant_id, "quantidade": m.quantity} for m in movs],
+            }
+            if grava_custo:
+                # E a `nota`, pelo mesmo motivo: a tela que só tirasse as peças reenviaria o
+                # resto com a nota que a entrada gravada JÁ lançou, e a dívida do fornecedor
+                # dobraria em Contas a pagar. `None` = a gravada foi sem nota, e a do
+                # formulário fica. Quem não vê dinheiro não recebe a chave: nem manda nota
+                # (`SemPermissao` acima), e o valor dela é custo da mercadoria.
+                detalhe["nota"] = await contas.nota_gravada_da_entrada(entrada.id)
             raise Duplicado(
                 f"Esta entrada já foi gravada (entrada #{entrada.id}, {pecas} "
                 f"{'peça' if pecas == 1 else 'peças'}), com outras peças, outro "
                 "fornecedor ou outra nota.",
-                {
-                    "entrada_id": entrada.id,
-                    "itens": [
-                        {"variante_id": m.variant_id, "quantidade": m.quantity} for m in movs
-                    ],
-                },
+                detalhe,
             )
         self.replay = True
         return await self._montar_entrada(entrada)

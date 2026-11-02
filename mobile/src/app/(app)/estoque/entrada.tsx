@@ -23,7 +23,7 @@ import { NOTA_VAZIA, NotaFornecedor, notaParaApi, type EstadoNota } from '@/comp
 import { CodigoManual } from '@/components/CodigoManual';
 import { Scanner } from '@/components/Scanner';
 import { Botao, Campo } from '@/components/ui';
-import { type ItemGravado, tirarOQueJaEntrou } from '@/lib/entrada';
+import { type ItemGravado, type NotaGravada, notaDepoisDoDuplicado, tirarOQueJaEntrou } from '@/lib/entrada';
 import { gerarUuid } from '@/lib/uuid';
 import { PODE, pode } from '@/lib/permissoes';
 import { chaves, invalidarAposMovimentoEstoque, queryClient } from '@/lib/queryClient';
@@ -127,12 +127,16 @@ export default function EntradaEstoque() {
         // o servidor recusa em vez de devolver a antiga como sucesso (ADR-2). O que ela
         // gravou sai da lista ANTES de a chave ser trocada — só trocar a chave e reenviar
         // tudo somaria de novo as peças que já entraram. Fica o que falta registrar.
-        const gravados = (detalheDoErro(erro)?.itens ?? []) as ItemGravado[];
-        setItens((atuais) => tirarOQueJaEntrou(atuais, gravados));
+        // A nota idem: se a gravada já a levou, reenviá-la dobraria Contas a pagar.
+        const detalhe = detalheDoErro(erro) as { itens?: ItemGravado[]; nota?: NotaGravada | null };
+        const { tirarNota, frase } = notaDepoisDoDuplicado(detalhe, veDinheiro && nota.ligada);
+        setItens((atuais) => tirarOQueJaEntrou(atuais, detalhe.itens ?? []));
+        if (tirarNota) setNota(NOTA_VAZIA);
         setClientUuid(gerarUuid());
         Alert.alert(
           'Esta entrada já foi gravada',
-          `${mensagemDoErro(erro)} Tirei da lista o que ela já gravou; confira e registre o que falta.`,
+          `${mensagemDoErro(erro)} Tirei da lista o que ela já gravou; confira e registre o que falta.` +
+            (frase ? ` ${frase}` : ''),
           [
             { text: 'Conferir a lista', style: 'cancel' },
             { text: 'Ver extrato', onPress: () => router.push('/estoque/movimentacoes') },

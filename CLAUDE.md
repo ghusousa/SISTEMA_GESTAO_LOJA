@@ -154,8 +154,10 @@ npm run publicar     # ficha inteira na App Store via API (mobile/publicar/, -- 
 - Mutações idempotentes por `client_uuid`: `POST /vendas`, `POST /estoque/entradas`,
   `POST /vendas/{id}/devolucoes` e `POST /clientes/{id}/pagamentos` (replay → 200 com o existente).
   A mesma chave com OUTRO pedido é 409 `DUPLICADO`, nunca o registro antigo como sucesso; a
-  Entrada devolve no `detail.itens` o que já gravou, e a tela tira isso da lista antes de
-  trocar a chave (senão o reenvio soma de novo). Depois do `rollback` de uma corrida, recarregue
+  Entrada devolve no `detail.itens` o que já gravou e no `detail.nota` a nota que já lançou
+  (`null` se foi sem; só para quem vê dinheiro), e a tela tira da lista os itens e do formulário
+  a nota antes de trocar a chave (senão o reenvio soma as peças de novo e a dívida do fornecedor
+  dobra em Contas a pagar). Depois do `rollback` de uma corrida, recarregue
   o `usuario` (`session.refresh`) antes de ler `role`/`id`: atributo expirado é MissingGreenlet.
 - **Condicional e contas a pagar (ADR-39, ADR-40)**: a condicional tira a peça do saldo
   (`CONDICIONAL_SAIDA`); o fechamento devolve TUDO (`CONDICIONAL_RETORNO`) e vende o que ficou
