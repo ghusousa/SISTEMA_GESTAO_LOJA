@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import func, or_, select, update

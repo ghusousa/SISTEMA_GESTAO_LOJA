@@ -318,6 +318,15 @@ class CondicionalService:
         return gravado == pedido and venda.desconto == dados.desconto
 
     # ------------------------------------------------------------ leitura
+    async def abertas_da_cliente(self, cliente_id: int) -> int:
+        """Quantas sacolas esta cliente tem em casa. Público: a exclusão da cliente pergunta.
+
+        A anonimização deixaria a condicional sem nome nem telefone para cobrar a volta — e o
+        fechamento vende o que ficou para uma cliente que não existe mais, então as peças
+        ficariam fora do saldo para sempre.
+        """
+        return await self.repo.abertas_da_cliente(cliente_id)
+
     async def obter(self, condicional_id: int) -> CondicionalOut:
         condicional = await self.repo.por_id(condicional_id)
         if condicional is None:

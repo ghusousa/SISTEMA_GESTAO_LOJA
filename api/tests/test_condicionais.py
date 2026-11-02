@@ -503,6 +503,28 @@ async def test_peca_excluida_enquanto_estava_na_condicional_volta_para_o_catalog
     assert await _saldo(client, auth_vendedor, loja["blusa"]) == 3
 
 
+async def test_cliente_com_sacola_em_casa_nao_se_exclui(
+    client: AsyncClient, auth_vendedor: dict[str, str], auth_admin: dict[str, str], loja: dict
+) -> None:
+    """Quitada, a exclusão anonimiza (LGPD). Com peça em condicional, não: a sacola ficaria
+    sem nome nem telefone para cobrar, e o fechamento venderia para uma cliente que não
+    existe mais — as peças ficariam fora do saldo para sempre."""
+    condicional = await _abrir(client, auth_vendedor, loja)
+
+    recusa = await client.delete(f"/clientes/{loja['cliente']}", headers=auth_admin)
+    assert recusa.status_code == 409, recusa.text
+    assert recusa.json()["detail"]["condicionais_abertas"] == 1
+
+    fechar = await client.post(
+        f"/condicionais/{condicional['id']}/fechamento",
+        headers=auth_vendedor,
+        json=_fechamento({loja["vestido"]: 2, loja["blusa"]: 1}),
+    )
+    assert fechar.status_code == 201, fechar.text
+    excluir = await client.delete(f"/clientes/{loja['cliente']}", headers=auth_admin)
+    assert excluir.status_code == 204, excluir.text
+
+
 # ------------------------------------------------------------------ listas
 async def test_listas_de_abertas_vencidas_e_por_cliente(
     client: AsyncClient, auth_vendedor: dict[str, str], auth_admin: dict[str, str], loja: dict

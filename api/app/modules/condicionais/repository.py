@@ -31,6 +31,13 @@ class CondicionalRepository:
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
+    async def abertas_da_cliente(self, cliente_id: int) -> int:
+        stmt = select(func.count()).where(
+            Consignment.customer_id == cliente_id,
+            Consignment.status == StatusCondicional.ABERTA,
+        )
+        return int(await self.session.scalar(stmt) or 0)
+
     async def por_client_uuid(self, client_uuid: uuid.UUID) -> Consignment | None:
         stmt = select(Consignment).where(Consignment.client_uuid == client_uuid)
         return (await self.session.execute(stmt)).scalar_one_or_none()

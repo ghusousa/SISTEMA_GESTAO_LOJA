@@ -166,6 +166,16 @@ class ClienteService:
                 "Este cliente ainda deve. Receba ou perdoe a dívida antes de excluir.",
                 {"deve": str(deve)},
             )
+        # Depois da trava: uma condicional que abre agora espera o FOR SHARE dela e, quando
+        # passa, já vê a cliente excluída; uma que abriu antes já está no COUNT (ADR-39).
+        from app.modules.condicionais.service import CondicionalService
+
+        abertas = await CondicionalService(self.session).abertas_da_cliente(cliente_id)
+        if abertas:
+            raise OperacaoInvalida(
+                "Esta cliente está com peças em condicional. Feche a condicional antes de excluir.",
+                {"condicionais_abertas": abertas},
+            )
         from datetime import UTC, datetime
 
         cliente.deleted_at = datetime.now(UTC)

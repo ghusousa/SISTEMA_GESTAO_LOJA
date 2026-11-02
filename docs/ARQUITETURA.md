@@ -1330,7 +1330,7 @@ conferência feita, e a devolução entra no caixa de hoje (ADR-19).
 | POST | `/clientes/balcao` | **ATENDER_CLIENTE**. `{client_uuid, nome, telefone?, nascimento?, preferencias?}` → 201 `ClienteBalcaoOut`. Replay → 200; mesma chave com outro nome ou telefone → 409. Telefone de cliente ativa → 422 |
 | GET | `/clientes/aniversariantes` | **ATENDER_CLIENTE**. `?mes=1..12` (sem ele, o mês de hoje na loja), paginado, na ordem do dia; `ClienteBalcaoOut` |
 | GET/PATCH | `/clientes/{id}` | o PATCH aceita `nascimento` e `preferencias` (`""` apaga a preferência) |
-| DELETE | `/clientes/{id}` | recusa quem ainda deve (409). Quitada, **anonimiza** (LGPD): `phone`, `document`, `note`, `nascimento` e `preferencias` viram nulos e `name` vira "Cliente removido #id"; a linha fica, e vendas, pagamentos e devoluções continuam apontando para ela. Sem volta |
+| DELETE | `/clientes/{id}` | recusa quem ainda deve e quem está com condicional aberta (409, `detail.condicionais_abertas`). Quitada, **anonimiza** (LGPD): `phone`, `document`, `note`, `nascimento` e `preferencias` viram nulos e `name` vira "Cliente removido #id"; a linha fica, e vendas, pagamentos e devoluções continuam apontando para ela. Sem volta |
 | GET | `/clientes/{id}/extrato` | `?page=&size=` pagina as DUAS listas juntas: `vendas` (compras no fiado) e `pagamentos` vêm cada uma em `{items, total, page, size}`, mais recentes primeiro; os três totais que fecham a conta (e o `deve`) são da conta inteira, nunca da página |
 | POST | `/clientes/{id}/pagamentos` | `{forma, valor, client_uuid, observacao?}`; só formas de gaveta, e não aceita mais do que a dívida. Replay → 200; mesma chave com outra cliente, forma ou valor → 409 (ADR-2) |
 

@@ -25,7 +25,6 @@ from app.modules.catalogo.schemas import (
     VarianteUpdate,
 )
 from app.modules.estoque import movimentos
-from app.modules.estoque.models import TipoMovimento
 from app.core.permissoes import Pode, pode
 from app.modules.usuarios.models import User
 

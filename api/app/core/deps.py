@@ -1,6 +1,7 @@
 """Dependências compartilhadas: usuário autenticado e exigência de permissão."""
 
-from typing import Annotated, Callable
+from typing import Annotated
+from collections.abc import Callable
 
 from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer

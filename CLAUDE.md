@@ -169,7 +169,7 @@ npm run publicar     # ficha inteira na App Store via API (mobile/publicar/, -- 
   condicional, igual ao saldo de estoque). `FORMAS_DE_GAVETA` (dinheiro, PIX, débito, crédito) é o
   que o caixa confere — VALE e FIADO **nunca** entram numa conferência de gaveta. O saldo do
   cliente é sempre calculado, nunca coluna, e o abatimento para onde a dívida acaba.
-  Excluir cliente (só quitada) **anonimiza** (LGPD): telefone, documento e observação viram
+  Excluir cliente (só quitada e sem condicional aberta) **anonimiza** (LGPD): telefone, documento e observação viram
   nulos e o nome vira "Cliente removido #id"; a linha fica para as vendas do passado.
 
 ## Convenções do web (`web/`)
