@@ -40,10 +40,13 @@ class Settings(BaseSettings):
     db_statement_timeout_ms: int = 30_000
     #: A conexão DIRETA do Neon que a Vercel injeta (ADR-42). Quando existe, ganha da
     #: DATABASE_URL (que lá passa pelo PgBouncer em modo transação): conexão direta mantém o
-    #: cache de prepared statements e aceita o `statement_timeout` na partida.
+    #: cache de prepared statements e aceita o `statement_timeout` na partida. A escuta do
+    #: tempo real também usa (`core/escuta.py`): LISTEN atrás de PgBouncer em modo transação
+    #: não recebe nada, e calado.
     database_url_unpooled: str = ""
     #: `ssl=` do asyncpg. Vazio = o que a URL pedir no `sslmode` (o Neon pede `require`);
-    #: a da loja não pede nada, e fica como sempre foi.
+    #: a da loja não pede nada, e fica como sempre foi. A escuta do tempo real segue este
+    #: modo (`dsn_da_escuta()`): a conexão de LISTEN não pode ser menos protegida que a do app.
     db_ssl: str = ""
     #: A URL passa por um PgBouncer em modo transação. Ligado sozinho quando o host tem
     #: `-pooler` (Neon); ver `url_do_banco.py`.

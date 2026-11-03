@@ -44,6 +44,7 @@ docker compose exec api python -m app.cli create-admin ...  # novo admin
 ./desinstalar.sh --manter-dados                           # desligar preservando o banco
 
 # Web: nada a instalar. Com a API no ar, abra http://localhost:8000/app/ (ou / no Docker)
+node --test testes/web/*.test.mjs                        # canal de tempo real do web (fora de web/, que é público)
 
 # Mobile (dentro de mobile/)
 npm start            # Expo
@@ -112,6 +113,16 @@ npm run publicar     # ficha inteira na App Store via API (mobile/publicar/, -- 
   rajada viram UMA rodada (1 s de silêncio, teto de 2 s: `mobile/src/lib/avisos.ts`, espelho
   em `web/js/tempo-real.js`); no app só refaz consulta com tela montada
   (`refetchType: 'active'`), e com app no fundo ou aba escondida a rodada espera a volta.
+  **Entre instâncias** (Vercel, ou mais de um worker) o assunto também sai por `pg_notify`
+  DENTRO da transação (`after_flush`; rollback não avisa) e cada instância com tela ligada
+  faz LISTEN numa conexão dedicada (`core/escuta.py`: abre na primeira tela, fecha na
+  última, religa sozinha e manda refazer tudo na volta). O que volta com a origem da
+  própria instância é descartado — ela já entregou em memória. O endereço do LISTEN sai SÓ
+  de `dsn_da_escuta()` (`DATABASE_URL_UNPOOLED`, nunca o pooler: atrás de PgBouncer o LISTEN
+  não recebe nada, calado; e com o SSL do app, `DB_SSL`). "conectado" só sai com o LISTEN
+  de pé, ou depois de 5 s — e aí a escuta manda refazer tudo quando subir —, e o cliente
+  refaz a tela ao recebê-lo; religar com espera crescente é `mobile/src/lib/canal.ts`
+  (espelho `web/js/canal.js`) — na Vercel o socket fecha no `maxDuration`, toda vez.
 - **Identidade da loja (ADR-26)**: nome e ramo moram numa linha de `store_config` (`CHECK id = 1`),
   não no `.env` — o dono corrige na tela, entra no backup, e as duas pontas leem da mesma rota.
   `GET /configuracao` é **aberto, sem login** (a tela de entrada precisa do nome antes da sessão)
