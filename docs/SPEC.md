@@ -138,7 +138,8 @@ A loja consegue operar 100% sem celular.
 13. **Emitir a NFC-e** — com o emissor ligado (ADR-41), um toque no detalhe da venda (ou
     sozinha, logo depois da venda, se o dono ligar). O que faltar — NCM da peça, CNPJ, IE,
     regime — aparece em lista; sem rede, fica pendente e tenta-se de novo. Cancelar a venda
-    cancela a nota antes; se a SEFAZ recusar (passou de 30 minutos), a venda não é cancelada.
+    cancela a nota antes; se a SEFAZ recusar (passou de 30 minutos), a venda não é cancelada —
+    nem quando não dá para confirmar com o emissor se a nota pendente foi autorizada.
 
 ## Regras de negócio que não podem ser violadas
 

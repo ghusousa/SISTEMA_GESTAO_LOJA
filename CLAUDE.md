@@ -135,7 +135,13 @@ npm run publicar     # ficha inteira na App Store via API (mobile/publicar/, -- 
   adaptador Focus NFe), ligado **só** pelo `.env` (`FISCAL_EMISSOR`, `FOCUSNFE_TOKEN`,
   `FOCUSNFE_AMBIENTE`); desligado, as rotas dão 409 com `detail.faltando`. O token nunca vai ao
   banco nem sai por rota (`SecretStr`). Rede caída no adaptador vira PENDENTE, nunca exceção; a
-  `referencia` é commitada ANTES do envio e "tentar de novo" consulta antes de reenviar. Emissão
+  `referencia` é commitada ANTES do envio (também a nova, na ida para produção), e a tentativa
+  também (PENDENTE, `tentativas + 1`): processo que cai no meio deixa "pode ter saído", nunca
+  REJEITADA nem `tentativas = 0`. O commit solta o `FOR UPDATE`, então retrava e relê a venda
+  antes do POST; dois "Emitir" esperam na fila por venda (`uma_emissao_por_vez`). "Tentar de
+  novo" consulta antes de reenviar. Só resposta DEFINITIVA vira REJEITADA ou "não encontrada"
+  (SEFAZ recusou, recusa documentada do pedido, 404 `nfce_nao_encontrada`): 429, 408, 5xx e 4xx
+  desconhecido ficam PENDENTE, e com nota PENDENTE sem resposta a venda NÃO cancela. Emissão
   automática é fora da transação da venda (`after_commit`). Cancelar venda chama
   `FiscalService.cancelar_nota_da_venda` depois das recusas da venda e antes dos estornos: emissor
   recusou → a venda NÃO cancela. Teste de emissor só com `httpx.MockTransport` — nunca internet.

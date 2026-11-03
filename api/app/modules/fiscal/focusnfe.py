@@ -4,8 +4,14 @@ O que este arquivo sabe da Focus, e só ele:
 
 - `POST /v2/nfce?ref=REF` emite. É síncrono: a resposta já diz `autorizado` ou
   `erro_autorizacao`. Mesma referência já autorizada → 422 `already_processed`; ainda
-  processando → 422 `pending_operation`.
+  processando → 422 `pending_operation`. As recusas documentadas do PEDIDO estão em
+  `_RECUSAS_DA_NOTA`.
 - `GET /v2/nfce/REF` consulta (404 `nfce_nao_encontrada` se a referência não existe).
+- Só resposta DEFINITIVA vira REJEITADA ou "não encontrada". 429 (limite de 100 pedidos por
+  minuto), 408, 409, 5xx, página de erro de proxy, rede caída e qualquer 4xx fora da tabela
+  documentada não dizem nada da nota: ficam PENDENTE, e a próxima tentativa pergunta de novo.
+  REJEITADA libera o cancelamento da venda sem falar com o emissor — dada por engano, deixa
+  uma NFC-e autorizada numa venda cancelada.
 - `DELETE /v2/nfce/REF` com `{"justificativa"}` (15 a 255 caracteres) cancela. A SEFAZ só
   aceita até 30 minutos depois da autorização; depois disso a resposta é recusa.
 - Autenticação: HTTP Basic, token como usuário e senha vazia. O token vem do `.env` e só
@@ -43,6 +49,24 @@ _STATUS = {
     "denegado": StatusNota.REJEITADA,
     "processando_autorizacao": StatusNota.PENDENTE,
 }
+
+#: Os 4xx que a Focus documenta no `POST /v2/nfce` como recusa do pedido: o que foi mandado
+#: (ou o cadastro da empresa no painel) está errado, e a nota NÃO foi feita. Só estes viram
+#: REJEITADA; `permissao_negada` é credencial (fica PENDENTE, como o 401/403).
+_RECUSAS_DA_NOTA = frozenset(
+    {
+        "requisicao_invalida",
+        "forma_emissao_nao_informada",
+        "formato_invalido",
+        "erro_validacao_schema",
+        "erro_validacao",
+        "ambiente_nao_configurado",
+        "empresa_nao_configurada",
+    }
+)
+
+#: A única resposta da consulta que diz "essa referência não existe lá".
+_NAO_ENCONTRADA = "nfce_nao_encontrada"
 
 TIMEOUT_S = 30.0
 
@@ -219,11 +243,13 @@ class FocusNFe:
         except httpx.HTTPError as exc:
             return self._sem_rede(exc)
         corpo = self._corpo(resp)
-        if resp.status_code == 404:
-            return Resultado(status=None, encontrada=False, mensagem=corpo.get("mensagem"))
         if resp.status_code == 200:
             return self._resultado(corpo)
-        return self._recusa(resp.status_code, corpo)
+        if resp.status_code == 404 and corpo.get("codigo") == _NAO_ENCONTRADA:
+            return Resultado(status=None, encontrada=False, mensagem=corpo.get("mensagem"))
+        # A consulta não recusa nota: qualquer outra resposta (429, 5xx, 404 de proxy...) é
+        # "não deu para saber", e quem pergunta (o cancelamento da venda) não pode seguir.
+        return self._sem_resposta_definitiva(resp.status_code, corpo)
 
     async def cancelar(self, referencia: str, justificativa: str) -> Resultado:
         try:
@@ -255,14 +281,24 @@ class FocusNFe:
         return Resultado(status=StatusNota.AUTORIZADA, mensagem=recusa.mensagem)
 
     @staticmethod
-    def _recusa(status_http: int, corpo: dict[str, Any]) -> Resultado:
+    def _mensagem(status_http: int, corpo: dict[str, Any]) -> str:
         mensagem = corpo.get("mensagem") or f"O emissor respondeu HTTP {status_http}."
         codigo = corpo.get("codigo")
-        if codigo:
-            mensagem = f"{mensagem} ({codigo})"
-        if codigo == "pending_operation" or status_http >= 500:
-            return Resultado(status=StatusNota.PENDENTE, mensagem=mensagem)
-        if status_http in (401, 403):
+        return f"{mensagem} ({codigo})" if codigo else mensagem
+
+    @classmethod
+    def _recusa(cls, status_http: int, corpo: dict[str, Any]) -> Resultado:
+        """Resposta de erro do ENVIO. Só a recusa documentada do pedido vira REJEITADA."""
+        if 400 <= status_http < 500 and corpo.get("codigo") in _RECUSAS_DA_NOTA:
+            mensagem = cls._mensagem(status_http, corpo)
+            return Resultado(status=StatusNota.REJEITADA, mensagem=mensagem)
+        return cls._sem_resposta_definitiva(status_http, corpo)
+
+    @classmethod
+    def _sem_resposta_definitiva(cls, status_http: int, corpo: dict[str, Any]) -> Resultado:
+        """O emissor respondeu, mas a resposta não diz se a nota existe: PENDENTE."""
+        mensagem = cls._mensagem(status_http, corpo)
+        if status_http in (401, 403) or corpo.get("codigo") == "permissao_negada":
             # Token errado ou CNPJ não habilitado no painel: não é a nota que está errada,
             # e tentar de novo depois de acertar o .env/painel tem de ser possível.
             return Resultado(
@@ -271,7 +307,17 @@ class FocusNFe:
                     f"O emissor recusou o acesso: confira o token e o CNPJ no painel. {mensagem}"
                 ),
             )
-        return Resultado(status=StatusNota.REJEITADA, mensagem=mensagem)
+        if corpo.get("codigo") == "pending_operation":
+            return Resultado(status=StatusNota.PENDENTE, mensagem=mensagem)
+        if f"HTTP {status_http}" not in mensagem:
+            mensagem = f"HTTP {status_http}: {mensagem}"
+        return Resultado(
+            status=StatusNota.PENDENTE,
+            mensagem=(
+                "Não deu para confirmar a nota com o emissor fiscal; tente de novo em "
+                f"instantes. [{mensagem}]"
+            ),
+        )
 
 
 def _chave(valor: Any) -> str | None:
