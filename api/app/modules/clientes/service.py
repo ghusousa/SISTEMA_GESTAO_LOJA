@@ -46,6 +46,10 @@ from app.modules.vendas.models import (
 )
 
 ZERO = Decimal("0.00")
+#: O balcão acha a cliente pelo documento INTEIRO (igualdade), nunca por trecho — de qualquer
+#: tamanho, porque o cadastro aceita RG e CPF sem o zero da frente. Abaixo deste piso a
+#: igualdade vira chute de poucas tentativas, e o número é mais trecho de telefone que documento.
+MINIMO_DE_DIGITOS_DO_DOCUMENTO = 7
 
 
 def _fiado_das_vendas(cliente_id_col) -> Select:
@@ -215,8 +219,15 @@ class ClienteService:
     # portas, nem calculado: a conta do `deve` nem chega a rodar.
 
     @staticmethod
-    def _filtro_busca(stmt: Select, q: str | None) -> Select:
-        """Nome sem acento, telefone ou documento — a mesma busca do crediário."""
+    def _filtro_busca(stmt: Select, q: str | None, *, documento_por_trecho: bool) -> Select:
+        """Nome sem acento, telefone ou documento.
+
+        O documento casa por TRECHO só no crediário, que já o vê. O balcão não o devolve
+        (ADR-36), e por isso lá ele só casa INTEIRO, por igualdade: por trecho, "a Maria
+        aparece?" vira oráculo — um dígito por vez, a vendedora remontava o CPF que a
+        resposta esconde. O tamanho não entra na regra (RG também é documento); só o piso.
+        Telefone segue por trecho nas duas portas: ele já volta.
+        """
         if not q:
             return stmt
         from app.modules.catalogo.repository import _achatar, achatar_termo
@@ -226,11 +237,16 @@ class ClienteService:
         condicoes = [_achatar(Customer.name).like(termo)]
         if so_digitos:
             condicoes.append(Customer.phone.like(f"%{so_digitos}%"))
-            condicoes.append(Customer.document.like(f"%{so_digitos}%"))
+            if documento_por_trecho:
+                condicoes.append(Customer.document.like(f"%{so_digitos}%"))
+            elif len(so_digitos) >= MINIMO_DE_DIGITOS_DO_DOCUMENTO:
+                condicoes.append(Customer.document == so_digitos)
         return stmt.where(or_(*condicoes))
 
     async def buscar_no_balcao(self, p: Paginacao, q: str | None) -> Pagina[ClienteBalcaoOut]:
-        stmt = self._filtro_busca(select(Customer).where(Customer.deleted_at.is_(None)), q)
+        stmt = self._filtro_busca(
+            select(Customer).where(Customer.deleted_at.is_(None)), q, documento_por_trecho=False
+        )
         total = await self._contar(stmt)
         linhas = (
             await self.session.execute(
@@ -349,7 +365,9 @@ class ClienteService:
     async def listar(
         self, p: Paginacao, q: str | None, somente_devendo: bool
     ) -> Pagina[ClienteOut]:
-        stmt = self._filtro_busca(select(Customer).where(Customer.deleted_at.is_(None)), q)
+        stmt = self._filtro_busca(
+            select(Customer).where(Customer.deleted_at.is_(None)), q, documento_por_trecho=True
+        )
 
         deve = _deve_expr()
         if somente_devendo:

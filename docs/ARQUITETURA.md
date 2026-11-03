@@ -1071,12 +1071,18 @@ veio. A vendedora escolhe parcelas (1 a 12, só no crédito — o banco recusa "
 bandeira (texto livre, opcional), mas não vê taxa: ela sai só no schema de quem vê dinheiro.
 `taxas_cartao` no resumo é Σ `round(valor × taxa / 100, 2)` por pagamento — o mesmo
 arredondamento que a venda mostra, para os dois baterem centavo a centavo —, e a devolução
-devolve a taxa da parte que voltou pelo cartão **no período da devolução** (ADR-19), pela taxa
-média que aquela forma pagou naquela venda (a devolução diz por qual forma voltou, não por qual
-pagamento). A agenda de recebíveis (`/relatorios/recebiveis`) quebra o crédito em parcelas — a
-1ª em D+prazo, as outras de 30 em 30 dias, o centavo da divisão na 1ª, como faz a credenciadora —
-e debita o estorno no dia da devolução; é uma simplificação (há credenciadora que cancela as
-parcelas futuras em vez de debitar), mas a soma fecha e o passado não muda. Ficou de fora:
+devolve a taxa da parte que voltou pelo cartão **no período da devolução** (ADR-19), na
+proporção da taxa que aquela forma pagou naquela venda (a devolução diz por qual forma voltou,
+não por qual pagamento). A conta é **acumulada** por venda e forma: `round(taxa paga × devolvido
+até esta devolução / recebido pela forma) − round(taxa paga × devolvido antes dela / recebido)`,
+com teto na taxa paga. Arredondar cada devolução sozinha devolvia mais do que a venda pagou —
+R$ 10,00 a 2,5% pagam 0,25, e duas devoluções de R$ 5,00 devolviam 0,13 + 0,13, deixando
+`taxas_cartao` negativo; acumulada, a soma telescopa e devolver tudo devolve a taxa paga,
+cravada. O resumo e o estorno da agenda usam a mesma expressão (`relatorios/cartao.py`). A
+agenda de recebíveis (`/relatorios/recebiveis`) quebra o crédito em parcelas — a 1ª em D+prazo,
+as outras de 30 em 30 dias, o centavo da divisão na 1ª, como faz a credenciadora — e debita o
+estorno no dia da devolução; é uma simplificação (há credenciadora que cancela as parcelas
+futuras em vez de debitar), mas a soma fecha e o passado não muda. Ficou de fora:
 taxa por bandeira, antecipação de recebíveis e taxa no recebimento de fiado em cartão.
 
 **ADR-36 — Cliente em qualquer venda, por uma porta de balcão que não vê dinheiro.**
@@ -1087,9 +1093,14 @@ clientes ("chegou a coleção no seu tamanho", aniversariante do mês). A venda 
 `/clientes/balcao` e `/clientes/aniversariantes`, que respondem `ClienteBalcaoOut` — um schema
 **próprio**, que não herda de `ClienteOut`: herdar traria `deve`, `limite` e `acima_do_limite`
 para a tela da vendedora no primeiro campo novo que alguém pusesse lá. Também ficam de fora o
-documento (busca por CPF funciona, mas ele não volta) e a observação do crediário, que guarda
-combinados de cobrança. O fiado continua sendo `GERIR_CREDIARIO`: vender fiado é abrir uma dívida
-que alguém vai cobrar. O cadastro de balcão é idempotente por `client_uuid` (a rede caindo depois
+documento e a observação do crediário, que guarda combinados de cobrança. No balcão o documento
+só casa **inteiro**, por igualdade: por trecho, "a Maria aparece?" virava oráculo, e um dígito
+por vez a vendedora remontava o CPF que a resposta esconde. O tamanho não entra na regra —
+o cadastro aceita RG e CPF sem o zero da frente, e casar só 11 ou 14 dígitos deixava esse
+documento inteiro sem achar ninguém; a igualdade já fecha o oráculo. Só há um piso de 7
+dígitos, abaixo do qual a igualdade vira chute de poucas tentativas. A busca por trecho do
+documento fica no crediário (`GERIR_CREDIARIO`), que já o vê; o telefone segue por trecho nas duas portas, porque ele volta. O fiado continua sendo
+`GERIR_CREDIARIO`: vender fiado é abrir uma dívida que alguém vai cobrar. O cadastro de balcão é idempotente por `client_uuid` (a rede caindo depois
 de gravar não faz a cliente nascer duas vezes; a mesma chave com outra pessoa é 409), e
 `nascimento` e `preferencias` entram na anonimização da exclusão (LGPD). No PDV, tirar o fiado
 não tira mais a cliente da venda: ela continua sendo quem comprou. O histórico de compras é
@@ -1402,7 +1413,7 @@ conferência feita, e a devolução entra no caixa de hoje (ADR-19).
 |---|---|---|
 | GET | `/clientes` | `?q=&somente_devendo=`; `deve` e `acima_do_limite` vêm calculados |
 | POST | `/clientes` | `{nome, telefone?, documento?, limite?, nascimento?, preferencias?}` |
-| GET | `/clientes/balcao` | **ATENDER_CLIENTE**. `?q=` (nome sem acento, telefone ou documento), paginado. Responde `ClienteBalcaoOut` `{id, nome, telefone, nascimento, preferencias}` — sem `deve`, `limite`, `observacao` nem `documento` (ADR-36) |
+| GET | `/clientes/balcao` | **ATENDER_CLIENTE**. `?q=` (nome sem acento, trecho do telefone ou documento INTEIRO — por igualdade, a partir de 7 dígitos, nunca por trecho), paginado. Responde `ClienteBalcaoOut` `{id, nome, telefone, nascimento, preferencias}` — sem `deve`, `limite`, `observacao` nem `documento` (ADR-36) |
 | POST | `/clientes/balcao` | **ATENDER_CLIENTE**. `{client_uuid, nome, telefone?, nascimento?, preferencias?}` → 201 `ClienteBalcaoOut`. Replay → 200; mesma chave com outro nome ou telefone → 409. Telefone de cliente ativa → 422 |
 | GET | `/clientes/aniversariantes` | **ATENDER_CLIENTE**. `?mes=1..12` (sem ele, o mês de hoje na loja), paginado, na ordem do dia; `ClienteBalcaoOut` |
 | GET/PATCH | `/clientes/{id}` | o PATCH aceita `nascimento` e `preferencias` (`""` apaga a preferência) |
