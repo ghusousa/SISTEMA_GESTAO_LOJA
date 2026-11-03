@@ -75,6 +75,8 @@ class NotaFiscal(Base):
     url_xml: Mapped[str | None] = mapped_column(Text)
     #: Última palavra do emissor ou da SEFAZ, para a tela mostrar o porquê.
     mensagem: Mapped[str | None] = mapped_column(Text)
+    #: Contada e commitada ANTES de cada envio (com status PENDENTE): 0 quer dizer que esta
+    #: referência nunca saiu daqui; mais que isso, que pode ter saído — pergunta-se ao emissor.
     tentativas: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     autorizada_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     cancelada_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -3,7 +3,10 @@
 Três promessas que este arquivo cumpre:
 
 1. **Nota autorizada não se emite de novo.** "Emitir" numa venda com nota autorizada
-   devolve a mesma nota; dois cliques simultâneos esperam um pelo outro (trava na linha).
+   devolve a mesma nota; dois cliques simultâneos esperam um pelo outro (fila por venda).
+   E o banco nunca fica atrás do emissor: referência e tentativa são commitadas ANTES de
+   cada envio, então um processo que cai no meio deixa "pode ter saído", nunca "nunca
+   saiu" nem "rejeitada" sobre uma nota que o emissor autorizou.
 2. **Falha fiscal nunca impede vender.** A venda grava sem passar por aqui; a emissão vem
    depois — pelo botão, ou sozinha (`automatico.py`) — e o que der errado fica na nota,
    com a mensagem, para tentar de novo.
@@ -95,6 +98,17 @@ class FiscalService:
             raise OperacaoInvalida("Venda cancelada não emite NFC-e.")
 
         nota_para_emitir = await self._preparar(venda)
+        async with self.repo.uma_emissao_por_vez(venda_id):
+            return await self._emitir_na_fila(venda_id, emissor, vendas, usuario, nota_para_emitir)
+
+    async def _emitir_na_fila(
+        self,
+        venda_id: int,
+        emissor: Emissor,
+        vendas: VendaService,
+        usuario: User,
+        nota_para_emitir: NotaParaEmitir,
+    ) -> NfceOut:
         nota = await self._travar_para_emitir(venda_id, emissor, vendas, usuario)
 
         if nota.status == StatusNota.AUTORIZADA:
@@ -102,8 +116,9 @@ class FiscalService:
             await self.session.commit()
             return await self._out(venda_id, nota)
         if nota.status == StatusNota.CANCELADA:
-            await self.session.rollback()
-            raise OperacaoInvalida("A NFC-e desta venda foi cancelada.", {"nfce": _resumo(nota)})
+            erro = OperacaoInvalida("A NFC-e desta venda foi cancelada.", {"nfce": _resumo(nota)})
+            await self.session.rollback()  # expira a nota: a mensagem sai antes
+            raise erro
 
         if nota.status == StatusNota.PENDENTE and nota.tentativas > 0:
             # Já foi enviada e não teve resposta: pergunta antes de reenviar.
@@ -113,7 +128,21 @@ class FiscalService:
                 await self.session.commit()
                 return await self._out(venda_id, nota)
 
+        # O envio é anotado e commitado ANTES do POST: se o processo cair com o emissor já
+        # tendo autorizado, a linha diz "pode ter saído" (PENDENTE, tentativa contada), e
+        # quem vier depois — cancelar a venda, trocar de ambiente, tentar de novo — pergunta
+        # ao emissor. Gravada só com a resposta, a queda deixava REJEITADA (o cancelamento
+        # nem perguntava) ou PENDENTE com 0 tentativas (a troca de ambiente largava a nota).
+        nota.status = StatusNota.PENDENTE
         nota.tentativas += 1
+        nota.mensagem = (
+            "Enviada ao emissor, sem resposta registrada. Tentar de novo pergunta a ele "
+            "antes de reenviar."
+        )
+        await self.session.commit()
+        # O commit soltou a trava da linha: retrava e relê a venda (um cancelamento pode
+        # ter entrado nesse vão). Outro "Emitir" não entra: a fila é por venda.
+        nota = await self._travar_para_emitir(venda_id, emissor, vendas, usuario)
         self._aplicar(nota, await emissor.emitir(nota.referencia, nota_para_emitir))
         await self.session.commit()
         return await self._out(venda_id, nota)
@@ -139,13 +168,16 @@ class FiscalService:
             if self._mesma_origem(nota, emissor):
                 return nota
             if not self._pode_recomecar(nota):
-                await self.session.rollback()
-                raise OperacaoInvalida(
+                erro = OperacaoInvalida(
                     f"A NFC-e desta venda é do emissor '{nota.emissor}' em {nota.ambiente} "
                     f"(situação: {nota.status}). Emitir por outro emissor ou ambiente "
                     "deixaria a venda com duas notas: confira no painel dele primeiro.",
                     {"nfce": _resumo(nota)},
                 )
+                # O rollback expira a nota: ler `nota.emissor` depois dele é MissingGreenlet
+                # (um 500 no lugar desta recusa).
+                await self.session.rollback()
+                raise erro
             # Troca de emissor/ambiente (homologação → produção): a referência nova segue a
             # mesma regra da linha nova — commit antes do envio — e a volta do laço retrava
             # a linha e relê a venda, como na primeira passada.
@@ -261,7 +293,9 @@ class FiscalService:
     @staticmethod
     def _pode_recomecar(nota: NotaFiscal) -> bool:
         """Trocar de emissor/ambiente só larga a nota antiga quando ela não vale nada:
-        de homologação (sem valor fiscal), rejeitada, ou que nunca chegou a ser enviada."""
+        de homologação (sem valor fiscal), rejeitada, ou que nunca chegou a ser enviada.
+        "Nunca enviada" é `tentativas == 0` — e só quer dizer isso porque a tentativa é
+        commitada antes do POST (`_emitir_na_fila`): uma queda no meio deixa 1, não 0."""
         return (
             nota.ambiente == Ambiente.HOMOLOGACAO
             or nota.status == StatusNota.REJEITADA

@@ -1201,9 +1201,16 @@ Loja"** (é o crediário próprio) e **VALE 99 "Outros" com descrição "Vale-tr
 uma devolução, não um vale-presente vendido; 99 sem descrição é a rejeição 441). As duas
 últimas são para o contador confirmar — mudar é uma linha em `nfce.TPAG`. *Uma nota por venda:*
 `sale_id` UNIQUE e a `referencia` (`venda-<id>-<aleatório>`, o sufixo protege de uma
-reinstalação que recomeça os ids) é gravada e **commitada antes** do primeiro envio; o envio
-roda com a linha travada (`FOR UPDATE`), então dois cliques esperam um pelo outro e a venda é
-relida com a trava (cancelamento que terminou no meio não ganha nota). Rede caída nunca vira
+reinstalação que recomeça os ids) é gravada e **commitada antes** do primeiro envio. **A
+tentativa também**: antes de cada POST a linha vira PENDENTE com `tentativas + 1`, commitada —
+`tentativas = 0` quer dizer "esta referência nunca saiu daqui", e um processo que cai com o
+emissor já tendo autorizado deixa "pode ter saído" (que se consulta), nunca REJEITADA (que
+libera cancelar a venda sem perguntar) nem "nunca enviada" (que a troca de ambiente larga).
+Cada commit solta a trava da linha (`FOR UPDATE`), então a emissão retrava e relê a venda antes
+do POST (cancelamento que entrou no vão não ganha nota), e dois "Emitir" da mesma venda (duplo
+clique, automática + botão) esperam um pelo outro numa **fila por venda** que atravessa esses
+commits: `pg_advisory_xact_lock` numa conexão à parte, aberta do começo ao fim da emissão
+(`uma_emissao_por_vez`). Rede caída nunca vira
 exceção: vira PENDENTE com a mensagem, e o "Tentar de novo" **consulta antes de reenviar** —
 resposta perdida não vira duas notas; `already_processed` também vira consulta. **Só resposta
 definitiva muda o veredito**: REJEITADA vem do `erro_autorizacao`/`denegado` da SEFAZ ou de
@@ -1223,8 +1230,10 @@ emissor se a homologação ainda estiver ligada — senão, não segura a venda.
 venda, numa tarefa com sessão própria, em nome de quem vendeu: falha fiscal nunca impede vender.
 Ir de homologação para produção reemite as notas de teste com referência nova — gravada e
 commitada antes do envio pelo mesmo caminho da linha nova (`_travar_para_emitir`), senão um
-processo que caísse entre a autorização e o commit sortearia outra; trocar de emissor
-com nota pendente em produção é recusado (poderia haver duas notas). Telas: o cartão da NFC-e no
+processo que caísse entre a autorização e o commit sortearia outra; trocar de emissor ou
+voltar a homologação com nota de produção autorizada ou pendente com tentativa é recusado
+(409, "confira no painel"): poderia haver duas notas, e o cancelamento só fala com a nota no
+ambiente em que ela nasceu. Telas: o cartão da NFC-e no
 detalhe da venda (status, chave, DANFE, Emitir/Tentar de novo — `web/js/nfce.js` ↔
 `mobile/src/lib/fiscal.ts`) e a chave no recibo. *Fica com o dono:* contratar o emissor,
 cadastrar nele o A1 e o CSC, testar em homologação, e acertar regime/NCM/CFOP com o contador.

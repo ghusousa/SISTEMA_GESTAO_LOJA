@@ -25,6 +25,7 @@ from app.modules.fiscal import automatico, emissores
 from app.modules.fiscal.focusnfe import DESCRICAO_HOMOLOGACAO, FocusNFe, montar_payload
 from app.modules.fiscal.models import Ambiente
 from app.modules.fiscal.nfce import TPAG, DadosDaLoja, montar_nota, ratear_desconto
+from app.modules.fiscal.service import FiscalService
 from app.modules.vendas.models import FormaPagamento
 from app.modules.vendas.schemas import ItemVendaOut, PagamentoOut, VendaOut
 
@@ -805,6 +806,35 @@ async def _venda_com_nota(client, auth_admin, pecas) -> dict:
     return {**venda, "nota": nota}
 
 
+def _cair_depois_do_proximo_envio(monkeypatch: pytest.MonkeyPatch, venda_id: int) -> list[dict]:
+    """O processo cai logo depois de a Focus responder ao próximo POST: lá a nota foi
+    processada, aqui a resposta nunca é gravada. Devolve, para cada POST, o que estava
+    COMMITADO na linha da nota naquele instante (lido por outra conexão)."""
+    no_banco: list[dict] = []
+    original = FocusFalsa.__call__
+
+    async def cai(self, request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            async with engine.connect() as conn:
+                linha = (
+                    await conn.execute(
+                        text(
+                            "SELECT referencia, ambiente, status, tentativas "
+                            "FROM notas_fiscais WHERE sale_id = :v"
+                        ),
+                        {"v": venda_id},
+                    )
+                ).one()
+            no_banco.append({"ref": request.url.params["ref"], **linha._asdict()})
+        resp = await original(self, request)
+        if request.method == "POST" and len(no_banco) == 1:
+            raise RuntimeError("o processo caiu depois de o emissor responder")
+        return resp
+
+    monkeypatch.setattr(FocusFalsa, "__call__", cai)
+    return no_banco
+
+
 async def test_cancelar_venda_cancela_a_nota_no_emissor_antes(
     client, auth_admin, pecas, focus
 ) -> None:
@@ -959,6 +989,70 @@ async def test_nota_pendente_que_nunca_chegou_nao_impede_cancelar(
     assert nota["status"] == "REJEITADA" and "nenhuma nota vale" in nota["mensagem"]
 
 
+async def test_queda_ao_reenviar_nota_rejeitada_nao_libera_cancelar_sem_perguntar(
+    client, auth_admin, pecas, focus, monkeypatch
+) -> None:
+    """A rejeitada, corrigida, vai de novo e a Focus autoriza; o processo cai antes de
+    gravar a resposta. Antes a linha ficava REJEITADA (só a resposta mudava o status), e
+    cancelar a venda passava sem falar com o emissor — com a NFC-e AUTORIZADA lá. Agora o
+    envio é anotado e commitado ANTES do POST: PENDENTE, com a tentativa contada."""
+    await _configurar_loja(client, auth_admin)
+    venda = await _vender(client, auth_admin, [(pecas["camiseta"], 1)], [("PIX", "49.90")])
+    focus.ao_emitir = "rejeitar"
+    nota = (await client.post(f"/vendas/{venda['id']}/nfce", headers=auth_admin)).json()["nota"]
+    assert nota["status"] == "REJEITADA" and nota["tentativas"] == 1
+
+    focus.ao_emitir = "autorizar"
+    no_banco = _cair_depois_do_proximo_envio(monkeypatch, venda["id"])
+    with pytest.raises(RuntimeError):
+        await client.post(f"/vendas/{venda['id']}/nfce", headers=auth_admin)
+    assert (no_banco[0]["status"], no_banco[0]["tentativas"]) == ("PENDENTE", 2)
+    assert focus.notas[nota["referencia"]]["status"] == "autorizado"
+
+    resp = await client.post(
+        f"/vendas/{venda['id']}/cancelamento",
+        headers=auth_admin,
+        json={"motivo": "cliente desistiu da compra"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert [p.method for p in focus.pedidos][-2:] == ["GET", "DELETE"]
+    assert focus.notas[nota["referencia"]]["status"] == "cancelado"
+
+
+async def test_cancelar_no_vao_entre_anotar_o_envio_e_enviar_nao_deixa_a_nota_sair(
+    client, auth_admin, pecas, focus, monkeypatch
+) -> None:
+    """Anotar o envio antes do POST é um commit, e o commit solta a trava da linha. Um
+    cancelamento da venda que entre nesse vão pergunta ao emissor (nada chegou lá) e
+    cancela; a emissão retrava, relê a venda e não manda nada — nota de uma venda que
+    não existe mais é imposto sobre nada."""
+    await _configurar_loja(client, auth_admin)
+    venda = await _vender(client, auth_admin, [(pecas["camiseta"], 1)], [("PIX", "49.90")])
+    original = FiscalService._travar_para_emitir
+    chamadas: list[int] = []
+    cancelamento: list = []
+
+    async def travar(self, *args, **kwargs):
+        chamadas.append(1)
+        if len(chamadas) == 2:  # a retrava, logo depois de o envio ser anotado
+            cancelamento.append(
+                await client.post(
+                    f"/vendas/{venda['id']}/cancelamento",
+                    headers=auth_admin,
+                    json={"motivo": "cliente desistiu da compra"},
+                )
+            )
+        return await original(self, *args, **kwargs)
+
+    monkeypatch.setattr(FiscalService, "_travar_para_emitir", travar)
+    resp = await client.post(f"/vendas/{venda['id']}/nfce", headers=auth_admin)
+    assert cancelamento[0].status_code == 200, cancelamento[0].text
+    assert resp.status_code == 409 and "Venda cancelada" in resp.json()["message"]
+    assert focus.de("POST") == [] and [p.method for p in focus.pedidos] == ["GET"]
+    nota = (await client.get(f"/vendas/{venda['id']}/nfce", headers=auth_admin)).json()["nota"]
+    assert nota["status"] == "REJEITADA" and "nenhuma nota vale" in nota["mensagem"]
+
+
 @pytest.mark.parametrize(
     "falha",
     [
@@ -1027,31 +1121,12 @@ async def test_ir_para_producao_grava_a_referencia_nova_antes_do_primeiro_envio(
     venda = await _venda_com_nota(client, auth_admin, pecas)  # autorizada em homologação
     monkeypatch.setattr(settings, "focusnfe_ambiente", "producao")
 
-    no_banco: list[tuple[str, str, str]] = []
-    original = FocusFalsa.__call__
-
-    async def cai_depois_de_autorizar(self, request: httpx.Request) -> httpx.Response:
-        if request.method == "POST":
-            # Outra conexão: só enxerga o que já foi commitado.
-            async with engine.connect() as conn:
-                linha = (
-                    await conn.execute(
-                        text("SELECT referencia, ambiente FROM notas_fiscais WHERE sale_id = :v"),
-                        {"v": venda["id"]},
-                    )
-                ).one()
-            no_banco.append((request.url.params["ref"], linha.referencia, linha.ambiente))
-        resp = await original(self, request)
-        if request.method == "POST" and len(no_banco) == 1:
-            raise RuntimeError("o processo caiu depois de o emissor autorizar")
-        return resp
-
-    monkeypatch.setattr(FocusFalsa, "__call__", cai_depois_de_autorizar)
+    no_banco = _cair_depois_do_proximo_envio(monkeypatch, venda["id"])
     with pytest.raises(RuntimeError):
         await client.post(f"/vendas/{venda['id']}/nfce", headers=auth_admin)
-    ref, ref_no_banco, ambiente = no_banco[0]
+    ref = no_banco[0]["ref"]
     assert ref != venda["nota"]["referencia"]
-    assert (ref_no_banco, ambiente) == (ref, "producao")
+    assert (no_banco[0]["referencia"], no_banco[0]["ambiente"]) == (ref, "producao")
 
     nota = (await client.post(f"/vendas/{venda['id']}/nfce", headers=auth_admin)).json()["nota"]
     assert nota["status"] == "AUTORIZADA" and nota["ambiente"] == "producao"
@@ -1062,6 +1137,43 @@ async def test_ir_para_producao_grava_a_referencia_nova_antes_do_primeiro_envio(
         if str(p.url).startswith("https://api.focusnfe.com.br")
     }
     assert em_producao == {ref}  # uma NFC-e em produção, não duas
+
+
+async def test_queda_em_producao_nao_deixa_a_volta_para_homologacao_largar_a_nota(
+    client, auth_admin, pecas, focus, monkeypatch
+) -> None:
+    """O processo cai depois de a Focus autorizar a nota de PRODUÇÃO. Antes, `tentativas`
+    só ia ao banco junto com a resposta, e a linha ficava "produção / PENDENTE / 0" — cara
+    de nunca enviada. Voltando o .env para homologação, "Emitir" largava essa referência
+    (`_pode_recomecar`) e a venda cancelava com a NFC-e de produção valendo."""
+    venda = await _venda_com_nota(client, auth_admin, pecas)  # autorizada em homologação
+    monkeypatch.setattr(settings, "focusnfe_ambiente", "producao")
+    no_banco = _cair_depois_do_proximo_envio(monkeypatch, venda["id"])
+    with pytest.raises(RuntimeError):
+        await client.post(f"/vendas/{venda['id']}/nfce", headers=auth_admin)
+    r1 = no_banco[0]["ref"]
+    assert focus.notas[r1]["status"] == "autorizado"
+    assert (no_banco[0]["status"], no_banco[0]["tentativas"]) == ("PENDENTE", 1)
+
+    monkeypatch.setattr(settings, "focusnfe_ambiente", "homologacao")
+    resp = await client.post(f"/vendas/{venda['id']}/nfce", headers=auth_admin)
+    assert resp.status_code == 409, resp.text  # não larga a nota de produção
+    assert "confira no painel" in resp.json()["message"]
+    motivo = {"motivo": "cliente desistiu da compra"}
+    resp = await client.post(f"/vendas/{venda['id']}/cancelamento", headers=auth_admin, json=motivo)
+    assert resp.status_code == 409, resp.text
+    venda_agora = (await client.get(f"/vendas/{venda['id']}", headers=auth_admin)).json()
+    assert venda_agora["status"] == "CONCLUIDA"
+
+    # De volta à produção, o cancelamento pergunta pela R1 e a cancela antes da venda.
+    monkeypatch.setattr(settings, "focusnfe_ambiente", "producao")
+    resp = await client.post(f"/vendas/{venda['id']}/cancelamento", headers=auth_admin, json=motivo)
+    assert resp.status_code == 200, resp.text
+    assert focus.notas[r1]["status"] == "cancelado"
+    assert {p.url.params.get("ref") for p in focus.de("POST")} == {
+        venda["nota"]["referencia"],
+        r1,
+    }
 
 
 # ------------------------------------------------------------------ emissão automática
