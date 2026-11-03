@@ -1,11 +1,14 @@
 /**
  * O canal de tempo real do web cai e volta, e ao voltar redesenha a tela.
  *
- * Roda sem navegador: `node --test web/testes/*.test.mjs`. Na Vercel o servidor FECHA o socket no
+ * Roda sem navegador: `node --test testes/web/*.test.mjs`. Na Vercel o servidor FECHA o socket no
  * `maxDuration` da função, toda vez; o que mudou enquanto a aba não ouvia só aparece se o
- * "conectado" da religação mandar redesenhar. A regra mora em `js/canal.js` (espelho de
+ * "conectado" da religação mandar redesenhar. A regra mora em `web/js/canal.js` (espelho de
  * `mobile/src/lib/canal.ts`, que tem os mesmos casos em `canal.test.ts`), e a segunda metade
- * deste arquivo confere a ligação de verdade em `js/tempo-real.js`.
+ * deste arquivo confere a ligação de verdade em `web/js/tempo-real.js`.
+ *
+ * Mora FORA de `web/` de propósito: tudo o que está lá é servido em `/app` (imagem Docker e
+ * cópia da Vercel), e teste não é página da loja.
  */
 
 import assert from 'node:assert/strict';
@@ -16,7 +19,7 @@ import {
   ESPERA_INICIAL,
   ESPERA_MAXIMA,
   esperaDaTentativa,
-} from '../js/canal.js';
+} from '../../web/js/canal.js';
 
 const microtarefas = () => new Promise((r) => setImmediate(r));
 
@@ -221,8 +224,8 @@ test('tempo-real.js: o conectado de cada religação redesenha a tela inscrita',
     globalThis.fetch = async () =>
       new Response(JSON.stringify({ access_token: 'tok', usuario: { id: 1 } }), { status: 200 });
 
-    const { entrar } = await import('../js/api.js');
-    const tr = await import('../js/tempo-real.js');
+    const { entrar } = await import('../../web/js/api.js');
+    const tr = await import('../../web/js/tempo-real.js');
     await entrar('dona@loja.com', 'senha');
 
     const redesenhos = [];

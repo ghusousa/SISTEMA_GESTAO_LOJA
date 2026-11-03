@@ -15,7 +15,9 @@ isso é o que deixa o banco dormir quando ninguém usa.
 é vigiada (aviso de término do asyncpg e um `SELECT 1` de tempos em tempos, para a queda
 calada) e religada com espera crescente. Na volta, as telas desta instância recebem todos
 os assuntos de uma vez: o que outra instância gravou no buraco não chegou, e não há como
-saber o quê.
+saber o quê. O mesmo vale para a PRIMEIRA conexão que demora mais do que a tela aceita
+esperar (o Neon acordando): a tela recebeu "conectado" e refez as consultas antes de o
+LISTEN subir, e o que outra instância gravou nesse meio só chega como "refaça tudo".
 
 **Sem aviso dobrado.** A instância que gravou já entregou em memória no commit; quando o
 mesmo aviso volta pelo LISTEN com a origem dela, é descartado.
@@ -62,19 +64,23 @@ _FORA_DO_ASYNCPG = frozenset({"channel_binding", "prepared_statement_cache_size"
 _SSL_DO_SQLALCHEMY = {"true": "require", "1": "require", "false": "disable", "0": "disable"}
 
 
-def dsn_direto(url: str, *, tirar_pooler: bool) -> str:
+def dsn_direto(url: str, *, tirar_pooler: bool, ssl: str = "") -> str:
     """A URL do app (formato do SQLAlchemy) como o `asyncpg.connect` aceita, sem pooler.
 
     `postgresql+asyncpg://` e `postgres://` viram `postgresql://`; `ssl=` (do dialeto)
     vira `sslmode=`, que o asyncpg lê da URL; `channel_binding` e companhia saem. Com
     `tirar_pooler`, o host `<endpoint>-pooler.<região>` do Neon perde o `-pooler`: é o
-    mesmo banco nos dois endereços, e só o direto entrega NOTIFY.
+    mesmo banco nos dois endereços, e só o direto entrega NOTIFY. `ssl` (o `DB_SSL` do
+    app) manda no `sslmode`, sobre o que a URL disser: a URL do app pode já ter chegado
+    sem ele, tirado para ir por `connect_args`.
     """
     u = make_url(url)
     query = {k: v for k, v in u.query.items() if k not in _FORA_DO_ASYNCPG}
     if "ssl" in query:
         valor = str(query.pop("ssl"))
         query.setdefault("sslmode", _SSL_DO_SQLALCHEMY.get(valor.lower(), valor))
+    if ssl:
+        query["sslmode"] = ssl.strip().lower()
     host = u.host
     if tirar_pooler and host and "-pooler." in host:
         host = host.replace("-pooler.", ".", 1)
@@ -87,11 +93,12 @@ def dsn_da_escuta() -> str:
     """**Ponto único** do endereço da escuta.
 
     `DATABASE_URL_UNPOOLED` (a direta que o Neon injeta) quando existe; senão a mesma
-    `DATABASE_URL` do app — que na loja de Docker já é direta. Mudou a forma de montar a
-    URL do app? É aqui que a escuta acompanha.
+    `DATABASE_URL` do app — que na loja de Docker já é direta. O modo de SSL é o do app
+    (`DB_SSL`), venha ele da URL ou não. Mudou a forma de montar a URL do app? É aqui que
+    a escuta acompanha.
     """
     direta = settings.database_url_unpooled
-    return dsn_direto(direta or settings.database_url, tirar_pooler=not direta)
+    return dsn_direto(direta or settings.database_url, tirar_pooler=not direta, ssl=settings.db_ssl)
 
 
 @dataclass(eq=False)
@@ -105,6 +112,9 @@ class _Turno:
     pronta: asyncio.Event = field(default_factory=asyncio.Event)
     conexao: asyncpg.Connection | None = None
     tarefa: asyncio.Task[None] | None = None
+    #: Alguma tela cansou de esperar o LISTEN e seguiu sem ele (`aguardar_pronta`): quando
+    #: ele subir, as telas refazem tudo, como na volta de uma queda.
+    atrasou: bool = False
 
 
 class Escuta:
@@ -159,13 +169,19 @@ class Escuta:
 
     async def aguardar_pronta(self, limite: float) -> bool:
         """Espera o LISTEN estar de pé. Desiste em `limite` — a tela segue com os avisos
-        desta instância, e os das outras chegam quando a escuta voltar."""
+        desta instância, e a escuta, quando subir, manda refazer tudo: o que outra
+        instância gravar entre o "conectado" e o LISTEN não chegaria por aviso nenhum."""
         turno = self._turno
         if turno is None:
             return False
         try:
             await asyncio.wait_for(turno.pronta.wait(), timeout=limite)
         except TimeoutError:
+            if turno.pronta.is_set():
+                return True  # subiu junto com o limite: não há buraco
+            # Sem `await` entre olhar `pronta` e marcar: ou a escuta já subiu (acima), ou
+            # vai ver a marca quando subir (`_manter`).
+            turno.atrasou = True
             logger.warning("tempo-real: a escuta do banco não ficou pronta em %.0f s.", limite)
             return False
         return True
@@ -190,6 +206,7 @@ class Escuta:
         buraco = False
         while True:
             conexao: asyncpg.Connection | None = None
+            educada = False
             try:
                 conexao = await asyncpg.connect(
                     self._dsn(),
@@ -205,10 +222,15 @@ class Escuta:
                 if buraco:
                     self.religacoes += 1
                     logger.info("tempo-real: escuta do banco de volta; as telas refazem tudo.")
+                elif turno.atrasou:
+                    logger.info("tempo-real: escuta do banco subiu atrasada; telas refazem tudo.")
+                if buraco or turno.atrasou:
+                    turno.atrasou = False
                     self._central.publicar_tudo()
                 await self._vigiar(conexao, caiu)
                 logger.warning("tempo-real: a escuta do banco caiu; religando.")
             except asyncio.CancelledError:
+                educada = True  # a última tela saiu, ou o processo desliga
                 raise
             except Exception as exc:  # noqa: BLE001 — rede, senha, banco fora: nova tentativa
                 logger.warning(
@@ -221,7 +243,12 @@ class Escuta:
                 turno.pronta.clear()
                 turno.conexao = None
                 if conexao is not None:
-                    await self._fechar(conexao)
+                    if educada:
+                        await self._fechar(conexao)
+                    else:
+                        # Caiu ou emudeceu: a despedida educada esperaria resposta de quem
+                        # não responde (até ESPERA_FECHAR), e a religação esperaria junto.
+                        conexao.terminate()
             buraco = True
             await asyncio.sleep(espera)
             espera = min(espera * 2, self._espera_maxima)

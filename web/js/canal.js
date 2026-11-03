@@ -1,6 +1,6 @@
 /**
  * O canal de tempo real que cai e volta — a parte sem socket de verdade, para dar para testar
- * (`node --test web/testes/*.test.mjs`). **Espelho de `mobile/src/lib/canal.ts`.** Mudou um, mude o outro.
+ * (`node --test testes/web/*.test.mjs`). **Espelho de `mobile/src/lib/canal.ts`.** Mudou um, mude o outro.
  *
  * Cair é rotina, não exceção: a aba dorme, o Wi-Fi troca, e na Vercel o servidor FECHA o
  * socket toda vez que a função chega ao `maxDuration`. O canal religa sozinho, com espera

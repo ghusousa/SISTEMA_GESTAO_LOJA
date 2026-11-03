@@ -103,9 +103,9 @@ function urlDoCanal() {
 }
 
 /**
- * Quando cair e como voltar mora em `canal.js` (com teste em `web/testes/`): espera
- * crescente, zera só no "conectado", e o "conectado" — inclusive o de toda religação depois
- * que a Vercel fecha o socket no `maxDuration` — redesenha a tela.
+ * Quando cair e como voltar mora em `canal.js` (teste em `testes/web/`, fora da pasta
+ * servida): espera crescente, zera só no "conectado", e o "conectado" — inclusive o de toda
+ * religação depois que a Vercel fecha o socket no `maxDuration` — redesenha a tela.
  */
 const canal = criarCanal({
   abrirSocket(ouvidos) {

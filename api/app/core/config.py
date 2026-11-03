@@ -22,11 +22,6 @@ class Settings(BaseSettings):
     debug: bool = False
 
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/loja"
-    #: Conexão DIRETA ao Postgres, sem pooler — a que o Neon da Vercel injeta como
-    #: `DATABASE_URL_UNPOOLED`. Só a escuta do tempo real usa (`core/escuta.py`): LISTEN
-    #: atrás de PgBouncer em modo transação não recebe nada, e calado. Vazia, a escuta
-    #: usa `database_url` (na loja de Docker não há pooler: é a mesma conexão).
-    database_url_unpooled: str | None = None
     db_echo: bool = False
     #: Teto de cada consulta da API, em milissegundos (0 = sem teto). O app desiste em 15 s
     #: e o retry dispara a MESMA consulta de novo; sem teto no banco, a primeira continua
@@ -34,6 +29,16 @@ class Settings(BaseSettings):
     #: Clientes, sem índice, prendia o banco por 70 s a cada abertura. Vale só para as
     #: conexões da API: a migration e o pg_dump usam conexão própria e não herdam o teto.
     db_statement_timeout_ms: int = 30_000
+    #: Conexão DIRETA ao Postgres, sem pooler — a que o Neon da Vercel injeta como
+    #: `DATABASE_URL_UNPOOLED`. A escuta do tempo real usa (`core/escuta.py`): LISTEN atrás
+    #: de PgBouncer em modo transação não recebe nada, e calado. Vazia, a escuta usa
+    #: `database_url` (na loja de Docker não há pooler: é a mesma conexão).
+    database_url_unpooled: str = ""
+    #: `ssl=` do asyncpg, nos nomes do `sslmode` da libpq (`require`, `verify-full`...).
+    #: Vazio = o que a URL pedir; a da loja não pede nada, e fica como sempre foi. A escuta
+    #: do tempo real segue este modo (`dsn_da_escuta()`): a conexão de LISTEN não pode ser
+    #: menos protegida que a do app.
+    db_ssl: str = ""
 
     # Segurança. Em produção JWT_SECRET é obrigatório e vem do .env (nunca do código).
     jwt_secret: str = JWT_SECRET_EXEMPLO

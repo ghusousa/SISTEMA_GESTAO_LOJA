@@ -15,7 +15,8 @@ rota REST, e assim nenhuma vendedora recebe custo por este caminho.
 de pé (`app/core/escuta.py`): daí em diante nada que outra instância grave escapa desta
 tela, e o cliente refaz o que tem aberto ao receber "conectado" — o que mudou antes está
 na consulta. Na Vercel o socket cai no `maxDuration` da função; o cliente religa e o
-mesmo "conectado" fecha o buraco.
+mesmo "conectado" fecha o buraco. Escuta que não sobe a tempo (`ESPERA_ESCUTA`) não
+segura a tela: o "conectado" sai, e a escuta, quando subir, manda refazer tudo.
 """
 
 from __future__ import annotations
@@ -48,7 +49,8 @@ INTERVALO_PING = 25.0
 
 #: Quanto a tela espera a escuta do banco antes de receber "conectado" mesmo assim. Banco
 #: local responde em milissegundos; o Neon acordando leva alguns segundos. Passou disso,
-#: a tela segue com os avisos desta instância e a escuta, quando voltar, manda refazer.
+#: a tela segue com os avisos desta instância e fica marcada no turno da escuta: quando o
+#: LISTEN subir (ou voltar de uma queda), a escuta manda refazer tudo.
 ESPERA_ESCUTA = 5.0
 
 CODIGO_NAO_AUTENTICADO = 4401

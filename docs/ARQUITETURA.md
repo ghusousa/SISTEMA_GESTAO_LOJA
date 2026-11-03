@@ -591,23 +591,35 @@ no commit; o que volta pelo LISTEN com a origem dela é descartado. **Cai e volt
 de término do asyncpg mais um `SELECT 1` por minuto (a queda calada de NAT), religação com
 espera crescente (1 s → 30 s) e, na volta, a central local publica TODOS os assuntos — o
 que outra instância gravou no buraco não chegou, e não há como saber o quê. **"conectado" é
-uma promessa**: o socket só o manda depois de o LISTEN estar de pé (ou de esperar 5 s), e o
-cliente refaz as consultas ao recebê-lo; daí em diante nada escapa. O laço do socket espera
+uma promessa**: o socket só o manda depois de o LISTEN estar de pé, e o cliente refaz as
+consultas ao recebê-lo; daí em diante nada escapa. Se o LISTEN não sobe em 5 s (o Neon
+acordando leva até 10 s para conectar), o "conectado" sai assim mesmo e a tela fica marcada
+no turno da escuta (`atrasou`): quando ele subir, a central publica TODOS os assuntos, como
+na volta de uma queda — senão o que outra instância gravasse entre o "conectado" e o LISTEN
+não chegaria por consulta (já feita) nem por aviso (ninguém escutava). O laço do socket espera
 o aviso OU a queda do cliente — esperando só o aviso, a tela que saiu ficava pendurada até o
 próximo ping (25 s), segurando a escuta e, na Vercel, a instância. O endereço sai de
 `dsn_da_escuta()`, ponto único: `DATABASE_URL_UNPOOLED` quando existe, senão
 `DATABASE_URL` — sem o `+asyncpg`, com `ssl=` traduzido para `sslmode=`, sem
 `channel_binding` (o asyncpg mandaria ao servidor como configuração, e o Postgres recusa) e,
 sem URL direta, com o `-pooler` do host do Neon tirado: LISTEN atrás de PgBouncer em modo
-transação não recebe nada, e sem erro. O NOTIFY pode ir pela conexão "pooled" (é uma função
-dentro da transação). Custo aceito: commit que dá NOTIFY é serializado pelo Postgres entre
-si — irrelevante numa loja de meia dúzia de aparelhos. Os clientes já religavam sozinhos e
+transação não recebe nada, e sem erro. O `sslmode` é o do app (`DB_SSL`) quando ele existe,
+sobre o que a URL disser: a URL do app pode chegar já sem ele (tirado para ir por
+`connect_args`), e a conexão de LISTEN não pode ficar menos protegida que a do app. Queda
+calada (NAT que esqueceu a conexão) é largada com `terminate()`, sem a despedida educada,
+que esperaria `ESPERA_FECHAR` inteiro por resposta de quem não responde. O NOTIFY pode ir
+pela conexão "pooled" (é uma função dentro da transação). Custo aceito: commit que dá
+NOTIFY é serializado pelo Postgres entre si — irrelevante numa loja de meia dúzia de
+aparelhos. Os clientes já religavam sozinhos e
 refaziam a tela no "conectado"; a regra saiu para `mobile/src/lib/canal.ts` (teste em
-`canal.test.ts`) e o espelho `web/js/canal.js` (teste em `web/testes/`, que também confere
-`tempo-real.js` de verdade), porque na Vercel o socket FECHA no `maxDuration` da função e
-religar deixou de ser exceção. Testes: `tests/test_tempo_real_instancias.py` — outra
-central com outra escuta no mesmo processo, e um segundo uvicorn de verdade com o socket de
-verdade.
+`canal.test.ts`) e o espelho `web/js/canal.js` (teste em `testes/web/`, que também confere
+`tempo-real.js` de verdade — fora de `web/`, porque tudo o que mora lá é servido em `/app`,
+e `tests/test_web_servido.py` confere), porque na Vercel o socket FECHA no `maxDuration` da
+função e religar deixou de ser exceção. Testes: `tests/test_tempo_real_instancias.py` —
+outra central com outra escuta no mesmo processo, um segundo uvicorn de verdade com o
+socket de verdade, e uma rede de mentira entre a escuta e o Postgres para o que o banco não
+faz quando o teste pede (conexão nova que demora, como o Neon acordando; conexão que
+emudece sem cair, como o NAT).
 **Queda de cliente não é erro.** A task que lê do socket (`_escutar_ate_cair`) existe para
 PERCEBER a queda, e morre com `WebSocketDisconnect` quando ela acontece. `await` numa task
 morta relança a exceção dela: sem suprimir, ela sobe até o uvicorn, que escreve um traceback
@@ -1669,5 +1681,6 @@ a peça na sacola não se vende no balcão, fechar duas vezes (simultâneo ou re
 nem cobra duas vezes, erro na venda do fechamento desfaz o retorno · conta a pagar: a nota entra
 com a Entrada ou nada entra, vendedora não lança nota, pagar uma vez só, Resultado não muda ·
 tempo real entre instâncias: o commit de um processo chega ao socket de outro uvicorn, rollback
-não avisa, a tela de quem gravou recebe o aviso uma vez só, a escuta que cai religa e a última
+não avisa, a tela de quem gravou recebe o aviso uma vez só, a escuta que cai (ou emudece)
+religa e manda refazer, o LISTEN que sobe depois do "conectado" manda refazer, e a última
 tela que sai fecha o LISTEN.

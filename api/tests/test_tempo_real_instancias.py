@@ -22,6 +22,7 @@ import asyncpg
 import httpx
 import pytest
 from sqlalchemy import text
+from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
 
 from app.core import escuta as modulo_escuta
@@ -73,6 +74,99 @@ async def _ate(condicao, limite: float = 5.0) -> None:
 
 async def _conexao_avulsa() -> asyncpg.Connection:
     return await asyncpg.connect(dsn_da_escuta())
+
+
+async def _aviso_de_outra_instancia(assunto: Assunto) -> None:
+    """Outra instância gravou: o NOTIFY dela, por uma conexão que não é a da escuta."""
+    avulsa = await _conexao_avulsa()
+    try:
+        await avulsa.execute(
+            "SELECT pg_notify($1, $2)", CANAL_DO_BANCO, carga_do_aviso("outra-instancia", assunto)
+        )
+    finally:
+        await avulsa.close()
+
+
+class RedeDeMentira:
+    """Um pedaço de rede entre a escuta e o Postgres, para os dois sustos que o banco de
+    verdade não faz quando o teste pede: o Neon que demora a acordar (`segurar_novas`: a
+    conexão nova espera antes de chegar ao banco) e o NAT de operadora que esquece a
+    conexão sem fechá-la (`congelar`: nada mais passa nas conexões de agora, e ninguém do
+    lado de cá fica sabendo — nem aviso de término, nem erro)."""
+
+    def __init__(self, dsn: str) -> None:
+        self._url = make_url(dsn)
+        self._destino = (self._url.host or "localhost", self._url.port or 5432)
+        self._servidor: asyncio.Server | None = None
+        self._passagens: list[asyncio.Event] = []
+        self._conexoes: set[asyncio.Task[None]] = set()
+        self._novas = asyncio.Event()
+        self._novas.set()
+        self.dsn = ""
+
+    async def abrir(self) -> None:
+        self._servidor = await asyncio.start_server(self._atender, "127.0.0.1", 0)
+        porta = self._servidor.sockets[0].getsockname()[1]
+        self.dsn = self._url.set(host="127.0.0.1", port=porta).render_as_string(hide_password=False)
+
+    def segurar_novas(self) -> None:
+        self._novas.clear()
+
+    def soltar_novas(self) -> None:
+        self._novas.set()
+
+    def congelar(self) -> None:
+        for passagem in self._passagens:
+            passagem.clear()
+
+    async def fechar(self) -> None:
+        for tarefa in self._conexoes:
+            tarefa.cancel()
+        if self._conexoes:
+            await asyncio.wait(self._conexoes, timeout=2)
+        if self._servidor is not None:
+            self._servidor.close()
+
+    async def _atender(self, leitor: asyncio.StreamReader, escritor: asyncio.StreamWriter) -> None:
+        tarefa = asyncio.current_task()
+        assert tarefa is not None
+        self._conexoes.add(tarefa)
+        escritor_db: asyncio.StreamWriter | None = None
+        try:
+            await self._novas.wait()
+            leitor_db, escritor_db = await asyncio.open_connection(*self._destino)
+            passagem = asyncio.Event()
+            passagem.set()
+            self._passagens.append(passagem)
+            await asyncio.gather(
+                self._repassar(leitor, escritor_db, passagem),
+                self._repassar(leitor_db, escritor, passagem),
+            )
+        except (ConnectionError, asyncio.IncompleteReadError):
+            pass
+        finally:
+            for lado in (escritor, escritor_db):
+                if lado is not None:
+                    lado.transport.abort()
+            self._conexoes.discard(tarefa)
+
+    @staticmethod
+    async def _repassar(
+        de: asyncio.StreamReader, para: asyncio.StreamWriter, passagem: asyncio.Event
+    ) -> None:
+        while dados := await de.read(65536):
+            await passagem.wait()  # congelada: o que chega fica aqui, e nada responde
+            para.write(dados)
+            await para.drain()
+        para.transport.abort()
+
+
+@pytest.fixture
+async def rede() -> AsyncIterator[RedeDeMentira]:
+    rede = RedeDeMentira(dsn_da_escuta())
+    await rede.abrir()
+    yield rede
+    await rede.fechar()
 
 
 # ------------------------------------------------------------ o caminho do aviso
@@ -221,17 +315,76 @@ async def test_escuta_que_cai_religa_e_manda_refazer(client, auth_admin, outra) 
         await _esperar(fila, Assunto.CATALOGO)
 
 
-async def test_batimento_sem_resposta_derruba_a_conexao_para_religar() -> None:
-    """A queda calada (NAT que esqueceu a conexão) não avisa ninguém: é o `SELECT 1` de
-    tempos em tempos que descobre, e a falha dele leva a escuta a religar."""
+async def test_batimento_sem_resposta_religa_e_manda_refazer(rede, monkeypatch) -> None:
+    """A queda calada (NAT de operadora que esqueceu a conexão sem fechá-la) não avisa
+    ninguém: é o `SELECT 1` de tempos em tempos que descobre. A escuta larga a conexão muda
+    SEM a despedida educada — que esperaria resposta de quem não responde, ESPERA_FECHAR
+    inteiro —, religa e manda refazer, porque o que chegou no silêncio se perdeu."""
+    monkeypatch.setattr(modulo_escuta, "ESPERA_BATIMENTO", 0.3)
+    escuta_b = Escuta(
+        central_b := Central(),
+        dsn=lambda: rede.dsn,
+        batimento=0.1,
+        espera_inicial=0.05,
+        espera_maxima=0.2,
+    )
+    try:
+        async with central_b.inscrever() as fila, escuta_b.tela():
+            assert await escuta_b.aguardar_pronta(PRONTA_EM)
+            muda = escuta_b.conexao
+            assert _drenar(fila) == []
 
-    class ConexaoMuda:
-        async def fetchval(self, *_a: object, **_k: object) -> None:
-            raise TimeoutError
+            rede.congelar()
+            # Bem antes de ESPERA_FECHAR (5 s): sem esperar a despedida de quem emudeceu.
+            await _ate(lambda: escuta_b.religacoes == 1, limite=3.0)
 
-    escuta_b = Escuta(Central(), batimento=0.01)
-    with pytest.raises(TimeoutError):
-        await escuta_b._vigiar(ConexaoMuda(), asyncio.Event())  # type: ignore[arg-type]
+            assert await escuta_b.aguardar_pronta(PRONTA_EM)
+            assert escuta_b.conexao is not muda and muda.is_closed()
+            assert set(_drenar(fila)) == set(Assunto), "o silêncio tem de virar 'refaça'"
+
+            await _aviso_de_outra_instancia(Assunto.VENDAS)  # e a nova escuta ouve
+            await _esperar(fila, Assunto.VENDAS)
+    finally:
+        await escuta_b.encerrar()
+
+
+async def test_escuta_que_sobe_depois_do_conectado_manda_refazer(rede) -> None:
+    """O Neon acordando: conectar demora mais do que a tela aceita esperar (ESPERA_ESCUTA).
+    A tela recebe "conectado" e refaz as consultas ANTES de o LISTEN subir; o que outra
+    instância grava nesse meio não chega pela consulta (já feita) nem por aviso (ninguém
+    escutava). Quando o LISTEN sobe, a escuta manda refazer tudo, como na volta de uma
+    queda — e só dessa vez."""
+    escuta_b = Escuta(central_b := Central(), dsn=lambda: rede.dsn)
+    rede.segurar_novas()
+    try:
+        async with central_b.inscrever() as fila, escuta_b.tela():
+            assert not await escuta_b.aguardar_pronta(0.2), "o 'conectado' sai sem o LISTEN"
+            await _aviso_de_outra_instancia(Assunto.ESTOQUE)  # cai no buraco
+
+            rede.soltar_novas()
+            assert await escuta_b.aguardar_pronta(PRONTA_EM)
+            assert set(_drenar(fila)) == set(Assunto), "o atraso tem de virar 'refaça'"
+            assert escuta_b.religacoes == 0, "não foi queda: foi atraso"
+
+            # Tela que chega com o LISTEN de pé não refaz nada: a marca já foi zerada.
+            async with escuta_b.tela():
+                assert await escuta_b.aguardar_pronta(PRONTA_EM)
+            assert _drenar(fila) == []
+            await _aviso_de_outra_instancia(Assunto.CLIENTES)
+            await _esperar(fila, Assunto.CLIENTES)
+    finally:
+        await escuta_b.encerrar()
+
+
+async def test_tela_que_espera_a_tempo_nao_manda_refazer(outra) -> None:
+    """O caminho de todo dia (banco local, milissegundos): sem buraco, sem rodada à toa."""
+    central_b, escuta_b = outra
+    async with central_b.inscrever() as fila, escuta_b.tela():
+        assert await escuta_b.aguardar_pronta(PRONTA_EM)
+        assert _drenar(fila) == []
+        await _aviso_de_outra_instancia(Assunto.CAIXA)
+        await _esperar(fila, Assunto.CAIXA)
+        assert _drenar(fila) == []
 
 
 async def test_ultima_tela_que_sai_fecha_a_escuta(outra) -> None:
@@ -264,8 +417,9 @@ async def test_ultima_tela_que_sai_fecha_a_escuta(outra) -> None:
         await avulsa.close()
 
 
-async def test_tela_que_cai_solta_a_escuta(monkeypatch) -> None:
-    """O socket do app: a tela que fecha o app também solta a conexão de LISTEN."""
+async def test_tela_que_cai_solta_a_escuta_na_hora(monkeypatch) -> None:
+    """O socket do app: a tela que fecha o app solta a conexão de LISTEN NA HORA — não no
+    próximo ping (25 s), segurando a escuta e, na Vercel, a instância da função."""
     from types import SimpleNamespace
 
     from test_tempo_real import CanalQueCai
@@ -276,10 +430,10 @@ async def test_tela_que_cai_solta_a_escuta(monkeypatch) -> None:
         return SimpleNamespace(id=1, email="dona@loja.com")
 
     monkeypatch.setattr(tr, "_autenticar", _fingir_autenticar)
-    monkeypatch.setattr(tr, "INTERVALO_PING", 0.05)
+    assert tr.INTERVALO_PING == 25.0  # o de produção: quem esperasse o ping não passaria
 
     canal = CanalQueCai()
-    await tr.tempo_real(canal)  # type: ignore[arg-type]
+    await asyncio.wait_for(tr.tempo_real(canal), timeout=1.0)  # type: ignore[arg-type]
 
     assert canal.enviados[0]["assunto"] == "conectado"
     assert escuta.telas == 0 and escuta.conexao is None
@@ -349,11 +503,36 @@ def test_escuta_prefere_a_url_sem_pooler(monkeypatch) -> None:
     """LISTEN atrás de PgBouncer em modo transação não recebe nada — e não dá erro."""
     s = modulo_escuta.settings
     monkeypatch.setattr(s, "database_url", "postgresql+asyncpg://u:p@ep-x-pooler.neon.tech/db")
-    monkeypatch.setattr(s, "database_url_unpooled", None)
+    monkeypatch.setattr(s, "database_url_unpooled", "")
+    monkeypatch.setattr(s, "db_ssl", "")
     assert dsn_da_escuta() == "postgresql://u:p@ep-x.neon.tech/db"
 
     monkeypatch.setattr(s, "database_url_unpooled", "postgres://u:p@direta.neon.tech/db")
     assert dsn_da_escuta() == "postgresql://u:p@direta.neon.tech/db"
+
+
+def test_escuta_conecta_com_o_ssl_do_app(monkeypatch) -> None:
+    """A URL do app pode chegar já SEM `sslmode` — tirado para ir por `connect_args`, com o
+    modo em `DB_SSL`. A escuta segue o mesmo modo: a conexão de LISTEN não fica menos
+    protegida que a do app (sem isso, um `verify-full` valia para o app e não para ela)."""
+    s = modulo_escuta.settings
+    monkeypatch.setattr(s, "database_url_unpooled", "")
+    monkeypatch.setattr(s, "database_url", "postgresql+asyncpg://u:p@ep-x-pooler.neon.tech/db")
+    monkeypatch.setattr(s, "db_ssl", "require")
+    assert dsn_da_escuta() == "postgresql://u:p@ep-x.neon.tech/db?sslmode=require"
+
+    # O modo do app manda sobre o que a URL direta pedir.
+    monkeypatch.setattr(
+        s, "database_url_unpooled", "postgres://u:p@direta.neon.tech/db?sslmode=require"
+    )
+    monkeypatch.setattr(s, "db_ssl", "verify-full")
+    assert dsn_da_escuta() == "postgresql://u:p@direta.neon.tech/db?sslmode=verify-full"
+
+    # A loja: nem URL nem DB_SSL pedem nada, e nada muda.
+    monkeypatch.setattr(s, "database_url_unpooled", "")
+    monkeypatch.setattr(s, "database_url", "postgresql+asyncpg://loja:x@db:5432/loja")
+    monkeypatch.setattr(s, "db_ssl", "")
+    assert dsn_da_escuta() == "postgresql://loja:x@db:5432/loja"
 
 
 # ------------------------------------------------------------ dois processos de verdade

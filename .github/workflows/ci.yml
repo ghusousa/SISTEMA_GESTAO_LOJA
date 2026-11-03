@@ -193,7 +193,7 @@ jobs:
       - run: npm test
       # O web não tem build nem package.json: o canal de tempo real dele (espelho do
       # `lib/canal.ts`) roda com o node que este job já instalou.
-      - run: node --test ../web/testes/*.test.mjs
+      - run: node --test ../testes/web/*.test.mjs
       # O tsc não vê import quebrado de dependência nativa; o bundle vê.
       - run: npm run bundle
 
