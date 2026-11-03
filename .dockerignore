@@ -13,3 +13,5 @@ media
 .env
 .env.*
 *.log
+# Cópia do web/ do build da Vercel (ADR-42): a imagem leva o web/ da raiz.
+api/web_vercel

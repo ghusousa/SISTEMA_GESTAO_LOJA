@@ -694,6 +694,52 @@ As dependências Python têm **versão exata** em `api/requirements.lock` (o que
 instalam) e `api/requirements-dev.lock` (só os testes). Subir uma biblioteca é mudar a trava,
 rodar a suíte e deixar o CI confirmar — nunca mais "a versão do dia do build".
 
+## Subir na Vercel (demonstração)
+
+Para mostrar o sistema a quem ainda não o tem, sem máquina nenhuma: o mesmo código roda na
+Vercel, com o banco no Neon que ela mesma cria. **É demonstração, não loja**: backup no Drive,
+atualização e vigia são da instalação da loja e não rodam lá (o que muda e por quê está na
+ADR-42 de [docs/ARQUITETURA.md](docs/ARQUITETURA.md)). A instalação local continua igual.
+
+1. **Projeto.** Na Vercel, no time da loja: *Add New → Project → Import* deste repositório,
+   com o nome `loja-tria`. Antes de clicar em Deploy:
+   - **Root Directory: `api`** (botão *Edit*). Deixe **ligado** *Include files outside the root
+     directory in the Build Step* — o build copia o `web/`, que fica fora de `api/`.
+   - *Framework Preset*: FastAPI (vem sozinho). **Não** mude Build nem Install Command: o
+     projeto já diz quais são (`api/pyproject.toml` e `api/vercel.json`).
+2. **Variáveis** (*Settings → Environment Variables*). `JWT_SECRET` em **Production e Preview**
+   (sem ele nenhum build sobe); as `DEMO_*` só em **Production**:
+
+   | Variável | Valor |
+   |---|---|
+   | `JWT_SECRET` | gere com `python3 -c "import secrets; print(secrets.token_urlsafe(48))"` |
+   | `AMBIENTE` | `producao` (se esquecer, a Vercel já assume isso) |
+   | `DEMO_ADMIN_EMAIL` | o e-mail do dono da demonstração |
+   | `DEMO_ADMIN_SENHA` | a senha dele (8 caracteres ou mais) |
+   | `DEMO_VENDEDORA_SENHA` | opcional: a senha da vendedora `ana@loja.com`; sem ela, é sorteada e você define outra na tela Usuários |
+
+3. **Banco.** No projeto, aba **Storage → Create Database → Neon (Postgres)**, região **São
+   Paulo**, e *Connect* ao projeto. A integração põe `DATABASE_URL` e `DATABASE_URL_UNPOOLED`
+   sozinha — não copie URL nenhuma à mão. Conecte **só ao ambiente Production**: o deploy de um
+   branch (preview) então sobe sem banco e não encosta nos dados da demonstração. (Quem quiser
+   preview com dados liga, no Neon, *Create database branch for deployment → Preview*: cada
+   preview ganha uma cópia — mas o plano grátis tem poucas.)
+4. **Deploy** (ou *Deployments → Redeploy*, se o primeiro saiu antes das variáveis). O build
+   confere que instalou as versões do `requirements.lock`, copia o sistema web, migra o banco e,
+   na primeira vez, cria o dono e enche a loja de exemplo (catálogo, ~100 vendas, crediário,
+   caixa fechado) — leva uns minutos. Abra `https://loja-tria.vercel.app`: ele leva a `/app/`.
+5. **App do celular**: o endereço do servidor é o mesmo, `https://loja-tria.vercel.app`.
+
+Cada envio ao GitHub vira um deploy novo; só o de **produção** (o branch principal) mexe no
+banco, e nunca semeia de novo — com alguém cadastrado, o build não cria nem apaga nada. Para
+**recomeçar a demonstração do zero**: no painel do Neon, *SQL Editor*,
+`DROP SCHEMA public CASCADE; CREATE SCHEMA public;` e depois *Redeploy*. O backup lá é o do
+Neon (histórico e restauração para um instante, no painel dele).
+
+Se o build reprovar, a mensagem diz o porquê: "não achei o sistema web" é o *Include files
+outside the root directory* desligado; "dependências instaladas não são as do
+requirements.lock" é um Install Command com override no painel — deixe-o sem override.
+
 ## Deploy
 
 O guia de produção (VPS Ubuntu com systemd, Nginx, SSL, backup e atualização) está em

@@ -1,15 +1,24 @@
 """Configuração da aplicação (12-factor: tudo por variável de ambiente)."""
 
 from functools import lru_cache
-from typing import Annotated, Literal
+from pathlib import Path
+from typing import Annotated, Any, Literal
 from zoneinfo import ZoneInfo
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+from app.core.url_do_banco import argumentos_de_conexao, preparar_url
+
 # Valor de exemplo do .env.example. Serve para desenvolvimento e é recusado em produção:
 # subir com ele significaria aceitar qualquer token forjado com um segredo público.
 JWT_SECRET_EXEMPLO = "troque-esta-chave-em-producao"
+
+#: A pasta `api/`, de onde quer que o processo rode (uvicorn na mão, Docker ou Vercel).
+PASTA_API = Path(__file__).resolve().parents[2]
+#: Para onde o build da Vercel copia o sistema web: a função só empacota o que está DENTRO
+#: do Root Directory (`api/`), e o `web/` mora ao lado dele no repositório (ADR-42).
+PASTA_WEB_NA_VERCEL = PASTA_API / "web_vercel"
 
 
 class Settings(BaseSettings):
@@ -29,6 +38,21 @@ class Settings(BaseSettings):
     #: Clientes, sem índice, prendia o banco por 70 s a cada abertura. Vale só para as
     #: conexões da API: a migration e o pg_dump usam conexão própria e não herdam o teto.
     db_statement_timeout_ms: int = 30_000
+    #: A conexão DIRETA do Neon que a Vercel injeta (ADR-42). Quando existe, ganha da
+    #: DATABASE_URL (que lá passa pelo PgBouncer em modo transação): conexão direta mantém o
+    #: cache de prepared statements e aceita o `statement_timeout` na partida.
+    database_url_unpooled: str = ""
+    #: `ssl=` do asyncpg. Vazio = o que a URL pedir no `sslmode` (o Neon pede `require`);
+    #: a da loja não pede nada, e fica como sempre foi.
+    db_ssl: str = ""
+    #: A URL passa por um PgBouncer em modo transação. Ligado sozinho quando o host tem
+    #: `-pooler` (Neon); ver `url_do_banco.py`.
+    db_pooler: bool = False
+    #: Conexões que cada processo da API mantém abertas, e quantas a mais aceita no pico.
+    #: Na loja é um processo só; na Vercel cada instância da função tem o seu pool, por isso
+    #: lá o padrão é pequeno (ver `_padroes_da_vercel`).
+    db_pool_size: int = Field(default=10, ge=1)
+    db_max_overflow: int = Field(default=20, ge=0)
 
     # Segurança. Em produção JWT_SECRET é obrigatório e vem do .env (nunca do código).
     jwt_secret: str = JWT_SECRET_EXEMPLO
@@ -43,6 +67,9 @@ class Settings(BaseSettings):
     timezone_loja: str = "America/Sao_Paulo"
 
     media_dir: str = "media"
+    #: Onde mora o sistema web (HTML e módulos ES). Vazio = `web/` ao lado de `api/`, que é o
+    #: lugar dele no repositório e na imagem Docker; na Vercel, a cópia que o build faz.
+    web_dir: str = ""
     #: Onde o ./atualizar.sh deixa o que sabe sobre a versão instalada. É o único
     #: caminho por onde a API descobre se existe coisa nova — ela nunca fala com o
     #: GitHub, para não precisar de credencial do repositório dentro do contêiner.
@@ -70,6 +97,16 @@ class Settings(BaseSettings):
     #: sai pelo botão "Emitir NFC-e" do detalhe da venda.
     fiscal_emitir_automatico: bool = False
 
+    # Vercel (ADR-42): variáveis de SISTEMA que a própria Vercel põe no build e na função.
+    # Fora dela nenhuma existe, e é por isso que a loja não muda nada: tudo o que depende
+    # delas fica atrás de `if self.vercel`.
+    vercel: bool = False
+    vercel_env: str = ""
+    vercel_url: str = ""
+    vercel_branch_url: str = ""
+    vercel_project_production_url: str = ""
+    vercel_git_commit_sha: str = ""
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_origins(cls, v: object) -> object:
@@ -87,6 +124,59 @@ class Settings(BaseSettings):
         except Exception as exc:
             raise ValueError(f"TIMEZONE_LOJA inválido: {v!r}") from exc
         return v
+
+    @model_validator(mode="after")
+    def _padroes_da_vercel(self) -> "Settings":
+        """Na Vercel, o padrão de cada campo que o dono não escreveu é o que serve LÁ.
+
+        Roda antes da checagem de segurança, de propósito: esquecer o AMBIENTE no painel da
+        Vercel não pode subir a demonstração em modo desenvolvimento — com a documentação
+        aberta, CORS `*` e aceitando o JWT_SECRET de exemplo, que está no repositório. O que
+        o dono escreveu sempre ganha (`model_fields_set`).
+        """
+        if not self.web_dir:
+            self.web_dir = str(PASTA_WEB_NA_VERCEL if self.vercel else PASTA_API.parent / "web")
+        if not self.vercel:
+            return self
+
+        definidos = self.model_fields_set
+        if "ambiente" not in definidos:
+            self.ambiente = "producao"
+        if "cors_origins" not in definidos:
+            # A página e a API são a mesma origem; a lista só existe porque `*` é recusado
+            # fora de desenvolvimento. Os três endereços que a Vercel dá a um deploy.
+            enderecos = (
+                self.vercel_project_production_url,
+                self.vercel_url,
+                self.vercel_branch_url,
+            )
+            origens = [f"https://{e}" for e in dict.fromkeys(enderecos) if e]
+            if origens:
+                self.cors_origins = origens
+        if "media_dir" not in definidos:
+            # O disco da função é somente leitura; só o /tmp grava (e não sobrevive à
+            # instância). Sem isto a API morre no import, no mkdir da pasta de fotos.
+            self.media_dir = "/tmp/media"
+        if "db_pool_size" not in definidos:
+            self.db_pool_size = 2
+        if "db_max_overflow" not in definidos:
+            self.db_max_overflow = 3
+        # NFC-e automática roda DEPOIS de responder a venda, numa tarefa solta (ADR-41). Na
+        # função da Vercel a instância pode congelar assim que a resposta sai, e a nota
+        # ficaria pela metade: lá ela sai só pelo botão "Emitir NFC-e".
+        self.fiscal_emitir_automatico = False
+        return self
+
+    @model_validator(mode="after")
+    def _url_do_banco(self) -> "Settings":
+        """A URL que o asyncpg entende, venha ela do `.env` da loja ou do Neon (ADR-42)."""
+        conexao = preparar_url(self.database_url_unpooled or self.database_url)
+        self.database_url = conexao.url
+        if conexao.ssl and not self.db_ssl:
+            self.db_ssl = conexao.ssl
+        if conexao.pooler:
+            self.db_pooler = True
+        return self
 
     @model_validator(mode="after")
     def _seguranca_de_producao(self) -> "Settings":
@@ -120,6 +210,17 @@ class Settings(BaseSettings):
     def producao(self) -> bool:
         """Está servindo a loja de verdade? (qualquer ambiente que não seja dev/test/local)."""
         return self.ambiente.lower() not in {"dev", "test", "local"}
+
+    def connect_args(self, *, com_teto: bool = True) -> dict[str, Any]:
+        """`connect_args` do engine: teto por consulta, SSL e o modo PgBouncer.
+
+        `com_teto=False` é a migration: ela usa conexão própria e não herda o teto.
+        """
+        return argumentos_de_conexao(
+            ssl=self.db_ssl,
+            pooler=self.db_pooler,
+            statement_timeout_ms=self.db_statement_timeout_ms if com_teto else None,
+        )
 
 
 @lru_cache

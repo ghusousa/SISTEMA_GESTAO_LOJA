@@ -93,6 +93,39 @@ async def test_versao_exige_login(client) -> None:
     assert (await client.get("/versao")).status_code == 401
 
 
+async def test_na_vercel_a_versao_e_o_proprio_deploy(
+    client, auth_vendedor, tmp_path, monkeypatch
+) -> None:
+    """Na Vercel não há atualizador: o commit vem dela, e o que está no ar é o mais novo.
+
+    Um versao.json esquecido por perto (dizendo "desatualizada") não pode mandar na resposta.
+    """
+    from app.core.config import settings
+
+    _escrever(tmp_path, monkeypatch, commit="414c046", atualizada=False)
+    monkeypatch.setattr(settings, "vercel", True)
+    monkeypatch.setattr(
+        settings, "vercel_git_commit_sha", "fa1eade47b73733d6312d5abfad33ce9e4068081"
+    )
+    corpo = (await client.get("/versao", headers=auth_vendedor)).json()
+    assert corpo["commit"] == "fa1eade"
+    assert corpo["atualizada"] is True
+    assert corpo["conferido_recente"] is True
+    assert corpo["conferido_em"] is not None
+    assert "Vercel" in corpo["resumo"]
+
+
+async def test_na_vercel_sem_commit_nao_inventa_um(client, auth_admin, monkeypatch) -> None:
+    """Deploy feito pela CLI, sem Git: não há SHA, e a tela mostra "sem versão"."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "vercel", True)
+    monkeypatch.setattr(settings, "vercel_git_commit_sha", "")
+    corpo = (await client.get("/versao", headers=auth_admin)).json()
+    assert corpo["commit"] is None
+    assert corpo["atualizada"] is True
+
+
 # ------------------------------------------------------------------ o ./atualizar.sh
 #
 # Quem escreve o versao.json é o ./atualizar.sh, e é ele que faz a loja voltar sozinha de

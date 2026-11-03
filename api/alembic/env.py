@@ -9,7 +9,9 @@ from app.core.config import settings
 from app.models_registry import Base  # noqa: F401  (importa todos os modelos)
 
 config = context.config
-config.set_main_option("sqlalchemy.url", settings.database_url)
+# `%` dobrado: o alembic.ini é lido pelo configparser, e uma senha com `%` (comum nas
+# geradas pelo Neon e afins) quebraria a interpolação dele.
+config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
@@ -40,6 +42,9 @@ async def run_async_migrations() -> None:
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        # SSL e modo PgBouncer quando a URL é a do Neon (ADR-42); sem o teto por consulta,
+        # que é da API: migration pode levar o tempo que precisar.
+        connect_args=settings.connect_args(com_teto=False),
     )
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)

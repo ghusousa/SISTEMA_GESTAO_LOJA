@@ -30,7 +30,12 @@ Módulos e ordem de implementação (dependências primeiro):
 `core` → `auth` → `usuarios` → `catalogo` → `estoque` → `vendas` → `despesas` → `caixa` → `relatorios`
 
 `app/core/`: `config.py` (pydantic-settings), `db.py` (engine async + naming convention),
-`security.py` (bcrypt + JWT), `exceptions.py` (AppError + handler), `pagination.py`, `deps.py`.
+`url_do_banco.py` (a URL do Neon em formato asyncpg, ADR-42), `security.py` (bcrypt + JWT),
+`exceptions.py` (AppError + handler), `pagination.py`, `deps.py`.
+
+Duas formas de rodar o mesmo código: a **loja** (Docker + Caddy na máquina dela, a de
+verdade) e a **Vercel** (demonstração, Neon como banco), ligada só por variáveis que a Vercel
+põe — sem elas nada muda (ADR-42).
 
 ---
 
@@ -1308,6 +1313,74 @@ detalhe da venda (status, chave, DANFE, Emitir/Tentar de novo — `web/js/nfce.j
 cadastrar nele o A1 e o CSC, testar em homologação, e acertar regime/NCM/CFOP com o contador.
 *Fora, por ora:* CPF na nota, NF-e de devolução, regimes 2 e 3, tributos aproximados (IBPT) e a
 guarda dos XMLs na loja (ficam no emissor; aqui só os links).
+
+**ADR-42 — Vercel como segunda forma de rodar: demonstração.**
+A loja continua sendo a máquina dela (Docker, Caddy, `./atualizar.sh`, `./backup.sh`). A
+Vercel é uma **segunda** forma de rodar o MESMO código, para mostrar o sistema a quem ainda não
+o tem (plano Hobby, projeto `loja-tria`, banco Postgres no **Neon** que a própria Vercel cria
+na aba Storage, região São Paulo). Ela é ligada por variáveis de ambiente e por três arquivos
+que a loja não lê — `api/vercel.json`, `[tool.vercel]` no `pyproject.toml` e
+`api/.python-version` —: **sem `VERCEL=1` (que a Vercel põe sozinha), nada muda**, e os testes
+prendem isso (`test_url_do_banco.py`: URL, pool, ambiente e pasta web da loja saem iguais).
+*Projeto:* Root Directory = `api/`, framework FastAPI (`entrypoint = "app.main:app"`), uma
+função só, na região `gru1` (Hobby: uma região), `maxDuration` 60 s (as consultas já têm teto
+de 30 s; o Hobby vai a 300). *Dependências:* com `pyproject.toml` presente a Vercel o lê no
+lugar de qualquer requirements.txt e resolveria o `>=` no dia do build — o que o ADR-34 proíbe.
+Por isso `installCommand = python scripts/vercel_instalar.py`, que instala o
+`requirements.lock` com `--no-deps` (uv se houver, senão `ensurepip` + pip), e o build
+**confere versão por versão** e reprova o deploy se a Vercel tiver instalado outra coisa.
+Python 3.12, o da imagem e do CI. *Web:* o `web/` mora fora do Root Directory; o build
+(`scripts/vercel_build.py`) o copia para `api/web_vercel/` (no `.gitignore`), e o `main.py`
+serve a pasta de `settings.web_dir` — vazio, é o `web/` ao lado de `api/` de sempre; na Vercel,
+a cópia. `[tool.vercel.fastapi.static] cdn = false`: nada vai para a CDN, `/app`, `/legal`,
+`/privacidade` e o redirect de `/` saem do mesmo FastAPI, com os mesmos cabeçalhos. O que na
+loja é do Caddy (CSP, HSTS, Permissions-Policy) está no `vercel.json`, igual — menos o
+`{hostport}` do `connect-src`, que lá não existe (`'self'` já cobre ws/wss da mesma origem nos
+navegadores atuais) — e com `https://*.public.blob.vercel-storage.com` no `img-src`, onde ficam
+as fotos na Vercel; `test_vercel.py` compara as duas listas diretiva por diretiva.
+X-Content-Type-Options/X-Frame-Options/Referrer-Policy NÃO vão no `vercel.json`: a API já os põe,
+e em dobro ("DENY, DENY") alguns navegadores descartam. *Banco:* o Neon injeta `DATABASE_URL`
+(PgBouncer em modo transação) e `DATABASE_URL_UNPOOLED` (direta), no formato
+`postgres://...?sslmode=require&channel_binding=require`. A config prefere a **direta** (mantém
+o cache de prepared statements e o `statement_timeout` na partida) e `core/url_do_banco.py`
+traduz: `postgres://` vira `postgresql+asyncpg://`, `sslmode` sai da URL e vira o `ssl=` do
+asyncpg, `channel_binding` sai (o asyncpg mandaria os dois ao servidor como configuração e não
+conectaria). Só com a URL do pooler (`-pooler` no host), o cache de statements desliga, cada
+statement ganha nome único e o teto de partida não vai. O pool é `DB_POOL_SIZE`/
+`DB_MAX_OVERFLOW` (10/20 na loja; 2/3 por padrão na Vercel, onde cada instância tem o seu).
+*Padrões na Vercel* (só o que o dono não escreveu): `AMBIENTE=producao` — esquecer a variável
+não pode subir a demonstração com `/docs` aberto e aceitando o `JWT_SECRET` de exemplo, que
+está no repositório; `CORS_ORIGINS` = os endereços que a Vercel dá ao deploy; `MEDIA_DIR=/tmp/media`
+(o disco da função é só leitura; sem isso a API morria no import). *Build:* confere a trava,
+copia o web e, **só com `VERCEL_ENV=production`**, roda `alembic upgrade head` e, se a loja
+não tem usuário nenhum e `DEMO_ADMIN_EMAIL`/`DEMO_ADMIN_SENHA` existem, cria o dono pela mesma
+porta do `app.cli create-admin` e enche a demonstração pelo `seed_demo.popular()` — as rotas
+de sempre, com a API dentro do processo do build (`TestClient`), porque ali não há servidor de
+pé. A vendedora da demonstração (`ana@loja.com`) tem senha de `DEMO_VENDEDORA_SENHA` ou
+sorteada: senha conhecida numa URL pública é balcão aberto. Build repetido não duplica nada
+(com alguém cadastrado, não cria nem semeia); preview não toca no banco (o preview de um
+branch não migra o banco da demonstração por baixo do deploy que está no ar); e o log nunca
+leva senha nem URL do banco (erro de config sai só com a frase de cada campo: o pydantic
+repete os valores lidos). A migração roda ANTES de o deploy novo entrar no ar — o anterior
+atende alguns segundos com o schema novo; numa demonstração, aceito. *Login:* a Vercel
+sobrescreve o `X-Forwarded-For` com o IP de quem chamou, então o primeiro da lista — o que a
+trava de força bruta (ADR-24) já lê — é o real; nada a configurar. *`/versao`:* não há
+`atualizar.sh` nem `versao.json`; o commit vem de `VERCEL_GIT_COMMIT_SHA` e "a mais nova" é o
+próprio deploy (cada envio ao GitHub publica sozinho). **O que NÃO roda lá:** `atualizar.sh`
+(quem publica é a Vercel, a cada push), `backup.sh` e o backup no Drive do ADR-28 (o backup é
+o do Neon: histórico e restauração para um instante, no painel dele), `vigia.sh`,
+`notificar.sh`, `diagnostico.sh` e as unidades do systemd; e a **NFC-e automática pós-commit**
+(`FISCAL_EMITIR_AUTOMATICO` é forçado a desligado: a instância da função pode congelar assim
+que a resposta sai, e a nota ficaria pela metade — o botão "Emitir NFC-e" continua). O disco
+da função não guarda nada entre instâncias (`/tmp` é de cada uma). *Incertezas que só um
+deploy real confirma:* que o `installCommand` do `vercel.json` vale para o preset FastAPI (o
+código do builder diz que sim; se não valer, o build reprova na conferência e o README diz o
+que fazer); que "Include files outside the root directory" está ligado (sem ele o `web/` não
+existe no build, e o build reprova dizendo isso); o HSTS, que a Vercel pode já mandar no
+`*.vercel.app`; e se a integração Git da Vercel publica **check-run** no commit do branch
+principal — o `atualizar.sh` exige TODAS verdes (ADR-34), e aí um deploy vermelho da
+demonstração seguraria a atualização das lojas (a integração costuma publicar *commit status*,
+que ele não lê; conferir no primeiro deploy em `GET /repos/.../commits/<sha>/check-runs`).
 
 ## 4. Contratos de API
 
