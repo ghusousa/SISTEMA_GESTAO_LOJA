@@ -201,8 +201,8 @@ A loja consegue operar 100% sem celular.
 - Só o dono muda as taxas da maquininha; quem vê dinheiro as lê; a vendedora não as vê.
 - O balcão busca e cadastra cliente sem ver saldo, limite ou observação do crediário; vender
   fiado continua sendo de quem cuida do crediário. Pelo documento, o balcão só acha a cliente
-  com o CPF (ou CNPJ) inteiro — nunca por um trecho dele. Cadastro reenviado pela rede não
-  duplica a cliente.
+  com o documento inteiro (CPF, CNPJ ou RG, como foi cadastrado) — nunca por um trecho dele.
+  Cadastro reenviado pela rede não duplica a cliente.
 - A comissão sai do faturamento LÍQUIDO de quem fez a venda: venda cancelada não conta, e a peça
   devolvida tira a comissão no período em que voltou — sem reescrever a folha de um mês fechado.
   A soma da equipe fecha com o faturamento líquido do resumo da loja.

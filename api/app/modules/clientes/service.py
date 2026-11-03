@@ -46,8 +46,10 @@ from app.modules.vendas.models import (
 )
 
 ZERO = Decimal("0.00")
-#: CPF e CNPJ, só dígitos: o balcão acha a cliente pelo documento INTEIRO, nunca por trecho.
-DIGITOS_DO_DOCUMENTO = (11, 14)
+#: O balcão acha a cliente pelo documento INTEIRO (igualdade), nunca por trecho — de qualquer
+#: tamanho, porque o cadastro aceita RG e CPF sem o zero da frente. Abaixo deste piso a
+#: igualdade vira chute de poucas tentativas, e o número é mais trecho de telefone que documento.
+MINIMO_DE_DIGITOS_DO_DOCUMENTO = 7
 
 
 def _fiado_das_vendas(cliente_id_col) -> Select:
@@ -221,9 +223,10 @@ class ClienteService:
         """Nome sem acento, telefone ou documento.
 
         O documento casa por TRECHO só no crediário, que já o vê. O balcão não o devolve
-        (ADR-36), e por isso lá ele só casa INTEIRO (CPF ou CNPJ): por trecho, "a Maria
+        (ADR-36), e por isso lá ele só casa INTEIRO, por igualdade: por trecho, "a Maria
         aparece?" vira oráculo — um dígito por vez, a vendedora remontava o CPF que a
-        resposta esconde. Telefone segue por trecho nas duas portas: ele já volta.
+        resposta esconde. O tamanho não entra na regra (RG também é documento); só o piso.
+        Telefone segue por trecho nas duas portas: ele já volta.
         """
         if not q:
             return stmt
@@ -236,7 +239,7 @@ class ClienteService:
             condicoes.append(Customer.phone.like(f"%{so_digitos}%"))
             if documento_por_trecho:
                 condicoes.append(Customer.document.like(f"%{so_digitos}%"))
-            elif len(so_digitos) in DIGITOS_DO_DOCUMENTO:
+            elif len(so_digitos) >= MINIMO_DE_DIGITOS_DO_DOCUMENTO:
                 condicoes.append(Customer.document == so_digitos)
         return stmt.where(or_(*condicoes))
 

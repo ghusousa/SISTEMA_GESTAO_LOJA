@@ -128,6 +128,32 @@ async def test_balcao_so_acha_pelo_documento_inteiro(client, auth_admin, auth_ge
     assert await achou("/clientes", auth_gerente, cpf[4:9])
 
 
+async def test_balcao_acha_documento_inteiro_que_nao_e_cpf(client, auth_admin, auth_vendedor):
+    """O cadastro aceita qualquer documento (RG, CPF sem o zero da frente): só dígitos, até
+    20. Casar só com 11 ou 14 dígitos deixava o RG inteiro sem achar ninguém no balcão — a
+    igualdade já fecha o oráculo, o tamanho não protegia nada (ADR-36)."""
+    ids = {}
+    for nome, documento in (("Rita Geral", "12.345.678-9"), ("Rosa Zero", "1234567890")):
+        r = await client.post(
+            "/clientes", headers=auth_admin, json={"nome": nome, "documento": documento}
+        )
+        assert r.status_code == 201, r.text
+        ids[nome] = r.json()["id"]
+
+    async def achou(q: str, alvo: int) -> bool:
+        resp = await client.get("/clientes/balcao", headers=auth_vendedor, params={"q": q})
+        assert resp.status_code == 200, resp.text
+        return any(c["id"] == alvo for c in resp.json()["items"])
+
+    rg = ids["Rita Geral"]
+    assert await achou("123456789", rg)
+    assert await achou("12.345.678-9", rg)
+    assert await achou("1234567890", ids["Rosa Zero"])
+    # Trecho continua sem achar, de qualquer tamanho.
+    for trecho in ("12345678", "2345678", "23456789"):
+        assert not await achou(trecho, rg), trecho
+
+
 async def test_todo_papel_atende_cliente(
     client, auth_admin, auth_gerente, auth_supervisora, auth_vendedor
 ):

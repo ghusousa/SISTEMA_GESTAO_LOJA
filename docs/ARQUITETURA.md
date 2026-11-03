@@ -1075,10 +1075,12 @@ clientes ("chegou a coleção no seu tamanho", aniversariante do mês). A venda 
 **próprio**, que não herda de `ClienteOut`: herdar traria `deve`, `limite` e `acima_do_limite`
 para a tela da vendedora no primeiro campo novo que alguém pusesse lá. Também ficam de fora o
 documento e a observação do crediário, que guarda combinados de cobrança. No balcão o documento
-só casa **inteiro** (CPF ou CNPJ, 11 ou 14 dígitos, por igualdade): por trecho, "a Maria
-aparece?" virava oráculo, e um dígito por vez a vendedora remontava o CPF que a resposta
-esconde. A busca por trecho do documento fica no crediário (`GERIR_CREDIARIO`), que já o vê;
-o telefone segue por trecho nas duas portas, porque ele volta. O fiado continua sendo
+só casa **inteiro**, por igualdade: por trecho, "a Maria aparece?" virava oráculo, e um dígito
+por vez a vendedora remontava o CPF que a resposta esconde. O tamanho não entra na regra —
+o cadastro aceita RG e CPF sem o zero da frente, e casar só 11 ou 14 dígitos deixava esse
+documento inteiro sem achar ninguém; a igualdade já fecha o oráculo. Só há um piso de 7
+dígitos, abaixo do qual a igualdade vira chute de poucas tentativas. A busca por trecho do
+documento fica no crediário (`GERIR_CREDIARIO`), que já o vê; o telefone segue por trecho nas duas portas, porque ele volta. O fiado continua sendo
 `GERIR_CREDIARIO`: vender fiado é abrir uma dívida que alguém vai cobrar. O cadastro de balcão é idempotente por `client_uuid` (a rede caindo depois
 de gravar não faz a cliente nascer duas vezes; a mesma chave com outra pessoa é 409), e
 `nascimento` e `preferencias` entram na anonimização da exclusão (LGPD). No PDV, tirar o fiado
@@ -1335,7 +1337,7 @@ conferência feita, e a devolução entra no caixa de hoje (ADR-19).
 |---|---|---|
 | GET | `/clientes` | `?q=&somente_devendo=`; `deve` e `acima_do_limite` vêm calculados |
 | POST | `/clientes` | `{nome, telefone?, documento?, limite?, nascimento?, preferencias?}` |
-| GET | `/clientes/balcao` | **ATENDER_CLIENTE**. `?q=` (nome sem acento, trecho do telefone ou documento INTEIRO — CPF/CNPJ por igualdade, nunca por trecho), paginado. Responde `ClienteBalcaoOut` `{id, nome, telefone, nascimento, preferencias}` — sem `deve`, `limite`, `observacao` nem `documento` (ADR-36) |
+| GET | `/clientes/balcao` | **ATENDER_CLIENTE**. `?q=` (nome sem acento, trecho do telefone ou documento INTEIRO — por igualdade, a partir de 7 dígitos, nunca por trecho), paginado. Responde `ClienteBalcaoOut` `{id, nome, telefone, nascimento, preferencias}` — sem `deve`, `limite`, `observacao` nem `documento` (ADR-36) |
 | POST | `/clientes/balcao` | **ATENDER_CLIENTE**. `{client_uuid, nome, telefone?, nascimento?, preferencias?}` → 201 `ClienteBalcaoOut`. Replay → 200; mesma chave com outro nome ou telefone → 409. Telefone de cliente ativa → 422 |
 | GET | `/clientes/aniversariantes` | **ATENDER_CLIENTE**. `?mes=1..12` (sem ele, o mês de hoje na loja), paginado, na ordem do dia; `ClienteBalcaoOut` |
 | GET/PATCH | `/clientes/{id}` | o PATCH aceita `nascimento` e `preferencias` (`""` apaga a preferência) |
