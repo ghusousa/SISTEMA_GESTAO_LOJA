@@ -21,7 +21,11 @@ export function render(raiz) {
   /** `{ variante_id, produto, tamanho, cor, codigo_barras, preco_venda, quantidade }` */
   let itens = [];
   let cliente = null;
-  let chave = null; // nasce no primeiro envio e fica até dar certo (reenvio não tira duas vezes)
+  // A chave nasce com a tela e só morre com ela (sucesso ou 409): mexer na sacola, na
+  // cliente ou no prazo depois de uma resposta perdida NÃO a troca — senão o reenvio abriria
+  // uma segunda condicional e as peças sairiam do saldo duas vezes. Com a mesma chave, o
+  // servidor recusa (409) e diz qual condicional já abriu (ADR-39), como o PDV e a Entrada.
+  const chave = novoClientUuid();
   let enviando = false;
 
   raiz.innerHTML = html`
@@ -75,7 +79,6 @@ export function render(raiz) {
 
   function mudarItens(novos) {
     itens = novos;
-    chave = null; // outra sacola é outro pedido: a chave antiga já não serve para ela
     pintar();
   }
 
@@ -126,7 +129,6 @@ export function render(raiz) {
     if (!campoPrazo.value) return avisarErro({ message: 'Combine o prazo para a cliente devolver.' });
     enviando = true;
     pintar();
-    chave = chave || novoClientUuid();
     try {
       const condicional = await api.post('/condicionais', {
         client_uuid: chave,
@@ -138,7 +140,14 @@ export function render(raiz) {
       aviso(`Condicional #${condicional.id}: ${plural(condicional.total_pecas, 'peça saiu', 'peças saíram')} com ${condicional.cliente}.`);
       ir(`/condicionais/${condicional.id}`);
     } catch (erro) {
-      if (erro instanceof ErroApi && erro.status === 409 && erro.detail?.condicional_id) chave = null;
+      const jaAberta = erro instanceof ErroApi && erro.status === 409 ? erro.detail?.condicional_id : null;
+      if (jaAberta) {
+        // Esta chave já abriu uma condicional (a resposta se perdeu e a sacola mudou
+        // depois). Ela é a que vale: leva até ela, e o que mudou vai numa condicional nova.
+        aviso(`Esta condicional já foi aberta (#${jaAberta}). Confira o que saiu nela; se a cliente levou mais alguma peça, abra outra condicional.`, 'erro');
+        ir(`/condicionais/${jaAberta}`);
+        return;
+      }
       avisarErro(erro);
     } finally {
       enviando = false;
@@ -150,12 +159,10 @@ export function render(raiz) {
     const escolhida = await escolherCliente();
     if (escolhida) {
       cliente = escolhida;
-      chave = null;
       pintar();
     }
     campo.focus();
   });
-  campoPrazo.addEventListener('change', () => (chave = null));
   botaoSalvar.addEventListener('click', salvar);
 
   const busca = ligarBuscaDePeca({ campo, painel: raiz.querySelector('[data-busca]'), aoEscolher: somarPeca, mostrarPreco: true });

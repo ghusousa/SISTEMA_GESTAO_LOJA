@@ -11,6 +11,7 @@
 import { api, ErroApi } from '../api.js';
 import { itensDoFechamento, resumirFechamento, textoDoPrazo } from '../condicional.js';
 import { formatar, paraCentavos, paraDecimalString, somar } from '../dinheiro.js';
+import { pedirParcelas } from '../pagar-credito.js';
 import { pedirVale } from '../pagar-fiado-vale.js';
 import { PODE, pode } from '../permissoes.js';
 import { ir } from '../router.js';
@@ -28,6 +29,7 @@ import {
   html,
   ligarCampoDinheiro,
   numero,
+  rotuloPagamento,
 } from '../ui.js';
 
 const FORMAS_DO_FECHAMENTO = () =>
@@ -48,7 +50,7 @@ export async function render(raiz, params) {
 
   /** variante -> quantas voltaram (só as que a pessoa já respondeu). */
   const devolvidas = new Map();
-  /** `{ forma, valor (centavos), codigo_vale? }` */
+  /** `{ forma, valor (centavos), codigo_vale?, parcelas?, bandeira? }` */
   let pagamentos = [];
   let desconto = 0;
   // A chave do fechamento nasce com a tela e fica até dar certo: a resposta perdida e o
@@ -172,7 +174,7 @@ export async function render(raiz, params) {
       <div class="formas">${FORMAS_DO_FECHAMENTO().map((f) => html`<button class="forma" data-forma="${f}">${FORMAS[f]}</button>`)}</div>
       ${pagamentos.map((p, i) => html`
         <div class="pagamento-linha">
-          <strong>${FORMAS[p.forma]}${p.codigo_vale ? ` ${p.codigo_vale}` : ''}</strong>
+          <strong>${rotuloPagamento(p)}${p.codigo_vale ? ` ${p.codigo_vale}` : ''}</strong>
           <input data-pagamento="${i}" style="width:120px;text-align:right" aria-label="Valor em ${FORMAS[p.forma]}" />
           <button class="botao-icone botao-icone--perigo" data-remover="${i}" aria-label="Tirar">✕</button>
         </div>`)}
@@ -206,6 +208,13 @@ export async function render(raiz, params) {
       pagamentos.push({ forma, valor: Math.min(vale.saldo, restante), codigo_vale: vale.codigo });
     } else if (pagamentos.some((p) => p.forma === forma)) {
       return;
+    } else if (forma === 'CREDITO') {
+      // Como no PDV (ADR-35): em quantas vezes e em que bandeira, antes do valor entrar.
+      // Sem isto toda condicional parcelada virava 1x — a taxa e a agenda de recebíveis
+      // saíam as do à vista.
+      const escolha = await pedirParcelas(restante);
+      if (!escolha) return;
+      pagamentos.push({ forma, valor: restante, ...escolha });
     } else {
       pagamentos.push({ forma, valor: restante });
     }
@@ -220,11 +229,14 @@ export async function render(raiz, params) {
       const fechada = await api.post(`/condicionais/${c.id}/fechamento`, {
         client_uuid: chave,
         itens: itensDoFechamento(c.itens, devolvidas),
-        desconto: paraDecimalString(resumo().total ? desconto : 0),
+        // Tudo voltou: desconto 0 (o servidor recusa desconto sem venda). Espelho do app.
+        desconto: paraDecimalString(Math.min(desconto, resumo().total)),
         pagamentos: pagamentos.map((p) => ({
           forma: p.forma,
           valor: paraDecimalString(p.valor),
           ...(p.codigo_vale ? { codigo_vale: p.codigo_vale } : {}),
+          ...(p.parcelas ? { parcelas: p.parcelas } : {}),
+          ...(p.bandeira ? { bandeira: p.bandeira } : {}),
         })),
       });
       aviso(fechada.venda_id ? `Condicional fechada: venda #${fechada.venda_id} registrada.` : 'Condicional fechada: tudo voltou ao estoque.');

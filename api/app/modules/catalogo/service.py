@@ -445,19 +445,56 @@ async def peca_que_recebe(
             "Esta peça acabou de ser excluída do catálogo.", {"variante_id": variante_id}
         )
 
-    mesma_etiqueta = await repo.travar_ativa_por_codigo(peca.barcode)
-    if mesma_etiqueta is not None:
-        return mesma_etiqueta, (
-            f"A peça vendida (#{variante_id}) foi excluída do catálogo; voltou para esta, "
-            f"que tem a mesma etiqueta {peca.barcode}."
-        )
-    mesma_grade = await repo.travar_ativa_da_grade(peca.product_id, peca.size, peca.color)
-    if mesma_grade is not None:
-        return mesma_grade, (
-            f"A peça vendida (#{variante_id}) foi excluída do catálogo; voltou para esta, "
-            "do mesmo produto, tamanho e cor."
-        )
+    substituta = await _ativa_no_lugar_da_excluida(repo, peca, travar=True)
+    if substituta is not None:
+        return substituta
     await repo.reativar_peca(variante_id, peca.product_id)
     return variante_id, (
         "A peça estava excluída do catálogo e voltou para ele: está de volta na arara."
     )
+
+
+async def _ativa_no_lugar_da_excluida(
+    repo: CatalogoRepository, peca, *, travar: bool
+) -> tuple[int, str] | None:
+    """A peça ATIVA que recebe no lugar de uma excluída: a mesma etiqueta, senão a mesma
+    grade. None: nenhuma — a excluída é que volta ao catálogo."""
+    mesma_etiqueta = await repo.travar_ativa_por_codigo(peca.barcode, travar=travar)
+    if mesma_etiqueta is not None:
+        return mesma_etiqueta, (
+            f"A peça vendida (#{peca.id}) foi excluída do catálogo; voltou para esta, "
+            f"que tem a mesma etiqueta {peca.barcode}."
+        )
+    mesma_grade = await repo.travar_ativa_da_grade(
+        peca.product_id, peca.size, peca.color, travar=travar
+    )
+    if mesma_grade is not None:
+        return mesma_grade, (
+            f"A peça vendida (#{peca.id}) foi excluída do catálogo; voltou para esta, "
+            "do mesmo produto, tamanho e cor."
+        )
+    return None
+
+
+async def pecas_que_receberiam(session: AsyncSession, variante_ids: list[int]) -> dict[int, int]:
+    """Para MOSTRAR: a peça que `peca_que_recebe` escolheria HOJE para cada uma destas —
+    sem travar nem reativar nada.
+
+    A condicional aberta mostra o preço da peça que o fechamento vai VENDER, e o fechamento
+    vende da peça que recebe o retorno. Se a dona excluiu a peça e a recadastrou (com outro
+    preço, ou a etiqueta noutro produto) enquanto ela estava na casa da cliente, mostrar o
+    preço da excluída faria a tela cobrar um valor e a venda pedir outro (422) — e a
+    condicional não fecharia. Peça ativa, ou excluída sem substituta (seria ela a voltar
+    ao catálogo), é ela mesma.
+    """
+    repo = CatalogoRepository(session)
+    destino: dict[int, int] = {}
+    for variante_id in sorted(set(variante_ids)):
+        destino[variante_id] = variante_id
+        peca = await repo.travar_peca(variante_id, travar=False)
+        if peca is None or peca.deleted_at is None:
+            continue
+        substituta = await _ativa_no_lugar_da_excluida(repo, peca, travar=False)
+        if substituta is not None:
+            destino[variante_id] = substituta[0]
+    return destino

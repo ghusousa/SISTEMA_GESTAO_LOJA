@@ -355,6 +355,51 @@ async def test_reenvio_com_outro_carrinho_e_recusado_e_nao_devolve_a_venda_antig
     assert [(p["forma"], p["valor"]) for p in venda["pagamentos"]] == [("PIX", "49.90")]
 
 
+async def test_reenvio_pago_com_outro_vale_e_recusado(
+    client: AsyncClient, auth_vendedor: dict[str, str], loja: dict
+) -> None:
+    """O vale é papel na mão da cliente: o mesmo valor em OUTRO vale é outra cobrança.
+
+    A resposta se perdeu e a moça, com a cliente mostrando o segundo vale, cobra de novo
+    com a mesma chave. Devolver a venda antiga como sucesso diria que o vale que está na
+    mão dela foi usado — e foi o outro que o servidor gastou. A régua do reenvio é a mesma
+    do fechamento da condicional (`VendaService._cobrada_assim`).
+    """
+    async with SessionLocal() as s:
+        for codigo in ("VPDV01", "VPDV02"):
+            await s.execute(
+                text("INSERT INTO vouchers (code, value, used_value) VALUES (:c, 49.90, 0)"),
+                {"c": codigo},
+            )
+        await s.commit()
+    pedido = {
+        "client_uuid": str(uuid.uuid4()),
+        "itens": [{"variante_id": loja["camiseta"], "quantidade": 1}],
+        "pagamentos": [{"forma": "VALE", "valor": "49.90", "codigo_vale": "VPDV01"}],
+    }
+    primeira = await client.post("/vendas", headers=auth_vendedor, json=pedido)
+    assert primeira.status_code == 201, primeira.text
+    # O reenvio idêntico continua sendo replay.
+    assert (await client.post("/vendas", headers=auth_vendedor, json=pedido)).status_code == 200
+
+    outro = await client.post(
+        "/vendas",
+        headers=auth_vendedor,
+        json={
+            **pedido,
+            "pagamentos": [{"forma": "VALE", "valor": "49.90", "codigo_vale": "VPDV02"}],
+        },
+    )
+    assert outro.status_code == 409, outro.text
+    assert outro.json()["code"] == "DUPLICADO"
+    assert outro.json()["detail"]["venda_id"] == primeira.json()["id"]
+    async with SessionLocal() as s:
+        usado = (
+            await s.execute(text("SELECT used_value FROM vouchers WHERE code = 'VPDV02'"))
+        ).scalar_one()
+    assert usado == 0
+
+
 async def test_duas_vendas_simultaneas_da_ultima_peca_so_uma_passa(
     client: AsyncClient, auth_vendedor: dict[str, str], loja: dict
 ) -> None:
