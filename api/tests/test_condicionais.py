@@ -10,6 +10,7 @@ O que estes testes guardam, dos dois lados:
 import asyncio
 import uuid
 from datetime import timedelta
+from decimal import Decimal
 
 import pytest
 from conftest import criar_produto
@@ -594,40 +595,92 @@ async def test_peca_excluida_enquanto_estava_na_condicional_volta_para_o_catalog
     assert await _saldo(client, auth_vendedor, loja["blusa"]) == 3
 
 
-@pytest.mark.parametrize("mesma_etiqueta", [True, False], ids=["etiqueta", "grade"])
+@pytest.mark.parametrize(
+    ("onde", "preco"),
+    [
+        ("etiqueta", "89.90"),
+        ("grade", "89.90"),
+        ("etiqueta", "99.90"),
+        ("grade", "99.90"),
+        ("outro-produto", "119.90"),
+    ],
+    ids=[
+        "etiqueta",
+        "grade",
+        "etiqueta-outro-preco",
+        "grade-outro-preco",
+        "etiqueta-em-outro-produto",
+    ],
+)
 async def test_peca_excluida_e_recadastrada_vende_da_peca_que_recebeu_o_retorno(
     client: AsyncClient,
     auth_vendedor: dict[str, str],
     auth_admin: dict[str, str],
     loja: dict,
-    mesma_etiqueta: bool,
+    onde: str,
+    preco: str,
 ) -> None:
-    """As 3 blusas na casa da cliente, saldo zero: a dona exclui a peça e a recadastra (a
-    mesma etiqueta, ou a mesma grade). O retorno vai para a peça ATIVA (ADR-30), e a blusa
-    que ficou tem de ser vendida DELA — vender a excluída dava "Peça não encontrada" e a
-    condicional não fechava nunca."""
+    """As 3 blusas (R$ 89,90) na casa da cliente, saldo zero: a dona exclui a peça e a
+    recadastra — a mesma etiqueta, a mesma grade, ou a etiqueta num produto novo, e às vezes
+    com outro preço. O retorno vai para a peça ATIVA (ADR-30), e a blusa que ficou tem de ser
+    vendida DELA — vender a excluída dava "Peça não encontrada" e a condicional não fechava
+    nunca. E a tela cobra o preço que a condicional MOSTRA: se mostrasse o da excluída e a
+    venda cobrasse o da nova, o fechamento seria 422 PAGAMENTO_DIVERGENTE para sempre."""
     condicional = await _abrir(
         client, auth_vendedor, loja, itens=[{"variante_id": loja["blusa"], "quantidade": 3}]
     )
     excluir = await client.delete(f"/variantes/{loja['blusa']}", headers=auth_admin)
     assert excluir.status_code == 204, excluir.text
-    nova = {"tamanho": "P", "cor": "Rosa", "preco_custo": "35.00", "preco_venda": "89.90"}
-    if mesma_etiqueta:
-        nova["codigo_barras"] = loja["etiqueta_blusa"]
-    recadastro = await client.post(
-        f"/produtos/{loja['produto']}/variantes", headers=auth_admin, json=nova
-    )
-    assert recadastro.status_code == 201, recadastro.text
-    nova_id = next(
-        v["id"]
-        for v in recadastro.json()["variantes"]
-        if (v["tamanho"], v["cor"]) == ("P", "Rosa") and v["id"] != loja["blusa"]
-    )
+    if onde == "outro-produto":
+        categoria = (
+            await client.post("/categorias", headers=auth_admin, json={"nome": "Blusas"})
+        ).json()["id"]
+        produto = await criar_produto(
+            client,
+            auth_admin,
+            {
+                "categoria_id": categoria,
+                "nome": "Blusa Rosa",
+                "variantes": [
+                    {
+                        "tamanho": "U",
+                        "cor": "Rosa",
+                        "preco_custo": "40.00",
+                        "preco_venda": preco,
+                        "codigo_barras": loja["etiqueta_blusa"],
+                    }
+                ],
+            },
+        )
+        nova_id = produto["variantes"][0]["id"]
+    else:
+        nova = {"tamanho": "P", "cor": "Rosa", "preco_custo": "35.00", "preco_venda": preco}
+        if onde == "etiqueta":
+            nova["codigo_barras"] = loja["etiqueta_blusa"]
+        recadastro = await client.post(
+            f"/produtos/{loja['produto']}/variantes", headers=auth_admin, json=nova
+        )
+        assert recadastro.status_code == 201, recadastro.text
+        nova_id = next(
+            v["id"]
+            for v in recadastro.json()["variantes"]
+            if (v["tamanho"], v["cor"]) == ("P", "Rosa") and v["id"] != loja["blusa"]
+        )
+
+    # A tela cobra pelo que a condicional mostra — é o preço da peça que será vendida.
+    aberta = (
+        await client.get(f"/condicionais/{condicional['id']}", headers=auth_vendedor)
+    ).json()
+    assert aberta["itens"][0]["variante_id"] == loja["blusa"]
+    assert aberta["itens"][0]["preco_venda"] == preco
+    assert aberta["valor_pecas"] == str(Decimal(preco) * 3)
 
     resposta = await client.post(
         f"/condicionais/{condicional['id']}/fechamento",
         headers=auth_vendedor,
-        json=_fechamento({loja["blusa"]: 2}, [{"forma": "PIX", "valor": "89.90"}]),
+        json=_fechamento(
+            {loja["blusa"]: 2}, [{"forma": "PIX", "valor": aberta["itens"][0]["preco_venda"]}]
+        ),
     )
     assert resposta.status_code == 201, resposta.text
     fechada = resposta.json()
@@ -636,7 +689,7 @@ async def test_peca_excluida_e_recadastrada_vende_da_peca_que_recebeu_o_retorno(
 
     venda = (await client.get(f"/vendas/{fechada['venda_id']}", headers=auth_vendedor)).json()
     assert [(i["variante_id"], i["quantidade"]) for i in venda["itens"]] == [(nova_id, 1)]
-    assert venda["total"] == "89.90"
+    assert venda["total"] == preco
     # Voltaram 3 para a peça nova e 1 saiu pela venda: ficam as 2 que a cliente devolveu.
     assert await _saldo(client, auth_vendedor, nova_id) == 2
 

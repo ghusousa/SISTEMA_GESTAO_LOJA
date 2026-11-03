@@ -223,20 +223,21 @@ class CatalogoRepository:
     # Consulta de COLUNAS, não de objeto: a sessão roda com `autoflush=False`, e recarregar
     # o objeto apagaria o custo que a Entrada acabou de pôr nele e ainda não gravou.
 
-    async def travar_peca(self, variante_id: int):
-        """Trava a peça (ativa ou excluída) e devolve o que se decide com ela, ou None."""
-        stmt = (
-            select(
-                ProductVariant.id,
-                ProductVariant.product_id,
-                ProductVariant.size,
-                ProductVariant.color,
-                ProductVariant.barcode,
-                ProductVariant.deleted_at,
-            )
-            .where(ProductVariant.id == variante_id)
-            .with_for_update(key_share=True)
-        )
+    async def travar_peca(self, variante_id: int, *, travar: bool = True):
+        """Trava a peça (ativa ou excluída) e devolve o que se decide com ela, ou None.
+
+        `travar=False` é para quem só MOSTRA o que a regra decidiria (a condicional aberta,
+        `pecas_que_receberiam`): a mesma consulta, sem esperar ninguém."""
+        stmt = select(
+            ProductVariant.id,
+            ProductVariant.product_id,
+            ProductVariant.size,
+            ProductVariant.color,
+            ProductVariant.barcode,
+            ProductVariant.deleted_at,
+        ).where(ProductVariant.id == variante_id)
+        if travar:
+            stmt = stmt.with_for_update(key_share=True)
         return (await self.session.execute(stmt)).one_or_none()
 
     async def travar_grade(self, produto_id: int) -> None:
@@ -252,27 +253,29 @@ class CatalogoRepository:
             .with_for_update(key_share=True)
         )
 
-    async def travar_ativa_por_codigo(self, codigo: str) -> int | None:
+    async def travar_ativa_por_codigo(self, codigo: str, *, travar: bool = True) -> int | None:
         """Id da peça ATIVA com este código, travada. O filtro é reconferido depois da espera:
         se ela foi excluída enquanto esperávamos, volta None."""
-        return await self.session.scalar(
-            select(ProductVariant.id)
-            .where(ProductVariant.barcode == codigo, ProductVariant.deleted_at.is_(None))
-            .with_for_update(key_share=True)
+        stmt = select(ProductVariant.id).where(
+            ProductVariant.barcode == codigo, ProductVariant.deleted_at.is_(None)
         )
+        if travar:
+            stmt = stmt.with_for_update(key_share=True)
+        return await self.session.scalar(stmt)
 
-    async def travar_ativa_da_grade(self, produto_id: int, tamanho: str, cor: str) -> int | None:
+    async def travar_ativa_da_grade(
+        self, produto_id: int, tamanho: str, cor: str, *, travar: bool = True
+    ) -> int | None:
         """Id da peça ATIVA com o mesmo produto, tamanho e cor (o UNIQUE da grade), travada."""
-        return await self.session.scalar(
-            select(ProductVariant.id)
-            .where(
-                ProductVariant.product_id == produto_id,
-                ProductVariant.size == tamanho,
-                ProductVariant.color == cor,
-                ProductVariant.deleted_at.is_(None),
-            )
-            .with_for_update(key_share=True)
+        stmt = select(ProductVariant.id).where(
+            ProductVariant.product_id == produto_id,
+            ProductVariant.size == tamanho,
+            ProductVariant.color == cor,
+            ProductVariant.deleted_at.is_(None),
         )
+        if travar:
+            stmt = stmt.with_for_update(key_share=True)
+        return await self.session.scalar(stmt)
 
     async def reativar_peca(self, variante_id: int, produto_id: int) -> None:
         """Desfaz a exclusão da peça e, se o produto também saiu, a dele."""

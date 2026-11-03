@@ -163,9 +163,11 @@ npm run publicar     # ficha inteira na App Store via API (mobile/publicar/, -- 
   sem commit. Não há segundo caminho de venda; o que ficou sai da peça que RECEBEU o retorno
   (a que `aplicar_movimento` devolve — a recadastrada, se a original foi excluída). A chave da
   abertura vive com a tela: mexer na sacola não a troca, e o 409 leva à condicional que já
-  abriu. O reenvio do fechamento compara a cobrança inteira (`VendaService.mesma_cobranca`:
-  forma, valor, parcelas, bandeira, vale). `payables` (contas a pagar do fornecedor) nascem
-  na Entrada, na mesma transação, e **nunca** entram no Resultado: o CMV já conta a mercadoria.
+  abriu. O reenvio do fechamento compara a cobrança inteira com a régua do PDV
+  (`VendaService._cobrada_assim`: forma, valor, parcelas, bandeira, vale, desconto), e a
+  aberta mostra o preço da peça que vai ser VENDIDA (`catalogo.pecas_que_receberiam`).
+  `payables` (contas a pagar do fornecedor) nascem na Entrada, na mesma transação, e **nunca**
+  entram no Resultado: o CMV já conta a mercadoria.
   `web/js/parcelas.js`/`condicional.js` são espelhos de `mobile/src/lib/` — mudou um, mude o outro.
 - **Devolução, vale e fiado (ADR-19 a ADR-21)**: não existe "modo troca" — troca é devolução que
   vira vale mais uma venda nova. O valor volta pró-rata **pelas formas em que entrou**, com teto

@@ -205,7 +205,8 @@ class VendaService:
         O replay devolve a venda existente com o mesmo escopo do GET: quem descobrisse o
         client_uuid de uma venda alheia leria por aqui o que `GET /vendas/{id}` recusaria.
 
-        E só devolve se as peças e os pagamentos forem os de antes. A resposta se perde, a
+        E só devolve se as peças e a cobrança forem as de antes (`_cobrada_assim`: forma,
+        valor, parcelas, bandeira, código do vale e desconto). A resposta se perde, a
         moça troca o PIX por dinheiro (ou bipa mais uma peça) e cobra de novo com o carrinho
         de sempre: devolver a venda antiga como sucesso mostraria o recibo de uma cobrança
         que não aconteceu — a peça nova sai sem baixa de estoque e a gaveta espera PIX onde
@@ -214,23 +215,12 @@ class VendaService:
         """
         if not pode(usuario.role, Pode.VER_VENDAS_DE_TODOS) and venda.seller_id != usuario.id:
             raise SemPermissao("Esta venda pertence a outro vendedor.")
-        # Parcelas e bandeira fazem parte do pedido: "crédito 1x" reenviado como "crédito
-        # 3x" é outra cobrança, e a agenda de recebíveis da primeira não serve para ela.
-        pedido = (
-            sorted((i.variante_id, i.quantidade) for i in dados.itens),
-            sorted(
-                (FormaPagamento(p.forma), p.valor, p.parcelas, p.bandeira or "")
-                for p in dados.pagamentos
-            ),
+        mesmas_pecas = sorted((i.variante_id, i.quantidade) for i in dados.itens) == sorted(
+            (i.variant_id, i.quantity) for i in venda.items
         )
-        gravado = (
-            sorted((i.variant_id, i.quantity) for i in venda.items),
-            sorted(
-                (FormaPagamento(p.method), p.amount, p.parcelas, p.bandeira or "")
-                for p in venda.payments
-            ),
-        )
-        if pedido != gravado:
+        if not (
+            mesmas_pecas and await self._cobrada_assim(venda, dados.pagamentos, dados.desconto)
+        ):
             raise Duplicado(
                 f"Esta cobrança já foi registrada como a venda #{venda.id}, com outras peças "
                 "ou outro pagamento. Confira essa venda antes de cobrar de novo; para uma "
@@ -249,7 +239,7 @@ class VendaService:
     ) -> bool:
         """A venda `venda_id` foi cobrada exatamente assim? Para quem registra venda por
         dentro e precisa decidir se um reenvio é o MESMO pedido (o fechamento da
-        condicional, ADR-39).
+        condicional, ADR-39) — com a mesma régua do reenvio do PDV (`_replay`).
 
         Forma, valor, parcelas, bandeira e código do vale: "crédito 1x" reenviado como
         "crédito 3x" é outra cobrança (outra taxa, outra agenda de recebíveis), e o vale de
@@ -261,6 +251,12 @@ class VendaService:
             return False
         if not pode(usuario.role, Pode.VER_VENDAS_DE_TODOS) and venda.seller_id != usuario.id:
             return False
+        return await self._cobrada_assim(venda, pagamentos, desconto)
+
+    async def _cobrada_assim(
+        self, venda: Sale, pagamentos: list[PagamentoIn], desconto: Decimal
+    ) -> bool:
+        """A régua do reenvio — do PDV (`_replay`) e do fechamento da condicional."""
         codigos = await self.repo.codigos_dos_vales(
             [p.voucher_id for p in venda.payments if p.voucher_id is not None]
         )
