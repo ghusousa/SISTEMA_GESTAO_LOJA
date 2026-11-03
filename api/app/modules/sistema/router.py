@@ -72,8 +72,31 @@ def _texto(atualizada: bool | None, recente: bool, conferido: datetime | None) -
     return "Existe versão mais nova esperando para ser instalada."
 
 
+#: Na Vercel não há atualizador nem `versao.json`: cada envio ao GitHub vira um deploy.
+RESUMO_NA_VERCEL = "Demonstração na Vercel: esta é a versão do deploy, publicada a cada envio."
+
+
+def _versao_na_vercel() -> VersaoOut:
+    """Na Vercel (ADR-42), "a mais nova" é o próprio deploy.
+
+    Quem publica é a Vercel, a cada envio ao GitHub, e o commit vem dela
+    (`VERCEL_GIT_COMMIT_SHA`). Não existe "versão esperando para ser instalada" — o que
+    está no ar É o que foi publicado —, então a resposta é "em dia, conferido agora".
+    """
+    sha = settings.vercel_git_commit_sha.strip()
+    return VersaoOut(
+        commit=sha[:7] or None,
+        conferido_em=datetime.now(UTC),
+        atualizada=True,
+        conferido_recente=True,
+        resumo=RESUMO_NA_VERCEL,
+    )
+
+
 @router.get("/versao", response_model=VersaoOut, summary="Versão instalada e se é a mais nova")
 async def versao(_: CurrentUser) -> VersaoOut:
+    if settings.vercel:
+        return _versao_na_vercel()
     estado = _ler_estado()
 
     def _quando(chave: str) -> datetime | None:

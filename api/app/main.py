@@ -127,8 +127,9 @@ app.mount("/media", StaticFiles(directory=str(_media)), name="media")
 
 # O sistema web é HTML e módulos ES, sem build: o próprio FastAPI entrega os arquivos e a
 # loja não precisa de um segundo processo no servidor. Em produção o Nginx pode servir a
-# mesma pasta direto, mas nada quebra se ele não fizer isso.
-_web = Path(__file__).resolve().parent.parent.parent / "web"
+# mesma pasta direto, mas nada quebra se ele não fizer isso. A pasta vem da config: `web/` ao
+# lado de `api/` (repositório e Docker), ou a cópia que o build da Vercel faz (ADR-42).
+_web = Path(settings.web_dir)
 if _web.is_dir():
     app.mount("/app", StaticFiles(directory=str(_web), html=True), name="web")
 

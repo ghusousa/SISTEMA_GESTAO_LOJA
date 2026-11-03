@@ -100,6 +100,11 @@ npm run publicar     # ficha inteira na App Store via API (mobile/publicar/, -- 
   sem inline — atributo `onclick=""` em template é bloqueado; use delegação (`data-*`). Origem
   de fora nova (CDN, imagem) tem de entrar na CSP. O pentest confere no proxy com
   `PENTEST_PROXY=http://...`, ou no Caddyfile sem ele.
+- **Vercel (ADR-42)** é a 2ª forma de rodar, só demonstração (Root Directory `api/`, Neon): tudo atrás
+  de `settings.vercel` (`VERCEL=1`, a Vercel põe) — sem ela nada muda. A CSP/HSTS de lá mora no
+  `api/vercel.json`: mudou o Caddyfile, mude ele (`test_vercel.py` compara). Build: `scripts/vercel_build.py`.
+  A carga da demo é RETOMÁVEL (marcos `DEMONSTRACAO_*` no `audit_log`): passo novo no
+  `seed_demo.popular()` usa `chave("rotulo")` fixa ou busca antes de criar, senão a retomada duplica.
 - Tempo real: `WS /api/v1/tempo-real`. Quem avisa é o commit do SQLAlchemy
   (`core/eventos.py`), não os services — mudou tabela, sai aviso. O que trafega é o
   ASSUNTO ("estoque"), nunca o dado: a tela refaz a consulta pela rota REST, e o filtro
