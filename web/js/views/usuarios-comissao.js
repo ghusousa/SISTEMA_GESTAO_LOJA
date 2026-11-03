@@ -20,7 +20,7 @@ export const podeDefinirComissao = () => pode(PODE.DEFINIR_COMISSAO);
 /** "5% · meta R$ 1.500,00" para a lista; vazio quando não há nenhum dos dois. */
 export function resumoComissao(u) {
   const partes = [];
-  if (paraCentavos(u.comissao_percentual) > 0) partes.push(formatarPercentual(u.comissao_percentual));
+  if (paraCentavos(u.comissao_percentual) > 0) partes.push(formatarPercentual(u.comissao_percentual, 2));
   if (u.meta_diaria) partes.push(`meta ${formatar(paraCentavos(u.meta_diaria))}`);
   return partes.join(' · ');
 }
@@ -32,7 +32,7 @@ export function camposComissao(usuario = {}) {
   return html`
     <div class="linha-campos">
       <label class="campo">
-        <span>Comissão (%) ${ajuda('Sobre o que a pessoa vendeu menos o que voltou de devolução. A peça devolvida tira a comissão no mês em que voltou. Use 0 para quem não ganha comissão.')}</span>
+        <span>Comissão (%) ${ajuda('Sobre o que a pessoa vendeu menos o que voltou de devolução. A peça devolvida tira a comissão no mês em que voltou. Mudar a % vale para as vendas daqui em diante: a venda já feita guarda a % do dia dela. Use 0 para quem não ganha comissão.')}</span>
         <input data-comissao inputmode="decimal" maxlength="6"
           value="${pct ? paraDecimalString(pct).replace('.', ',').replace(/,00$/, '') : '0'}" />
       </label>

@@ -63,6 +63,24 @@ export const definirFusoDaLoja = (tz) => {
   if (tz) fusoDaLoja = tz;
 };
 
+const DIA = { day: '2-digit', month: '2-digit', year: 'numeric' };
+const DIA_E_HORA = { ...DIA, hour: '2-digit', minute: '2-digit' };
+
+/** Um INSTANTE (ISO com hora) formatado no fuso da loja, com os campos pedidos. */
+function noFusoDaLoja(valor, campos) {
+  if (!valor) return '—';
+  const d = new Date(valor);
+  if (Number.isNaN(d.getTime())) return String(valor);
+  try {
+    return new Intl.DateTimeFormat('pt-BR', { timeZone: fusoDaLoja, ...campos })
+      .format(d)
+      .replace(',', '');
+  } catch {
+    // Fuso desconhecido (linha estranha na configuração) não pode apagar a data da tela.
+    return new Intl.DateTimeFormat('pt-BR', campos).format(d).replace(',', '');
+  }
+}
+
 /**
  * ISO com hora -> "22/08/2026 14:35", no fuso da loja.
  *
@@ -75,26 +93,17 @@ export const definirFusoDaLoja = (tz) => {
  * Agora as duas metades saem da MESMA formatação, no MESMO fuso.
  */
 export function dataHora(valor) {
-  if (!valor) return '—';
-  const d = new Date(valor);
-  if (Number.isNaN(d.getTime())) return String(valor);
-  try {
-    return new Intl.DateTimeFormat('pt-BR', {
-      timeZone: fusoDaLoja,
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-      .format(d)
-      .replace(',', '');
-  } catch {
-    // Fuso desconhecido (linha estranha na configuração) não pode apagar a data da tela.
-    return new Intl.DateTimeFormat('pt-BR', {
-      day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
-    }).format(d).replace(',', '');
-  }
+  return noFusoDaLoja(valor, DIA_E_HORA);
+}
+
+/**
+ * ISO com hora -> "22/08/2026": o DIA em que o instante caiu na loja.
+ *
+ * Para um instante (`TIMESTAMPTZ`), não para data pura — essa é a `data()`. Fatiar o ISO
+ * daria o dia em UTC: a venda das 23h30 de 25/07 em São Paulo chega como 26/07 02h30Z.
+ */
+export function diaNaLoja(valor) {
+  return noFusoDaLoja(valor, DIA);
 }
 
 /** "2026-08" -> "agosto de 2026". */

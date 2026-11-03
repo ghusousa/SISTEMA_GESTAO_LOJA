@@ -115,12 +115,18 @@ export function somar(valores) {
   return valores.reduce((total, valor) => total + valor, 0);
 }
 
-/** "42.35" -> "42,4%". A API manda percentual como string decimal. */
-export function formatarPercentual(valor) {
+/**
+ * "42.35" -> "42,4%". A API manda percentual como string decimal.
+ *
+ * `casas` é o máximo depois da vírgula: 1 para margem e participação, que são leitura de
+ * olho; 2 para a % da comissão, que o dono define com duas casas — 2,25% não pode
+ * aparecer como 2,3%. Número inteiro sai sem vírgula.
+ */
+export function formatarPercentual(valor, casas = 1) {
   const numero = typeof valor === 'number' ? valor : Number(String(valor).replace(',', '.'));
   if (!Number.isFinite(numero)) return '0%';
   return `${numero.toLocaleString('pt-BR', {
-    minimumFractionDigits: numero % 1 === 0 ? 0 : 1,
-    maximumFractionDigits: 1,
+    minimumFractionDigits: numero % 1 === 0 ? 0 : Math.min(1, casas),
+    maximumFractionDigits: casas,
   })}%`;
 }

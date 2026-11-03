@@ -7,8 +7,11 @@ venda e devolução. As regras que a folha depende delas:
   dia em que aconteceu (ADR-19), na conta de quem fez a venda ORIGINAL — quem só atendeu a
   troca não perde comissão por isso. Assim a soma da equipe fecha com o
   `faturamento_liquido` do resumo da loja, centavo por centavo.
-- **Comissão** = líquido × % da pessoa, arredondada no centavo. Período só de devolução dá
-  líquido e comissão negativos: é o estorno da comissão paga no mês da venda.
+- **Comissão** = Σ venda × % DA VENDA − Σ devolução × % da venda ORIGINAL, arredondada no
+  centavo uma vez por pessoa. A % é a que valia quando a venda aconteceu
+  (`sales.comissao_percentual`): o dono mudar a % hoje não reescreve a folha de um mês já
+  pago, e o estorno devolve exatamente o que foi pago por aquela peça. Período só de
+  devolução dá líquido e comissão negativos: é o estorno da comissão paga no mês da venda.
 - Cancelada não conta: cancelar desfaz a venda inteira (estoque e caixa), e a comissão vai
   junto.
 """
@@ -30,11 +33,18 @@ ZERO = Decimal("0.00")
 _ZERO_SQL = literal_column("0")
 
 
+def comissao_da_soma(valor_x_percentual: Decimal) -> Decimal:
+    """A conta da folha, num lugar só: Σ (valor × % da venda) ÷ 100, meio-centavo para cima.
+
+    Arredonda UMA vez, sobre a soma exata da pessoa no período (o banco multiplica em
+    `numeric`, sem perder casa): arredondar venda a venda faria a comissão derivar meio
+    centavo por venda."""
+    return (Decimal(valor_x_percentual) / 100).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
 def comissao_de(liquido: Decimal, percentual: Decimal) -> Decimal:
-    """A conta da folha, num lugar só: líquido × % ÷ 100, meio-centavo para cima."""
-    return (Decimal(liquido) * Decimal(percentual) / 100).quantize(
-        Decimal("0.01"), rounding=ROUND_HALF_UP
-    )
+    """Líquido × % ÷ 100 — o caso de uma % só no período inteiro."""
+    return comissao_da_soma(Decimal(liquido) * Decimal(percentual))
 
 
 class VendedorasService:
@@ -43,7 +53,10 @@ class VendedorasService:
 
     async def _por_vendedora(self, inicio: date, fim: date, vendedora_id: int | None = None):
         """Uma linha por pessoa com movimento no período: (id, bruto, vendas, peças,
-        devolvido, peças devolvidas).
+        devolvido, peças devolvidas, Σ valor × % da venda).
+
+        A última coluna é a base da comissão: cada venda pesa pela % congelada NELA, e a
+        devolução subtrai pela % da venda ORIGINAL (ADR-37).
 
         Cada fonte é somada por vendedora ANTES de juntar — dezenas de linhas, não as
         centenas de milhares de itens de um ano. Vendas e itens caem no índice do dia da
@@ -66,6 +79,7 @@ class VendedorasService:
                 _ZERO_SQL.label("pecas"),
                 _ZERO_SQL.label("devolvido"),
                 _ZERO_SQL.label("pecas_devolvidas"),
+                func.sum(Sale.total * Sale.comissao_percentual).label("comissao"),
             )
             .where(*vendas)
             .group_by(Sale.seller_id),
@@ -74,6 +88,7 @@ class VendedorasService:
                 _ZERO_SQL,
                 _ZERO_SQL,
                 func.sum(SaleItem.quantity),
+                _ZERO_SQL,
                 _ZERO_SQL,
                 _ZERO_SQL,
             )
@@ -87,6 +102,7 @@ class VendedorasService:
                 _ZERO_SQL,
                 func.sum(SaleReturnItem.refund_amount),
                 func.sum(SaleReturnItem.quantity),
+                -func.sum(SaleReturnItem.refund_amount * Sale.comissao_percentual),
             )
             .select_from(SaleReturnItem)
             .join(SaleReturn, SaleReturn.id == SaleReturnItem.return_id)
@@ -104,6 +120,7 @@ class VendedorasService:
                     func.sum(fontes.c.pecas),
                     func.sum(fontes.c.devolvido),
                     func.sum(fontes.c.pecas_devolvidas),
+                    func.sum(fontes.c.comissao),
                 ).group_by(fontes.c.uid)
             )
         ).all()
@@ -122,24 +139,25 @@ class VendedorasService:
             pessoas = {u.id: u for u in consulta.scalars()}
 
         itens: list[VendedoraOut] = []
-        for uid, bruto, vendas, pecas, devolvido, pecas_dev in linhas:
+        for uid, bruto, vendas, pecas, devolvido, pecas_dev, base_comissao in linhas:
             pessoa = pessoas[uid]
             bruto = _centavos(bruto)
             devolvido = _centavos(devolvido)
             liquido = bruto - devolvido
-            percentual = Decimal(pessoa.comissao_percentual or 0)
             itens.append(
                 VendedoraOut(
                     usuario_id=uid,
                     nome=pessoa.name,
-                    comissao_percentual=percentual,
+                    # A % de HOJE, a que o dono configurou. A comissão abaixo usa a de cada
+                    # venda, congelada quando ela aconteceu.
+                    comissao_percentual=Decimal(pessoa.comissao_percentual or 0),
                     quantidade_vendas=int(vendas or 0),
                     faturamento=bruto,
                     devolucoes=devolvido,
                     faturamento_liquido=liquido,
                     pecas=int(pecas or 0) - int(pecas_dev or 0),
                     ticket_medio=_centavos(bruto / vendas) if vendas else ZERO,
-                    comissao=comissao_de(liquido, percentual),
+                    comissao=comissao_da_soma(base_comissao or 0),
                 )
             )
         # Quem mais trouxe primeiro; o id desempata para a página não trocar de ordem.
@@ -161,7 +179,7 @@ class VendedorasService:
         linhas = await self._por_vendedora(hoje, hoje, vendedora_id=usuario.id)
         bruto = devolvido = ZERO
         vendas = pecas = 0
-        for _uid, b, v, pc, d, pd in linhas:
+        for _uid, b, v, pc, d, pd, _comissao in linhas:
             bruto, devolvido = _centavos(b), _centavos(d)
             vendas, pecas = int(v or 0), int(pc or 0) - int(pd or 0)
         vendido = bruto - devolvido

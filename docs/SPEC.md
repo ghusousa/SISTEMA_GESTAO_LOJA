@@ -210,6 +210,8 @@ A loja consegue operar 100% sem celular.
 - A comissão sai do faturamento LÍQUIDO de quem fez a venda: venda cancelada não conta, e a peça
   devolvida tira a comissão no período em que voltou — sem reescrever a folha de um mês fechado.
   A soma da equipe fecha com o faturamento líquido do resumo da loja.
+- Vale a % de comissão do dia da VENDA: mudar a % de alguém vale dali em diante, não muda a
+  comissão de um mês já pago, e a peça que volta depois estorna pela % com que foi vendida.
 - Só o dono define a % de comissão (0 a 100) e a meta do dia de cada um; nem o gerente, que também
   recebe comissão, mexe nisso — nem na própria.
 - Cada pessoa vê o próprio dia no PDV (vendido, peças, meta), sem custo, lucro nem o número das

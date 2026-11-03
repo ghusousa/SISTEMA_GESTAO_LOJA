@@ -119,6 +119,9 @@ class VendaService:
             subtotal=subtotal,
             discount=dados.desconto,
             total=total,
+            # A % de quem vende AGORA fica na venda (ADR-37): a folha deste mês não muda
+            # quando o dono ajustar a comissão no mês que vem.
+            comissao_percentual=usuario.comissao_percentual,
             client_uuid=dados.client_uuid,
             note=dados.observacao,
             customer_id=dados.cliente_id,

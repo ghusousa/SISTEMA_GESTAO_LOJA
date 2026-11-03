@@ -22,6 +22,7 @@ import {
   confirmar,
   cru,
   data as formatarData,
+  diaNaLoja,
   html,
   ligarCampoDinheiro,
   modal,
@@ -201,12 +202,12 @@ export async function render(raiz, _params, consulta) {
   const linhaVenda = (v) => html`
     <tr>
       <td><a href="#/vendas/${v.venda_id}">Venda #${v.venda_id}</a></td>
-      <td>${formatarData(v.vendida_em)}</td>
+      <td>${diaNaLoja(v.vendida_em)}</td>
       <td class="direita dinheiro">${formatar(paraCentavos(v.no_fiado))}</td>
     </tr>`;
   const linhaPagamento = (p) => html`
     <tr>
-      <td>${formatarData(p.pago_em)}</td>
+      <td>${diaNaLoja(p.pago_em)}</td>
       <td>${p.forma.toLowerCase()}</td>
       <td class="direita dinheiro">${formatar(paraCentavos(p.valor))}</td>
     </tr>`;

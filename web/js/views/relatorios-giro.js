@@ -13,7 +13,7 @@ import {
   ajuda,
   carregando,
   cru,
-  data as formatarData,
+  diaNaLoja,
   erroBloco,
   etiqueta,
   grade,
@@ -85,7 +85,7 @@ const linhaParada = (p) => html`
       <span class="celula-secundaria">${grade(p.tamanho, p.cor)}</span>
     </td>
     <td class="direita dinheiro">${numero(p.saldo)}</td>
-    <td class="texto-suave">${p.ultima_venda ? formatarData(p.ultima_venda) : 'nunca vendeu'}</td>
+    <td class="texto-suave">${p.ultima_venda ? diaNaLoja(p.ultima_venda) : 'nunca vendeu'}</td>
     <td class="direita dinheiro celula-principal">${numero(p.dias_parada)}</td>
     <td class="direita dinheiro">${formatar(paraCentavos(p.valor_em_custo))}</td>
     <td class="direita dinheiro texto-suave">${formatar(paraCentavos(p.valor_em_venda))}</td>
