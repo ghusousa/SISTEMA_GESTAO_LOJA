@@ -15,13 +15,25 @@ Entrega no melhor esforço. Aviso perdido não corrompe nada: a tela segue com o
 anterior até o próximo aviso, até a pessoa puxar para atualizar, ou até voltar para a
 tela. Por isso não há fila, confirmação nem histórico — nada disso pagaria o próprio
 custo numa loja com meia dúzia de aparelhos.
+
+**Entre instâncias, o aviso passa pelo Postgres.** Com mais de um processo servindo a loja
+(a Vercel, onde cada instância da função é isolada, ou o uvicorn com mais de um worker),
+a venda feita numa instância não chegava à tela ligada em outra. Por isso cada assunto
+também sai por `pg_notify` no canal `CANAL_DO_BANCO`, DENTRO da transação que o gravou: o
+Postgres só entrega se o commit acontecer (rollback não avisa) e junta cargas iguais da
+mesma transação. Quem escuta é `app/core/escuta.py`, uma conexão de LISTEN por instância
+que tenha tela ligada. A entrega em memória continua a mesma de antes — o que volta pelo
+LISTEN com a origem desta instância é descartado, senão cada tela receberia tudo duas
+vezes. O que trafega no banco é o mesmo assunto, nunca o dado.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
+import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -32,6 +44,10 @@ logger = logging.getLogger(__name__)
 #: Quantos avisos podem esperar num ouvinte lento antes de começar a descartar. Uma tela
 #: que não consegue acompanhar não pode segurar memória do servidor da loja.
 FILA_MAXIMA = 32
+
+#: O canal de LISTEN/NOTIFY. O NOTIFY é por banco, então a loja de cada banco tem o seu —
+#: duas lojas no mesmo servidor Postgres não se ouvem.
+CANAL_DO_BANCO = "loja_avisos"
 
 
 class Assunto(StrEnum):
@@ -83,18 +99,31 @@ class Evento:
 class Central:
     """Um lugar só por onde os avisos saem, e a lista de quem está ouvindo.
 
-    Deliberadamente em memória e por processo. A loja roda um servidor; empilhar Redis
-    aqui seria mais uma peça para instalar, monitorar e ver quebrar num sábado cheio.
-    Se um dia houver mais de um processo, é aqui — e só aqui — que entra o repasse
-    entre eles.
+    Em memória e por processo: é ela que entrega às telas ligadas NESTA instância. O
+    repasse entre instâncias não empilha Redis — mais uma peça para instalar, monitorar e
+    ver quebrar num sábado cheio —, usa o LISTEN/NOTIFY do Postgres que a loja já tem
+    (`app/core/escuta.py`), e chega aqui como mais um `publicar`.
     """
 
     def __init__(self) -> None:
         self._ouvintes: set[asyncio.Queue[Evento]] = set()
+        #: Quem é esta instância no canal do banco. O aviso que ELA gravou já foi entregue
+        #: em memória no commit; quando ele volta pelo LISTEN com esta origem, é descartado.
+        self.instancia: str = uuid.uuid4().hex
 
     @property
     def ouvintes(self) -> int:
         return len(self._ouvintes)
+
+    def publicar_tudo(self) -> None:
+        """Todo assunto de uma vez: o buraco de quando a escuta do banco esteve caída.
+
+        O que outra instância gravou nesse meio-tempo não chegou aqui. Não dá para saber
+        o quê, então as telas refazem tudo o que têm abertas — uma rodada só, porque o
+        cliente junta avisos em rajada.
+        """
+        for assunto in Assunto:
+            self.publicar(assunto)
 
     def publicar(self, assunto: Assunto, **dados: Any) -> None:
         """Avisa todo mundo. Nunca levanta erro: publicar não pode derrubar a venda.
@@ -130,6 +159,24 @@ central = Central()
 def publicar(assunto: Assunto, **dados: Any) -> None:
     """Atalho para o que os services chamam depois de gravar."""
     central.publicar(assunto, **dados)
+
+
+# ------------------------------------------------------------ o fio do banco
+
+
+def carga_do_aviso(origem: str, assunto: Assunto) -> str:
+    """O que vai no `pg_notify`: de que instância saiu, e o assunto. Nada do registro."""
+    return json.dumps({"origem": origem, "assunto": str(assunto)}, separators=(",", ":"))
+
+
+def ler_carga(carga: str) -> tuple[str, Assunto] | None:
+    """O contrário de `carga_do_aviso`. Carga estranha devolve `None`, nunca exceção:
+    qualquer conexão do banco pode dar NOTIFY no canal, e lixo não derruba a escuta."""
+    try:
+        lido = json.loads(carga)
+        return str(lido["origem"]), Assunto(lido["assunto"])
+    except (ValueError, KeyError, TypeError):
+        return None
 
 
 # --------------------------------------------------------- avisos automáticos
@@ -168,6 +215,34 @@ ASSUNTO_POR_TABELA: dict[str, Assunto] = {
 }
 
 _CHAVE = "_tabelas_tocadas"
+#: Os assuntos que esta transação já mandou pelo `pg_notify`: um por assunto, não um por
+#: flush. Uma venda faz vários flushes, e cada um repetiria o mesmo NOTIFY.
+_AVISADOS = "_assuntos_avisados_no_banco"
+
+
+def _avisar_pelo_banco(sessao: Any, tabelas: set[str]) -> None:
+    """`pg_notify` dos assuntos novos desta transação, na conexão DELA.
+
+    Dentro da transação, e não depois do commit: o Postgres guarda o NOTIFY e só o
+    entrega se o commit acontecer — rollback (e savepoint desfeito) some com ele sem
+    ninguém precisar lembrar. E a entrega sai junto com o commit, então quem recebe o
+    aviso e consulta já enxerga o dado novo.
+    """
+    avisados: set[Assunto] = sessao.info.setdefault(_AVISADOS, set())
+    novos = {ASSUNTO_POR_TABELA[t] for t in tabelas if t in ASSUNTO_POR_TABELA} - avisados
+    if not novos:
+        return
+    conexao = sessao.connection()
+    if conexao.dialect.name != "postgresql":
+        return
+    from sqlalchemy import text
+
+    cargas = [carga_do_aviso(central.instancia, a) for a in sorted(novos)]
+    conexao.execute(
+        text("SELECT pg_notify(:canal, carga) FROM unnest(CAST(:cargas AS text[])) AS carga"),
+        {"canal": CANAL_DO_BANCO, "cargas": cargas},
+    )
+    avisados.update(novos)
 
 
 def registrar_avisos_automaticos() -> None:
@@ -183,16 +258,20 @@ def registrar_avisos_automaticos() -> None:
     transação (é a invariante do projeto). Ouvir o ORM basta.
     """
     from sqlalchemy import event
-    from sqlalchemy.orm import Session
+    from sqlalchemy.orm import Session, SessionTransaction
 
     @event.listens_for(Session, "after_flush")
     def _anotar(sessao: Session, _contexto: object) -> None:
         # Anotado no flush porque no `after_commit` a sessão já esqueceu o que mudou.
         tocadas: set[str] = sessao.info.setdefault(_CHAVE, set())
+        neste_flush: set[str] = set()
         for obj in (*sessao.new, *sessao.dirty, *sessao.deleted):
             tabela = getattr(obj, "__tablename__", None)
             if tabela:
-                tocadas.add(tabela)
+                neste_flush.add(tabela)
+        tocadas.update(neste_flush)
+        # As OUTRAS instâncias ficam sabendo pelo banco; esta, em memória no commit.
+        _avisar_pelo_banco(sessao, neste_flush)
 
     @event.listens_for(Session, "after_commit")
     def _publicar(sessao: Session) -> None:
@@ -203,6 +282,19 @@ def registrar_avisos_automaticos() -> None:
             # mandaria todo mundo recarregar para ver exatamente o que já tinha.
             central.publicar(assunto)
 
-    @event.listens_for(Session, "after_rollback")
-    def _esquecer(sessao: Session) -> None:
-        sessao.info.pop(_CHAVE, None)
+    @event.listens_for(Session, "after_soft_rollback")
+    def _refazer_no_banco(sessao: Session, _anterior: SessionTransaction) -> None:
+        # Savepoint desfeito: o Postgres jogou fora os NOTIFY feitos dentro dele. O
+        # próximo flush que tocar a tabela avisa de novo (carga repetida na mesma
+        # transação o Postgres junta numa só).
+        sessao.info.pop(_AVISADOS, None)
+
+    @event.listens_for(Session, "after_transaction_end")
+    def _esquecer(sessao: Session, transacao: SessionTransaction) -> None:
+        # Só o fim da transação de FORA (commit, rollback ou close) esquece. O rollback
+        # de um savepoint não: a parte de fora segue de pé e vai ser commitada — antes,
+        # um savepoint desfeito (a despesa recorrente que já estava lançada) apagava
+        # também o aviso do que a transação tinha gravado ANTES dele.
+        if transacao.parent is None:
+            sessao.info.pop(_CHAVE, None)
+            sessao.info.pop(_AVISADOS, None)

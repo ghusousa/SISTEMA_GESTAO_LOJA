@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     debug: bool = False
 
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/loja"
+    #: Conexão DIRETA ao Postgres, sem pooler — a que o Neon da Vercel injeta como
+    #: `DATABASE_URL_UNPOOLED`. Só a escuta do tempo real usa (`core/escuta.py`): LISTEN
+    #: atrás de PgBouncer em modo transação não recebe nada, e calado. Vazia, a escuta
+    #: usa `database_url` (na loja de Docker não há pooler: é a mesma conexão).
+    database_url_unpooled: str | None = None
     db_echo: bool = False
     #: Teto de cada consulta da API, em milissegundos (0 = sem teto). O app desiste em 15 s
     #: e o retry dispara a MESMA consulta de novo; sem teto no banco, a primeira continua
