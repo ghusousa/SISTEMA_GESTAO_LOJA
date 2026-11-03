@@ -2,10 +2,11 @@
  * Escolher e preparar a foto de uma peça, pela câmera ou pela galeria.
  *
  * O preparo não é enfeite. A câmera de um celular atual entrega de 4 a 12 MB por foto, e a
- * API recusa acima de 5 MB — a pessoa fotografaria a peça, esperaria o upload e levaria
- * "imagem muito grande" depois de gastar o dado móvel. Reduzimos para 1200 px e JPEG a
- * 70%, que dá algo entre 100 e 300 KB: passa folgado no limite, sobe rápido no 4G da loja
- * e ainda é mais resolução do que a tela precisa para mostrar uma blusa.
+ * API recusa acima de 5 MB (4 MB na Vercel, ADR-42) — a pessoa fotografaria a peça,
+ * esperaria o upload e levaria "imagem muito grande" depois de gastar o dado móvel.
+ * Reduzimos para 1200 px e JPEG a 70%, que dá algo entre 100 e 300 KB: passa folgado no
+ * limite, sobe rápido no 4G da loja e ainda é mais resolução do que a tela precisa para
+ * mostrar uma blusa.
  */
 
 import * as ImageManipulator from 'expo-image-manipulator';

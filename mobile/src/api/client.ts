@@ -12,6 +12,7 @@
 
 import axios, { AxiosError, type AxiosInstance, type InternalAxiosRequestConfig } from 'axios';
 
+import { montarUrlDaFoto } from '../lib/enderecoDaFoto';
 import { refreshRecusado } from '../lib/renovacao';
 import { lerAccessToken, lerRefreshToken, limparSessao, salvarTokens } from './sessao';
 import { enderecoSugerido, servidorEmCache } from './servidor';
@@ -130,11 +131,9 @@ export function detalheDoErro(erro: unknown): Record<string, unknown> | null {
 }
 
 /**
- * A API grava a foto como caminho relativo ("/media/produtos/x.jpg") de propósito: montar a
- * URL a partir do header Host deixaria um atacante gravar o próprio domínio no banco.
- * Quem exibe a imagem completa o endereço aqui.
+ * Foto do disco da loja vem relativa ("/media/produtos/x.jpg") e ganha o servidor do aparelho;
+ * foto no Vercel Blob vem com URL absoluta e passa como está (`lib/enderecoDaFoto.ts`, ADR-42).
  */
 export function urlDaFoto(caminho: string | null | undefined): string | null {
-  if (!caminho) return null;
-  return caminho.startsWith("http") ? caminho : `${baseAtual()}${caminho}`;
+  return montarUrlDaFoto(caminho, baseAtual());
 }

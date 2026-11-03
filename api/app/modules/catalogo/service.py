@@ -1,3 +1,4 @@
+import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -6,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import Duplicado, NaoEncontrado, OperacaoInvalida, Validacao
 from app.core.pagination import Pagina, Paginacao
+from app.modules.catalogo import fotos
 from app.modules.catalogo.barcode import eh_codigo_interno, montar_codigo_interno
 from app.modules.catalogo.models import Category, Product, ProductVariant, TipoCodigo
 from app.modules.catalogo.repository import CatalogoRepository
@@ -264,13 +266,30 @@ class CatalogoService:
             variante.deleted_at = agora
         await self.session.commit()
 
-    async def definir_foto(self, produto_id: int, url: str) -> ProdutoOut | None:
-        produto = await self.repo.produto_por_id(produto_id)
-        if produto is None:
-            raise NaoEncontrado("Produto não encontrado.")
+    async def trocar_foto(
+        self, produto_id: int, conteudo: bytes, extensao: str, tipo: str
+    ) -> None:
+        """Guarda a foto nova, aponta o produto para ela e só então tira a antiga.
+
+        Nessa ordem: a rede do Blob fica FORA da trava do produto, e se a troca falhar a
+        foto que está na tela continua existindo. Onde a foto mora (disco ou Vercel Blob) é
+        decisão do ambiente, em `fotos.armazenamento()` (ADR-42).
+        """
+        casa = fotos.armazenamento()
+        # Nome gerado pelo servidor: o nome do arquivo do celular não entra no caminho.
+        url = await casa.gravar(f"{produto_id}-{uuid.uuid4().hex}{extensao}", conteudo, tipo)
+        try:
+            produto = await self.repo.travar_produto(produto_id)
+            if produto is None:  # excluído enquanto a foto subia
+                raise NaoEncontrado("Produto não encontrado.")
+        except Exception:
+            await casa.apagar(url)
+            raise
+        antiga = produto.photo_url
         produto.photo_url = url
         await self.session.commit()
-        return None
+        if antiga and antiga != url:
+            await casa.apagar(antiga)
 
     async def dados_fiscais_das_pecas(
         self, variante_ids: list[int]

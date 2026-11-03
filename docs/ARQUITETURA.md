@@ -94,6 +94,69 @@ SEQUENCE internal_barcode_seq   -- alimenta o código interno
 (faixa reservada a uso interno/restrito): `'2' + seq.zfill(11)` → dígito verificador EAN-13 → 13
 dígitos. Fica indistinguível de um EAN para o leitor, e `barcode_type='INTERNO'` registra a origem.
 
+#### Fotos no Vercel Blob (ADR-42)
+
+Onde a foto da peça mora é decisão do AMBIENTE, em `catalogo/fotos.py`; a tela, o banco e o
+contrato de `PUT /produtos/{id}/foto` são os mesmos em todos os casos.
+
+- **Disco** (padrão, a loja de sempre): `MEDIA_DIR/produtos/<id>-<uuid4>.<ext>`, servido pela
+  API em `/media`; o banco guarda o caminho RELATIVO (montar a URL pelo header Host deixaria um
+  atacante gravar o próprio domínio no banco). Trocar a foto **não** apaga a antiga: o backup do
+  banco e o volume de fotos são cópias separadas, e o banco restaurado da semana passada aponta
+  para a foto de antes.
+- **Vercel Blob** (com `BLOB_READ_WRITE_TOKEN` no ambiente): o disco da função é só leitura,
+  então não há `mkdir(MEDIA_DIR)` nem `mount("/media")` no import — era o que derrubava a
+  função. A foto vai para um store **público** (foto de peça é vitrine, não dado pessoal) e o
+  banco guarda a URL ABSOLUTA que a RESPOSTA do Blob trouxe; URL fora de
+  `https://*.public.blob.vercel-storage.com` é recusada (store privado daria foto que não abre
+  no navegador). A troca envia a nova fora de qualquer trava, trava o produto relido
+  (`FOR NO KEY UPDATE OF products` — a categoria vem num LEFT JOIN, que o Postgres não trava),
+  aponta, faz commit e só então apaga a antiga, e só se ela for do Blob (o `/media/...` de um
+  banco que veio da loja local fica). Duas trocas ao mesmo tempo esperam na trava: cada uma
+  apaga a que a anterior gravou, e o store guarda só a foto do banco. Produto excluído enquanto
+  a foto subia: 404, e a que subiu é apagada. Blob fora do ar ou recusando: 503
+  `FOTO_NAO_GUARDADA` e a foto de antes fica (o corpo do erro do Blob vai só para o log); falha
+  ao apagar a antiga só vai para o log — foto órfã custa espaço, não a troca.
+- **Uma pasta por ambiente no store**: `produtos/<VERCEL_ENV>/<id>-<uuid4>.<ext>` (`production`,
+  `preview`, `development`; sem Vercel, `local`), e só se apaga foto da pasta do ambiente que
+  está rodando. O store sai ligado à Production E à Preview (o painel pré-marca as duas), e com
+  o *preview branching* do Neon o banco do preview é cópia do de produção: apontaria para as
+  fotos da produção, e trocar a foto num preview apagaria a que a loja está mostrando. Fica de
+  fora, aceito por ser demonstração: *restore* do Neon (ou *reset* de branch) volta o banco
+  para antes de uma troca e aponta para a foto que a troca já apagou — a peça aparece sem foto
+  até alguém enviar de novo.
+- **Na Vercel sem token** (`VERCEL=1` e nada de `BLOB_READ_WRITE_TOKEN`) não há onde a foto
+  dure: o `/tmp` da função grava (um `MEDIA_DIR=/tmp/media` passa em qualquer `mkdir`), mas é
+  de cada instância e some no *cold start* — a foto responderia 200 e sumiria. Quem decide
+  é a variável de sistema `VERCEL`, nunca a falha do `mkdir`: `/media` não monta, `MEDIA_DIR` é
+  ignorado, e o envio responde 503 `FOTO_NAO_GUARDADA` (`motivo: sem_blob`) dizendo o que
+  conectar. `VERCEL` só existe com "Enable access to System Environment Variables" ligado (o
+  padrão); desligado, o `MEDIA_DIR` relativo cai no disco só leitura e o caminho é o da linha
+  de baixo.
+- **Na loja, pasta que não se cria ou não grava** (volume sem permissão, disco cheio) não
+  derruba a API: `/media` não monta, e o envio responde 503 (`motivo: disco`) falando da pasta
+  de fotos (`MEDIA_DIR`) — nada de Vercel na tela da lojista; o errno vai para o log.
+- **Teto do envio**: na loja, `MAX_UPLOAD_BYTES` (5 MB) como sempre. Na Vercel (ou com o Blob
+  ligado), no máximo 4 MB: a função recusa corpo acima de 4,5 MB com o 413
+  `FUNCTION_PAYLOAD_TOO_LARGE` dela, sem o JSON da API (doc: *functions/limitations*, "Request
+  body size"); os 0,5 MB que sobram são o envelope do multipart. O `limite_mb` do 422 diz o teto
+  que vale. A web e o app já encolhem a foto para 100 a 300 KB antes de subir.
+- **Cliente do Blob**: `httpx` direto, nas duas chamadas de que a loja precisa — `PUT
+  {VERCEL_BLOB_API_URL}?pathname=produtos/<ambiente>/<nome>` (`x-vercel-blob-access: public`,
+  `x-content-type` pela assinatura do arquivo, sem sufixo aleatório nem sobrescrita) e `POST
+  .../delete` com `{"urls": [...]}`, ambos com `Authorization: Bearer` e `x-api-version: 12` —
+  espelho do SDK Python oficial (`vercel-blob` 0.5.1, `_internal/api_client.py`), já que a doc
+  pública da Vercel só documenta os SDKs. O SDK não entrou: o pacote `vercel` (o do
+  `from vercel import blob` da doc) puxa sandbox, workflow, fila e websockets; o `vercel-blob`
+  sozinho puxa mais quatro pacotes 0.x e roda sobre `httpx2`, onde o `httpx.MockTransport` dos
+  testes não entra. A validação do envio (extensão, teto, assinatura) roda antes de qualquer
+  byte sair, igual em todos os modos — só o teto muda na Vercel.
+- **Quem mostra aceita as duas formas**: a web põe `foto_url` direto no `src` (relativo resolve
+  na origem da página, absoluto passa); o app passa por `lib/enderecoDaFoto.ts` (relativo ganha
+  o servidor do aparelho, `http(s)://` passa como está). CSP: o `docker/Caddyfile` não muda —
+  na loja a foto é `'self'`; na Vercel quem libera `https://*.public.blob.vercel-storage.com` no
+  `img-src` é o `vercel.json`.
+
 ### 2.3 Estoque
 
 ```sql
@@ -1444,7 +1507,7 @@ com o valor atual. No `PATCH`, ausente = não mexe, `meta_diaria: null` tira a m
 | GET | `/produtos` | todos | `?q=&categoria_id=` · `q` acha por nome (sem acento, como `/variantes`) ou código da grade; custo só para quem tem VER_DINHEIRO |
 | POST | `/produtos` | A/V | produto + `variantes[]` (com `estoque_inicial?` → gera ENTRADA na mesma transação) |
 | GET/PATCH/DELETE | `/produtos/{id}` | A/V · A · A | detalhe traz variantes com saldo; DELETE só com saldo zero, conferido com grade e saldos travados (ADR-30) |
-| PUT | `/produtos/{id}/foto` | A/V | multipart, salva em `media/produtos/` |
+| PUT | `/produtos/{id}/foto` | A/V | multipart; no disco salva em `media/produtos/` (caminho relativo), com `BLOB_READ_WRITE_TOKEN` no Vercel Blob público (URL absoluta, a antiga é apagada se for do mesmo ambiente). Teto 5 MB (4 MB na Vercel); 503 `FOTO_NAO_GUARDADA` se não guardou, inclusive na Vercel sem Blob (§2.2, ADR-42) |
 | POST | `/produtos/{id}/variantes` | A/V | adiciona variante a produto existente |
 | PATCH/DELETE | `/variantes/{id}` | A | DELETE só com saldo zero, conferido com peça e saldo travados (ADR-30) |
 | GET | `/versao` | A/V | commit instalado, quando foi conferido e se há versão nova; lê `docker/estado/versao.json` |

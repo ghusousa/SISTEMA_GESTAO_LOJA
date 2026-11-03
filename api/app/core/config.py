@@ -75,6 +75,12 @@ class Settings(BaseSettings):
     #: GitHub, para não precisar de credencial do repositório dentro do contêiner.
     estado_dir: str = "estado"
     max_upload_bytes: int = 5 * 1024 * 1024
+    #: Fotos no Vercel Blob (ADR-42). Vazio (padrão) = disco em MEDIA_DIR, como sempre.
+    #: Presente, a foto vai para o store PÚBLICO e o banco guarda a URL absoluta dela.
+    #: `SecretStr`: escreve no store da loja, não sai em `repr` nem em log.
+    blob_read_write_token: SecretStr = SecretStr("")
+    #: O mesmo padrão (e a mesma variável) do SDK oficial do Blob.
+    vercel_blob_api_url: str = "https://vercel.com/api/blob"
 
     #: Quantos dias o diário de auditoria guarda (0 = para sempre). A faxina é oportunista,
     #: no login certo, como a das tentativas de login. O diário prova quem fez o quê; não
@@ -221,6 +227,11 @@ class Settings(BaseSettings):
             pooler=self.db_pooler,
             statement_timeout_ms=self.db_statement_timeout_ms if com_teto else None,
         )
+
+    @property
+    def fotos_no_blob(self) -> bool:
+        """A foto da peça vai para o Vercel Blob (e não para MEDIA_DIR)? ADR-42."""
+        return bool(self.blob_read_write_token.get_secret_value().strip())
 
 
 @lru_cache

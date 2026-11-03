@@ -120,10 +120,12 @@ from app.modules.fiscal.automatico import registrar_emissao_automatica  # noqa: 
 
 registrar_emissao_automatica()
 
-# Fotos de produto. Em produção o Nginx serve /media direto do disco.
-_media = Path(settings.media_dir)
-_media.mkdir(parents=True, exist_ok=True)
-app.mount("/media", StaticFiles(directory=str(_media)), name="media")
+# Fotos de produto em /media, só quando moram no disco. Com BLOB_READ_WRITE_TOKEN elas estão
+# no Vercel Blob, com URL absoluta, e nada se cria nem se monta aqui; na Vercel sem o token,
+# também nada — o envio responde 503 (ADR-42).
+from app.modules.catalogo.fotos import servir_fotos_do_disco  # noqa: E402
+
+servir_fotos_do_disco(app)
 
 # O sistema web é HTML e módulos ES, sem build: o próprio FastAPI entrega os arquivos e a
 # loja não precisa de um segundo processo no servidor. Em produção o Nginx pode servir a
