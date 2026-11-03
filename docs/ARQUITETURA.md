@@ -405,9 +405,24 @@ devolução de outra venda aparecia no comprovante. O reenvio idêntico continua
 da peça, porque a entrada não o guarda por item: ela o grava na variante. Divergiu →
 `409 DUPLICADO` com `detail.entrada_id`. Antes, a resposta perdida seguida de mais sete peças
 bipadas devolvia `201` com a entrada antiga: as sete não entravam, e a tela ainda oferecia
-etiqueta para elas. Web e celular mantêm a conferência e trocam só a chave, que é da entrada
-que já existe (com ela, todo reenvio cairia no mesmo 409); a mensagem manda conferir o extrato
-e tirar o que já entrou antes de registrar de novo.
+etiqueta para elas. O 409 leva também o que a entrada gravada levou: `detail.itens` (peças e
+quantidades) e, para quem vê dinheiro, `detail.nota` (`{numero, valor_total, parcelas}`, ou
+`null` se foi sem nota). Web e celular tiram da conferência os itens gravados
+(`tirarOQueJaEntrou`) e, se a gravada já levou ESTA nota, tiram a nota do formulário
+(`notaDepoisDoDuplicado`, `js/entrada-gravada.js` ↔ `lib/entrada.ts`) — só então trocam a chave,
+que é da entrada que já existe (com ela, todo reenvio cairia no mesmo 409). Trocar a chave e
+reenviar o resto com a mesma nota lançava as parcelas de novo: a nota de R$ 900 virava R$ 1.800
+em Contas a pagar, porque o servidor não tem como saber que duas notas iguais são a mesma (o
+número é opcional e se repete entre fornecedores). Quem compara é a tela, que tem as duas: é a
+mesma quando o número bate (sem pontuação nem caixa; mesmo número com outro valor é a nota
+corrigida, e a correção é em Contas a pagar) ou, faltando número de um lado, quando o valor bate.
+Outro número → é outra nota, que ainda não entrou: fica e vai com o resto (tirar qualquer nota
+deixava o boleto dela vencer esquecido, o desfecho que o ADR-40 chama de pior). Sem número e
+com outro valor não dá para saber: fica, e a mensagem pede para tirá-la se for a mesma. Gravada
+sem nota → a do formulário fica e vai com o resto. E "vai com o resto" só vale se sobrou peça:
+se a gravada já levou a lista inteira, o botão Registrar desliga e a nota não sairia — a
+mensagem manda lançá-la em Contas a pagar (`POST /contas-pagar`). A mensagem diz à pessoa qual
+dos casos aconteceu.
 
 **ADR-3 — Desconto só no total da venda.**
 Desconto por item multiplicaria os caminhos de arredondamento (rateio, soma que não fecha, margem por
@@ -1167,7 +1182,8 @@ saída de dinheiro, não custo do mês: nenhum relatório a lê, e a tela diz is
 Entrada (`nota: {numero?, valor_total, parcelas:[{vencimento, valor}]}`), que cria uma conta por
 parcela ligada a ela, na MESMA transação: se a mercadoria não entra, a dívida também não, e a
 chave da Entrada protege as duas — o reenvio compara também a nota (outro valor ou outro
-vencimento com a mesma chave → 409). As parcelas vêm prontas da tela (a sugestão 30/60/90 e o
+vencimento com a mesma chave → 409, com a nota gravada em `detail.nota` para a tela não
+lançá-la de novo junto com o resto, ADR-2). As parcelas vêm prontas da tela (a sugestão 30/60/90 e o
 centavo que sobra são de `lib/parcelas.ts` / `js/parcelas.js`); o servidor só confere que
 somam a nota. Quem vê dinheiro vê, lança e paga (`VER_DINHEIRO`); a vendedora dá entrada SEM a
 nota, e a nota vinda dela é recusada (403), não ignorada como o custo — ignorar deixaria a loja
@@ -1278,7 +1294,7 @@ com o valor atual. No `PATCH`, ausente = não mexe, `meta_diaria: null` tira a m
 ### 4.4 `estoque`
 | método | rota | papel | notas |
 |---|---|---|---|
-| POST | `/estoque/entradas` | A/V | `{client_uuid, fornecedor?, observacao?, itens:[{variante_id, quantidade, custo_unitario?}], nota?}`; `custo_unitario` atualiza o custo da variante — só de quem tem VER_DINHEIRO; dos outros é ignorado, a mesma tranca do catálogo. `nota: {numero?, valor_total, parcelas:[{vencimento, valor}]}` cria as contas a pagar na mesma transação — só VER_DINHEIRO (403 dos outros), exige fornecedor e parcelas que somem a nota (ADR-40). Resposta traz `contas_a_pagar` (quantas parcelas). Replay → 200; mesma chave com outras peças, quantidades, fornecedor, custo ou nota → 409 com `detail.entrada_id` (ADR-2) |
+| POST | `/estoque/entradas` | A/V | `{client_uuid, fornecedor?, observacao?, itens:[{variante_id, quantidade, custo_unitario?}], nota?}`; `custo_unitario` atualiza o custo da variante — só de quem tem VER_DINHEIRO; dos outros é ignorado, a mesma tranca do catálogo. `nota: {numero?, valor_total, parcelas:[{vencimento, valor}]}` cria as contas a pagar na mesma transação — só VER_DINHEIRO (403 dos outros), exige fornecedor e parcelas que somem a nota (ADR-40). Resposta traz `contas_a_pagar` (quantas parcelas). Replay → 200; mesma chave com outras peças, quantidades, fornecedor, custo ou nota → 409 com `detail.entrada_id`, `detail.itens` (o que ela gravou) e, para VER_DINHEIRO, `detail.nota` (a nota gravada ou `null`) — a tela tira os dois antes de trocar a chave (ADR-2) |
 | POST | `/estoque/ajustes` | A | `{variante_id, quantidade(±), motivo}` — motivo obrigatório |
 | POST | `/estoque/inventarios` | A | `{observacao?, contagens:[{variante_id, quantidade_contada}]}` → movimentações das diferenças + resumo. A diferença é calculada com peças e saldos travados (ADR-30) |
 | GET | `/estoque/saldos` | A/V | `?q=&categoria_id=&somente_baixo=` · `q` acha por nome do produto (sem acento, como `/variantes`) ou código |

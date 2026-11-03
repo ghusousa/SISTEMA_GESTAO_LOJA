@@ -168,6 +168,99 @@ async def test_entrada_com_nota_reenviada_nao_duplica_a_divida(
     assert (await client.post("/estoque/entradas", headers=auth_admin, json=sem)).status_code == 409
 
 
+async def test_409_da_entrada_diz_a_nota_gravada_e_o_resto_sem_ela_nao_dobra_a_divida(
+    client: AsyncClient, auth_admin: dict[str, str], pecas: dict
+) -> None:
+    """10 calças com a nota de R$ 900 em 3x; a resposta se perde, a pessoa bipa mais 4 e
+    reenvia com a mesma chave. O 409 leva os itens E a nota que já entrou: a tela tira as
+    peças da lista e a nota do formulário e registra só o resto — sem isso a nota ia de novo
+    e Contas a pagar mostrava R$ 1.800 para um boleto de R$ 900."""
+    nota = _nota()
+    pedido = _entrada(pecas, nota, itens=[{"variante_id": pecas["38"], "quantidade": 10}])
+    r = await client.post("/estoque/entradas", headers=auth_admin, json=pedido)
+    assert r.status_code == 201, r.text
+
+    mais = [*pedido["itens"], {"variante_id": pecas["40"], "quantidade": 4}]
+    r = await client.post("/estoque/entradas", headers=auth_admin, json={**pedido, "itens": mais})
+    assert r.status_code == 409, r.text
+    detalhe = r.json()["detail"]
+    assert detalhe["itens"] == [{"variante_id": pecas["38"], "quantidade": 10}]
+    assert detalhe["nota"] == nota  # número, total e parcelas, como a tela mandou
+
+    # O que a tela manda depois: o resto, com chave nova e SEM a nota.
+    resto = _entrada(pecas, itens=[{"variante_id": pecas["40"], "quantidade": 4}])
+    r = await client.post("/estoque/entradas", headers=auth_admin, json=resto)
+    assert r.status_code == 201, r.text
+    assert r.json()["contas_a_pagar"] == 0
+    assert await _contar("SELECT count(*) FROM payables") == 3
+    assert await _contar("SELECT sum(amount)::int FROM payables WHERE deleted_at IS NULL") == 900
+
+
+async def test_409_da_entrada_sem_nota_diz_que_a_nota_do_formulario_fica(
+    client: AsyncClient, auth_admin: dict[str, str], auth_vendedor: dict[str, str], pecas: dict
+) -> None:
+    """A gravada foi SEM nota: `nota` é None, e a do formulário vai com o resto (uma vez)."""
+    pedido = _entrada(pecas, itens=[{"variante_id": pecas["38"], "quantidade": 10}])
+    r = await client.post("/estoque/entradas", headers=auth_admin, json=pedido)
+    assert r.status_code == 201, r.text
+
+    r = await client.post("/estoque/entradas", headers=auth_admin, json={**pedido, "nota": _nota()})
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["nota"] is None
+
+    resto = _entrada(pecas, _nota(), itens=[{"variante_id": pecas["40"], "quantidade": 4}])
+    r = await client.post("/estoque/entradas", headers=auth_admin, json=resto)
+    assert r.status_code == 201, r.text
+    assert await _contar("SELECT count(*) FROM payables") == 3
+
+    # Quem não vê dinheiro não recebe a nota no 409 (é custo da mercadoria) — nem a chave.
+    com_nota = _entrada(pecas, _nota(), itens=[{"variante_id": pecas["38"], "quantidade": 2}])
+    r = await client.post("/estoque/entradas", headers=auth_admin, json=com_nota)
+    assert r.status_code == 201, r.text
+    sem_nota = {k: v for k, v in com_nota.items() if k != "nota"}
+    r = await client.post("/estoque/entradas", headers=auth_vendedor, json=sem_nota)
+    assert r.status_code == 409, r.text
+    assert "nota" not in r.json()["detail"]
+
+
+async def test_409_da_entrada_com_outra_nota_no_formulario_a_outra_ainda_entra(
+    client: AsyncClient, auth_admin: dict[str, str], pecas: dict
+) -> None:
+    """A gravada levou a nota 123 de R$ 300; o reenvio veio com a 456 de R$ 500 e mais peças.
+    O 409 diz o NÚMERO da nota gravada, e é por ele que a tela vê que a 456 é outra: ela fica
+    e vai com o resto. Tirar do formulário qualquer nota quando a gravada levou alguma deixava
+    Contas a pagar em R$ 300 e o boleto de R$ 500 vencendo esquecido. A regra é de
+    `notaDepoisDoDuplicado` (testada em `mobile/src/lib/entrada.test.ts`); aqui, o contrato
+    que ela usa e o desfecho."""
+
+    def nota(numero: str, valor: str) -> dict:
+        return {
+            "numero": numero,
+            "valor_total": valor,
+            "parcelas": [{"vencimento": _dia(30), "valor": valor}],
+        }
+
+    pedido = _entrada(
+        pecas, nota("123", "300.00"), itens=[{"variante_id": pecas["38"], "quantidade": 10}]
+    )
+    r = await client.post("/estoque/entradas", headers=auth_admin, json=pedido)
+    assert r.status_code == 201, r.text
+
+    mais = [*pedido["itens"], {"variante_id": pecas["40"], "quantidade": 7}]
+    reenvio = {**pedido, "itens": mais, "nota": nota("456", "500.00")}
+    r = await client.post("/estoque/entradas", headers=auth_admin, json=reenvio)
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["nota"]["numero"] == "123"
+
+    resto = _entrada(
+        pecas, nota("456", "500.00"), itens=[{"variante_id": pecas["40"], "quantidade": 7}]
+    )
+    r = await client.post("/estoque/entradas", headers=auth_admin, json=resto)
+    assert r.status_code == 201, r.text
+    assert r.json()["contas_a_pagar"] == 1
+    assert await _contar("SELECT sum(amount)::int FROM payables WHERE deleted_at IS NULL") == 800
+
+
 # ------------------------------------------------------------------ quem vê
 async def _barrado(client: AsyncClient, auth: dict[str, str]) -> None:
     assert (await client.get("/contas-pagar", headers=auth)).status_code == 403

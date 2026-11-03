@@ -22,7 +22,7 @@
 import { api, ErroApi } from '../api.js';
 import { ligarBuscaDePeca } from '../busca-peca.js';
 import { formatar, paraDecimalString, somar } from '../dinheiro.js';
-import { tirarOQueJaEntrou } from '../entrada-gravada.js';
+import { notaDepoisDoDuplicado, tirarOQueJaEntrou } from '../entrada-gravada.js';
 import { criarLeitor, manterFoco } from '../leitor.js';
 import { ir } from '../router.js';
 import { conferencia, limparConferencia, novoClientUuid } from '../store.js';
@@ -238,7 +238,7 @@ export function render(raiz) {
       campo.focus();
     } catch (erro) {
       if (erro instanceof ErroApi && erro.status === 409 && erro.detail?.entrada_id) {
-        await avisarEntradaJaGravada(erro);
+        await avisarEntradaJaGravada(erro, notaApi);
         return;
       }
       avisarErro(erro);
@@ -253,15 +253,23 @@ export function render(raiz) {
    * A chave desta conferência já gravou OUTRA entrada (resposta perdida, lista mudada
    * depois): o servidor recusa (ADR-2) e devolve os itens dela. O que ela gravou sai da
    * lista ANTES de a chave sair — só trocar a chave e reenviar tudo somaria de novo as
-   * peças que já entraram (10 P + 7 M viravam +20 P). Fica o que falta registrar.
+   * peças que já entraram (10 P + 7 M viravam +20 P). Fica o que falta registrar. A nota
+   * idem: se a gravada já levou ESTA nota, reenviá-la dobraria Contas a pagar; se levou
+   * outra (ou nenhuma), esta ainda não entrou e fica.
    */
-  async function avisarEntradaJaGravada(erro) {
-    definir(tirarOQueJaEntrou(itens(), erro.detail.itens || []));
+  async function avisarEntradaJaGravada(erro, notaApi) {
+    const resto = tirarOQueJaEntrou(itens(), erro.detail.itens || []);
+    const { tirarNota, frase } = notaDepoisDoDuplicado(erro.detail, notaApi, resto.length > 0);
+    definir(resto);
+    if (tirarNota) nota?.limpar();
     conferencia.set({ clientUuid: null });
     pintar();
+    const lista = resto.length
+      ? 'Tirei da lista o que ela já gravou; confira e registre o que falta.'
+      : 'Tudo o que estava na lista ela já tinha gravado.';
     const verExtrato = await confirmar({
       titulo: 'Esta entrada já foi gravada',
-      mensagem: `${erro.message} Tirei da lista o que ela já gravou; confira e registre o que falta.`,
+      mensagem: `${erro.message} ${lista}${frase ? ` ${frase}` : ''}`,
       confirmarTexto: 'Ver extrato',
     });
     if (verExtrato) ir('/estoque/extrato?tipo=ENTRADA');
