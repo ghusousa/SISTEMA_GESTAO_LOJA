@@ -6,7 +6,8 @@ pelos últimos dias, despesas do mês e uma peça no estoque mínimo para o aler
     .venv/bin/python scripts/seed_demo.py          # com a API no ar
 
 Na Vercel quem chama é o `scripts/vercel_build.py`, pela função `popular()`, com a API dentro
-do processo do build (ADR-42).
+do processo do build (ADR-42). Rodar de novo não duplica: cada gravação usa uma chave fixa, e a
+carga que caiu no meio termina de onde parou.
 
 NÃO use em produção: cria usuários com senha conhecida.
 """
@@ -94,17 +95,55 @@ CLIENTES = [
 ]
 
 
+#: Raiz das chaves `client_uuid` da carga. A MESMA chave a cada execução: o passo que já foi
+#: gravado volta como réplica (200, o registro de antes) em vez de gravar outra vez. É isso que
+#: deixa o build da Vercel retomar a carga que caiu no meio sem duplicar nada (ADR-42) — e
+#: rodar o seed de novo na loja local também não dobra mais a demonstração.
+RAIZ_DAS_CHAVES = uuid.UUID("6f1c7a0e-3d52-4c1e-9a43-5e0d7b2a8c11")
+
+#: Quantas vendas sorteadas a carga tenta (algumas recusam por falta de estoque, de propósito).
+VENDAS_SORTEADAS = 115
+
+MOTIVO_DO_AJUSTE = "peças com defeito de fábrica devolvidas ao fornecedor"
+
+
+def chave(rotulo: str) -> str:
+    return str(uuid.uuid5(RAIZ_DAS_CHAVES, rotulo))
+
+
+class CargaInterrompida(RuntimeError):
+    """A API recusou um passo da carga. Diz qual e o porquê — nunca o que foi enviado (pode
+    levar senha)."""
+
+
+def _exigir(resposta: httpx.Response, passo: str, *aceitos: int) -> httpx.Response:
+    if resposta.status_code in (aceitos or (200, 201)):
+        return resposta
+    try:
+        corpo = resposta.json()
+    except ValueError:
+        corpo = None
+    motivo = (
+        f"{corpo.get('code', '')} {corpo.get('message', '')}".strip()
+        if isinstance(corpo, dict)
+        else ""
+    )
+    raise CargaInterrompida(f"{passo}: HTTP {resposta.status_code} {motivo}".strip())
+
+
 def hoje_loja() -> datetime:
     return datetime.now(UTC).astimezone(TZ_LOJA)
 
 
-async def _espalhar_vendas_no_mes(ids: list[int]) -> None:
+async def _espalhar_vendas_no_mes(vendas: list[tuple[int, int]]) -> None:
     """Redistribui `sold_at` pelos últimos 25 dias, em horário de loja.
 
     Sábado vende mais, domingo quase nada — sem isso a curva de vendas fica reta e não
-    ajuda a enxergar como o relatório se comporta.
+    ajuda a enxergar como o relatório se comporta. `vendas` é (número na carga, id): o sorteio
+    é POR VENDA, então a mesma venda cai no mesmo horário a cada execução, e a retomada da
+    carga não embaralha o que já estava espalhado.
     """
-    if not ids:
+    if not vendas:
         return
 
     import asyncpg
@@ -112,18 +151,20 @@ async def _espalhar_vendas_no_mes(ids: list[int]) -> None:
     from app.core.config import settings
 
     agora = datetime.now(UTC).astimezone(TZ_LOJA)
-    momentos: list[datetime] = []
-    for indice, _ in enumerate(ids):
-        dias_atras = int((indice / max(len(ids) - 1, 1)) * 24)
+    momentos: list[tuple[int, datetime]] = []
+    for numero, venda_id in vendas:
+        sorteio = random.Random(numero)
+        dias_atras = int((numero / max(VENDAS_SORTEADAS - 1, 1)) * 24)
         dia = (agora - timedelta(days=dias_atras)).date()
         peso_do_dia = {5: 1.6, 6: 0.2}.get(dia.weekday(), 1.0)
-        if random.random() > peso_do_dia:
+        if sorteio.random() > peso_do_dia:
             dias_atras = max(dias_atras - 1, 0)
             dia = (agora - timedelta(days=dias_atras)).date()
-        hora = random.randint(9, 18)
-        momentos.append(
-            datetime(dia.year, dia.month, dia.day, hora, random.randint(0, 59), tzinfo=TZ_LOJA)
+        hora = sorteio.randint(9, 18)
+        momento = datetime(
+            dia.year, dia.month, dia.day, hora, sorteio.randint(0, 59), tzinfo=TZ_LOJA
         )
+        momentos.append((venda_id, momento))
 
     from app.core.url_do_banco import argumentos_asyncpg
 
@@ -134,11 +175,51 @@ async def _espalhar_vendas_no_mes(ids: list[int]) -> None:
     )
     try:
         await conexao.executemany(
-            "UPDATE sales SET sold_at = $2, created_at = $2 WHERE id = $1",
-            list(zip(ids, momentos, strict=True)),
+            "UPDATE sales SET sold_at = $2, created_at = $2 WHERE id = $1", momentos
         )
     finally:
         await conexao.close()
+
+
+def _entrar(c: httpx.Client, conta: dict) -> httpx.Response:
+    return c.post("/auth/login", json={"email": conta["email"], "senha": conta["senha"]})
+
+
+def _vendedora(c: httpx.Client, admin: dict, conta: dict) -> dict:
+    """A vendedora da demonstração, criada se faltar, e o crachá dela."""
+    criada = _exigir(
+        c.post("/usuarios", headers=admin, json=conta), "criar a vendedora", 201, 409
+    )
+    if criada.status_code == 201:
+        print("vendedora criada")
+    entrou = _entrar(c, conta)
+    if entrou.status_code == 401 and criada.status_code == 409:
+        # Ela já existia, de uma carga que caiu no meio — e lá a senha sorteada foi OUTRA.
+        equipe = c.get("/usuarios", headers=admin, params={"size": 100}).json()["items"]
+        ana_id = next(u["id"] for u in equipe if u["email"] == conta["email"])
+        _exigir(
+            c.patch(
+                f"/usuarios/{ana_id}/senha", headers=admin, json={"nova_senha": conta["senha"]}
+            ),
+            "redefinir a senha da vendedora",
+            204,
+        )
+        entrou = _entrar(c, conta)
+    _exigir(entrou, "entrar como a vendedora", 200)
+    return {"Authorization": f"Bearer {entrou.json()['access_token']}"}
+
+
+def _id_por_nome(c: httpx.Client, admin: dict, rota: str, nome: str) -> int:
+    return next(
+        x["id"] for x in c.get(rota, headers=admin, params={"size": 100}).json()["items"]
+        if x["nome"] == nome
+    )
+
+
+def _achar_por_nome(c: httpx.Client, admin: dict, rota: str, nome: str) -> dict | None:
+    """O registro com exatamente este nome, se a carga já o criou."""
+    achados = c.get(rota, headers=admin, params={"q": nome, "size": 100}).json()["items"]
+    return next((x for x in achados if x["nome"] == nome), None)
 
 
 def popular(c: httpx.Client, admin_conta: dict, vendedora_conta: dict) -> int:
@@ -148,12 +229,16 @@ def popular(c: httpx.Client, admin_conta: dict, vendedora_conta: dict) -> int:
     (`vercel_build.py`) passa um `TestClient` com a API dentro do próprio processo — lá não
     há servidor de pé durante o build. O caminho é o mesmo nos dois: as rotas, as regras e a
     auditoria de sempre, nada escrito por fora (só o `sold_at` espalhado, ver acima).
-    """
-    random.seed(42)  # dados iguais a cada execução: bom para comparar telas
 
-    entrar = c.post(
-        "/auth/login", json={"email": admin_conta["email"], "senha": admin_conta["senha"]}
-    )
+    **Retomável**: rodar de novo depois de cair no meio termina a carga sem duplicar. Toda
+    gravação com `client_uuid` usa a chave fixa do passo (`chave()`), e o resto procura antes
+    de criar. O sorteio (`random.seed(42)`) é consumido igual em toda execução, então a
+    réplica manda exatamente o pedido de antes. Recusa que impede de seguir vira
+    `CargaInterrompida`, com o passo e o motivo.
+    """
+    random.seed(42)  # dados iguais a cada execução: bom para comparar telas, e para retomar
+
+    entrar = _entrar(c, admin_conta)
     if entrar.status_code == 401:
         print(
             f"Não consegui entrar como {admin_conta['email']}.\n"
@@ -163,15 +248,9 @@ def popular(c: httpx.Client, admin_conta: dict, vendedora_conta: dict) -> int:
             file=sys.stderr,
         )
         return 1
-    entrar.raise_for_status()
+    _exigir(entrar, "entrar como o dono", 200)
     admin = {"Authorization": f"Bearer {entrar.json()['access_token']}"}
-
-    if c.post("/usuarios", headers=admin, json=vendedora_conta).status_code == 201:
-        print("vendedora criada")
-    login_ana = c.post(
-        "/auth/login", json={"email": vendedora_conta["email"], "senha": vendedora_conta["senha"]}
-    )
-    ana = {"Authorization": f"Bearer {login_ana.json()['access_token']}"}
+    ana = _vendedora(c, admin, vendedora_conta)
 
     # ---------------------------------------------------------- catálogo
     categorias: dict[str, int] = {}
@@ -182,11 +261,7 @@ def popular(c: httpx.Client, admin_conta: dict, vendedora_conta: dict) -> int:
             categorias[cat] = (
                 resp.json()["id"]
                 if resp.status_code == 201
-                else next(
-                    x["id"]
-                    for x in c.get("/categorias", headers=admin).json()["items"]
-                    if x["nome"] == cat
-                )
+                else _id_por_nome(c, admin, "/categorias", cat)
             )
 
         grade = []
@@ -205,33 +280,41 @@ def popular(c: httpx.Client, admin_conta: dict, vendedora_conta: dict) -> int:
                     "estoque_minimo": 2,
                 }
             )
-        criado = c.post(
-            "/produtos",
-            headers=admin,
-            json={"categoria_id": categorias[cat], "nome": nome, "variantes": grade},
-        )
-        criado.raise_for_status()
+        produto = _achar_por_nome(c, admin, "/produtos", nome)
+        if produto is None:
+            produto = _exigir(
+                c.post(
+                    "/produtos",
+                    headers=admin,
+                    json={"categoria_id": categorias[cat], "nome": nome, "variantes": grade},
+                ),
+                f"cadastrar {nome}",
+                201,
+            ).json()
+        pecas = sorted(produto["variantes"], key=lambda v: v["id"])
         # Cadastro nasce com saldo zero (ADR-29): a mercadoria entra pela Entrada.
-        c.post(
-            "/estoque/entradas",
-            headers=admin,
-            json={
-                "client_uuid": str(uuid.uuid4()),
-                "fornecedor": "Fornecedor demo",
-                "itens": [
-                    {"variante_id": v["id"], "quantidade": random.randint(4, 14)}
-                    for v in criado.json()["variantes"]
-                ],
-            },
-        ).raise_for_status()
-        for v in criado.json()["variantes"]:
+        _exigir(
+            c.post(
+                "/estoque/entradas",
+                headers=admin,
+                json={
+                    "client_uuid": chave(f"entrada-{ordem}"),
+                    "fornecedor": "Fornecedor demo",
+                    "itens": [
+                        {"variante_id": v["id"], "quantidade": random.randint(4, 14)}
+                        for v in pecas
+                    ],
+                },
+            ),
+            f"entrada de {nome}",
+        )
+        for v in pecas:
             variantes.append({"id": v["id"], "preco": v["preco_venda"], "nome": nome})
     print(f"catálogo: {len(CATALOGO)} produtos, {len(variantes)} peças")
 
     # ---------------------------------------------------------- vendas
-    vendidas = 0
-    ids_criados: list[int] = []
-    for _ in range(115):
+    vendas_da_carga: list[tuple[int, int]] = []
+    for numero in range(VENDAS_SORTEADAS):
         variante = random.choice(variantes)
         quantidade = random.choice([1, 1, 1, 2])
         preco = float(variante["preco"])
@@ -254,29 +337,29 @@ def popular(c: httpx.Client, admin_conta: dict, vendedora_conta: dict) -> int:
             "/vendas",
             headers=ana if random.random() < 0.6 else admin,
             json={
-                "client_uuid": str(uuid.uuid4()),
+                "client_uuid": chave(f"venda-{numero}"),
                 "desconto": f"{desconto:.2f}",
                 "itens": [{"variante_id": variante["id"], "quantidade": quantidade}],
                 "pagamentos": pagamentos,
             },
         )
-        if resp.status_code == 201:
-            vendidas += 1
-            ids_criados.append(resp.json()["id"])
+        if resp.status_code in (200, 201):  # 200: já gravada numa execução anterior
+            vendas_da_carga.append((numero, resp.json()["id"]))
 
     # A API sempre carimba a venda com o instante atual — correto em produção, mas aqui
     # deixaria as 70 vendas empilhadas no mesmo minuto e o gráfico do mês seria uma
     # barra só. Espalhar exige tocar no banco, e é por isso que este script é de demo.
-    asyncio.run(_espalhar_vendas_no_mes(ids_criados))
-    print(f"vendas: {vendidas} (espalhadas nos últimos 25 dias)")
+    asyncio.run(_espalhar_vendas_no_mes(vendas_da_carga))
+    print(f"vendas: {len(vendas_da_carga)} (espalhadas nos últimos 25 dias)")
 
-    # Uma venda cancelada, para o histórico mostrar os dois estados.
-    primeira = c.get("/vendas", headers=admin).json()["items"][-1]
-    c.post(
-        f"/vendas/{primeira['id']}/cancelamento",
-        headers=admin,
-        json={"motivo": "cliente trocou por outro tamanho"},
-    )
+    # Uma venda cancelada, para o histórico mostrar os dois estados. Sempre a mesma: na
+    # retomada, a já cancelada responde que já está, e nenhuma outra cai junto.
+    if vendas_da_carga:
+        c.post(
+            f"/vendas/{vendas_da_carga[0][1]}/cancelamento",
+            headers=admin,
+            json={"motivo": "cliente trocou por outro tamanho"},
+        )
 
     # ---------------------------------------------------------- despesas
     hoje = hoje_loja().date()
@@ -285,12 +368,16 @@ def popular(c: httpx.Client, admin_conta: dict, vendedora_conta: dict) -> int:
         categoria_id = (
             resp.json()["id"]
             if resp.status_code == 201
-            else next(
-                x["id"]
-                for x in c.get("/despesas/categorias", headers=admin).json()["items"]
-                if x["nome"] == categoria
-            )
+            else _id_por_nome(c, admin, "/despesas/categorias", categoria)
         )
+        data = hoje.replace(day=min(dia, 28)).isoformat()
+        lancadas = c.get(
+            "/despesas",
+            headers=admin,
+            params={"inicio": data, "fim": data, "categoria_id": categoria_id, "size": 100},
+        ).json()["items"]
+        if any(d["descricao"] == descricao for d in lancadas):
+            continue
         c.post(
             "/despesas",
             headers=admin,
@@ -298,24 +385,29 @@ def popular(c: httpx.Client, admin_conta: dict, vendedora_conta: dict) -> int:
                 "categoria_id": categoria_id,
                 "descricao": descricao,
                 "valor": valor,
-                "data": hoje.replace(day=min(dia, 28)).isoformat(),
+                "data": data,
                 "recorrente": recorrente,
             },
         )
     print(f"despesas: {len(DESPESAS)}")
 
     # ------------------------------------------- uma peça pedindo reposição
-    saldos = c.get("/estoque/saldos", headers=admin, params={"size": 100}).json()
-    alvo = next(s for s in saldos["items"] if s["saldo"] > 3)
-    c.post(
-        "/estoque/ajustes",
-        headers=admin,
-        json={
-            "variante_id": alvo["variante_id"],
-            "quantidade": -(alvo["saldo"] - 1),
-            "motivo": "peças com defeito de fábrica devolvidas ao fornecedor",
-        },
-    )
+    # Ajuste não tem chave: procura o dele no extrato antes de baixar outra peça.
+    ajustes = c.get(
+        "/estoque/movimentacoes", headers=admin, params={"tipo": "AJUSTE", "size": 100}
+    ).json()["items"]
+    if not any(m.get("observacao") == MOTIVO_DO_AJUSTE for m in ajustes):
+        saldos = c.get("/estoque/saldos", headers=admin, params={"size": 100}).json()
+        alvo = next(s for s in saldos["items"] if s["saldo"] > 3)
+        c.post(
+            "/estoque/ajustes",
+            headers=admin,
+            json={
+                "variante_id": alvo["variante_id"],
+                "quantidade": -(alvo["saldo"] - 1),
+                "motivo": MOTIVO_DO_AJUSTE,
+            },
+        )
 
     # ------------------------------------------- entrada de reposição
     reposicao = random.sample(variantes, 3)
@@ -323,7 +415,7 @@ def popular(c: httpx.Client, admin_conta: dict, vendedora_conta: dict) -> int:
         "/estoque/entradas",
         headers=admin,
         json={
-            "client_uuid": str(uuid.uuid4()),
+            "client_uuid": chave("reposicao"),
             "fornecedor": "Malharia Nova",
             "itens": [{"variante_id": v["id"], "quantidade": 6} for v in reposicao],
         },
@@ -342,7 +434,7 @@ def popular(c: httpx.Client, admin_conta: dict, vendedora_conta: dict) -> int:
         "/vendas",
         headers=admin,
         json={
-            "client_uuid": str(uuid.uuid4()),
+            "client_uuid": chave("recibo"),
             "desconto": f"{desconto:.2f}",
             "itens": [{"variante_id": v["id"], "quantidade": 1} for v in sacola],
             "pagamentos": [
@@ -351,12 +443,16 @@ def popular(c: httpx.Client, admin_conta: dict, vendedora_conta: dict) -> int:
             ],
         },
     )
-    if recibo.status_code == 201:
+    if recibo.status_code in (200, 201):
         print(f"venda do recibo: #{recibo.json()['id']} — 3 peças, desconto e pagamento dividido")
 
     # ------------------------------------------------- crediário (fiado)
     clientes = []
     for nome, telefone, limite in CLIENTES:
+        existente = _achar_por_nome(c, admin, "/clientes", nome)
+        if existente is not None:
+            clientes.append(existente)
+            continue
         resp = c.post(
             "/clientes",
             headers=admin,
@@ -367,14 +463,14 @@ def popular(c: httpx.Client, admin_conta: dict, vendedora_conta: dict) -> int:
     if clientes:
         # Marizete leva no fiado duas vezes e passa do limite combinado: é o caso que
         # faz a etiqueta de aviso aparecer na tela, sem travar venda nenhuma.
-        for _ in range(2):
+        for vez in range(2):
             peca = random.choice(variantes)
             valor = f"{float(peca['preco']):.2f}"
             c.post(
                 "/vendas",
                 headers=admin,
                 json={
-                    "client_uuid": str(uuid.uuid4()),
+                    "client_uuid": chave(f"fiado-marizete-{vez}"),
                     "cliente_id": clientes[0]["id"],
                     "itens": [{"variante_id": peca["id"], "quantidade": 1}],
                     "pagamentos": [{"forma": "FIADO", "valor": valor}],
@@ -390,7 +486,7 @@ def popular(c: httpx.Client, admin_conta: dict, vendedora_conta: dict) -> int:
             "/vendas",
             headers=admin,
             json={
-                "client_uuid": str(uuid.uuid4()),
+                "client_uuid": chave("fiado-cleide"),
                 "cliente_id": clientes[1]["id"],
                 "itens": [{"variante_id": peca["id"], "quantidade": 1}],
                 "pagamentos": [
@@ -399,14 +495,14 @@ def popular(c: httpx.Client, admin_conta: dict, vendedora_conta: dict) -> int:
                 ],
             },
         )
-        if venda_cleide.status_code == 201:
+        if venda_cleide.status_code in (200, 201):
             c.post(
                 f"/clientes/{clientes[1]['id']}/pagamentos",
                 headers=admin,
                 json={
                     "forma": "PIX",
                     "valor": f"{round((preco - metade) / 2, 2):.2f}",
-                    "client_uuid": str(uuid.uuid4()),
+                    "client_uuid": chave("pagamento-cleide"),
                 },
             )
         print(f"crediário: {len(clientes)} clientes, com fiado e pagamento parcial")
@@ -427,11 +523,13 @@ def popular(c: httpx.Client, admin_conta: dict, vendedora_conta: dict) -> int:
     )
     if a_vista:
         detalhe = c.get(f"/vendas/{a_vista['id']}", headers=admin).json()
-        c.post(
+        # A chave é única na loja inteira: se a retomada achar OUTRA venda aqui, a mesma
+        # chave noutro pedido é recusada (409) e a devolução não sai duas vezes.
+        devolveu = c.post(
             f"/vendas/{a_vista['id']}/devolucoes",
             headers=admin,
             json={
-                "client_uuid": str(uuid.uuid4()),
+                "client_uuid": chave("devolucao-a-vista"),
                 "motivo": "não serviu",
                 "itens": [
                     {
@@ -442,7 +540,8 @@ def popular(c: httpx.Client, admin_conta: dict, vendedora_conta: dict) -> int:
                 ],
             },
         )
-        print("devolução: uma peça de volta na arara, dinheiro pela forma que entrou")
+        if devolveu.status_code in (200, 201):
+            print("devolução: uma peça de volta na arara, dinheiro pela forma que entrou")
 
     if clientes:
         # O caminho do vale, do começo: Sônia leva no fiado, paga tudo, e só depois
@@ -454,13 +553,13 @@ def popular(c: httpx.Client, admin_conta: dict, vendedora_conta: dict) -> int:
             "/vendas",
             headers=admin,
             json={
-                "client_uuid": str(uuid.uuid4()),
+                "client_uuid": chave("fiado-sonia"),
                 "cliente_id": clientes[2]["id"],
                 "itens": [{"variante_id": peca["id"], "quantidade": 1}],
                 "pagamentos": [{"forma": "FIADO", "valor": valor}],
             },
         )
-        if venda_sonia.status_code == 201:
+        if venda_sonia.status_code in (200, 201):
             venda_sonia = venda_sonia.json()
             c.post(
                 f"/clientes/{clientes[2]['id']}/pagamentos",
@@ -468,21 +567,21 @@ def popular(c: httpx.Client, admin_conta: dict, vendedora_conta: dict) -> int:
                 json={
                     "forma": "DINHEIRO",
                     "valor": valor,
-                    "client_uuid": str(uuid.uuid4()),
+                    "client_uuid": chave("pagamento-sonia"),
                 },
             )
             devolvida = c.post(
                 f"/vendas/{venda_sonia['id']}/devolucoes",
                 headers=admin,
                 json={
-                    "client_uuid": str(uuid.uuid4()),
+                    "client_uuid": chave("devolucao-sonia"),
                     "motivo": "presente repetido",
                     "itens": [
                         {"item_id": venda_sonia["itens"][0]["id"], "quantidade": 1}
                     ],
                 },
             )
-            if devolvida.status_code == 201:
+            if devolvida.status_code in (200, 201):
                 vale = next(
                     (
                         p["codigo_vale"]

@@ -1352,16 +1352,33 @@ statement ganha nome único e o teto de partida não vai. O pool é `DB_POOL_SIZ
 não pode subir a demonstração com `/docs` aberto e aceitando o `JWT_SECRET` de exemplo, que
 está no repositório; `CORS_ORIGINS` = os endereços que a Vercel dá ao deploy; `MEDIA_DIR=/tmp/media`
 (o disco da função é só leitura; sem isso a API morria no import). *Build:* confere a trava,
-copia o web e, **só com `VERCEL_ENV=production`**, roda `alembic upgrade head` e, se a loja
-não tem usuário nenhum e `DEMO_ADMIN_EMAIL`/`DEMO_ADMIN_SENHA` existem, cria o dono pela mesma
-porta do `app.cli create-admin` e enche a demonstração pelo `seed_demo.popular()` — as rotas
-de sempre, com a API dentro do processo do build (`TestClient`), porque ali não há servidor de
-pé. A vendedora da demonstração (`ana@loja.com`) tem senha de `DEMO_VENDEDORA_SENHA` ou
-sorteada: senha conhecida numa URL pública é balcão aberto. Build repetido não duplica nada
-(com alguém cadastrado, não cria nem semeia); preview não toca no banco (o preview de um
-branch não migra o banco da demonstração por baixo do deploy que está no ar); e o log nunca
-leva senha nem URL do banco (erro de config sai só com a frase de cada campo: o pydantic
-repete os valores lidos). A migração roda ANTES de o deploy novo entrar no ar — o anterior
+copia o web e, **só com `VERCEL_ENV=production`** e com o banco conectado (sem `DATABASE_URL`
+a config cairia no localhost da loja e o build num "Connect call failed" mudo; ele para antes,
+dizendo para conectar o Neon sem prefixo — é o primeiro deploy de todo projeto novo), roda
+`alembic upgrade head` e a carga da demonstração: o dono pela mesma porta do `app.cli
+create-admin` e a loja cheia pelo `seed_demo.popular()` — as rotas de sempre, com a API dentro
+do processo do build (`TestClient`), porque ali não há servidor de pé. A vendedora da
+demonstração (`ana@loja.com`) tem senha de `DEMO_VENDEDORA_SENHA` ou sorteada: senha conhecida
+numa URL pública é balcão aberto. **A carga é retomável e nunca duplica.** As duas contas
+passam pela régua da API (`UsuarioCreate`) ANTES de qualquer escrita — antes, uma senha de
+vendedora curta criava o dono, caía no 422 e o build seguinte via "já tem usuário" e nunca mais
+semeava. O começo e o fim da carga são duas linhas no diário de auditoria
+(`DEMONSTRACAO_INICIADA`/`DEMONSTRACAO_SEMEADA`, autor "Build da Vercel", pela porta pública
+`AuditoriaService`): o dono vê ali que aquelas vendas são de exemplo, e o build lê ali o
+estado — fim anotado, nada a fazer; só o começo, a carga caiu no meio (rede, Neon) e o
+Redeploy a retoma; nenhum marco e já há produto ou venda, a loja é de alguém e não se semeia
+por cima. Retomar sem duplicar é do próprio seed: toda gravação com `client_uuid` usa uma chave
+FIXA por passo (`uuid5`), e a réplica devolve o registro de antes (a mesma régua do app no
+celular); o resto (produto, cliente, despesa, ajuste) procura antes de criar; o sorteio é
+consumido igual a cada execução, então a réplica manda o pedido idêntico; e a vendedora que já
+existia com outra senha sorteada tem a senha redefinida pelo dono. Escolhemos o diário e não
+uma tabela nova porque o marco É um fato a auditar e não pede migration numa loja de verdade;
+a faxina (`RETENCAO_AUDITORIA_DIAS`) apaga o começo antes do fim, e sem nenhum dos dois a loja
+tem produto — cai em "de alguém", nunca em semear de novo. Preview não toca no banco (o preview
+de um branch não migra o banco da demonstração por baixo do deploy que está no ar); e o log
+nunca leva senha nem URL do banco, nem a normalizada (erro de config sai só com a frase de cada
+campo: o pydantic repete os valores lidos; o teste procura a senha de um papel do banco que só
+existe nele). A migração roda ANTES de o deploy novo entrar no ar — o anterior
 atende alguns segundos com o schema novo; numa demonstração, aceito. *Login:* a Vercel
 sobrescreve o `X-Forwarded-For` com o IP de quem chamou, então o primeiro da lista — o que a
 trava de força bruta (ADR-24) já lê — é o real; nada a configurar. *`/versao`:* não há

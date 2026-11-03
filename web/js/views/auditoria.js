@@ -65,6 +65,9 @@ const ACOES = {
   USUARIO_EDITADO: ['Editou usuário', 'perigo'],
   SENHA_REDEFINIDA: ['Redefiniu senha', 'perigo'],
   SENHA_PROPRIA: ['Trocou a própria senha', 'info'],
+  // A carga da demonstração na Vercel (ADR-42): quem age é o build, não uma pessoa.
+  DEMONSTRACAO_INICIADA: ['Carga da demonstração', 'info'],
+  DEMONSTRACAO_SEMEADA: ['Demonstração carregada', 'ok'],
   OUTRO: ['Outra ação', 'info'],
 };
 
