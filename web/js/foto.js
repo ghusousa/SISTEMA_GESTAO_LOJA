@@ -1,9 +1,10 @@
 /**
  * Preparo da foto da peça antes de subir. **Espelho de `mobile/src/lib/foto.ts`.**
  *
- * A API recusa acima de 5 MB, e foto de celular passa disso com facilidade — inclusive as
- * que chegam ao balcão por WhatsApp e cartão de memória. Encolher aqui, no navegador,
- * evita que a pessoa espere o upload inteiro para levar "imagem muito grande" no fim.
+ * A API recusa acima de 5 MB (4 MB na Vercel, ADR-42), e foto de celular passa disso com
+ * facilidade — inclusive as que chegam ao balcão por WhatsApp e cartão de memória. Encolher
+ * aqui, no navegador, evita que a pessoa espere o upload inteiro para levar "imagem muito
+ * grande" no fim.
  *
  * 1200 px no lado maior e JPEG a 70% dão entre 100 e 300 KB: sobra resolução para a tela e
  * o envio termina rápido até numa internet ruim de loja.

@@ -3,12 +3,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 
-from app.core.config import settings
 from app.core.permissoes import Pode, pode
 from app.core.deps import CurrentUser, ExigeEditarCatalogo, SessionDep
 from app.core.exceptions import Validacao
 from app.core.pagination import Pagina, Paginacao, paginacao
-from app.modules.catalogo.fotos import tipo_da_imagem
+from app.modules.catalogo.fotos import limite_do_envio, tipo_da_imagem
 from app.modules.catalogo.schemas import (
     CategoriaIn,
     CategoriaOut,
@@ -196,14 +195,16 @@ async def enviar_foto(
     # Lê em blocos e aborta ao passar do limite: `await arquivo.read()` traria o arquivo
     # inteiro para a memória antes de qualquer checagem, e um envio de vários GB derrubaria
     # o servidor da loja no meio do expediente.
+    # Na Vercel o teto é menor: a função recusa corpo acima de 4,5 MB antes da API (ADR-42).
+    limite = limite_do_envio()
     partes: list[bytes] = []
     lidos = 0
     while bloco := await arquivo.read(64 * 1024):
         lidos += len(bloco)
-        if lidos > settings.max_upload_bytes:
+        if lidos > limite:
             raise Validacao(
                 "Imagem muito grande.",
-                {"limite_mb": round(settings.max_upload_bytes / 1024 / 1024, 1)},
+                {"limite_mb": round(limite / 1024 / 1024, 1)},
             )
         partes.append(bloco)
     conteudo = b"".join(partes)

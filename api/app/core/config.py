@@ -76,6 +76,16 @@ class Settings(BaseSettings):
     #: sai pelo botão "Emitir NFC-e" do detalhe da venda.
     fiscal_emitir_automatico: bool = False
 
+    # Vercel (ADR-42): variáveis de SISTEMA que a própria Vercel põe no build e na função.
+    # Fora dela nenhuma existe, e é por isso que a loja não muda nada: tudo o que depende
+    # delas fica atrás de `if self.vercel`.
+    vercel: bool = False
+    vercel_env: str = ""
+    vercel_url: str = ""
+    vercel_branch_url: str = ""
+    vercel_project_production_url: str = ""
+    vercel_git_commit_sha: str = ""
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_origins(cls, v: object) -> object:
