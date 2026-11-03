@@ -1,15 +1,14 @@
-import uuid
 from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile, status
-from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
 from app.core.permissoes import Pode, pode
 from app.core.deps import CurrentUser, ExigeEditarCatalogo, SessionDep
 from app.core.exceptions import Validacao
 from app.core.pagination import Pagina, Paginacao, paginacao
+from app.modules.catalogo.fotos import tipo_da_imagem
 from app.modules.catalogo.schemas import (
     CategoriaIn,
     CategoriaOut,
@@ -209,29 +208,11 @@ async def enviar_foto(
         partes.append(bloco)
     conteudo = b"".join(partes)
 
-    if not _parece_imagem(conteudo):
+    # A extensão do nome é escolhida por quem envia e não prova nada: vale a assinatura.
+    tipo = tipo_da_imagem(conteudo)
+    if tipo is None:
         raise Validacao("O arquivo enviado não é uma imagem.")
 
-    destino = Path(settings.media_dir) / "produtos"
-    destino.mkdir(parents=True, exist_ok=True)
-    # Nome gerado pelo servidor: o nome do arquivo do celular não entra no caminho.
-    nome = f"{produto_id}-{uuid.uuid4().hex}{extensao}"
-    # Gravação é I/O bloqueante: fora da thread do event loop, senão a foto trava o PDV.
-    await run_in_threadpool((destino / nome).write_bytes, conteudo)
-
-    # Caminho relativo, nunca derivado do header Host: uma requisição com
-    # `Host: atacante.com` gravaria essa URL no banco e todo mundo passaria a buscar a
-    # imagem no servidor do atacante.
-    await service.definir_foto(produto_id, f"/media/produtos/{nome}")
+    # Disco (a loja de sempre) ou Vercel Blob: quem decide é o ambiente (ADR-42).
+    await service.trocar_foto(produto_id, conteudo, extensao, tipo)
     return await service.obter_produto(produto_id, usuario)
-
-
-# Assinaturas de arquivo: a extensão do nome é escolhida por quem envia e não prova nada.
-_ASSINATURAS = (b"\xff\xd8\xff", b"\x89PNG\r\n\x1a\n", b"RIFF")
-
-
-def _parece_imagem(conteudo: bytes) -> bool:
-    if any(conteudo.startswith(assinatura) for assinatura in _ASSINATURAS):
-        # WebP é RIFF com "WEBP" no oitavo byte; os demais já bastam pelo prefixo.
-        return not conteudo.startswith(b"RIFF") or conteudo[8:12] == b"WEBP"
-    return False

@@ -146,6 +146,7 @@ npm run publicar     # ficha inteira na App Store via API (mobile/publicar/, -- 
   `FiscalService.cancelar_nota_da_venda` depois das recusas da venda e antes dos estornos: emissor
   recusou → a venda NÃO cancela. Teste de emissor só com `httpx.MockTransport` — nunca internet.
   `web/js/nfce.js` + `web/js/campos-fiscais.js` e `mobile/src/lib/fiscal.ts` são espelhos.
+- **Fotos (ADR-42, "Fotos no Vercel Blob")**: `catalogo/fotos.py` escolhe pelo ambiente — disco (`/media`, caminho relativo, trocar NÃO apaga a antiga) ou, com `BLOB_READ_WRITE_TOKEN`, Blob público com URL absoluta, sem `mkdir`/`/media`, e a antiga apagada só depois do commit; quem mostra aceita as duas (`lib/enderecoDaFoto.ts`).
 - Versão: `GET /versao` diz o commit instalado E se é o mais novo. Quem sabe disso é o
   `atualizar.sh` (tem a credencial do GitHub), que grava `docker/estado/versao.json`; a API
   só lê o arquivo montado. **A API nunca fala com o GitHub** — token do código-fonte não

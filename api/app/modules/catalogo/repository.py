@@ -62,6 +62,21 @@ class CatalogoRepository:
         stmt = self._produto_base().where(Product.id == produto_id)
         return (await self.session.execute(stmt)).unique().scalar_one_or_none()
 
+    async def travar_produto(self, produto_id: int) -> Product | None:
+        """O produto ATIVO, travado e relido (a foto de agora, não a da sessão), ou None.
+
+        Duas trocas de foto ao mesmo tempo esperam uma pela outra: cada uma lê a foto que a
+        anterior acabou de gravar e apaga ESSA — sem a trava, as duas apagariam a mesma e a
+        do meio ficaria órfã no Blob."""
+        stmt = (
+            select(Product)
+            .where(Product.id == produto_id, Product.deleted_at.is_(None))
+            # `of`: a categoria vem num LEFT JOIN ansioso, e o Postgres não trava esse lado.
+            .with_for_update(key_share=True, of=Product)
+            .execution_options(populate_existing=True)
+        )
+        return await self.session.scalar(stmt)
+
     async def listar_produtos(
         self, p: Paginacao, q: str | None, categoria_id: int | None
     ) -> tuple[list[Product], int]:
