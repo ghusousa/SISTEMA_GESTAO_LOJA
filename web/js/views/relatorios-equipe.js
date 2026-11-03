@@ -4,7 +4,9 @@
  * Líquido = vendido − devolvido NO PERÍODO, e a devolução pesa para quem fez a venda
  * original (não para quem atendeu a troca). Por isso o líquido de alguém pode ficar
  * negativo num período só de devoluções: é o estorno da comissão já paga. A soma da equipe
- * fecha com o faturamento líquido do resumo.
+ * fecha com o faturamento líquido do resumo. A comissão vai pela % de cada venda (a que
+ * valia quando ela aconteceu); a coluna % é a de hoje — por isso líquido × % pode não dar
+ * a comissão da linha num período em que o dono mudou a %.
  *
  * Paginado no servidor como toda listagem; os totais (líquido e comissão a pagar) vêm
  * prontos e valem para a equipe INTEIRA — é a folha do período, não a da página.
@@ -30,7 +32,7 @@ const POR_PAGINA = 20;
 const cartao = (nota, corpo) => html`
   <div class="cartao" style="margin-top:16px">
     <div class="cartao__topo">
-      <h2>Vendas por vendedora ${ajuda('Vendido menos o que voltou de devolução no período, por quem fez a venda. A comissão é este líquido vezes a % de cada pessoa (definida pelo dono em Usuários). Venda cancelada não conta.')}</h2>
+      <h2>Vendas por vendedora ${ajuda('Vendido menos o que voltou de devolução no período, por quem fez a venda. A comissão é este líquido vezes a % que valia em CADA venda, quando ela aconteceu; a coluna % é a de hoje (definida pelo dono em Usuários), a que vale para as vendas novas. Venda cancelada não conta.')}</h2>
       <span class="texto-fraco">${nota}</span>
     </div>
     ${corpo}

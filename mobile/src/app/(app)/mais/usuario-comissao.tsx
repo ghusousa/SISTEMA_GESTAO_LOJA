@@ -82,7 +82,8 @@ export default function ComissaoDoUsuario() {
         <Cartao>
           <Text style={s.explica}>
             A comissão é sobre o que a pessoa vendeu menos o que voltou de devolução. Peça
-            devolvida tira a comissão no período em que voltou.
+            devolvida tira a comissão no período em que voltou. Mudar a % vale para as vendas
+            daqui em diante: a venda já feita guarda a % do dia dela.
           </Text>
         </Cartao>
         <Campo

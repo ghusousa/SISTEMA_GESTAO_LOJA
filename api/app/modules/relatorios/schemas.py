@@ -109,6 +109,8 @@ class VendedoraOut(BaseModel):
 
     usuario_id: int
     nome: str
+    #: A % de HOJE (a que o dono configurou), que vale para as vendas novas. Não é,
+    #: necessariamente, a da `comissao` abaixo: cada venda guarda a sua (ADR-37).
     comissao_percentual: Decimal
     quantidade_vendas: int
     #: Vendas concluídas no período, com desconto. Cancelada não conta.
@@ -121,7 +123,9 @@ class VendedoraOut(BaseModel):
     pecas: int
     #: Faturamento ÷ número de vendas — a mesma conta do resumo da loja.
     ticket_medio: Decimal
-    #: `faturamento_liquido × comissao_percentual ÷ 100`, arredondado no centavo.
+    #: Σ (total da venda × % DA VENDA) − Σ (devolvido × % da venda ORIGINAL), ÷ 100,
+    #: arredondado uma vez no centavo. Com a % mudada no período, não é
+    #: `faturamento_liquido × comissao_percentual` — a venda de antes leva a % de antes.
     comissao: Decimal
 
 

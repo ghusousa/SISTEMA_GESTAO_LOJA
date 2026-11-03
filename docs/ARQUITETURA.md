@@ -1097,7 +1097,9 @@ que voltasse depois estornava 3% do que tinha pago 5%. `comissao = (Σ total × 
 Σ refund_amount × % da venda ORIGINAL) ÷ 100`, somado exato no banco e arredondado **uma vez
 por pessoa**, meio centavo para cima (por venda, a soma derivaria meio centavo a cada uma). A
 coluna `comissao_percentual` da resposta continua sendo a % de HOJE — a que o dono configurou
-e mudaria; a % da venda não sai em resposta nenhuma de venda (a vendedora não a vê). Ticket
+e mudaria; a % da venda não sai em resposta nenhuma de venda (a vendedora não a vê). Num
+período em que a % mudou, `líquido × % de hoje` NÃO dá a comissão da linha, e a ajuda da tela
+da equipe e do campo Comissão (%) diz isso (web e app): mudar a % vale daí em diante. Ticket
 médio = vendido ÷ nº de vendas, a mesma conta do resumo. A soma da equipe fecha **centavo por
 centavo** com o `faturamento_liquido` do resumo (teste). Cada fonte é somada por vendedora
 antes de juntar (três `GROUP BY seller_id` num `UNION ALL`), e a equipe inteira vem numa
@@ -1136,11 +1138,18 @@ venda depois cancelada continua contando como venda (o movimento existe).
 **Curva ABC** (`?inicio&fim`): produto (não variante) por faturamento líquido no período — o
 item com o desconto da venda rateado (`preço × qtd × total ÷ subtotal`, a mesma conta do
 `refund_amount`) menos o devolvido no período. Somar o preço cheio contra a devolução rateada
-inflaria quem vende com desconto. Só entra quem teve líquido > 0 **no centavo**
-(`round(líquido, 2) > 0`): o rateio do vendido não arredonda (para a soma fechar com o total da
-venda) e o `refund_amount` já vem arredondado, então a peça vendida com desconto e devolvida
-inteira sobrava com R$ 0,0033 e aparecia com 0 peças e R$ 0,00. Produto só com devolução
-puxaria o acumulado acima de 100% e de volta. A classe vai pelo acumulado ANTES do produto: A
+inflaria quem vende com desconto. **A devolução vale pela MESMA régua do vendido**: `qtd
+devolvida × preço × total ÷ subtotal` da venda ORIGINAL, sem arredondar — não o
+`refund_amount`, que é arredondado no centavo a cada linha (e a última devolução da venda
+absorve o resíduo). Com o `refund_amount`, a blusa de um rateio de 9,3333 voltava como 9,33 e
+sobrava R$ 0,0033 por devolução; duas vendas, ou duas blusas do mesmo item devolvidas uma de
+cada vez (a venda não zera, ninguém absorve), somavam R$ 0,0067 e a blusa sumida aparecia na
+curva com 0 peças e R$ 0,01. Pela mesma régua, peça que volta inteira zera, quantas vendas e
+devoluções forem (a devolução junta `sale_items` e `sales` pela PK). O custo: a soma da curva
+pode diferir do faturamento líquido do Resultado pelos centavos do arredondamento do reembolso
+— a curva ordena produtos; quem fecha com a gaveta é o Resultado. Só entra quem teve líquido > 0 no centavo
+(`round(líquido, 2) > 0`; a divisão deixa ~1e-16 entre "2 peças" e "1 + 1 peça"). Produto só
+com devolução puxaria o acumulado acima de 100% e de volta. A classe vai pelo acumulado ANTES do produto: A
 enquanto ele é < 80%, B < 95%, C o resto — quem cruza a linha dos 80% ainda é A; pelo acumulado
 "inclusive", um campeão que sozinho faz 90% seria B e a loja ficaria sem nenhum A. Janela
 (`sum() OVER`) antes do `OFFSET`, então a página 2 continua o acumulado da 1. Ano: 127 ms.

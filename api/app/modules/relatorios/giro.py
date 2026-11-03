@@ -171,22 +171,29 @@ class GiroService:
     def _liquido_por_produto(self, inicio: date, fim: date):
         """(produto, peças, líquido) do período: vendido − devolvido, por produto.
 
-        O valor vendido de cada item leva o desconto da venda rateado (preço × qtd × total
-        ÷ subtotal) — a mesma conta do `refund_amount` da devolução (ADR-19). Somar o preço
-        cheio contra uma devolução já rateada inflaria quem vende com desconto.
+        Cada peça vale o preço com o desconto da venda rateado (preço × qtd × total ÷
+        subtotal) — a conta do `refund_amount` da devolução (ADR-19); somar o preço cheio
+        contra uma devolução já rateada inflaria quem vende com desconto. A devolução usa a
+        MESMA régua, sobre a venda original e sem arredondar, e não o `refund_amount`: esse
+        é arredondado no centavo a cada linha (e a última devolução da venda absorve o
+        resíduo), então a peça que volta inteira sobraria com frações de centavo — que se
+        somam por venda e por devolução até virar R$ 0,01 de um produto com 0 peças.
         """
-        rateado = case(
-            (
-                Sale.subtotal > 0,
-                SaleItem.unit_price * SaleItem.quantity * Sale.total / Sale.subtotal,
-            ),
-            else_=0,
-        )
+
+        def rateado(quantidade):
+            return case(
+                (
+                    Sale.subtotal > 0,
+                    SaleItem.unit_price * quantidade * Sale.total / Sale.subtotal,
+                ),
+                else_=0,
+            )
+
         fontes = union_all(
             select(
                 ProductVariant.product_id.label("produto_id"),
                 func.sum(SaleItem.quantity).label("pecas"),
-                func.sum(rateado).label("valor"),
+                func.sum(rateado(SaleItem.quantity)).label("valor"),
             )
             .select_from(SaleItem)
             .join(Sale, Sale.id == SaleItem.sale_id)
@@ -199,10 +206,12 @@ class GiroService:
             select(
                 ProductVariant.product_id,
                 -func.sum(SaleReturnItem.quantity),
-                -func.sum(SaleReturnItem.refund_amount),
+                -func.sum(rateado(SaleReturnItem.quantity)),
             )
             .select_from(SaleReturnItem)
             .join(SaleReturn, SaleReturn.id == SaleReturnItem.return_id)
+            .join(SaleItem, SaleItem.id == SaleReturnItem.sale_item_id)
+            .join(Sale, Sale.id == SaleItem.sale_id)
             .join(ProductVariant, ProductVariant.id == SaleReturnItem.variant_id)
             .where(dia_da_loja(SaleReturn.returned_at).between(inicio, fim))
             .group_by(ProductVariant.product_id),
@@ -216,10 +225,8 @@ class GiroService:
             )
             .group_by(fontes.c.produto_id)
             # Só quem trouxe dinheiro entra na curva: produto só com devolução no período
-            # puxaria o acumulado para trás (passaria de 100% e voltaria). A régua é o
-            # CENTAVO: o rateio do vendido não arredonda (assim a soma fecha com o total
-            # da venda) e o `refund_amount` já vem arredondado — peça vendida com desconto
-            # e devolvida inteira sobraria com R$ 0,0033 e entraria com R$ 0,00.
+            # puxaria o acumulado para trás (passaria de 100% e voltaria). No centavo: a
+            # divisão do rateio deixa ~1e-16 entre "2 peças" e "1 + 1 peça".
             .having(func.round(liquido, 2) > 0)
         ).subquery()
 

@@ -31,7 +31,8 @@ export function SecaoVendedoras({ inicio, fim }: { inicio: string; fim: string }
     <Cartao>
       <Text style={r.titulo}>Vendas por vendedora</Text>
       <Text style={r.legenda}>
-        Vendido menos devolvido no período. A comissão sai deste líquido.
+        Vendido menos devolvido no período. A comissão sai deste líquido, pela % que valia em
+        cada venda; a % entre parênteses é a de hoje, a das vendas novas.
       </Text>
       {consulta.isPending ? (
         <Text style={r.vazio}>Somando…</Text>

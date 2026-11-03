@@ -17,7 +17,7 @@ import {
   comAtraso,
   confirmar,
   cru,
-  data as formatarData,
+  diaNaLoja,
   erroBloco,
   etiqueta,
   html,
@@ -142,7 +142,7 @@ export async function render(raiz, _params, consulta) {
                     ${resumoComissao(u) ? cru(html`<span class="celula-secundaria">${resumoComissao(u)}</span>`) : ''}
                   </td>
                   <td>${u.ativo ? etiqueta('Ativo', 'ok') : etiqueta('Desativado', 'perigo')}</td>
-                  <td class="texto-suave">${formatarData(u.criado_em)}</td>
+                  <td class="texto-suave">${diaNaLoja(u.criado_em)}</td>
                   <td class="direita">
                     <button class="botao-icone" data-editar="${u.id}" title="Editar" aria-label="Editar ${u.nome}">✏️</button>
                     <button class="botao-icone" data-senha="${u.id}" title="Redefinir senha" aria-label="Redefinir senha de ${u.nome}">🔑</button>

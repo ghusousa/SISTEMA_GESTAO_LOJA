@@ -3,7 +3,7 @@
 import { api } from '../api.js';
 import { sessao } from '../store.js';
 import { resumoDoPapel, titulo } from '../permissoes.js';
-import { ajuda, aviso, avisarErro, cru, data as formatarData, etiqueta, html } from '../ui.js';
+import { ajuda, aviso, avisarErro, cru, diaNaLoja, etiqueta, html } from '../ui.js';
 
 export async function render(raiz) {
   const usuario = sessao.get().usuario;
@@ -36,7 +36,7 @@ export async function render(raiz) {
             </div>
             <div class="pagamento-linha">
               <strong>No sistema desde</strong>
-              <span>${formatarData(usuario.criado_em)}</span>
+              <span>${diaNaLoja(usuario.criado_em)}</span>
             </div>
             <p class="texto-fraco" style="margin-top:12px">O que seu acesso permite:</p>
             <ul class="texto-fraco" style="margin:4px 0 0;padding-left:18px">

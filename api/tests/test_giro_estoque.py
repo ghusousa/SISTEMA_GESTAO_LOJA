@@ -370,6 +370,63 @@ async def test_produto_com_desconto_devolvido_inteiro_fica_fora_da_curva(
     assert r["total"] == 1
 
 
+async def _devolver(
+    client: AsyncClient, auth: dict[str, str], venda: dict, variante: int, quantidade: int
+) -> None:
+    item = next(i for i in venda["itens"] if i["variante_id"] == variante)
+    resp = await client.post(
+        f"/vendas/{venda['id']}/devolucoes",
+        headers=auth,
+        json={
+            "client_uuid": str(uuid.uuid4()),
+            "itens": [{"item_id": item["id"], "quantidade": quantidade}],
+        },
+    )
+    assert resp.status_code == 201, resp.text
+
+
+async def test_residuo_do_rateio_nao_se_soma_entre_vendas_na_curva(
+    client: AsyncClient, auth_admin: dict[str, str]
+) -> None:
+    """Duas vendas de blusa 10 + calça 20 com 2 de desconto, e a blusa volta nas duas.
+    Cada reembolso é 9,33 contra um rateio de 9,3333…: os dois restos somam R$ 0,0067, que
+    no centavo é R$ 0,01 — a blusa entrava na curva com 0 peças. A devolução vale pela
+    mesma régua do vendido, sem o arredondamento do reembolso."""
+    (blusa,) = await _produto(client, auth_admin, "Blusa", [("U", "1.00", "10.00", 5)])
+    (calca,) = await _produto(client, auth_admin, "Calça", [("U", "1.00", "20.00", 5)])
+    for _ in range(2):
+        venda = await _vender(
+            client, auth_admin, [(blusa, 1), (calca, 1)], "28.00", desconto="2.00"
+        )
+        await _devolver(client, auth_admin, venda, blusa, 1)
+
+    r = await _curva(client, auth_admin)
+    assert [(i["produto"], i["pecas"], i["faturamento_liquido"]) for i in r["items"]] == [
+        ("Calça", 2, "37.33"),
+    ]
+    assert r["total"] == 1
+
+
+async def test_peca_devolvida_uma_de_cada_vez_nao_deixa_resto_na_curva(
+    client: AsyncClient, auth_admin: dict[str, str]
+) -> None:
+    """2 blusas de 10 + calça de 10 com 2 de desconto: o item da blusa rateia 18,6667, e
+    cada blusa devolvida sozinha reembolsa 9,33. Voltando as duas, uma de cada vez, o
+    reembolso soma 18,66 — e a venda não zerou (a calça ficou), então ninguém absorve o
+    resto. A blusa sumida não pode ficar na curva com R$ 0,01."""
+    (blusa,) = await _produto(client, auth_admin, "Blusa", [("U", "1.00", "10.00", 5)])
+    (calca,) = await _produto(client, auth_admin, "Calça", [("U", "1.00", "10.00", 5)])
+    venda = await _vender(client, auth_admin, [(blusa, 2), (calca, 1)], "28.00", desconto="2.00")
+    await _devolver(client, auth_admin, venda, blusa, 1)
+    await _devolver(client, auth_admin, venda, blusa, 1)
+
+    r = await _curva(client, auth_admin)
+    assert [(i["produto"], i["pecas"], i["faturamento_liquido"]) for i in r["items"]] == [
+        ("Calça", 1, "9.33"),
+    ]
+    assert r["total"] == 1
+
+
 # -------------------------------------------------------------- valor do estoque
 async def test_valor_do_estoque_e_a_loja_inteira(
     client: AsyncClient, auth_admin: dict[str, str]

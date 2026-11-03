@@ -27,7 +27,7 @@ import {
   avisarErro,
   confirmar,
   cru,
-  data as formatarData,
+  diaNaLoja,
   grade,
   html,
   numero,
@@ -110,7 +110,7 @@ export function render(raiz, _params, consulta) {
                 (v) => html`
                   <tr>
                     <td>#${v.id}</td>
-                    <td>${formatarData(v.vendida_em)}</td>
+                    <td>${diaNaLoja(v.vendida_em)}</td>
                     <td>${v.vendedor}</td>
                     <td class="direita dinheiro">${formatar(paraCentavos(v.total))}</td>
                     <td class="direita">
@@ -172,7 +172,7 @@ export function render(raiz, _params, consulta) {
     area.innerHTML = html`
       <div class="cartao">
         <div class="cartao__topo">
-          <h2>Venda #${venda.id} · ${formatarData(venda.vendida_em)}</h2>
+          <h2>Venda #${venda.id} · ${diaNaLoja(venda.vendida_em)}</h2>
           <a class="botao botao--fantasma botao--pequeno" href="#/vendas/${venda.id}">Ver a venda</a>
         </div>
         ${podeDevolver
