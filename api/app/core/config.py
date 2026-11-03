@@ -1,8 +1,11 @@
 """Configuração da aplicação (12-factor: tudo por variável de ambiente)."""
 
+import hashlib
+import hmac
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from pydantic import Field, SecretStr, field_validator, model_validator
@@ -13,6 +16,24 @@ from app.core.url_do_banco import argumentos_de_conexao, preparar_url
 # Valor de exemplo do .env.example. Serve para desenvolvimento e é recusado em produção:
 # subir com ele significaria aceitar qualquer token forjado com um segredo público.
 JWT_SECRET_EXEMPLO = "troque-esta-chave-em-producao"
+#: Senha de banco curta ou conhecida não vira segredo de login: derivar dela daria um
+#: segredo que qualquer um calcula (a da loja local é "postgres").
+SENHA_MINIMA_PARA_DERIVAR = 12
+
+
+def segredo_derivado_do_banco(url: str, *, informado: bool) -> str | None:
+    """HMAC-SHA256 da senha do banco, com rótulo próprio, para assinar os tokens (ADR-42).
+
+    Só na Vercel, e só quando o banco foi informado e tem senha forte. Devolve None quando
+    não há de onde derivar — e aí vale a regra de sempre: sem JWT_SECRET, não sobe.
+    """
+    if not informado:
+        return None
+    senha = urlsplit(url).password or ""
+    if len(senha) < SENHA_MINIMA_PARA_DERIVAR:
+        return None
+    return hmac.new(senha.encode(), b"sistema-gestao-loja/jwt/v1", hashlib.sha256).hexdigest()
+
 
 #: A pasta `api/`, de onde quer que o processo rode (uvicorn na mão, Docker ou Vercel).
 PASTA_API = Path(__file__).resolve().parents[2]
@@ -151,6 +172,18 @@ class Settings(BaseSettings):
         definidos = self.model_fields_set
         if "ambiente" not in definidos:
             self.ambiente = "producao"
+        if "jwt_secret" not in definidos:
+            # Sem JWT_SECRET no painel, o segredo do login sai da senha do banco que o Neon
+            # injetou: segredo que só o deploy tem, nunca impresso, igual em toda instância.
+            # Quem lê a senha do banco já lê tudo; o HMAC com rótulo próprio só não deixa o
+            # token e o banco usarem a MESMA chave. Sem banco conectado (ou com a senha de
+            # exemplo da loja), não deriva nada e a checagem abaixo recusa subir (ADR-42).
+            derivado = segredo_derivado_do_banco(
+                self.database_url_unpooled or self.database_url,
+                informado="database_url" in definidos or "database_url_unpooled" in definidos,
+            )
+            if derivado:
+                self.jwt_secret = derivado
         if "cors_origins" not in definidos:
             # A página e a API são a mesma origem; a lista só existe porque `*` é recusado
             # fora de desenvolvimento. Os três endereços que a Vercel dá a um deploy.

@@ -711,12 +711,13 @@ ADR-42 de [docs/ARQUITETURA.md](docs/ARQUITETURA.md)). A instalação local cont
    **Este primeiro deploy reprova, e é esperado**: o banco só se cria no passo 3, depois que o
    projeto existe, e o build para dizendo "Nenhum banco conectado". Siga os passos 2 e 3 e faça
    *Redeploy* (passo 4).
-2. **Variáveis** (*Settings → Environment Variables*). `JWT_SECRET` em **Production e Preview**
-   (sem ele nenhum build sobe); as `DEMO_*` só em **Production**:
+2. **Variáveis** (*Settings → Environment Variables*), só em **Production**. `JWT_SECRET` é
+   opcional: sem ele, o segredo do login sai da senha do banco que o Neon conecta (HMAC com
+   rótulo próprio, ADR-42) — ninguém precisa gerar nem copiar segredo:
 
    | Variável | Valor |
    |---|---|
-   | `JWT_SECRET` | gere com `python3 -c "import secrets; print(secrets.token_urlsafe(48))"` |
+   | `JWT_SECRET` | opcional; se quiser um seu: `python3 -c "import secrets; print(secrets.token_urlsafe(48))"` |
    | `AMBIENTE` | `producao` (se esquecer, a Vercel já assume isso) |
    | `DEMO_ADMIN_EMAIL` | o e-mail do dono da demonstração |
    | `DEMO_ADMIN_SENHA` | a senha dele (8 caracteres ou mais) |

@@ -1461,7 +1461,7 @@ statement ganha nome único e o teto de partida não vai. O pool é `DB_POOL_SIZ
 `DB_MAX_OVERFLOW` (10/20 na loja; 2/3 por padrão na Vercel, onde cada instância tem o seu).
 *Padrões na Vercel* (só o que o dono não escreveu): `AMBIENTE=producao` — esquecer a variável
 não pode subir a demonstração com `/docs` aberto e aceitando o `JWT_SECRET` de exemplo, que
-está no repositório; `CORS_ORIGINS` = os endereços que a Vercel dá ao deploy; `MEDIA_DIR=/tmp/media`
+está no repositório; sem `JWT_SECRET` no painel, o segredo do login é o HMAC-SHA256 da senha do banco que o Neon injetou (rótulo `sistema-gestao-loja/jwt/v1`; só com banco informado e senha de 12+ caracteres — sem isso, não sobe): igual em toda instância, nunca impresso, e quem o calcularia já lê o banco inteiro; `CORS_ORIGINS` = os endereços que a Vercel dá ao deploy; `MEDIA_DIR=/tmp/media`
 (o disco da função é só leitura; sem isso a API morria no import). *Build:* confere a trava,
 copia o web e, **só com `VERCEL_ENV=production`** e com o banco conectado (sem `DATABASE_URL`
 a config cairia no localhost da loja e o build num "Connect call failed" mudo; ele para antes,

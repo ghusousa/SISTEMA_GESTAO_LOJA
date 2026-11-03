@@ -15,7 +15,14 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
-from app.core.config import PASTA_API, PASTA_WEB_NA_VERCEL, Settings, settings
+from app.core.config import (
+    JWT_SECRET_EXEMPLO,
+    PASTA_API,
+    PASTA_WEB_NA_VERCEL,
+    SENHA_MINIMA_PARA_DERIVAR,
+    Settings,
+    settings,
+)
 from app.core.url_do_banco import argumentos_de_conexao, preparar_url
 
 LOJA = "postgresql+asyncpg://postgres:postgres@localhost:5432/loja"
@@ -117,10 +124,23 @@ def test_pooler_desliga_cache_e_nao_manda_parametro_de_partida() -> None:
 def _settings(monkeypatch: pytest.MonkeyPatch, **env: str) -> Settings:
     """Settings lidas SÓ do ambiente dado (sem o .env da máquina nem o do conftest)."""
     for chave in (
-        "DATABASE_URL", "DATABASE_URL_UNPOOLED", "JWT_SECRET", "AMBIENTE", "CORS_ORIGINS",
-        "MEDIA_DIR", "WEB_DIR", "DB_POOL_SIZE", "DB_MAX_OVERFLOW", "DB_SSL", "DEBUG",
-        "VERCEL", "VERCEL_ENV", "VERCEL_URL", "VERCEL_BRANCH_URL",
-        "VERCEL_PROJECT_PRODUCTION_URL", "FISCAL_EMITIR_AUTOMATICO",
+        "DATABASE_URL",
+        "DATABASE_URL_UNPOOLED",
+        "JWT_SECRET",
+        "AMBIENTE",
+        "CORS_ORIGINS",
+        "MEDIA_DIR",
+        "WEB_DIR",
+        "DB_POOL_SIZE",
+        "DB_MAX_OVERFLOW",
+        "DB_SSL",
+        "DEBUG",
+        "VERCEL",
+        "VERCEL_ENV",
+        "VERCEL_URL",
+        "VERCEL_BRANCH_URL",
+        "VERCEL_PROJECT_PRODUCTION_URL",
+        "FISCAL_EMITIR_AUTOMATICO",
     ):
         monkeypatch.delenv(chave, raising=False)
     for chave, valor in env.items():
@@ -183,15 +203,51 @@ def test_na_vercel_os_padroes_sao_os_de_la(monkeypatch: pytest.MonkeyPatch) -> N
     assert s.fiscal_emitir_automatico is False
 
 
-def test_na_vercel_sem_jwt_secret_nao_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Esquecer o AMBIENTE não pode subir a demonstração aceitando o segredo de exemplo."""
+NEON_SENHA_FORTE = NEON_DIRETA.replace("npg_Ab12Cd34", "npg_Q7xLm2Rt9Vb4Kc8Z")
+
+
+def test_na_vercel_sem_jwt_secret_e_sem_banco_nao_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Esquecer o AMBIENTE não pode subir a demonstração aceitando o segredo de exemplo — e
+    sem banco conectado não há de onde derivar outro (a URL padrão é a da loja local)."""
+    with pytest.raises(ValidationError, match="JWT_SECRET"):
+        _settings(monkeypatch, VERCEL="1", VERCEL_PROJECT_PRODUCTION_URL="loja-tria.vercel.app")
+
+
+def test_na_vercel_senha_fraca_do_banco_nao_vira_segredo(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Derivar de senha curta ou conhecida daria um segredo que qualquer um calcula."""
+    fraca = NEON_DIRETA.replace("npg_Ab12Cd34", "postgres")
+    assert len("postgres") < SENHA_MINIMA_PARA_DERIVAR
     with pytest.raises(ValidationError, match="JWT_SECRET"):
         _settings(
             monkeypatch,
             VERCEL="1",
-            DATABASE_URL=NEON_DIRETA,
+            DATABASE_URL=fraca,
             VERCEL_PROJECT_PRODUCTION_URL="loja-tria.vercel.app",
         )
+
+
+def test_na_vercel_o_segredo_sai_da_senha_do_banco(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sem JWT_SECRET no painel, o Neon conectado basta: o segredo é o HMAC da senha dele,
+    igual em toda instância (o token de uma vale na outra), diferente da própria senha, e
+    outro banco dá outro segredo."""
+    base = {"VERCEL": "1", "VERCEL_PROJECT_PRODUCTION_URL": "loja-tria.vercel.app"}
+    s = _settings(monkeypatch, DATABASE_URL_UNPOOLED=NEON_SENHA_FORTE, **base)
+    assert len(s.jwt_secret) == 64 and s.jwt_secret != JWT_SECRET_EXEMPLO
+    assert "npg_Q7xLm2Rt9Vb4Kc8Z" not in s.jwt_secret
+    outra = _settings(monkeypatch, DATABASE_URL_UNPOOLED=NEON_SENHA_FORTE, **base)
+    assert outra.jwt_secret == s.jwt_secret
+    trocada = NEON_SENHA_FORTE.replace("npg_Q7xLm2Rt9Vb4Kc8Z", "npg_Z9yWn3Su8Ua5Jd7Y")
+    assert _settings(monkeypatch, DATABASE_URL_UNPOOLED=trocada, **base).jwt_secret != s.jwt_secret
+    # O que o dono escreveu ganha; e fora da Vercel nada é derivado.
+    assert (
+        _settings(
+            monkeypatch, JWT_SECRET=SEGREDO, DATABASE_URL_UNPOOLED=NEON_SENHA_FORTE, **base
+        ).jwt_secret
+        == SEGREDO
+    )
+    assert _settings(monkeypatch, DATABASE_URL_UNPOOLED=NEON_SENHA_FORTE).jwt_secret == (
+        JWT_SECRET_EXEMPLO
+    )
 
 
 def test_na_vercel_o_que_o_dono_escreveu_ganha(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -102,7 +102,8 @@ npm run publicar     # ficha inteira na App Store via API (mobile/publicar/, -- 
   de fora nova (CDN, imagem) tem de entrar na CSP. O pentest confere no proxy com
   `PENTEST_PROXY=http://...`, ou no Caddyfile sem ele.
 - **Vercel (ADR-42)** é a 2ª forma de rodar, só demonstração (Root Directory `api/`, Neon): tudo atrás
-  de `settings.vercel` (`VERCEL=1`, a Vercel põe) — sem ela nada muda. A CSP/HSTS de lá mora no
+  de `settings.vercel` (`VERCEL=1`, a Vercel põe) — sem ela nada muda. Lá, sem `JWT_SECRET`, o segredo
+  do login é o HMAC da senha do banco do Neon (`segredo_derivado_do_banco`; senha fraca ou sem banco: não sobe). A CSP/HSTS de lá mora no
   `api/vercel.json`: mudou o Caddyfile, mude ele (`test_vercel.py` compara). Build: `scripts/vercel_build.py`.
   A carga da demo é RETOMÁVEL (marcos `DEMONSTRACAO_*` no `audit_log`): passo novo no
   `seed_demo.popular()` usa `chave("rotulo")` fixa ou busca antes de criar, senão a retomada duplica.
