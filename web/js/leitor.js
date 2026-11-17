@@ -14,11 +14,22 @@
  * 2. Captura global: se o foco escapou para um botão ou para o corpo da página, os dígitos
  *    se perdiam. Aqui eles são acumulados e o Enter fecha a leitura do mesmo jeito. Campos
  *    de texto comuns são ignorados, senão digitar o nome de um produto viraria uma bipada.
+ *
+ * E uma terceira entrada, sem teclado: o celular como leitor (ADR-43, `leitor-celular.js`).
+ * O bipe da câmera chega pela API e é entregue por `entregarCodigoDeFora` ao leitor da tela
+ * aberta — o mesmo `aoLer` do leitor USB, então PDV, Devolução, Entrada, Inventário e
+ * Condicional nova não sabem de onde veio o código.
  */
 
 const SILENCIO_MAXIMO_MS = 300; // Leitor não pausa entre dígitos; dedo humano pausa.
 const MINIMO_CARACTERES = 4;
 const CARACTERE_VALIDO = /^[0-9A-Za-z]$/;
+
+/** O leitor da tela aberta: o último que ligou e ainda não desligou. `{ aoLer }` */
+let leitorDaTela = null;
+
+/** Modal aberto: a pessoa está resolvendo outra coisa (mesma regra do teclado e do foco). */
+export const haJanelaAberta = () => document.querySelector('.modal-fundo') !== null;
 
 function ehCampoDeTexto(elemento) {
   if (!elemento) return false;
@@ -57,7 +68,7 @@ export function criarLeitor({ aoLer, repeticaoMs = 1200, ignorarQuando = null })
   function aoTeclar(evento) {
     if (!ligado) return;
     // Modal aberto quer dizer que a pessoa está resolvendo outra coisa: bipada não atropela.
-    if (document.querySelector('.modal-fundo')) return;
+    if (haJanelaAberta()) return;
     if (ignorarQuando?.()) return;
 
     const alvo = evento.target;
@@ -89,13 +100,17 @@ export function criarLeitor({ aoLer, repeticaoMs = 1200, ignorarQuando = null })
     buffer += evento.key;
   }
 
+  const registro = { aoLer };
+
   return {
     ligar() {
+      leitorDaTela = registro;
       if (ligado) return;
       ligado = true;
       document.addEventListener('keydown', aoTeclar, true);
     },
     desligar() {
+      if (leitorDaTela === registro) leitorDaTela = null;
       ligado = false;
       buffer = '';
       document.removeEventListener('keydown', aoTeclar, true);
@@ -119,7 +134,7 @@ export function manterFoco(input) {
 
   const focar = () => {
     if (!ativo || !input.isConnected) return;
-    if (document.querySelector('.modal-fundo')) return;
+    if (haJanelaAberta()) return;
     const atual = document.activeElement;
     if (atual !== input && ehCampoDeTexto(atual)) return;
     input.focus();
@@ -135,4 +150,37 @@ export function manterFoco(input) {
     clearInterval(timer);
     document.removeEventListener('click', aoClicar);
   };
+}
+
+/**
+ * Entrega um código que não veio do teclado (o celular como leitor) ao leitor da tela.
+ *
+ * Chama o `aoLer` DIRETO: sem a trava de repetição (duas peças iguais bipadas na câmera
+ * são duas peças — quem filtra a leitura dupla é o celular) e sem esperar Enter. Espera o
+ * `aoLer` terminar, para um lote de bipes cair na ordem em que foi lido.
+ *
+ * Devolve o que aconteceu: `'entregue'`, `'janela-aberta'` (um modal na frente: o código
+ * não atropela o que a pessoa está resolvendo) ou `'sem-leitor'` (a tela aberta não lê
+ * código). Quem chama avisa a pessoa.
+ */
+export async function entregarCodigoDeFora(codigo) {
+  if (haJanelaAberta()) return 'janela-aberta';
+  const alvo = leitorDaTela;
+  if (!alvo) return 'sem-leitor';
+  piscarCampo();
+  await alvo.aoLer(codigo);
+  return 'entregue';
+}
+
+let fimDoPisca = null;
+
+/** Retorno curto no campo do leitor: o código chegou de longe, sem ninguém digitar. */
+function piscarCampo() {
+  const campo = document.querySelector('[data-leitor]');
+  if (!campo) return;
+  campo.classList.remove('is-remoto');
+  void campo.offsetWidth; // reinicia a animação quando dois bipes chegam juntos
+  campo.classList.add('is-remoto');
+  clearTimeout(fimDoPisca);
+  fimDoPisca = setTimeout(() => campo.classList.remove('is-remoto'), 900);
 }

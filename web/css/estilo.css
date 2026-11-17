@@ -1728,3 +1728,107 @@ kbd {
     display: none !important;
   }
 }
+
+/* ------------------------------------------------- celular como leitor (ADR-43)
+   O botão mora no rodapé da barra, à vista de qualquer papel: o celular de qualquer
+   pessoa da equipe vira leitor do computador. Ligado, o botão dá lugar ao selo com o
+   nome de quem está bipando — e o selo é o caminho para desligar. */
+
+.lateral__leitor {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: var(--raio-sm);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.92);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lateral__leitor:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* Mesmo cuidado do selo da versão: `display: flex` venceria o atributo `hidden`. */
+.lateral__leitor[hidden] {
+  display: none;
+}
+
+.lateral__leitor.is-ativo {
+  border-color: rgba(15, 157, 88, 0.6);
+}
+
+.lateral__leitor [data-leitor-nome] {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.leitor-celular {
+  text-align: center;
+}
+
+.leitor-celular__qr svg {
+  display: block;
+  width: 232px;
+  height: 232px;
+  margin: 0 auto 8px;
+}
+
+.leitor-celular__qr.is-vencido {
+  opacity: 0.2;
+}
+
+.leitor-celular__codigo {
+  display: block;
+  margin: 2px 0 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 34px;
+  letter-spacing: 0.14em;
+  color: var(--primaria);
+}
+
+.leitor-celular__passos {
+  margin: 0 0 6px;
+}
+
+.leitor-celular__prazo {
+  margin: 0;
+  color: var(--texto-suave);
+  font-size: 13px;
+}
+
+.leitor-celular__prazo.is-vencido {
+  color: var(--perigo);
+  font-weight: 600;
+}
+
+/* O código chegou do celular: o campo do leitor acende por um instante, para quem está no
+   balcão ver que a peça entrou sem ninguém ter digitado. */
+[data-leitor].is-remoto {
+  animation: leitor-remoto 0.9s ease-out;
+}
+
+@keyframes leitor-remoto {
+  from {
+    background-color: var(--sucesso-fraco);
+    box-shadow: 0 0 0 4px rgba(15, 157, 88, 0.45);
+  }
+  to {
+    box-shadow: 0 0 0 0 rgba(15, 157, 88, 0);
+  }
+}
+
+@media (max-width: 860px) {
+  .lateral__leitor {
+    width: auto;
+    white-space: nowrap;
+  }
+}

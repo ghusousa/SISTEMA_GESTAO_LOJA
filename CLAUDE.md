@@ -165,6 +165,13 @@ npm run publicar     # ficha inteira na App Store via API (mobile/publicar/, -- 
   recusou → a venda NÃO cancela. Teste de emissor só com `httpx.MockTransport` — nunca internet.
   `web/js/nfce.js` + `web/js/campos-fiscais.js` e `mobile/src/lib/fiscal.ts` são espelhos.
 - **Fotos (ADR-42, "Fotos no Vercel Blob")**: `catalogo/fotos.py` escolhe pelo ambiente — disco (`/media`, caminho relativo, trocar NÃO apaga a antiga) ou, com `BLOB_READ_WRITE_TOKEN`, Blob público com URL absoluta em `produtos/<VERCEL_ENV>/`, sem `mkdir`/`/media`, e a antiga apagada só depois do commit e só se for do mesmo ambiente; na Vercel (`VERCEL`, nunca a falha do `mkdir`: o `/tmp` grava) sem token, 503 e nada de `/media`; lá o teto é 4 MB (a função corta em 4,5); quem mostra aceita as duas (`lib/enderecoDaFoto.ts`).
+- **Leitor pelo celular (ADR-43)**: o computador pareia um celular (`/leitor/pareamentos`, código de 6
+  sem 0/O/1/I, 5 min; aceite vale 12 h fixas; status calculado, nunca coluna) e cada bipe da câmera
+  entra em `leitor_bipes` (idempotente por `client_uuid`, conferido ANTES de tudo). O computador
+  RETIRA a fila (`.../retirar`: `UPDATE ... FOR UPDATE SKIP LOCKED`, 50 por vez, uma vez só, bipe
+  com mais de 120 s descartado) por **SQL Core** — retirar pelo ORM avisaria "leitor" e cada tela
+  retiraria de novo, em eco. Aceite: a mesma 404 `LEITOR_CODIGO_INVALIDO` para todo código que não
+  serve. `web/js/leitor-remoto.js` e `mobile/src/lib/leitorRemoto.ts` (convite do QR) são espelhos.
 - Versão: `GET /versao` diz o commit instalado E se é o mais novo. Quem sabe disso é o
   `atualizar.sh` (tem a credencial do GitHub), que grava `docker/estado/versao.json`; a API
   só lê o arquivo montado. **A API nunca fala com o GitHub** — token do código-fonte não

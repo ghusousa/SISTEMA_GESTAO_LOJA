@@ -54,6 +54,8 @@ TABELAS = [
     "store_config",
     "backup_config",
     "card_fees",
+    "leitor_bipes",
+    "leitor_pareamentos",
     "audit_log",
     "login_attempts",
     "refresh_tokens",

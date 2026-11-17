@@ -440,6 +440,32 @@ notas_fiscais(id, sale_id FK→sales RESTRICT UNIQUE,              -- uma nota p
 
 A credencial do emissor **não** está aqui nem em tabela nenhuma: é `FOCUSNFE_TOKEN` no `.env`.
 
+### 2.12 Leitor pelo celular (ADR-43)
+
+```sql
+leitor_pareamentos(id, codigo VARCHAR(8),                 -- 6 de "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+                   computador_user_id FK→users CASCADE,   -- quem gerou o código
+                   aparelho_user_id FK→users CASCADE NULL,-- quem aceitou (o celular)
+                   criado_em, codigo_expira_em,           -- criado + 5 min
+                   aceito_em NULL, expira_em NULL,        -- aceito + 12 h, fixo
+                   encerrado_em NULL,
+                   motivo_encerramento CHECK IN ('COMPUTADOR','CELULAR','TROCOU','SUBSTITUIDO') NULL)
+  ck_leitor_pareamentos_encerramento  -- encerrado_em e motivo andam juntos
+  ck_leitor_pareamentos_aceite        -- aceito_em, aparelho_user_id e expira_em andam juntos
+  uq_leitor_pareamentos_codigo_aguardando (codigo) WHERE aceito_em IS NULL AND encerrado_em IS NULL
+
+leitor_bipes(id BIGINT, pareamento_id FK→leitor_pareamentos CASCADE,
+             client_uuid UUID UNIQUE,                     -- o reenvio do celular não bipa duas vezes
+             codigo VARCHAR(64), criado_em, consumido_em NULL)  -- retirado (entregue ou descartado)
+  ix_leitor_bipes_pendentes (pareamento_id, id) WHERE consumido_em IS NULL
+```
+
+O status do pareamento não é coluna: sai das datas, no servidor — ENCERRADO se `encerrado_em`;
+aceito, ATIVO até `expira_em` e EXPIRADO depois; sem aceite, AGUARDANDO até `codigo_expira_em` e
+EXPIRADO depois. As duas tabelas são de vida curta e não são histórico da loja: a faxina (a cada
+código gerado) apaga bipe com mais de 1 dia e pareamento terminado há mais de 30, e os FKs para
+`users` são CASCADE — excluir a conta de alguém não trava num pareamento de ontem.
+
 ---
 
 ## 3. Decisões (ADRs)
@@ -1510,6 +1536,91 @@ principal — o `atualizar.sh` exige TODAS verdes (ADR-34), e aí um deploy verm
 demonstração seguraria a atualização das lojas (a integração costuma publicar *commit status*,
 que ele não lê; conferir no primeiro deploy em `GET /repos/.../commits/<sha>/check-runs`).
 
+**ADR-43 — O celular como leitor de código de barras do computador.**
+*Contexto:* no balcão, o leitor USB é um teclado (`web/js/leitor.js`) — e nem toda loja tem um,
+ou tem um só para dois caixas, ou precisa bipar a arara longe do computador (Entrada,
+Inventário). O celular de cada vendedora já tem câmera, já lê etiqueta no app (`expo-camera`) e
+já está logado. *Decisão:* o computador (PDV, Devolução, Entrada, Inventário, Condicional nova —
+as telas que usam `criarLeitor`) **pareia** um celular, e cada bipe na câmera do celular chega
+ao campo do leitor do computador como se fosse o leitor USB. O servidor é o carteiro: o celular
+grava o bipe, o computador retira. Escolhas do dono: **qualquer pessoa da equipe logada pareia**
+(sem capacidade nova: ler código de barras não mostra nada que a pessoa já não veja; o que
+importa — vender, dar entrada — continua passando pela régua de sempre, na tela do computador,
+com o login de lá); **um celular por computador**; o pareamento vale até alguém desligar ou sair,
+e **no máximo 12 h depois do aceite**, fixas (usar não estica). *Modelo* (§2.12):
+`leitor_pareamentos` e `leitor_bipes`, tabelas de vida curta. O status (AGUARDANDO, ATIVO,
+EXPIRADO, ENCERRADO) é **calculado das datas** no servidor, com o relógio do BANCO (`SELECT now()`,
+o mesmo instante da transação inteira) — coluna de status precisaria de alguém para virá-la na
+hora, e duas instâncias com relógios diferentes discordariam do SQL. *O código:* 6 caracteres de
+`23456789ABCDEFGHJKLMNPQRSTUVWXYZ` (sem 0/O/1/I, que se confundem lidos ou digitados), sorteado com
+`secrets.choice`, válido 5 min, único só enquanto AGUARDANDO (UNIQUE parcial); colisão no
+sorteio desfaz só a tentativa (savepoint) e sorteia outro. O aceite normaliza (maiúsculas, sem
+espaços e hífens) e responde **a mesma coisa** — 404 `LEITOR_CODIGO_INVALIDO`, "Código não
+encontrado ou vencido. Gere outro no computador." — para inexistente, vencido, já aceito e
+encerrado: a tela não precisa saber qual foi, e quem chuta códigos não aprende nada com a
+diferença. *Força bruta:* 31^6 ≈ 887 milhões de códigos, cada um válido 5 min, e só para quem já
+tem sessão (a rota exige login: quem chuta é alguém da equipe, ou uma sessão roubada, que já
+teria coisa melhor a fazer). Com dez computadores esperando ao mesmo tempo, cada chute acerta
+com chance de 10 em 887 milhões: ter 50% de chance de acertar UM código dentro dos 5 min pede
+~61 milhões de tentativas — ~200 mil por segundo, contra uma loja que responde dezenas. E quem
+acertasse apareceria pelo nome no selo do computador ("ligado ao celular de Fulana"), com o
+aceite no diário. Sem trava nova. *Corrida no aceite:* `SELECT ... FOR UPDATE` da linha
+(`aceito_em IS NULL AND encerrado_em IS NULL AND codigo_expira_em > now()`) e a mutação pelo
+ORM: o segundo celular espera a trava e, quando o primeiro commita, o Postgres reavalia o WHERE
+na versão nova e não acha nada — um 200, um 404. **Um celular, um computador:** aceitar encerra
+(TROCOU) os outros ATIVOS do mesmo celular; dois aceites do mesmo celular ao mesmo tempo se
+serializam numa `pg_advisory_xact_lock` por usuário (espaço 43), senão um não veria o outro. O
+computador que gera código novo passa `substitui_id` (o antigo vira SUBSTITUIDO: código que
+saiu da tela não pode continuar abrindo o leitor); mais de 10 vivos da mesma pessoa no computador
+(o mesmo login em várias abas é normal; dezenas esquecidas, não), os mais velhos também. Desligar
+vale de qualquer ponta (COMPUTADOR ou CELULAR; com o mesmo login nas duas, não há como saber o
+lado e conta COMPUTADOR); desligar o que já terminou é 204 sem mudar nada. *Bipe:* idempotente
+por `client_uuid`, **conferido antes de qualquer outra coisa** — o reenvio de um bipe que já
+entrou responde 200 com o mesmo corpo mesmo que o leitor tenha sido desligado nesse meio-tempo
+(o bipe entrou; o celular só não soube). A mesma chave com outro código ou outro pareamento é
+409 `DUPLICADO`, e a de outro celular também (sem corpo: o atalho não é porta de leitura). Dois
+POST iguais ao mesmo tempo: o perdedor cai no UNIQUE, faz rollback, recarrega o usuário
+(`session.refresh`, o atributo expirado é MissingGreenlet) e devolve o do vencedor. Só o
+celular do pareamento bipa por ele (404 para os outros — inclusive o computador); pareamento
+fora de ATIVO é 409 `LEITOR_DESLIGADO` com `detail.status`; 100 pendentes é 409
+`LEITOR_FILA_CHEIA` (o computador não está retirando — tela fechada, aba no fundo — e continuar
+enfileirando só esconderia isso de quem bipa). *Retirada atômica e sem eco:* `UPDATE leitor_bipes
+SET consumido_em = now() WHERE id IN (SELECT id ... WHERE pareamento_id = :p AND consumido_em IS
+NULL ORDER BY id LIMIT 50 FOR UPDATE SKIP LOCKED) RETURNING ...`, em ordem de id: cada bipe sai
+**uma vez**, e duas abas retirando juntas pegam lotes disjuntos (a segunda pula o que a primeira
+travou, em vez de esperar e entregar de novo). Bipe com mais de **120 s** é consumido e não
+entregue (`descartados`): código lido há dois minutos não pode cair no carrinho de surpresa quando
+o computador volta. Pareamento fora de ATIVO entrega `[]`, descarta a fila e devolve o status,
+para a tela saber que caiu. A retirada é **SQL Core, nunca objeto ORM sujo**: o aviso de tempo
+real sai do commit do ORM, e se retirar avisasse, cada tela pareada retiraria de novo por causa
+da própria retirada — eco sem fim. **Não é listagem paginada** (exceção à regra da §4): é uma
+fila entregue uma vez, com teto de 50 por chamada; quem quer o resto chama de novo. *Tempo real:*
+`Assunto.LEITOR` ("leitor"), com `leitor_pareamentos` e `leitor_bipes` no mapa do commit
+(ADR-16): criar, aceitar, encerrar e bipar avisam; retirar não. Só o assunto trafega — **nunca o
+código lido** —, e quem busca é a rota REST, que confere de quem é o pareamento. *Auditoria*
+(ADR-23): aceitar é `LEITOR_PAREADO` ("Ligou o celular como leitor de código de barras de um
+computador") e desligar é `LEITOR_DESLIGADO` ("Desligou o celular-leitor #id"). Gerar o código,
+bipar e retirar ficam fora (`_IGNORAR`): o código na tela não é ato, cada bipe é uma tecla (o ato
+é a venda depois) e a tela retira de 2 em 2 s. *Faxina:* a cada código gerado, apaga bipe com mais
+de 1 dia e pareamento terminado há mais de 30; FKs para `users` em CASCADE, como os do refresh
+token (pareamento não é histórico; a exclusão de conta, LGPD, não pode travar nele). *Convite do
+QR* (espelho `web/js/leitor-remoto.js` ↔ `mobile/src/lib/leitorRemoto.ts`, com teste nas duas
+pontas): `gestaoloja://leitor?v=1&c=<CODIGO>&api=<base da API, encodeURIComponent>`; o leitor
+do app aceita o convite ou o código digitado solto e recusa o resto (o código de barras de uma
+peça lido por engano, uma URL de outro esquema); `mesmoServidor` compara host:porta (porta padrão
+normalizada, sem diferenciar maiúsculas) e confia no servidor quando o convite vem de loopback.
+*As duas pontas:* **web** — nas telas com `criarLeitor`, um botão abre o QR com o código (e o
+código escrito, para digitar), um selo mostra o estado (aguardando, ligado ao celular de Fulana,
+desligado), e com o leitor ATIVO a tela retira a fila ao ouvir "leitor" e de 2 em 2 s enquanto
+visível; cada código retirado é entregue ao `criarLeitor` ativo, pelo mesmo caminho do leitor
+USB (trava de bipe duplo e tudo). Sair do sistema desliga o pareamento — quem manda o DELETE
+é a tela: o servidor não amarra o logout ao leitor, e o pareamento de uma tela que não pôde
+avisar (aba fechada, energia) vence sozinho nas 12 h. **App** — o modo leitor
+lê o QR (ou aceita o código digitado), confere `mesmoServidor`, e a câmera passa a mandar cada
+bipe com `client_uuid` próprio por uma fila local que reenvia o que a rede perdeu e **descarta o
+que não saiu em 120 s** (`PRAZO_DO_BIPE_MS`, o mesmo prazo do servidor); 409 `LEITOR_DESLIGADO`
+sai do modo leitor dizendo por quê.
+
 **ADR-44 — Publicar o iOS por um botão do GitHub Actions, no molde do Sistema Obras.**
 *Contexto:* publicar exigia o computador do dono (`eas build`, `npm run publicar:build`,
 `npm run publicar -- --enviar`), com `config.json` e `.p8` numa pasta local. O Sistema Obras,
@@ -1556,6 +1667,9 @@ Erros: `{"code": "...", "message": "...", "detail": {...}}`.
 | `EMISSOR_NAO_CONFIGURADO` | 409 | NFC-e sem emissor ligado no `.env`; `detail.faltando` (ADR-41) |
 | `DADOS_FISCAIS_INCOMPLETOS` | 409 | NFC-e sem NCM, CNPJ, IE ou regime; `detail.faltando`, `detail.produtos_sem_ncm` |
 | `MUITAS_TENTATIVAS` | 429 | logins errados demais na janela; `detail.retry_after` em segundos, header `Retry-After` |
+| `LEITOR_CODIGO_INVALIDO` | 404 | código do leitor pelo celular inexistente, vencido, já aceito ou encerrado — a MESMA resposta (ADR-43) |
+| `LEITOR_DESLIGADO` | 409 | bipe num pareamento que não está ATIVO; `detail.status` diz qual (ADR-43) |
+| `LEITOR_FILA_CHEIA` | 409 | 100 bipes esperando o computador retirar (ADR-43) |
 
 ### 4.1 `auth`
 | método | rota | papel | descrição |
@@ -1766,6 +1880,20 @@ A busca de cliente das telas de condicional é a de balcão (`GET /clientes/balc
 | POST | `/contas-pagar/{id}/pagamento` | `{forma: BOLETO|PIX|TRANSFERENCIA|DINHEIRO|CARTAO, pago_em?}` (padrão: hoje na loja; futuro → 422). Reenvio igual → 200; outro pagamento sobre conta paga → 409 |
 | DELETE | `/contas-pagar/{id}/pagamento` | desfaz o pagamento marcado por engano (idempotente) |
 
+### 4.15 `leitor` (qualquer pessoa logada, ADR-43)
+`PareamentoOut` = `{id, codigo, status: AGUARDANDO|ATIVO|EXPIRADO|ENCERRADO, computador_nome,
+aparelho_nome|null, criado_em, codigo_expira_em, aceito_em|null, expira_em|null, encerrado_em|null,
+motivo_encerramento: COMPUTADOR|CELULAR|TROCOU|SUBSTITUIDO|null}` (datas ISO em UTC).
+
+| método | rota | notas |
+|---|---|---|
+| POST | `/leitor/pareamentos` | computador: corpo opcional `{substitui_id?}` → 201 `PareamentoOut` AGUARDANDO (código de 6, vale 5 min). `substitui_id` do próprio computador e não encerrado é encerrado (SUBSTITUIDO); de outra pessoa, ignorado. Mais de 10 vivos (AGUARDANDO/ATIVO) da mesma pessoa no computador: os mais velhos viram SUBSTITUIDO. Faz a faxina |
+| POST | `/leitor/pareamentos/aceitar` | celular: `{codigo}` (maiúsculas, espaços e hífens tanto faz) → 200 `PareamentoOut` ATIVO por 12 h; encerra (TROCOU) os outros ATIVOS deste celular. Inexistente, vencido, já aceito ou encerrado → 404 `LEITOR_CODIGO_INVALIDO`, a mesma resposta; dois celulares no mesmo código: um 200, o outro 404 |
+| GET | `/leitor/pareamentos/{id}` | `PareamentoOut` para as duas pontas; para mais ninguém, 404 |
+| DELETE | `/leitor/pareamentos/{id}` | 204 de qualquer ponta (COMPUTADOR ou CELULAR; o mesmo login nas duas conta como COMPUTADOR); já encerrado ou vencido → 204 sem mudar nada; de terceiro → 404 |
+| POST | `/leitor/bipes` | celular: `{client_uuid, pareamento_id, codigo}` → 201 `{id, client_uuid, pareamento_id, codigo, criado_em}`. A chave é conferida antes de tudo: reenvio idêntico → 200 com o mesmo corpo; a mesma chave com outro código, outro pareamento ou de outro celular → 409 `DUPLICADO`. `codigo` sem espaços nas pontas, 1–64, sem caractere de controle (senão 422). Pareamento que não é deste celular → 404; não ATIVO → 409 `LEITOR_DESLIGADO` `detail.status`; 100 pendentes → 409 `LEITOR_FILA_CHEIA` |
+| POST | `/leitor/pareamentos/{id}/retirar` | só o computador: → 200 `{items:[{id, codigo, criado_em}], descartados, pareamento: PareamentoOut}`. Até 50 por chamada, na ordem da leitura, entregues uma vez (consumidos na mesma instrução; duas abas pegam lotes disjuntos). Bipe com mais de 120 s é consumido e NÃO entregue (conta em `descartados`); pareamento que não está ATIVO entrega `[]`, descarta a fila e devolve o status. **Não é listagem paginada** (é uma fila com teto) e **não gera aviso de tempo real** |
+
 ---
 
 ## 5. App mobile
@@ -1803,6 +1931,11 @@ caixa do dia, sem o resumo do mês. Guarda por capacidade no `_layout`.
   nova, detalhe com fechamento) e `(app)/financeiro/contas-pagar`; a Entrada ganhou a nota
   (`components/NotaFornecedor.tsx`) para quem vê dinheiro.
 
+- `lib/leitorRemoto.ts` (com teste; espelho de `web/js/leitor-remoto.js`): o convite do QR do
+  leitor pelo celular — `normalizarCodigo`, `formatarCodigo`, `montarConvite`, `lerConvite`,
+  `mesmoServidor` e `PRAZO_DO_BIPE_MS` (120 s, o mesmo do servidor). O modo leitor transforma a
+  câmera no leitor de um computador pareado (ADR-43).
+
 Fluxo do PDV: bipar → item no carrinho → (qtd/desconto) → cobrar → formas de pagamento (misto,
 com ajuste do centavo na última parcela) → confirma → `POST /vendas` com `client_uuid` → limpa
 carrinho e invalida `['saldos']`, `['vendas']`, `['caixa']`.
@@ -1822,6 +1955,7 @@ módulos ES em `js/`.
 | `js/ui.js` | Template `html` com escape automático, modal, avisos, paginação, formatação pt-BR, campo de dinheiro |
 | `js/dinheiro.js` | Espelho de `mobile/src/lib/money.ts`. Centavos inteiros; **se mudar lá, mude aqui** |
 | `js/leitor.js` | Captura do leitor USB (teclado) e foco permanente no campo de leitura |
+| `js/leitor-remoto.js` | Espelho de `mobile/src/lib/leitorRemoto.ts` (teste em `testes/web/leitor-remoto.test.mjs`): o convite do QR do celular-leitor, o código normalizado e formatado, `mesmoServidor` e o prazo de 120 s do bipe (ADR-43) |
 | `js/grafico.js` | Barras e proporções em SVG escrito à mão — sem biblioteca, sem CDN |
 | `js/parcelas.js`, `js/condicional.js` | Espelhos de `mobile/src/lib/parcelas.ts` e `condicional.ts` (com teste lá): parcelas da nota do fornecedor e a conta do fechamento da condicional |
 | `js/nota-fornecedor.js` | A nota do fornecedor (valor, número, parcelas) — na Entrada e no lançamento avulso de Contas a pagar |
@@ -1862,4 +1996,7 @@ com a Entrada ou nada entra, vendedora não lança nota, pagar uma vez só, Resu
 tempo real entre instâncias: o commit de um processo chega ao socket de outro uvicorn, rollback
 não avisa, a tela de quem gravou recebe o aviso uma vez só, a escuta que cai (ou emudece)
 religa e manda refazer, o LISTEN que sobe depois do "conectado" manda refazer, e a última
-tela que sai fecha o LISTEN.
+tela que sai fecha o LISTEN · leitor pelo celular (ADR-43): o bipe chega ao computador uma vez
+só, dois celulares no mesmo código (simultâneos) → um ganha, o mesmo bipe em duas requisições
+simultâneas grava uma linha, duas retiradas simultâneas pegam lotes disjuntos, bipe com mais de
+120 s é descartado, e a retirada não gera aviso de tempo real.

@@ -12,6 +12,7 @@ import { PODE, pode, titulo } from './permissoes.js';
 import { conectarTempoReal, desconectarTempoReal } from './tempo-real.js';
 import { html, confirmar, cru, aviso } from './ui.js';
 import { carregarLoja, loja, aoMudarLoja } from './loja.js';
+import { desligarLeitorCelular, ligarLeitorCelular, pararLeitorCelular } from './leitor-celular.js';
 
 /* ------------------------------------------------------------------------- telas */
 
@@ -149,6 +150,15 @@ function molduraHtml(usuario) {
         </div>
         <div class="lateral__menu">${cru(menuHtml())}</div>
         <div class="lateral__rodape">
+          <button class="lateral__leitor" type="button" data-leitor-celular
+            title="Use a câmera do celular como leitor de código de barras deste computador">
+            <span aria-hidden="true">📱</span><span>Celular como leitor</span>
+          </button>
+          <button class="lateral__leitor is-ativo" type="button" data-leitor-selo hidden
+            title="O celular está lendo para este computador. Clique para desligar.">
+            <span class="lateral__versao-ponto" aria-hidden="true"></span>
+            <span aria-hidden="true">📱</span><span data-leitor-nome></span>
+          </button>
           <div class="lateral__quem-linha">
             <span class="lateral__avatar" aria-hidden="true">${iniciais(usuario.nome)}</span>
             <span class="lateral__quem">
@@ -308,6 +318,7 @@ function areaDeConteudo(caminho, usuario) {
       void pintarVersao(raiz);
       void pintarBackup(raiz);
       void pintarContas(raiz);
+      ligarLeitorCelular(raiz);
       raiz.querySelector('[data-sair]').addEventListener('click', async () => {
         const confirmou = await confirmar({
           titulo: 'Sair do sistema',
@@ -315,6 +326,8 @@ function areaDeConteudo(caminho, usuario) {
           confirmarTexto: 'Sair',
         });
         if (!confirmou) return;
+        // O celular-leitor desliga no servidor enquanto ainda há sessão para isso.
+        await desligarLeitorCelular();
         // Carrinho e conferência são de quem estava trabalhando: não podem sobrar para o
         // próximo turno — a venda e a sacola do turno anterior entrariam no nome de outra
         // pessoa.
@@ -341,6 +354,9 @@ definirTratadorDeSessaoPerdida(() => {
   // venda e a entrada sairiam no nome da pessoa errada.
   limparTudoDaSessao();
   desconectarTempoReal();
+  // Sem token não dá para desligar no servidor. A aba guarda o id: se a mesma pessoa
+  // entrar de novo, o leitor volta; se for outra, o servidor responde 404 e ele some.
+  pararLeitorCelular({ esquecerAba: false });
   aviso('Sua sessão expirou. Entre de novo para continuar.', 'alerta');
 });
 

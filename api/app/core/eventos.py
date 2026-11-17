@@ -84,6 +84,11 @@ class Assunto(StrEnum):
     CONTAS_PAGAR = "contas_pagar"
     """Conta de fornecedor lançada, corrigida, paga ou excluída."""
 
+    LEITOR = "leitor"
+    """Celular-leitor pareado, desligado ou com bipe novo esperando o computador (ADR-43).
+    Só o assunto: o código lido NUNCA vai no aviso — o computador retira pela rota REST,
+    que confere de quem é o pareamento. A retirada não avisa (seria eco sem fim)."""
+
 
 @dataclass(slots=True)
 class Evento:
@@ -212,6 +217,8 @@ ASSUNTO_POR_TABELA: dict[str, Assunto] = {
     "consignments": Assunto.CONDICIONAIS,
     "consignment_items": Assunto.CONDICIONAIS,
     "payables": Assunto.CONTAS_PAGAR,
+    "leitor_pareamentos": Assunto.LEITOR,
+    "leitor_bipes": Assunto.LEITOR,
 }
 
 _CHAVE = "_tabelas_tocadas"
