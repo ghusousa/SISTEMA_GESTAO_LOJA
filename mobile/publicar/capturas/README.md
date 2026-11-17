@@ -70,7 +70,14 @@ trocou de nome, por exemplo), o gerador para dizendo a cena e deixa a foto da ho
 `.brutas/erro-<cena>.png`; o ajuste é em `cenas.mjs`. Texto novo de título ou subtítulo
 precisa caber: título em duas linhas (o `\n`), subtítulo em uma — o `compor.mjs` recusa o que
 vazar. Para refazer só algumas: `CAPTURAS_SO=01-vender,07-caixa gerar.sh` (o roteiro anda
-inteiro do mesmo jeito; só essas imagens são trocadas).
+inteiro do mesmo jeito; só essas imagens são trocadas). Para comparar antes de trocar, gere
+noutra pasta: `CAPTURAS_DESTINO=/outra/pasta gerar.sh` — as commitadas ficam como estão.
+
+Mudou título, subtítulo, nome ou ordem de uma cena? Atualize também as tabelas de
+`media/app-store/FASE-6-COLAR-NA-APPLE.md` e do §8 de `docs/LOJAS-DE-APP.md`. O CI confere as
+imagens commitadas contra as cenas (`compor.mjs --conferir`) e as sobe na Apple de mentira
+(`publicar/teste/rodar.mjs --reais`), mas não roda o gerador: ele pede Postgres, Chromium e
+as fontes.
 
 A seed lança as despesas do mês inteiro de uma vez: na primeira quinzena o "Resultado do
 mês" ainda sai negativo, e a cena 03 para avisando. Rode na segunda quinzena (ou

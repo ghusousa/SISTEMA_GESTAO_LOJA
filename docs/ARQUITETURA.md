@@ -1570,6 +1570,13 @@ registro do app (não existe `POST /v1/apps`) e a ficha "Privacidade do App" (n�
 resumo lembra das duas. A Apple de mentira (`teste/mock-asc.mjs`) confere toda rota, parâmetro
 e corpo contra `teste/esquema-asc.mjs`, recorte gerado da especificação oficial por
 `teste/gerar-esquema.mjs` — especificação nova, gera de novo e o diff mostra o que mudou.
+*Capturas do app de verdade (nov/2026):* as 20 imagens saem de `mobile/publicar/capturas/gerar.sh`
+— banco local de teste com a loja da seed (`seed_demo.py`, "Loja Tria", roupas), a API e o export
+web do próprio app, fotografado cena a cena pelo Playwright numa tela de iPhone (áreas seguras
+declaradas ao navegador), com a arte montada por cima (`compor.mjs`) nos dois tamanhos e com os
+mesmos nomes; `png.mjs` grava RGB sem alfa. Nada é desenhado à mão: mudou uma tela, roda de novo.
+O CI não roda o gerador (pede Postgres, Chromium e as fontes Inter), mas confere as commitadas nos
+bytes contra as cenas (`compor.mjs --conferir`) e as sobe na Apple de mentira (`rodar.mjs --reais`).
 
 ## 4. Contratos de API
 

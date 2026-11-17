@@ -17,6 +17,8 @@
 #   CAPTURAS_PORTA_API   porta da API local                          (8131)
 #   CAPTURAS_PORTA_WEB   porta do export web                         (8092)
 #   CAPTURAS_PYTHON      Python com as dependências da API           (api/.venv/bin/python)
+#   CAPTURAS_DESTINO     onde as imagens saem; outra pasta = comparar
+#                        com as commitadas sem tocar nelas           (media/app-store)
 #   PGHOST PGPORT PGUSER PGPASSWORD   o Postgres local    (localhost 5432 postgres postgres)
 #   CAPTURAS_SO=01-vender,07-caixa    fotografa só essas (as outras pastas ficam como estão)
 #   CAPTURAS_ACEITAR_PREJUIZO=1       segue mesmo com o Resultado do mês negativo (cena 03)
@@ -177,5 +179,5 @@ CAPTURAS_WEB="$WEB" CAPTURAS_API="$API" CAPTURAS_EMAIL="$EMAIL" CAPTURAS_SENHA="
 passo "Montando a arte (compor.mjs)"
 node "$AQUI/compor.mjs"
 
-printf '\n✓ Capturas prontas em media/app-store/iphone-6.5 e media/app-store/iphone-6.9.\n'
+printf '\n✓ Capturas prontas em %s (iphone-6.5 e iphone-6.9).\n' "${CAPTURAS_DESTINO:-$RAIZ/media/app-store}"
 printf '  Confira cada uma com os olhos antes do commit.\n'

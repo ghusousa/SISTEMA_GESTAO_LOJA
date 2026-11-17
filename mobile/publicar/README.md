@@ -159,6 +159,8 @@ e o envio só passa com a ficha completa. Saiu especificação nova? Baixe o JSO
 e rode `node publicar/teste/gerar-esquema.mjs <arquivo.json>`: o diff mostra o que mudou, e
 pergunta de idade nova quebra o teste até ganhar resposta em `classificacao.mjs`.
 
-Os dois testes rodam no CI. Variáveis que encurtam as esperas (o teste usa):
+Os dois testes rodam no CI, e o `--reais` também, depois de `node publicar/capturas/compor.mjs
+--conferir` (as capturas commitadas nos bytes, contra as cenas do gerador). Variáveis que
+encurtam as esperas (o teste usa):
 `PUBLICAR_INTERVALO_BUILD`, `PUBLICAR_INTERVALO_CAPTURAS` (segundos) e `ASC_REPETIR_MS`;
 `PUBLICAR_CAPTURAS` aponta para outra pasta de capturas.

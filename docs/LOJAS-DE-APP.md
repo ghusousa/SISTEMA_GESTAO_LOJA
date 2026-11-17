@@ -456,9 +456,36 @@ Mais duas respostas que o publicador grava fora da declaração: **direitos de c
 
 ---
 
+## 8. CAPTURAS — 10 por tamanho, tiradas do app de verdade
+
+O publicador sobe o que estiver nas duas pastas, na ordem do nome (as 3 primeiras aparecem na busca). PNG RGB sem canal alfa, os mesmos nomes nas duas:
+
+| Pasta | Slot na Apple | Tamanho | Papel |
+|---|---|---|---|
+| `media/app-store/iphone-6.5/` | iPhone 6,5" (`APP_IPHONE_65`) | 1242 × 2688 | obrigatório |
+| `media/app-store/iphone-6.9/` | iPhone 6,7"/6,9" (`APP_IPHONE_67`) | 1320 × 2868 | extra |
+
+| # | Arquivo | Título · subtítulo da arte |
+|---|---|---|
+| 1 | `01-vender.png` | Venda feita em segundos · Bipe a etiqueta ou busque pelo nome |
+| 2 | `02-cobrar.png` | Pix, cartão e fiado · Divida a conta e parcele no crédito |
+| 3 | `03-financeiro.png` | Seu lucro de verdade · Já descontados custo, despesas e taxas |
+| 4 | `04-relatorios.png` | Saiba o que mais vende · Vendas por dia e o lucro de cada peça |
+| 5 | `05-estoque.png` | Estoque por tamanho e cor · O app avisa a hora de repor |
+| 6 | `06-produtos.png` | Catálogo na palma da mão · Grade, preço e saldo de cada peça |
+| 7 | `07-caixa.png` | Feche o caixa sem planilha · O esperado e o contado, forma por forma |
+| 8 | `08-crediario.png` | Fiado sob controle · O que levou, o que pagou e o que falta |
+| 9 | `09-condicional.png` | Condicional sem caderno · O que voltou para a arara e o que cobrar |
+| 10 | `10-recibo.png` | Recibo na hora · Mande para a cliente pelo celular |
+
+Quem faz as imagens é `mobile/publicar/capturas/gerar.sh`: o app rodando com os dados de exemplo da "Loja Tria" num banco local, fotografado numa tela de iPhone, com a arte por cima (`mobile/publicar/capturas/README.md`). Mudou uma tela, roda de novo. O que cada uma mostra está em `media/app-store/FASE-6-COLAR-NA-APPLE.md`; título, subtítulo e ordem moram em `mobile/publicar/capturas/cenas.mjs` — mudou lá, mude as duas tabelas.
+
+---
+
 ## Antes de enviar — o que ainda falta, e onde
 
 - **Registro do app** (uma vez, no site) e **Privacidade do App** (uma vez, na tela, §5): as duas coisas sem API.
+- **Leitor do computador (ADR-43)**: a descrição, o texto promocional e as notas citam a tela "Mais > Leitor do computador". Publique de um commit que já tenha o leitor, com o servidor de demonstração na mesma versão — senão a ficha promete o que o build não tem (diretriz 2.3, metadados fiéis ao app).
 - `{{EMAIL_DEMO}}`, `{{SENHA_DEMO}}`: conta de perfil **dono** no servidor de demonstração (a Apple exige conta de demonstração sempre que o login não é público) — variável `APPLE_EMAIL_DEMO` e segredo `APPLE_DEMO_PASSWORD`.
 - `{{CODIGO_DEMO}}`: um código de barras que exista no banco de demonstração (`APPLE_CODIGO_DEMO`) — é o caminho sem câmera, e é o que salva a revisão feita em simulador.
 - `{{URL_ETIQUETAS_DEMO}}` (opcional): página com códigos de barras de exemplo para bipar da tela; sem ela, a frase some e os caminhos (b) e (c) bastam.
