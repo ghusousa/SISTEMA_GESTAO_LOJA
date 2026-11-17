@@ -79,6 +79,10 @@ _REGRAS: list[tuple[str, re.Pattern[str], str, str, str | None]] = [
     ("POST", re.compile(r"^/taxas-cartao$"), "TAXA_CRIADA", "Cadastrou uma taxa da maquininha", "taxa"),
     ("PATCH", re.compile(r"^/taxas-cartao/(\d+)$"), "TAXA_EDITADA", "Mudou a taxa da maquininha #{id}", "taxa"),
     ("DELETE", re.compile(r"^/taxas-cartao/(\d+)$"), "TAXA_EXCLUIDA", "Excluiu a taxa da maquininha #{id}", "taxa"),
+    # celular como leitor do computador (ADR-43): ligar e desligar. Os bipes não entram
+    # (ver `_IGNORAR`); o que entra é a venda, a entrada ou a devolução que vem depois.
+    ("POST", re.compile(r"^/leitor/pareamentos/aceitar$"), "LEITOR_PAREADO", "Ligou o celular como leitor de código de barras de um computador", "leitor"),
+    ("DELETE", re.compile(r"^/leitor/pareamentos/(\d+)$"), "LEITOR_DESLIGADO", "Desligou o celular-leitor #{id}", "leitor"),
     # sessão
     ("POST", re.compile(r"^/auth/logout$"), "LOGOUT", "Saiu do sistema", None),
 ]
@@ -90,6 +94,12 @@ _IGNORAR = [
     # Só reserva o próximo número de etiqueta (a sequência anda, nada mais muda). O ato é o
     # cadastro que vem depois, e esse já tem frase; aqui seria um "OUTRO" a cada peça nova.
     ("POST", re.compile(r"^/variantes/gerar-codigo-interno$")),
+    # Leitor pelo celular (ADR-43). Gerar o código só mostra um código na tela — o ato é o
+    # aceite, que tem frase. Cada bipe é uma tecla do leitor: o ato é a venda depois, e uma
+    # linha por bipe afogaria o diário. E a tela do computador retira a fila de 2 em 2 s.
+    ("POST", re.compile(r"^/leitor/pareamentos$")),
+    ("POST", re.compile(r"^/leitor/bipes$")),
+    ("POST", re.compile(r"^/leitor/pareamentos/\d+/retirar$")),
 ]
 
 

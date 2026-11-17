@@ -78,6 +78,7 @@ def _montar_rotas() -> None:
     from app.modules.despesas.router import router as despesas_router
     from app.modules.estoque.router import router as estoque_router
     from app.modules.fiscal.router import router as fiscal_router
+    from app.modules.leitor.router import router as leitor_router
     from app.modules.relatorios.router import router as relatorios_router
     from app.modules.tempo_real.router import router as tempo_real_router
     from app.modules.usuarios.router import router as usuarios_router
@@ -107,6 +108,7 @@ def _montar_rotas() -> None:
         taxas_router,
         condicionais_router,
         contas_pagar_router,
+        leitor_router,
     ):
         app.include_router(r, prefix="/api/v1")
 

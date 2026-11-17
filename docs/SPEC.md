@@ -39,7 +39,9 @@ para não oferecer um botão que não funciona.
 o **app** (Android/iOS) para andar pela loja bipando com a câmera, e o **sistema web** no
 computador do balcão, onde o leitor USB digita o código como teclado e o teclado resolve
 o que é chato no celular — digitar preço, lançar despesa, fechar o caixa, editar a grade.
-A loja consegue operar 100% sem celular.
+A loja consegue operar 100% sem celular. E o contrário também ajuda: sem leitor USB (ou
+com um só para dois caixas), **o celular vira o leitor do computador** — pareado por um QR,
+cada bipe na câmera cai no campo do leitor da tela do computador (ADR-43).
 
 ## Entidades centrais
 
@@ -141,6 +143,14 @@ A loja consegue operar 100% sem celular.
     regime — aparece em lista; sem rede, fica pendente e tenta-se de novo. Cancelar a venda
     cancela a nota antes; se a SEFAZ recusar (passou de 30 minutos), a venda não é cancelada —
     nem quando não dá para confirmar com o emissor se a nota pendente foi autorizada.
+14. **Usar o celular como leitor do computador** — no PDV, na Devolução, na Entrada, no
+    Inventário ou na Condicional nova, quem está no computador pede "Usar o celular como
+    leitor": aparece um QR e um código de 6 letras e números (vale 5 min). Qualquer pessoa da
+    equipe, logada no app, lê o QR (ou digita o código) e o celular vira o leitor daquele
+    computador: cada bipe na câmera cai no campo do leitor da tela, como se fosse o leitor USB,
+    e o computador mostra de quem é o celular ligado. Vale até alguém desligar (de qualquer um
+    dos dois), sair do sistema, ou 12 h depois. Um celular lê para um computador por vez: ler o
+    código de outro computador desliga o primeiro.
 
 ## Regras de negócio que não podem ser violadas
 
@@ -153,6 +163,11 @@ A loja consegue operar 100% sem celular.
   vende: se ela foi excluída do catálogo depois da venda, volta ao catálogo — ou entra na peça
   ativa com a mesma etiqueta, se a dona já a recadastrou.
 - Desconto existe apenas no total da venda (não por item).
+- Celular como leitor (ADR-43): o bipe chega ao computador **no máximo uma vez** — nem o
+  reenvio de uma rede ruim, nem duas abas abertas o repetem; bipe que esperou mais de 2 minutos
+  **não** é entregue (não cai no carrinho de surpresa); só o celular que aceitou o código bipa por ele;
+  um celular lê para um computador por vez; e o código lido nunca passa pelo aviso de tempo
+  real, só pela rota que confere de quem é o pareamento.
 - Vendedor não recebe custo em nenhuma resposta da API.
 - Retry de rede não duplica venda, entrada, devolução nem recebimento de fiado
   (idempotência por `client_uuid`). E a mesma chave com outro pedido (outras peças, outro
