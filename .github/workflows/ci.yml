@@ -80,7 +80,12 @@ jobs:
         run: |
           BIN=/usr/lib/postgresql/16/bin
           if [ ! -x "$BIN/pg_dump" ]; then
-            sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client-16
+            # O 16 não está nos repositórios do Ubuntu do runner: liga o repositório oficial
+            # do Postgres (PGDG) pelo script que o próprio postgresql-common traz.
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq postgresql-common
+            sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+            sudo apt-get install -y -qq postgresql-client-16
           fi
           echo "$BIN" >> "$GITHUB_PATH"
           "$BIN/pg_dump" --version
