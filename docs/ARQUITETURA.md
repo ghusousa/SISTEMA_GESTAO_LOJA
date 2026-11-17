@@ -1558,12 +1558,13 @@ sorteio desfaz só a tentativa (savepoint) e sorteia outro. O aceite normaliza (
 espaços e hífens) e responde **a mesma coisa** — 404 `LEITOR_CODIGO_INVALIDO`, "Código não
 encontrado ou vencido. Gere outro no computador." — para inexistente, vencido, já aceito e
 encerrado: a tela não precisa saber qual foi, e quem chuta códigos não aprende nada com a
-diferença. *Força bruta:* 31^6 ≈ 887 milhões de códigos, cada um válido 5 min, e só para quem já
+diferença. *Força bruta:* o alfabeto tem 32 símbolos (8 algarismos e 24 letras), então são
+32^6 ≈ 1,07 bilhão de códigos, cada um válido 5 min, e só para quem já
 tem sessão (a rota exige login: quem chuta é alguém da equipe, ou uma sessão roubada, que já
 teria coisa melhor a fazer). Com dez computadores esperando ao mesmo tempo, cada chute acerta
-com chance de 10 em 887 milhões: ter 50% de chance de acertar UM código dentro dos 5 min pede
-~61 milhões de tentativas — ~200 mil por segundo, contra uma loja que responde dezenas. E quem
-acertasse apareceria pelo nome no selo do computador ("ligado ao celular de Fulana"), com o
+com chance de 10 em 1,07 bilhão: ter 50% de chance de acertar UM código dentro dos 5 min pede
+~74 milhões de tentativas — ~250 mil por segundo, contra uma loja que responde dezenas. E quem
+acertasse apareceria pelo nome no selo do computador ("📱 Celular de Fulana"), com o
 aceite no diário. Sem trava nova. *Corrida no aceite:* `SELECT ... FOR UPDATE` da linha
 (`aceito_em IS NULL AND encerrado_em IS NULL AND codigo_expira_em > now()`) e a mutação pelo
 ORM: o segundo celular espera a trava e, quando o primeiro commita, o Postgres reavalia o WHERE
@@ -1601,7 +1602,7 @@ código lido** —, e quem busca é a rota REST, que confere de quem é o paream
 (ADR-23): aceitar é `LEITOR_PAREADO` ("Ligou o celular como leitor de código de barras de um
 computador") e desligar é `LEITOR_DESLIGADO` ("Desligou o celular-leitor #id"). Gerar o código,
 bipar e retirar ficam fora (`_IGNORAR`): o código na tela não é ato, cada bipe é uma tecla (o ato
-é a venda depois) e a tela retira de 2 em 2 s. *Faxina:* a cada código gerado, apaga bipe com mais
+é a venda depois) e a tela retira a cada aviso e, sem canal, de 2 em 2 s. *Faxina:* a cada código gerado, apaga bipe com mais
 de 1 dia e pareamento terminado há mais de 30; FKs para `users` em CASCADE, como os do refresh
 token (pareamento não é histórico; a exclusão de conta, LGPD, não pode travar nele). *Convite do
 QR* (espelho `web/js/leitor-remoto.js` ↔ `mobile/src/lib/leitorRemoto.ts`, com teste nas duas
@@ -1609,17 +1610,47 @@ pontas): `gestaoloja://leitor?v=1&c=<CODIGO>&api=<base da API, encodeURIComponen
 do app aceita o convite ou o código digitado solto e recusa o resto (o código de barras de uma
 peça lido por engano, uma URL de outro esquema); `mesmoServidor` compara host:porta (porta padrão
 normalizada, sem diferenciar maiúsculas) e confia no servidor quando o convite vem de loopback.
-*As duas pontas:* **web** — nas telas com `criarLeitor`, um botão abre o QR com o código (e o
-código escrito, para digitar), um selo mostra o estado (aguardando, ligado ao celular de Fulana,
-desligado), e com o leitor ATIVO a tela retira a fila ao ouvir "leitor" e de 2 em 2 s enquanto
-visível; cada código retirado é entregue ao `criarLeitor` ativo, pelo mesmo caminho do leitor
-USB (trava de bipe duplo e tudo). Sair do sistema desliga o pareamento — quem manda o DELETE
-é a tela: o servidor não amarra o logout ao leitor, e o pareamento de uma tela que não pôde
-avisar (aba fechada, energia) vence sozinho nas 12 h. **App** — o modo leitor
-lê o QR (ou aceita o código digitado), confere `mesmoServidor`, e a câmera passa a mandar cada
-bipe com `client_uuid` próprio por uma fila local que reenvia o que a rede perdeu e **descarta o
-que não saiu em 120 s** (`PRAZO_DO_BIPE_MS`, o mesmo prazo do servidor); 409 `LEITOR_DESLIGADO`
-sai do modo leitor dizendo por quê.
+*As duas pontas:* **web** — o botão "📱 Celular como leitor" mora no rodapé da lateral, em
+toda tela e para todo papel (`leitor-celular.js`). Ele gera o código e abre o modal
+(`leitor-celular-janela.js`) com o QR — SVG montado pelo DOM (`vendor/qrcode.js` + `qr.js`),
+nada de `data:` nem `innerHTML`, a CSP não muda —, o código escrito ("ABC 234"), o caminho no
+app e a contagem dos 5 min; "Gerar outro" passa `substitui_id`. Fechar o modal sem aceite NÃO
+desliga: o celular pode já ter lido o QR, e o código vence sozinho (e não deixa "desligou" no
+diário por um código que ninguém usou). Enquanto AGUARDANDO, a aba consulta o pareamento de 2
+em 2 s e a cada aviso "leitor"; quando vira ATIVO, o modal fecha e o selo "📱 Celular de
+Fulana" toma o lugar do botão (clicar oferece Desligar). Com o leitor ATIVO, a aba retira a
+fila **na hora** do aviso "leitor" — `ouvirNaHora` do `tempo-real.js`, fora da rodada de 1–2 s,
+que continua só para redesenhar tela —, quando o canal volta, e como rede de segurança de 10 em
+10 s (sem canal, de 2 em 2 s: o bipe leva até ~2 s). Uma retirada por vez (`umaPorVez`): aviso
+que chega no meio vira UMA rodada a mais, e lote cheio (50) pede outra. Cada código vai, em
+ordem, ao `criarLeitor` montado por último (`entregarCodigoDeFora` de `leitor.js`), que chama o
+`aoLer` da tela direto — sem a trava de repetição do leitor USB, porque o celular já tem a dele
+e duas bipadas da mesma peça são duas peças —; com uma janela aberta o código não entra e a tela
+avisa "bipe de novo"; numa tela sem leitor, o aviso manda abrir o PDV, a Devolução, a Entrada, o
+Inventário ou a Condicional. O id do pareamento fica no `sessionStorage` da aba (o F5 não
+desliga; outra aba não herda). Sair do sistema manda o DELETE (até 3 s) ANTES do logout — o
+servidor não amarra o logout ao leitor, e o pareamento de uma tela que não pôde avisar (aba
+fechada, energia, sessão perdida) vence sozinho nas 12 h. **App** — Mais → "Leitor do
+computador", para todo papel: lê o QR (a câmera só com o tipo `qr`; o que não é convite mostra
+um aviso e a câmera segue) ou aceita o código digitado ("abc-234" serve). O aceite vai SEMPRE ao
+servidor em que o app já está — o app nunca troca de servidor por um QR —; o `api` do convite
+serve só para, se o aceite falhar, acrescentar a dica "este código é de X; o app está em Y"
+(`mesmoServidor`). O link `gestaoloja://leitor?…` só preenche o código: ligar pede o toque. Ligado,
+a câmera lê sem parar (as travas de `lib/leitura.ts`), e cada leitura entra com `client_uuid`
+próprio numa fila em memória (`stores/leitorStore.ts`, laço testado em `lib/filaDoLeitor.ts`): um
+bipe por vez, em ordem; rede caída, timeout, 5xx, 408, 429 e `LEITOR_FILA_CHEIA` reenviam a MESMA
+chave com espera de 1, 2, 4, 8 e 10 s, e o que **não saiu em 120 s** vira "não enviado"
+(`PRAZO_DO_BIPE_MS`, o mesmo prazo do servidor); 422 e `DUPLICADO` descartam só aquele bipe; 404
+ou 409 `LEITOR_DESLIGADO` param a fila e saem do modo leitor dizendo por quê. A tela consulta o
+pareamento de 15 em 15 s só com ela em foco e o app na frente (fora disso, câmera e consulta
+param). O pareamento não é guardado no aparelho: fechar o app esquece do lado do celular, e o
+servidor o mantém até alguém desligar, um novo aceite deste celular (TROCOU) ou as 12 h. O logout
+manda o DELETE (até 4 s) antes de revogar a sessão. O assunto "leitor" chega ao app e não refaz
+consulta nenhuma (sai um por bipe). *Os dois prazos somam no pior caso:* o do app conta da
+leitura, o do servidor do `criado_em` — um bipe preso ~2 min no celular sem rede ainda pode
+esperar outros 2 min na fila de um computador que não está retirando. Na prática a aba retira
+na hora; a soma só acontece com as duas pontas fora ao mesmo tempo, e o "não enviado"/descartado
+continua valendo para cada lado.
 
 **ADR-44 — Publicar o iOS por um botão do GitHub Actions, no molde do Sistema Obras.**
 *Contexto:* publicar exigia o computador do dono (`eas build`, `npm run publicar:build`,
@@ -1933,8 +1964,10 @@ caixa do dia, sem o resumo do mês. Guarda por capacidade no `_layout`.
 
 - `lib/leitorRemoto.ts` (com teste; espelho de `web/js/leitor-remoto.js`): o convite do QR do
   leitor pelo celular — `normalizarCodigo`, `formatarCodigo`, `montarConvite`, `lerConvite`,
-  `mesmoServidor` e `PRAZO_DO_BIPE_MS` (120 s, o mesmo do servidor). O modo leitor transforma a
-  câmera no leitor de um computador pareado (ADR-43).
+  `mesmoServidor` e `PRAZO_DO_BIPE_MS` (120 s, o mesmo do servidor); e, só do app, a espera
+  entre tentativas e o destino de cada falha. O modo leitor (`(app)/mais/leitor.tsx`,
+  `components/LeitorPareado.tsx`) transforma a câmera no leitor de um computador pareado; a fila
+  de envio é `stores/leitorStore.ts`, com o laço em `lib/filaDoLeitor.ts` (com teste) (ADR-43).
 
 Fluxo do PDV: bipar → item no carrinho → (qtd/desconto) → cobrar → formas de pagamento (misto,
 com ajuste do centavo na última parcela) → confirma → `POST /vendas` com `client_uuid` → limpa
@@ -1954,8 +1987,9 @@ módulos ES em `js/`.
 | `js/store.js` | Sessão e carrinho do PDV — um objeto e quem quiser ser avisado se inscreve. Carrinho e conferência saem com a sessão (`limparTudoDaSessao`), no botão Sair **e** quando ela cai |
 | `js/ui.js` | Template `html` com escape automático, modal, avisos, paginação, formatação pt-BR, campo de dinheiro |
 | `js/dinheiro.js` | Espelho de `mobile/src/lib/money.ts`. Centavos inteiros; **se mudar lá, mude aqui** |
-| `js/leitor.js` | Captura do leitor USB (teclado) e foco permanente no campo de leitura |
-| `js/leitor-remoto.js` | Espelho de `mobile/src/lib/leitorRemoto.ts` (teste em `testes/web/leitor-remoto.test.mjs`): o convite do QR do celular-leitor, o código normalizado e formatado, `mesmoServidor` e o prazo de 120 s do bipe (ADR-43) |
+| `js/leitor.js` | Captura do leitor USB (teclado) e foco permanente no campo de leitura. O último `criarLeitor` ligado é o da tela; `entregarCodigoDeFora` entrega a ele o bipe do celular (ADR-43) |
+| `js/leitor-remoto.js` | Espelho de `mobile/src/lib/leitorRemoto.ts` (teste em `testes/web/leitor-remoto.test.mjs`): o convite do QR do celular-leitor, o código normalizado e formatado, `mesmoServidor` e o prazo de 120 s do bipe; e, só do web, o ritmo da retirada e `umaPorVez` (ADR-43) |
+| `js/leitor-celular.js`, `js/leitor-celular-janela.js` | O celular como leitor (ADR-43): botão e selo da lateral, retirada da fila na hora do aviso (`ouvirNaHora` do `tempo-real.js`) e o modal do QR. `js/qr.js` desenha o QR em SVG pelo DOM com `js/vendor/qrcode.js` (qrcode-generator 1.4.4, MIT, copiado inteiro) |
 | `js/grafico.js` | Barras e proporções em SVG escrito à mão — sem biblioteca, sem CDN |
 | `js/parcelas.js`, `js/condicional.js` | Espelhos de `mobile/src/lib/parcelas.ts` e `condicional.ts` (com teste lá): parcelas da nota do fornecedor e a conta do fechamento da condicional |
 | `js/nota-fornecedor.js` | A nota do fornecedor (valor, número, parcelas) — na Entrada e no lançamento avulso de Contas a pagar |

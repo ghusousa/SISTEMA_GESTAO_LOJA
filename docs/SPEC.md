@@ -143,14 +143,17 @@ cada bipe na câmera cai no campo do leitor da tela do computador (ADR-43).
     regime — aparece em lista; sem rede, fica pendente e tenta-se de novo. Cancelar a venda
     cancela a nota antes; se a SEFAZ recusar (passou de 30 minutos), a venda não é cancelada —
     nem quando não dá para confirmar com o emissor se a nota pendente foi autorizada.
-14. **Usar o celular como leitor do computador** — no PDV, na Devolução, na Entrada, no
-    Inventário ou na Condicional nova, quem está no computador pede "Usar o celular como
-    leitor": aparece um QR e um código de 6 letras e números (vale 5 min). Qualquer pessoa da
-    equipe, logada no app, lê o QR (ou digita o código) e o celular vira o leitor daquele
-    computador: cada bipe na câmera cai no campo do leitor da tela, como se fosse o leitor USB,
-    e o computador mostra de quem é o celular ligado. Vale até alguém desligar (de qualquer um
-    dos dois), sair do sistema, ou 12 h depois. Um celular lê para um computador por vez: ler o
-    código de outro computador desliga o primeiro.
+14. **Usar o celular como leitor do computador** — quem está no computador clica em
+    "📱 Celular como leitor", no rodapé da lateral (em qualquer tela, qualquer papel): aparece um
+    QR e um código de 6 letras e números (vale 5 min; "Gerar outro" troca). Qualquer pessoa da
+    equipe, logada no app, vai em Mais → "Leitor do computador", lê o QR (ou digita o código) e o
+    celular vira o leitor daquele computador: cada bipe na câmera cai no campo do leitor da tela
+    aberta — PDV, Devolução, Entrada, Inventário ou Condicional nova —, como se fosse o leitor
+    USB, e a lateral do computador mostra de quem é o celular ligado. Com uma janela aberta no
+    computador o código não entra (a tela avisa para bipar de novo); numa tela sem leitor, a tela
+    avisa qual abrir. Vale até alguém desligar (de qualquer um dos dois), sair do sistema, ou 12 h
+    depois; o F5 não desliga. Um celular lê para um computador por vez: ler o código de outro
+    computador desliga o primeiro.
 
 ## Regras de negócio que não podem ser violadas
 

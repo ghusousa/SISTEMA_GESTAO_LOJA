@@ -9,7 +9,8 @@
  * ESPELHO de `web/js/leitor-remoto.js` (teste em `testes/web/leitor-remoto.test.mjs`):
  * as funções do convite, do código e do prazo têm de se comportar IGUAL nas duas pontas —
  * o web monta o convite que o app lê. Mudou um, mude o outro. A seção do fim ("só do
- * app") trata do lado que ENVIA bipe, que só existe no celular.
+ * app": espera entre tentativas, destino da falha, frase do fim) trata do lado que ENVIA
+ * bipe, que só existe no celular; o web tem a sua ("só do web") para o lado que RECEBE.
  *
  * Tudo aqui é texto e regex, de propósito: o `URL` do React Native não entende esquema
  * próprio (`gestaoloja:`), não baixa a caixa do host e não sabe IPv6. Com o mesmo código
@@ -33,12 +34,6 @@ export const ESQUEMA_DO_CONVITE = 'gestaoloja';
  * enviado" na lista. O servidor aplica o mesmo prazo na entrega ao computador.
  */
 export const PRAZO_DO_BIPE_MS = 120_000;
-
-/** Primeira espera entre tentativas de envio; dobra a cada falha. */
-export const ESPERA_INICIAL_MS = 1000;
-
-/** Teto da espera: com a rede de volta, o bipe sai em no máximo 10 s. */
-export const ESPERA_MAXIMA_MS = 10_000;
 
 // ------------------------------------------------------------------ código e convite
 
@@ -191,7 +186,18 @@ export function hostDoEndereco(texto: string | null | undefined): string {
   return padrao ? partes.host : `${partes.host}:${partes.porta}`;
 }
 
-// ------------------------------------------------------------------ fila
+/** O bipe passou do prazo sem sair? `lidoEm` e `agora` em milissegundos. */
+export function venceu(bipe: { lidoEm: number }, agora: number): boolean {
+  return agora - bipe.lidoEm > PRAZO_DO_BIPE_MS;
+}
+
+// ------------------------------------------------------------------ só do app
+
+/** Primeira espera entre tentativas de envio; dobra a cada falha. */
+export const ESPERA_INICIAL_MS = 1000;
+
+/** Teto da espera: com a rede de volta, o bipe sai em no máximo 10 s. */
+export const ESPERA_MAXIMA_MS = 10_000;
 
 /** Espera antes da tentativa `n` (1, 2, 3…): 1 s, 2 s, 4 s, 8 s, e daí 10 s. */
 export function esperaDaTentativa(n: number): number {
@@ -200,13 +206,6 @@ export function esperaDaTentativa(n: number): number {
   const expoente = Math.max(0, Math.floor(tentativa) - 1);
   return Math.min(ESPERA_MAXIMA_MS, ESPERA_INICIAL_MS * 2 ** expoente);
 }
-
-/** O bipe passou do prazo sem sair? `lidoEm` e `agora` em milissegundos. */
-export function venceu(bipe: { lidoEm: number }, agora: number): boolean {
-  return agora - bipe.lidoEm > PRAZO_DO_BIPE_MS;
-}
-
-// ------------------------------------------------------------------ só do app
 
 /**
  * O que fazer com um bipe cujo envio falhou.

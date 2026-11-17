@@ -30,7 +30,7 @@ export function mostrarConvite({ primeiro, gerarOutro }) {
         <p class="texto-suave">ou digite este código no celular</p>
         <strong class="leitor-celular__codigo" data-codigo></strong>
         <p class="leitor-celular__passos">
-          No app: <b>Mais → Usar como leitor do computador → Ler o QR</b>
+          No app: <b>Mais → Leitor do computador → Ler o QR do computador</b>
         </p>
         <p class="leitor-celular__prazo" data-prazo aria-live="polite"></p>
         <div class="modal__acoes">

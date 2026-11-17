@@ -172,6 +172,9 @@ npm run publicar     # ficha inteira na App Store via API (mobile/publicar/, -- 
   com mais de 120 s descartado) por **SQL Core** — retirar pelo ORM avisaria "leitor" e cada tela
   retiraria de novo, em eco. Aceite: a mesma 404 `LEITOR_CODIGO_INVALIDO` para todo código que não
   serve. `web/js/leitor-remoto.js` e `mobile/src/lib/leitorRemoto.ts` (convite do QR) são espelhos.
+  No web, o bipe retirado vai ao `criarLeitor` da tela por `entregarCodigoDeFora` (`leitor.js`),
+  na hora do aviso (`ouvirNaHora`, fora da rodada); tela nova com leitor ganha isso de graça
+  se chamar `ligar()`/`desligar()`.
 - Versão: `GET /versao` diz o commit instalado E se é o mais novo. Quem sabe disso é o
   `atualizar.sh` (tem a credencial do GitHub), que grava `docker/estado/versao.json`; a API
   só lê o arquivo montado. **A API nunca fala com o GitHub** — token do código-fonte não

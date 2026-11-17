@@ -16,7 +16,8 @@ import {
   venceu,
 } from './leitorRemoto';
 
-// Os mesmos casos de `testes/web/leitor-remoto.test.mjs`: as duas pontas leem o mesmo QR.
+// Até "só do app", os MESMOS casos de `testes/web/leitor-remoto.test.mjs`, na mesma ordem:
+// as duas pontas leem o mesmo QR. Mudou um caso lá, mude aqui.
 
 test('alfabeto sem 0, O, 1 e I, sem repetição', () => {
   assert.equal(ALFABETO, '23456789ABCDEFGHJKLMNPQRSTUVWXYZ');
@@ -146,6 +147,16 @@ test('hostDoEndereco mostra só o que identifica o servidor', () => {
   assert.equal(hostDoEndereco('lixo'), 'lixo');
 });
 
+test('venceu: o bipe vale por dois minutos, como no servidor', () => {
+  assert.equal(PRAZO_DO_BIPE_MS, 120_000);
+  const bipe = { lidoEm: 1_000_000 };
+  assert.equal(venceu(bipe, 1_000_000), false);
+  assert.equal(venceu(bipe, 1_000_000 + PRAZO_DO_BIPE_MS), false);
+  assert.equal(venceu(bipe, 1_000_000 + PRAZO_DO_BIPE_MS + 1), true);
+});
+
+// ------------------------------------------------------------ só do app
+
 test('esperaDaTentativa dobra a cada falha, com teto de 10 s', () => {
   assert.deepEqual(
     [1, 2, 3, 4, 5, 6, 50].map(esperaDaTentativa),
@@ -155,14 +166,6 @@ test('esperaDaTentativa dobra a cada falha, com teto de 10 s', () => {
   assert.equal(esperaDaTentativa(-3), 1000);
   assert.equal(esperaDaTentativa(Number.NaN), 1000);
   assert.equal(esperaDaTentativa(Number.POSITIVE_INFINITY), 10_000);
-});
-
-test('venceu: o bipe vale por dois minutos, como no servidor', () => {
-  assert.equal(PRAZO_DO_BIPE_MS, 120_000);
-  const bipe = { lidoEm: 1_000_000 };
-  assert.equal(venceu(bipe, 1_000_000), false);
-  assert.equal(venceu(bipe, 1_000_000 + PRAZO_DO_BIPE_MS), false);
-  assert.equal(venceu(bipe, 1_000_000 + PRAZO_DO_BIPE_MS + 1), true);
 });
 
 test('destinoDaFalha: rede e servidor fora tentam de novo', () => {
