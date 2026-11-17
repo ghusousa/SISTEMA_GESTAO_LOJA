@@ -1,16 +1,26 @@
-# Fase 6 — tudo para colar no App Store Connect
+# Fase 6 — a ficha do App Store Connect
 
-> **Atalho: isso aqui virou UM comando.** `mobile/publicar/` faz esta página inteira
-> sozinho — ficha, capturas, revisão, preço e envio (`npm run publicar -- --enviar`).
-> Leia `mobile/publicar/README.md`. Este documento continua valendo como referência
-> e para preencher a ficha de Privacidade, que a Apple obriga a ser manual.
+> **Isto virou UM comando (ou um clique).** `mobile/publicar/` faz esta página inteira sozinho
+> pela API da Apple — ficha, capturas, classificação, disponibilidade, revisão, preço e envio:
+> caixa **completo** no GitHub Actions, etiqueta `ios-v<versão>` ou
+> `npm run publicar -- --enviar --aguardar-build 60`. Leia `mobile/publicar/README.md`.
+> Esta página fica como referência do que sobe — e das **duas** coisas que nenhum programa faz
+> (a API 4.6 da Apple não tem rota para elas): criar o registro do app e a ficha de
+> Privacidade do App.
 
-As capturas estão em `media/app-store/iphone-6.5/` (1242 × 2688, o slot obrigatório de
-iPhone 6,5") e, as mesmas, em `media/app-store/iphone-6.9/` (1320 × 2868, o slot de
-6,7"/6,9"). Suba **na ordem dos números** — as 3 primeiras aparecem na busca da App Store.
-Só existe tela de iPhone porque o app declara `supportsTablet: false`: a Apple não pede iPad.
-Elas saem do app de verdade, com os dados de exemplo: `mobile/publicar/capturas/gerar.sh`
-refaz todas (ver o README de lá).
+## Capturas — dois tamanhos
+
+| Pasta | Slot na Apple | Tamanho | Papel |
+|---|---|---|---|
+| `media/app-store/iphone-6.5/` | iPhone 6,5" (`APP_IPHONE_65`) | 1242 × 2688 | **obrigatório** — em ago/2026 o formulário só aceitou este |
+| `media/app-store/iphone-6.9/` | iPhone 6,7"/6,9" (`APP_IPHONE_67`) | 1320 × 2868 | extra — nítido nos iPhones grandes; faltou ou falhou, a App Store usa o de 6,5" |
+
+PNG RGB **sem canal alfa** (a Apple recusa transparência), nomes `NN-nome.png` — a ordem do
+número é a ordem da vitrine, e as 3 primeiras aparecem na busca. As duas pastas têm os mesmos
+nomes, na mesma ordem. Só existe tela de iPhone porque o app declara `supportsTablet: false`: a
+Apple não pede iPad. Elas saem do app de verdade, com os dados de demonstração da "Loja Tria"
+num banco local, mais a arte por cima: `mobile/publicar/capturas/gerar.sh` refaz todas (ver o
+README de lá). A lista abaixo espelha as cenas de lá, e quem manda é a pasta.
 
 | Ordem | Arquivo | Título · subtítulo | O que mostra |
 |---|---|---|---|
@@ -27,71 +37,50 @@ refaz todas (ver o README de lá).
 
 ---
 
-## Campo a campo
+## Campo a campo (o que o publicador grava)
 
-**Nome** (aba Informações do App)
-```
-Gestão de Loja
-```
+| Campo | Valor | Fonte |
+|---|---|---|
+| Nome | `Gestão de Loja` | `mobile/publicar/ficha/nome.txt` |
+| Subtítulo (30) | `PDV, estoque, caixa e fiado` | `ficha/subtitulo.txt` |
+| Palavras-chave (100) | `controle,vendas,código,barras,leitor,crediário,condicional,roupas,boutique,varejo,inventário,nfce` | `ficha/palavras-chave.txt` |
+| Texto promocional (170) | ver `ficha/texto-promocional.txt` | muda sem nova revisão |
+| Descrição (4000) | ver `ficha/descricao.txt` | `docs/LOJAS-DE-APP.md`, seção App Store |
+| Novidades (4000) | só a partir da 2ª versão | `ficha/novidades.txt` |
+| Categoria | principal **Business**, secundária **Productivity** | fixo |
+| URL de privacidade | `https://loja-tria.vercel.app/privacidade` | a página que o próprio sistema serve |
+| URL de suporte | a do contato do dono (`APPLE_URL_SUPORTE`) | — |
+| Classificação etária | **4+**: "Não/Nenhum" nas 24 perguntas da API 4.6, inclusive as novas (conteúdo gerado por usuário, conversa, rede social, anúncios, verificação de idade, controle parental, caixa de recompensa, saúde, armas) | `mobile/publicar/classificacao.mjs` |
+| Direitos de conteúdo | **não usa conteúdo de terceiros** | fixo |
+| Disponibilidade | **só Brasil**, sem entrar sozinho em países novos — se a conta ainda não tiver; se tiver, fica como está | fixo |
+| Preço | **grátis** | fixo |
+| Revisão | login exigido, conta demo e as notas de `ficha/notas-revisao.txt` | config / Secrets |
 
-**Subtítulo**
-```
-PDV, estoque e caixa da loja
-```
-
-**Categoria**: principal **Business** · secundária **Productivity**
-
-**Palavras-chave** (100 caracteres exatos, sem espaço depois das vírgulas)
-```
-código,barras,leitor,varejo,fiado,crediário,vendas,despesas,inventário,lucro,balcão,confecção,roupas
-```
-
-**URL de Privacidade**
-```
-https://loja-tria.vercel.app/privacidade
-```
-(a página que o próprio sistema serve em `/privacidade` — troque pelo endereço do seu
-servidor de demonstração, se for outro)
-
-**URL de Suporte** → o site ou e-mail público que você quiser dar (obrigatório; pode ser
-o próprio servidor de demonstração, `https://loja-tria.vercel.app`).
-
-**Descrição** e **Novidades desta versão** → copie de `docs/LOJAS-DE-APP.md`, seção
-"App Store", itens 3 e 4 (já contados: 2.828 e 480 caracteres). Antes de colar, troque
-`{{EMAIL_SUPORTE}}` pelo seu e-mail real.
-
-**Classificação etária** → responda **Não/Nenhum em tudo** (sem violência, sem compras,
-sem web aberta, sem conteúdo de usuário público). Resultado: **4+**. Não inscreva na
-Kids Category.
-
-**Privacidade do App (App Privacy)** → siga a tabela do item 5 de `docs/LOJAS-DE-APP.md`:
-- "Coletamos dados": **Sim**. Rastreamento (tracking): **NENHUM** — logo, sem ATT.
-- Coletados (todos "Vinculados a você", finalidade única **Funcionalidade do App**):
-  Nome · E-mail · Telefone · Outras informações financeiras · Histórico de compras ·
-  Fotos ou vídeos · Outro conteúdo do usuário · ID do usuário · Interação com o produto ·
-  Outros dados.
-- Todo o resto: **Não coletado** (em especial: sem localização, sem contatos da agenda,
-  sem ID do dispositivo, sem diagnóstico de terceiros).
-
-**Informações de Revisão (App Review)** →
-- Marque **"É necessário fazer login"** e preencha a conta de demonstração (abaixo).
-- No campo de notas, cole o item 6 de `docs/LOJAS-DE-APP.md` ("Notas para a revisão") —
-  é o passo a passo que ensina o revisor a conectar no servidor de demonstração DA LOJA
-  (`https://loja-tria.vercel.app`; o `sistemaobras.com.br` hoje é o site de outro sistema)
-  e a vender sem precisar de câmera.
+Kids Category: **não** inscrever (é ferramenta de trabalho). O publicador não mexe na faixa
+infantil nem nos ajustes manuais de idade.
 
 ---
 
-## O que SÓ VOCÊ pode preencher (4 coisas)
+## O que nenhum programa faz — uma vez só
 
-1. **Conta de demonstração**: crie no servidor de demonstração (`loja-tria.vercel.app`) um usuário de perfil
-   **dono** só para a Apple (ex.: `revisao@sualoja.com`) e ponha e-mail e senha no campo
-   de conta de demonstração e nas notas (onde está `{{EMAIL_DEMO}}` / `{{SENHA_DEMO}}`).
-2. **Um código de barras que exista** nesse servidor de demonstração — entra nas notas no
-   lugar de `{{CODIGO_DEMO}}` (é o caminho "Digitar código", que salva a revisão feita
-   sem câmera).
-3. **E-mail de suporte** no lugar de `{{EMAIL_SUPORTE}}` (descrição e notas).
-4. **Confirmar** que `privacidade@sistemaobras.com.br` existe (está na descrição e na
-   política de privacidade).
+1. **Registro do app** — appstoreconnect.apple.com → Apps → **+** → Novo app → iOS, nome
+   "Gestão de Loja", bundle `com.gestaoloja.app`, SKU `gestao-loja`.
+2. **Privacidade do App (App Privacy)** — siga a tabela do item 5 de `docs/LOJAS-DE-APP.md`:
+   - "Coletamos dados": **Sim**. Rastreamento (tracking): **NENHUM** — logo, sem ATT.
+   - Coletados (todos "Vinculados a você", finalidade única **Funcionalidade do App**):
+     Nome · E-mail · Telefone · Outras informações financeiras · Histórico de compras ·
+     Fotos ou vídeos · Outro conteúdo do usuário · ID do usuário · Interação com o produto ·
+     Outros dados.
+   - Todo o resto: **Não coletado** (em especial: sem localização, sem contatos da agenda,
+     sem ID do dispositivo, sem diagnóstico de terceiros).
 
-Com isso preenchido: selecione o build (Fase 5), **Salvar** e **Enviar para revisão**.
+## O que o dono fornece (no GitHub, uma vez — não no site da Apple)
+
+As variáveis e segredos da tabela de `mobile/publicar/README.md`: a chave da API da Apple, o
+contato, e a **conta de demonstração** — um usuário de perfil **dono** criado no servidor de
+demonstração (`loja-tria.vercel.app`) só para a Apple, mais um **código de barras que exista**
+nele (é o caminho "Digitar código", que salva a revisão feita sem câmera). O
+`privacidade@sistemaobras.com.br` citado na política de privacidade precisa existir.
+
+Depois de uma revisão aprovada, versão nova = subir `"version"` no `mobile/app.json`,
+reescrever `ficha/novidades.txt` e rodar de novo.

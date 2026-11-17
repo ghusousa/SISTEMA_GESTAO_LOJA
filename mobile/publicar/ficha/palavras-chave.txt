@@ -1,1 +1,1 @@
-código,barras,leitor,varejo,fiado,crediário,vendas,despesas,inventário,lucro,balcão,confecção,roupas
+controle,vendas,código,barras,leitor,crediário,condicional,roupas,boutique,varejo,inventário,nfce

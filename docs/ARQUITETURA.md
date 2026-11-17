@@ -1515,7 +1515,7 @@ que ele não lê; conferir no primeiro deploy em `GET /repos/.../commits/<sha>/c
 `npm run publicar -- --enviar`), com `config.json` e `.p8` numa pasta local. O Sistema Obras,
 da mesma pessoa, já publica por um botão (`publicar-apple.yml`), e as notas do revisor desta
 loja mandavam conectar em `sistemaobras.com.br` — que hoje serve o Obras: a revisão voltaria.
-*Decisão:* `.github/workflows/publicar-apple.yml` (só `workflow_dispatch`) com quatro caixas:
+*Decisão:* `.github/workflows/publicar-apple.yml` (`workflow_dispatch`; a etiqueta `ios-v*` e a caixa "completo" vieram depois, ver abaixo) com quatro caixas:
 compilar (EAS na nuvem, `--no-wait`, `--auto-submit-with-profile=ci`), enviar o último build,
 ficha e revisão. Quem sobe a ficha é o MESMO `publicar.mjs` da máquina do dono, não o fastlane
 do Obras: ele já faz ficha, capturas, conta demo e envio para revisão pela API da Apple, e tem
@@ -1535,6 +1535,41 @@ vai por `env`, nunca colada no script (`${{ }}` no `run:` viraria comando num ru
 token). *Consequências:* publicar é um clique por rodada (build; depois, revisão), sem Mac;
 os segredos são os mesmos do Obras e moram no GitHub, nunca no repositório nem no log
 (`ci.test.mjs` procura a senha e a chave na saída). O CI roda `ci.test.mjs` e `rodar.mjs`.
+*Ficha completa (nov/2026):* o dono pediu não fazer nada no site da Apple, então o publicador
+passou a responder tudo o que a API 4.6 alcança, conferido contra a especificação OFICIAL:
+**classificação etária completa** — as 24 perguntas da `AgeRatingDeclaration` (frequência
+NONE, sim/não false, inclusive as novas: conteúdo gerado por usuário, conversa, rede social,
+anúncios, verificação de idade, controle parental, caixa de recompensa, saúde, armas), sem
+tocar na faixa infantil nem nos ajustes manuais; atributo que a Apple recusar nomeando-o sai
+sozinho e vira aviso; pergunta que a Apple criar depois da 4.6 (vieram duas em 16/11/2026)
+volta em branco e vira pendência com o nome, e a recusa do envio aparece inteira
+(`associatedErrors`) — a rodada seguinte retoma o envio que ficou aberto; **direitos de
+conteúdo** = não usa conteúdo de terceiros; **disponibilidade** só no Brasil
+(`POST /v2/appAvailabilities`, território em `included` com id local `${...}`,
+`availableInNewTerritories: false` — app em pt-BR, com PIX e NFC-e) e só quando a conta ainda
+não tem: a que existe fica como está; **capturas em dois conjuntos**: 6,5" (`APP_IPHONE_65`,
+1242×2688) OBRIGATÓRIO — em ago/2026 o formulário só aceitou ele — e 6,9" (`APP_IPHONE_67`,
+1320×2868) extra: pasta ausente, imagem fora do padrão ou falha viram aviso, e o conjunto pela
+metade é tirado (a App Store usa o 6,5" nos iPhones maiores); PNG RGB sem alfa conferido antes
+de subir, MD5 confirmado, espera o processamento da Apple, reenvio substitui; **textos**:
+texto promocional e "Novidades" (só em atualização) vêm de `ficha/`, e limite, marcador sem
+valor e menção a outra plataforma (2.3.10) param antes de falar com a Apple; a versão vem antes
+do appInfo (numa atualização a Apple só abre o appInfo editável depois da versão nova) e o
+build preso é o da versão do `app.json` (`filter[preReleaseVersion.version]`).
+`--aguardar-build <min>` espera o build ficar VALID (consulta a cada
+`PUBLICAR_INTERVALO_BUILD`, 60 s); estourou ou a Apple marcou o build inválido, erro claro. Um
+resumo honesto fecha cada rodada (feito, avisos, pendências, o que a API não cobre), também na
+página do Actions; a senha da demo vira `•••` até em erro da Apple. **Modo completo**: caixa
+"completo" (desmarcada por padrão: o runner fica até ~2 h parado esperando a Expo e a Apple,
+teto de 150 min) ou etiqueta `ios-v<versão>[-N]` (regex ancorada; tem de bater com o
+`app.json`) — a etiqueta existe porque o botão `workflow_dispatch` só aparece depois que o
+arquivo chega na branch padrão; compila com `--wait` (o envio automático do EAS sobe o
+binário), e roda `publicar.mjs --enviar --aguardar-build 60`; sem ficha ou sem o app na Apple,
+para ANTES de compilar. **O que a API 4.6 não cobre** — e nenhum programa faz: criar o
+registro do app (não existe `POST /v1/apps`) e a ficha "Privacidade do App" (não há rota); o
+resumo lembra das duas. A Apple de mentira (`teste/mock-asc.mjs`) confere toda rota, parâmetro
+e corpo contra `teste/esquema-asc.mjs`, recorte gerado da especificação oficial por
+`teste/gerar-esquema.mjs` — especificação nova, gera de novo e o diff mostra o que mudou.
 
 ## 4. Contratos de API
 
