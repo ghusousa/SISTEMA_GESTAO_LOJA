@@ -88,11 +88,12 @@ function podar(bipes: BipeDaFila[]): BipeDaFila[] {
   return bipes.filter((b, i) => b.estado === 'enviando' || i >= corte);
 }
 
-/** O que sobrou na fila não sai mais: fica na lista como "não enviado" (ou "sem confirmação"). */
+/**
+ * O que sobrou na fila não sai mais: fica na lista como "não enviado" (ou "sem confirmação").
+ * Sem podar: a tela de ligar mostra TODOS os que não saíram — é a lista do que bipar de novo.
+ */
 function pendentesNaoEnviados(bipes: BipeDaFila[]): BipeDaFila[] {
-  return podar(
-    bipes.map((b) => (b.estado === 'enviando' ? { ...b, estado: estadoDeQuemNaoSaiu(b) } : b)),
-  );
+  return bipes.map((b) => (b.estado === 'enviando' ? { ...b, estado: estadoDeQuemNaoSaiu(b) } : b));
 }
 
 function lerFalha(erro: unknown): Falha {

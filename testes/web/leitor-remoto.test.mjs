@@ -4,7 +4,9 @@
  * Roda sem navegador: `node --test testes/web/*.test.mjs`. A primeira metade são os MESMOS
  * casos de `mobile/src/lib/leitorRemoto.test.ts` — o web monta o convite que o app lê, e
  * as duas pontas têm de concordar em cada caractere. A segunda confere o lado que só o
- * computador tem: a rodada única do `retirar`, a frase do fim e o QR desenhado de verdade.
+ * computador tem: a rodada única do `retirar`, a frase do fim, o QR desenhado de verdade, a
+ * entrega ao leitor da tela (tela ocupada, janela que abre no meio), a fila de entrega, o aviso
+ * dos descartados e a aba dona do leitor.
  *
  * Mora FORA de `web/` de propósito: tudo o que está lá é servido em `/app`.
  */
@@ -557,8 +559,8 @@ test('criarEntrega: tela ocupada segura o código (e os de trás) até ela liber
   ocupada = false;
   await r.andar(300);
   assert.equal(entrega.esperando(), 0);
-  assert.deepEqual(ctx.tentativas.filter((c) => c !== 'A').slice(-1), ['B']);
   assert.deepEqual(ctx.tentativas.slice(-2), ['A', 'B'], 'na ordem da leitura');
+  assert.ok(ctx.tentativas.slice(0, -2).every((c) => c === 'A'), 'B nunca passa na frente de A');
   assert.deepEqual(ctx.avisos, []);
 });
 

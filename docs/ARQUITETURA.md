@@ -1656,8 +1656,12 @@ que foi no envio (`oQueSobrou`): a leitura que já vinha a caminho quando a pess
 para a próxima, em vez de sumir na limpeza; a Condicional nova, que sai da tela, avisa que uma
 peça lida no meio ficou de fora. Numa tela sem leitor o código espera 3 s (no F5 o leitor é
 retomado antes de a tela terminar de carregar; numa troca de tela há um instante sem nenhuma) e
-então o aviso manda abrir o PDV, a Devolução, a Entrada, o Inventário ou a Condicional. O id do
-pareamento fica no `sessionStorage` da aba (o F5 não desliga; outra aba não herda). "Duplicar
+então o aviso manda abrir o PDV, a Devolução, a Entrada, o Inventário ou a Condicional. Limite
+aceito: um F5 no instante exato de uma retirada em voo perde aquele lote (o servidor já o deu
+por entregue e a página que pediu não existe mais) — "no máximo uma vez" escolhe perder a peça a
+entregá-la duas; evitar pediria um segundo passo de confirmação em toda retirada, por uma janela
+de uma ida e volta. O id do pareamento fica no `sessionStorage` da aba (o F5 não desliga; outra
+aba não herda). "Duplicar
 aba" copia o `sessionStorage`: antes de retomar, a aba pergunta por um `BroadcastChannel`
 (`criarDonaDaAba`; não exige HTTPS, e a loja na rede local é HTTP) se outra aba já cuida daquele
 leitor, e a cópia não retoma — senão as duas retirariam a mesma fila e os bipes se dividiriam
