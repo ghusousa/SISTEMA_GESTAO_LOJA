@@ -5,22 +5,25 @@
 > Leia `mobile/publicar/README.md`. Este documento continua valendo como referência
 > e para preencher a ficha de Privacidade, que a Apple obriga a ser manual.
 
-As capturas estão em `media/app-store/iphone-6.5/` (1242 × 2688, o tamanho exato do
-iPhone 6,5"). Suba **na ordem dos números** — as 3 primeiras aparecem na busca da App Store.
+As capturas estão em `media/app-store/iphone-6.5/` (1242 × 2688, o slot obrigatório de
+iPhone 6,5") e, as mesmas, em `media/app-store/iphone-6.9/` (1320 × 2868, o slot de
+6,7"/6,9"). Suba **na ordem dos números** — as 3 primeiras aparecem na busca da App Store.
 Só existe tela de iPhone porque o app declara `supportsTablet: false`: a Apple não pede iPad.
+Elas saem do app de verdade, com os dados de exemplo: `mobile/publicar/capturas/gerar.sh`
+refaz todas (ver o README de lá).
 
-| Ordem | Arquivo | O que mostra |
-|---|---|---|
-| 1 | `01-pdv.png` | PDV com 3 peças no carrinho e total |
-| 2 | `02-pagamento.png` | Cobrança: formas de pagamento + teclado |
-| 3 | `03-financeiro.png` | Resultado do mês (faturamento, lucro, margem) |
-| 4 | `04-relatorios.png` | Vendas por dia + mais vendidos |
-| 5 | `05-estoque.png` | Saldo por tamanho e cor, aviso de repor |
-| 6 | `06-produtos.png` | Catálogo com busca e grade |
-| 7 | `07-caixa.png` | Fechamento de caixa por forma de pagamento |
-| 8 | `08-crediario.png` | Crediário: quem deve e quanto |
-| 9 | `09-vendas.png` | Histórico de vendas (com uma cancelada) |
-| 10 | `10-entrada.png` | Tela de entrada com o nome da loja |
+| Ordem | Arquivo | Título · subtítulo | O que mostra |
+|---|---|---|---|
+| 1 | `01-vender.png` | Venda feita em segundos · Bipe a etiqueta ou busque pelo nome | PDV com 4 peças no carrinho, o total e o Cobrar |
+| 2 | `02-cobrar.png` | Pix, cartão e fiado · Divida a conta e parcele no crédito | Cobrança dividida: PIX + crédito 3x Visa lançados, o que falta e as 6 formas |
+| 3 | `03-financeiro.png` | Seu lucro de verdade · Já descontados custo, despesas e taxas | Resultado do mês, faturamento, custo, lucro bruto, despesas, taxas e margem |
+| 4 | `04-relatorios.png` | Saiba o que mais vende · Vendas por dia e o lucro de cada peça | Vendas por dia (30 dias) e o ranking dos mais vendidos com o lucro |
+| 5 | `05-estoque.png` | Estoque por tamanho e cor · O app avisa a hora de repor | Saldo por tamanho e cor, valor em custo e a etiqueta "repor" |
+| 6 | `06-produtos.png` | Catálogo na palma da mão · Grade, preço e saldo de cada peça | Catálogo com preço, grade e saldo de cada tamanho |
+| 7 | `07-caixa.png` | Feche o caixa sem planilha · O esperado e o contado, forma por forma | Conferência por forma, a diferença na gaveta e o Fechar caixa |
+| 8 | `08-crediario.png` | Fiado sob controle · O que levou, o que pagou e o que falta | Conta da cliente: deve, passou do limite, compras e pagamentos |
+| 9 | `09-condicional.png` | Condicional sem caderno · O que voltou para a arara e o que cobrar | Fechamento de condicional: o que voltou, o que ficou e o pagamento |
+| 10 | `10-recibo.png` | Recibo na hora · Mande para a cliente pelo celular | Recibo da venda com as 3 formas de pagamento e o Enviar recibo |
 
 ---
 
