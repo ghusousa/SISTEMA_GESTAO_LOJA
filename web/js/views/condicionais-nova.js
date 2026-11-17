@@ -11,7 +11,7 @@
 import { api, ErroApi } from '../api.js';
 import { ligarBuscaDePeca } from '../busca-peca.js';
 import { formatar, paraCentavos, somar } from '../dinheiro.js';
-import { criarLeitor, manterFoco } from '../leitor.js';
+import { criarLeitor, digitandoEm, manterFoco } from '../leitor.js';
 import { ir } from '../router.js';
 import { novoClientUuid } from '../store.js';
 import { pintarConferencia } from '../tabela-conferencia.js';
@@ -129,15 +129,21 @@ export function render(raiz) {
     if (!campoPrazo.value) return avisarErro({ message: 'Combine o prazo para a cliente devolver.' });
     enviando = true;
     pintar();
+    const enviados = itens;
     try {
       const condicional = await api.post('/condicionais', {
         client_uuid: chave,
         cliente_id: cliente.id,
         prazo: campoPrazo.value,
         observacao: raiz.querySelector('[data-observacao]').value.trim() || null,
-        itens: itens.map((i) => ({ variante_id: i.variante_id, quantidade: i.quantidade })),
+        itens: enviados.map((i) => ({ variante_id: i.variante_id, quantidade: i.quantidade })),
       });
       aviso(`Condicional #${condicional.id}: ${plural(condicional.total_pecas, 'peça saiu', 'peças saíram')} com ${condicional.cliente}.`);
+      // A lista mudou durante a gravação (uma leitura que já vinha a caminho): o que entrou
+      // depois não foi nesta condicional, e a tela vai embora — diz em vez de sumir.
+      if (itens !== enviados) {
+        aviso('Uma peça lida enquanto a condicional era gravada ficou de fora. Confira e, se ela levou mais, abra outra.', 'alerta');
+      }
       ir(`/condicionais/${condicional.id}`);
     } catch (erro) {
       const jaAberta = erro instanceof ErroApi && erro.status === 409 ? erro.detail?.condicional_id : null;
@@ -166,7 +172,13 @@ export function render(raiz) {
   botaoSalvar.addEventListener('click', salvar);
 
   const busca = ligarBuscaDePeca({ campo, painel: raiz.querySelector('[data-busca]'), aoEscolher: somarPeca, mostrarPreco: true });
-  const leitor = criarLeitor({ aoLer: lerCodigo, repeticaoMs: 250, ignorarQuando: busca.aberta });
+  const leitor = criarLeitor({
+    aoLer: lerCodigo,
+    repeticaoMs: 250,
+    ignorarQuando: busca.aberta,
+    // Gravando, ou digitando uma quantidade: o código do celular espera a vez.
+    ocupadoQuando: () => enviando || digitandoEm(areaItens),
+  });
   leitor.ligar();
   const pararFoco = manterFoco(campo);
   pintar();

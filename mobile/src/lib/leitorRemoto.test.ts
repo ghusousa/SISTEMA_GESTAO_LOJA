@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   ALFABETO,
+  conviteDoLink,
   avisoDoFim,
   destinoDaFalha,
   esperaDaTentativa,
@@ -190,13 +191,30 @@ test('destinoDaFalha: recusa deste bipe descarta só ele', () => {
   assert.equal(destinoDaFalha(403, null), 'descartar');
 });
 
+test('conviteDoLink: o link do aparelho passa pela mesma régua da câmera', () => {
+  const api = 'https://loja.exemplo/api/v1';
+  assert.deepEqual(lerConvite(conviteDoLink({ v: '1', c: 'ABC234', api })), { codigo: 'ABC234', api });
+  assert.deepEqual(lerConvite(conviteDoLink({ c: 'abc 234' })), { codigo: 'ABC234', api: null });
+  // Versão que o app não conhece: recusada no link como na câmera (era aceita pelo atalho).
+  assert.equal(lerConvite(conviteDoLink({ v: '2', c: 'ABC234' })), null);
+  assert.equal(lerConvite(montarConvite('ABC234', api).replace('v=1', 'v=2')), null);
+  assert.deepEqual(lerConvite(conviteDoLink({ v: '1', c: 'ABC234', api: 'javascript:alert(1)' })), {
+    codigo: 'ABC234',
+    api: null,
+  });
+});
+
 test('avisoDoFim explica por que o leitor parou', () => {
   assert.match(avisoDoFim({ status: 'EXPIRADO' }), /12 horas/);
   assert.equal(
     avisoDoFim({ status: 'ENCERRADO', motivo_encerramento: 'COMPUTADOR' }),
     'O computador desligou o leitor.',
   );
-  assert.match(avisoDoFim({ status: 'ENCERRADO', motivo_encerramento: 'TROCOU' }), /outro computador/);
+  const trocou = avisoDoFim({ status: 'ENCERRADO', motivo_encerramento: 'TROCOU' });
+  assert.match(trocou, /outro computador/);
+  // "Um celular, um computador" é por login: a frase não afirma que foi ESTE aparelho.
+  assert.doesNotMatch(trocou, /Este celular/);
+  assert.match(trocou, /outro aparelho/);
   assert.match(avisoDoFim({ status: 'ENCERRADO', motivo_encerramento: 'CELULAR' }), /neste celular/);
   assert.equal(avisoDoFim(null), 'O computador desligou o leitor.');
 });

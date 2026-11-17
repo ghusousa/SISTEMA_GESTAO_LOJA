@@ -18,7 +18,7 @@
 import { api, ErroApi } from '../api.js';
 import { ligarBuscaDePeca } from '../busca-peca.js';
 import { formatar, paraCentavos } from '../dinheiro.js';
-import { criarLeitor, manterFoco } from '../leitor.js';
+import { criarLeitor, digitandoEm, manterFoco } from '../leitor.js';
 import { ir } from '../router.js';
 import { novoClientUuid } from '../store.js';
 import {
@@ -356,7 +356,12 @@ export function render(raiz, _params, consulta) {
     aoEscolher: (peca) =>
       void procurarVendas(peca.id, `${peca.produto} ${grade(peca.tamanho, peca.cor)}`),
   });
-  const leitor = criarLeitor({ aoLer: lerCodigo, ignorarQuando: busca.aberta });
+  const leitor = criarLeitor({
+    aoLer: lerCodigo,
+    ignorarQuando: busca.aberta,
+    // Devolvendo, ou digitando a quantidade e o motivo: o bipe do celular trocaria a área.
+    ocupadoQuando: () => enviando || digitandoEm(area),
+  });
   leitor.ligar();
   const pararFoco = manterFoco(campo);
 

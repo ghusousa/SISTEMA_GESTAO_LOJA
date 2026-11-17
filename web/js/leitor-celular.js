@@ -9,17 +9,30 @@
  * segurança, de 2 em 2 s sem canal ou de 10 em 10 s com ele. Cada código retirado vai ao
  * leitor da tela aberta por `entregarCodigoDeFora` (`leitor.js`), como o leitor USB.
  *
+ * O que o `retirar` traz passa pela fila de entrega (`criarEntrega`, `leitor-remoto.js`):
+ * código que encontra a tela ocupada (gravando, alguém digitando na lista) espera a vez, e a
+ * retirada segue sem esperar a tela. Leitura descartada pelo servidor (mais de 2 min) vira
+ * aviso, porque o celular mostrou "enviado" para ela.
+ *
  * O id do pareamento fica no `sessionStorage` (por aba; não é credencial: sem a sessão do
- * mesmo login ele não serve para nada) para o F5 não desligar o leitor. Sair do sistema
- * desliga no servidor ANTES de a sessão ir embora.
+ * mesmo login ele não serve para nada) para o F5 não desligar o leitor. "Duplicar aba" copia
+ * o `sessionStorage`; a cópia pergunta antes (`criarDonaDaAba`) e não retoma o leitor que a
+ * aba de origem ainda cuida. Sair do sistema desliga no servidor ANTES de a sessão ir embora.
  *
  * O aviso de tempo real só diz o assunto: o código lido nunca passa pelo WebSocket.
  */
 
-import { api, ErroApi } from './api.js';
+import { acessoAtual, api, ErroApi } from './api.js';
 import { entregarCodigoDeFora } from './leitor.js';
 import { mostrarConvite } from './leitor-celular-janela.js';
-import { avisoDoFimNoComputador, intervaloDaBusca, umaPorVez } from './leitor-remoto.js';
+import {
+  avisoDoFimNoComputador,
+  avisoDosDescartados,
+  criarDonaDaAba,
+  criarEntrega,
+  intervaloDaBusca,
+  umaPorVez,
+} from './leitor-remoto.js';
 import { canalConectado, ouvirNaHora } from './tempo-real.js';
 import { aviso, avisarErro, confirmar } from './ui.js';
 
@@ -34,10 +47,27 @@ let moldura = null;
 let pareamento = null;
 let timer = null;
 let pararDeOuvir = null;
-/** O modal do QR, quando aberto: `{ fechar(), vencer(), fechou }` (`leitor-celular-janela.js`). */
+/** O modal do QR, quando aberto: `{ fechar(), vencer(), naTela(), fechou }` (`leitor-celular-janela.js`). */
 let janela = null;
 /** Sobe a cada desligar: resposta que chega de uma sessão que já saiu é descartada. */
 let geracao = 0;
+
+/** O caminho do código retirado até a tela (espera a tela ocupada, avisa o que não entrou). */
+const entrega = criarEntrega({
+  entregar: entregarCodigoDeFora,
+  avisar: (texto) => aviso(texto, 'alerta'),
+  aoErro: avisarErro,
+});
+
+/** Uma aba por leitor: a cópia de "Duplicar aba" pergunta antes de retomar. */
+let donaDaAba = null;
+function dona() {
+  donaDaAba ??= criarDonaDaAba({
+    canal: typeof BroadcastChannel === 'function' ? new BroadcastChannel('leitor-celular') : null,
+    meu: () => pareamento?.id ?? null,
+  });
+  return donaDaAba;
+}
 
 // ----------------------------------------------------------------- sessionStorage
 
@@ -133,6 +163,8 @@ async function umaRodada() {
 
   const lote = await api.post(`/leitor/pareamentos/${atual.id}/retirar`);
   if (mudou()) return;
+  const descartes = avisoDosDescartados(lote.descartados, lote.pareamento.status);
+  if (descartes) aviso(descartes, 'alerta');
   if (lote.pareamento.status !== 'ATIVO') {
     terminou(lote.pareamento);
     return;
@@ -140,28 +172,8 @@ async function umaRodada() {
   pareamento = lote.pareamento;
   // Lote cheio: pode ter sobrado fila. Pede mais uma rodada (roda ao fim desta).
   if (lote.items.length >= LOTE_DO_SERVIDOR) void rodar();
-  for (const item of lote.items) {
-    if (mudou()) return;
-    await entregar(item.codigo);
-  }
-}
-
-async function entregar(codigo) {
-  let resultado;
-  try {
-    resultado = await entregarCodigoDeFora(codigo);
-  } catch (erro) {
-    avisarErro(erro);
-    return;
-  }
-  if (resultado === 'janela-aberta') {
-    aviso(`Código ${codigo} recebido, mas há uma janela aberta — feche-a e bipe de novo.`, 'alerta');
-  } else if (resultado === 'sem-leitor') {
-    aviso(
-      `Código ${codigo} recebido — abra o PDV, a Devolução, a Entrada, o Inventário ou a Condicional para usar o celular.`,
-      'alerta',
-    );
-  }
+  // Sem esperar a tela: código que espera a vez (tela ocupada) não segura a próxima retirada.
+  void entrega.receber(lote.items.map((item) => item.codigo));
 }
 
 function ligou(p) {
@@ -187,8 +199,16 @@ function terminou(p) {
 let abrindo = false;
 
 async function gerarCodigo() {
+  const minha = geracao;
   const substitui = pareamento?.status === 'AGUARDANDO' ? pareamento.id : null;
   const p = await api.post('/leitor/pareamentos', { substitui_id: substitui });
+  if (minha !== geracao) {
+    // A sessão saiu enquanto o código nascia: nada de adotar nem de abrir o QR por cima da
+    // tela de entrada (um celular ainda aceitaria o código, para um computador sem ninguém).
+    // Com token ainda, encerra no servidor; de outro login, o 404 não faz mal.
+    if (acessoAtual()) void api.delete(`/leitor/pareamentos/${p.id}`).catch(() => {});
+    return null;
+  }
   // O prazo conta do relógio do SERVIDOR (criado + 5 min); aqui vale a duração, contada
   // do relógio desta máquina — que pode estar adiantado ou atrasado.
   const venceEm = Date.now() + (Date.parse(p.codigo_expira_em) - Date.parse(p.criado_em));
@@ -197,7 +217,20 @@ async function gerarCodigo() {
   return { p, venceEm };
 }
 
+/**
+ * O roteador tira o modal da tela ao trocar de rota sem passar pelo ✕ (`router.js`), e a
+ * promessa dele nunca resolve: a janela que não está mais no documento fecha de vez aqui —
+ * senão o botão ficaria morto até um F5, e o relógio do QR girando sobre um nó solto.
+ */
+function soltarJanelaSumida() {
+  if (janela && !janela.naTela()) {
+    janela.fechar();
+    janela = null;
+  }
+}
+
 async function abrirJanela() {
+  soltarJanelaSumida();
   if (abrindo || janela) return;
   if (pareamento?.status === 'ATIVO') {
     void oferecerDesligar();
@@ -213,6 +246,7 @@ async function abrirJanela() {
   } finally {
     abrindo = false;
   }
+  if (!primeiro) return;
   const esta = mostrarConvite({ primeiro, gerarOutro: gerarCodigo });
   janela = esta;
   await esta.fechou;
@@ -248,6 +282,12 @@ async function oferecerDesligar() {
 
 async function restaurar(id) {
   const minha = geracao;
+  // Cópia de "Duplicar aba": se a aba de origem ainda cuida deste leitor, esta não o retoma.
+  if (await dona().outraCuida(id)) {
+    if (minha === geracao) guardarId(null);
+    return;
+  }
+  if (minha !== geracao) return;
   try {
     const p = await api.get(`/leitor/pareamentos/${id}`);
     if (minha !== geracao) return;
@@ -272,6 +312,8 @@ export function ligarLeitorCelular(raizDaMoldura) {
   moldura.querySelector('[data-leitor-selo]')?.addEventListener('click', () => void oferecerDesligar());
   // Na hora, sem a espera da rodada: o bipe tem de cair no carrinho já.
   pararDeOuvir = ouvirNaHora(['leitor', 'reconectado'], acordar);
+  document.addEventListener('rota-trocada', soltarJanelaSumida);
+  dona();
   const id = lerId();
   if (id) void restaurar(id);
 }
@@ -281,6 +323,9 @@ export function pararLeitorCelular({ esquecerAba = true } = {}) {
   geracao += 1;
   pararDeOuvir?.();
   pararDeOuvir = null;
+  document.removeEventListener('rota-trocada', soltarJanelaSumida);
+  // O que esperava a vez era do turno que saiu: não cai na tela de quem entrar depois.
+  entrega.limpar();
   janela?.fechar();
   pareamento = null;
   clearTimeout(timer);

@@ -151,7 +151,10 @@ cada bipe na câmera cai no campo do leitor da tela do computador (ADR-43).
     aberta — PDV, Devolução, Entrada, Inventário ou Condicional nova —, como se fosse o leitor
     USB, e a lateral do computador mostra de quem é o celular ligado. Com uma janela aberta no
     computador o código não entra (a tela avisa para bipar de novo); numa tela sem leitor, a tela
-    avisa qual abrir. Vale até alguém desligar (de qualquer um dos dois), sair do sistema, ou 12 h
+    avisa qual abrir. Enquanto a tela grava (Registrar, Fechar contagem) ou a pessoa do computador
+    digita uma quantidade na lista, o código espera a vez e entra depois — nada some no meio. O
+    que chegou tarde demais (mais de 2 min) o computador avisa; o celular lista o que não saiu
+    quando o leitor para, e marca "confira no computador" o que a rede não confirmou. Vale até alguém desligar (de qualquer um dos dois), sair do sistema, ou 12 h
     depois; o F5 não desliga. Um celular lê para um computador por vez: ler o código de outro
     computador desliga o primeiro.
 

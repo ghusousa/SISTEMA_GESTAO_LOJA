@@ -176,7 +176,10 @@ npm run publicar     # ficha inteira na App Store via API (mobile/publicar/, -- 
   serve — menos o reenvio de quem já aceitou (200 com o mesmo pareamento, a resposta se perdeu). `web/js/leitor-remoto.js` e `mobile/src/lib/leitorRemoto.ts` (convite do QR) são espelhos.
   No web, o bipe retirado vai ao `criarLeitor` da tela por `entregarCodigoDeFora` (`leitor.js`),
   na hora do aviso (`ouvirNaHora`, fora da rodada); tela nova com leitor ganha isso de graça
-  se chamar `ligar()`/`desligar()`.
+  se chamar `ligar()`/`desligar()` — e, se ela grava (POST que copia a lista e depois a limpa) ou
+  tem campo de digitar na lista que o bipe redesenha, passa `ocupadoQuando: () => enviando ||
+  digitandoEm(areaItens)`: o código de fora espera em vez de sumir. Uma aba por leitor
+  (`criarDonaDaAba`, "Duplicar aba" copia o `sessionStorage`).
 - Versão: `GET /versao` diz o commit instalado E se é o mais novo. Quem sabe disso é o
   `atualizar.sh` (tem a credencial do GitHub), que grava `docker/estado/versao.json`; a API
   só lê o arquivo montado. **A API nunca fala com o GitHub** — token do código-fonte não

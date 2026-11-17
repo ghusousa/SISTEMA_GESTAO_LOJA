@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { criarFila, type BipeDaFila, type Falha } from './filaDoLeitor';
+import {
+  criarFila,
+  deixouDuvida,
+  estadoDeQuemNaoSaiu,
+  type BipeDaFila,
+  type Falha,
+} from './filaDoLeitor';
 import { PRAZO_DO_BIPE_MS } from './leitorRemoto';
 
 const T0 = 1_000_000;
@@ -26,6 +32,7 @@ function montar({
     envios: [] as string[],
     esperas: [] as number[],
     desligou: [] as (string | null)[],
+    tentou: [] as (string | null)[],
     emVoo: 0,
     maxEmVoo: 0,
   };
@@ -48,6 +55,7 @@ function montar({
       ctx.desligou.push(status);
       ctx.estado.pareamentoId = null;
     },
+    aoTentar: (falha) => ctx.tentou.push(falha ? (falha.codigo ?? String(falha.status ?? 'rede')) : null),
     agora: () => ctx.agora,
     dormir:
       dormir ??
@@ -94,18 +102,64 @@ test('rede caída e 5xx: reenvia o MESMO bipe, com espera crescente, e o seguint
   assert.equal(ctx.estado.bipes[0].tentativas, 3);
 });
 
-test('passou do prazo sem sair: "não enviado", e o próximo dentro do prazo segue', async () => {
-  // A rede volta só 125 s depois da primeira leitura.
+test('passou do prazo sem resposta: "sem confirmação" (pode ter chegado), e o próximo segue', async () => {
+  // A rede volta só 125 s depois da primeira leitura. Sem resposta, o servidor PODE ter
+  // gravado e o computador recebido: "não enviado" faria a pessoa bipar de novo — duas peças.
   const { ctx, fila, ler, estados } = montar({
     responder: (_bipe, agora) => (agora - T0 < 125_000 ? REDE_CAIU : 'ok'),
   });
   ler('a', T0);
   ler('b', T0 + 100_000);
   await fila.esvaziar();
-  assert.deepEqual(estados(), ['a:nao-enviado', 'b:enviado']);
+  assert.deepEqual(estados(), ['a:sem-confirmacao', 'b:enviado']);
   assert.ok(ctx.agora - T0 > PRAZO_DO_BIPE_MS);
   assert.ok(ctx.esperas.every((ms) => ms <= 10_000), 'teto de 10 s entre tentativas');
   assert.equal(ctx.envios.at(-1), 'b@7');
+});
+
+test('passou do prazo com recusa definitiva: "não enviado" — a dúvida da rede não fica', async () => {
+  // Primeiro sem resposta (dúvida), depois a fila cheia até vencer. A chave é conferida
+  // antes de tudo no servidor: se o bipe tivesse entrado, o reenvio voltaria 200, não 409.
+  let primeira = true;
+  const { fila, ler, estados } = montar({
+    responder: () => {
+      if (primeira) {
+        primeira = false;
+        return REDE_CAIU;
+      }
+      return { status: 409, codigo: 'LEITOR_FILA_CHEIA' };
+    },
+  });
+  ler('a');
+  await fila.esvaziar();
+  assert.deepEqual(estados(), ['a:nao-enviado']);
+});
+
+test('sem resposta e depois 200 do reenvio: "enviado" (o servidor já tinha gravado)', async () => {
+  const roteiro: Resposta[] = [REDE_CAIU, REDE_CAIU];
+  const { ctx, fila, ler, estados } = montar({ responder: () => roteiro.shift() ?? 'ok' });
+  ler('a');
+  await fila.esvaziar();
+  assert.deepEqual(estados(), ['a:enviado']);
+  assert.equal(ctx.estado.bipes[0].incerto, false);
+});
+
+test('deixouDuvida: sem resposta ou 5xx sim; resposta do servidor não', () => {
+  assert.equal(deixouDuvida({}), true);
+  assert.equal(deixouDuvida({ status: 0 }), true);
+  assert.equal(deixouDuvida({ status: 502 }), true);
+  assert.equal(deixouDuvida({ status: 409, codigo: 'LEITOR_FILA_CHEIA' }), false);
+  assert.equal(deixouDuvida({ status: 429 }), false);
+  assert.equal(estadoDeQuemNaoSaiu({ incerto: true }), 'sem-confirmacao');
+  assert.equal(estadoDeQuemNaoSaiu({}), 'nao-enviado');
+});
+
+test('a fila conta como foi cada tentativa: a fila cheia aparece sem esperar o bipe vencer', async () => {
+  const roteiro: Resposta[] = [{ status: 409, codigo: 'LEITOR_FILA_CHEIA' }, REDE_CAIU];
+  const { ctx, fila, ler } = montar({ responder: () => roteiro.shift() ?? 'ok' });
+  ler('a');
+  await fila.esvaziar();
+  assert.deepEqual(ctx.tentou, ['LEITOR_FILA_CHEIA', 'rede', null]);
 });
 
 test('bipe já vencido nem tenta sair', async () => {
@@ -137,6 +191,19 @@ test('leitor desligado do outro lado (409): para tudo e avisa com o status', asy
   await fila.esvaziar();
   assert.deepEqual(ctx.envios, ['a@7']);
   assert.deepEqual(ctx.desligou, ['EXPIRADO']);
+});
+
+test('o 409 do leitor desligado tira a dúvida do bipe que ficou sem resposta antes', async () => {
+  const roteiro: Resposta[] = [
+    REDE_CAIU,
+    { status: 409, codigo: 'LEITOR_DESLIGADO', statusDoLeitor: 'ENCERRADO' },
+  ];
+  const { ctx, fila, ler } = montar({ responder: () => roteiro.shift() ?? 'ok' });
+  ler('a');
+  await fila.esvaziar();
+  assert.deepEqual(ctx.desligou, ['ENCERRADO']);
+  assert.equal(ctx.estado.bipes[0].incerto, false, 'a chave vem antes: não está no servidor');
+  assert.equal(estadoDeQuemNaoSaiu(ctx.estado.bipes[0]), 'nao-enviado');
 });
 
 test('pareamento sumido (404) também desliga', async () => {

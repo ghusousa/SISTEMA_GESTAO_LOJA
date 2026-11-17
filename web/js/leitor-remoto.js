@@ -242,3 +242,187 @@ export function umaPorVez(rodada, { aoErro = () => {} } = {}) {
     return promessa;
   };
 }
+
+/**
+ * Quanto um código já retirado espera a tela que pediu tempo (`'tela-ocupada'`: gravando, ou
+ * alguém digitando na lista). Passou disso, não entra: avisa para bipar de novo — entrar
+ * minutos depois numa lista que já foi gravada seria a surpresa que o prazo do servidor evita.
+ */
+export const ESPERA_DA_TELA_MS = 60_000;
+/**
+ * Quanto um código espera aparecer uma tela que lê código (`'sem-leitor'`): no F5 o leitor é
+ * retomado antes de a tela terminar de carregar, e numa troca de tela há um instante sem
+ * nenhuma. Passou disso, a tela aberta não lê código mesmo: avisa qual abrir.
+ */
+export const ESPERA_DO_LEITOR_MS = 3000;
+/** De quanto em quanto a entrega tenta de novo enquanto um código espera. */
+export const REENTREGA_MS = 250;
+
+/** O aviso de um código que não entrou na tela, ou `null` se entrou. */
+export function avisoDaEntrega(resultado, codigo) {
+  if (resultado === 'janela-aberta') {
+    return `Código ${codigo} recebido, mas há uma janela aberta — feche-a e bipe de novo.`;
+  }
+  if (resultado === 'sem-leitor') {
+    return `Código ${codigo} recebido — abra o PDV, a Devolução, a Entrada, o Inventário ou a Condicional para usar o celular.`;
+  }
+  if (resultado === 'tela-ocupada') {
+    return `Código ${codigo} do celular não entrou: a tela ficou ocupada por muito tempo. Bipe de novo.`;
+  }
+  return null;
+}
+
+/**
+ * O aviso dos bipes que o servidor consumiu sem entregar (`descartados` do `retirar`), ou
+ * `null`. O celular mostrou "enviado" para eles: sem o aviso, ninguém fica sabendo que não
+ * entraram (o computador dormiu, a aba ficou fechada, o leitor foi desligado no meio).
+ */
+export function avisoDosDescartados(quantos, status) {
+  if (!(quantos > 0)) return null;
+  const um = quantos === 1;
+  const leituras = um ? '1 leitura do celular' : `${quantos} leituras do celular`;
+  if (status !== 'ATIVO') {
+    return `${leituras} não ${um ? 'entrou' : 'entraram'}: o leitor foi desligado antes de chegar${um ? '' : 'em'} aqui.`;
+  }
+  return `${leituras} ${um ? 'chegou' : 'chegaram'} depois de 2 min e ${um ? 'foi descartada' : 'foram descartadas'} — bipe de novo.`;
+}
+
+/**
+ * A fila do computador entre o `retirar` e a tela: o que o servidor já entregou (e não
+ * entrega de novo) espera aqui a vez de cair no leitor da tela, em ordem.
+ *
+ * - `'entregue'`: segue para o próximo;
+ * - `'tela-ocupada'`: o código ESPERA (até `ESPERA_DA_TELA_MS`) e a entrega tenta de novo a
+ *   cada `REENTREGA_MS` — entregar no meio da gravação o poria numa lista que a tela limpa
+ *   quando a resposta chega, e a peça sumiria sem aviso;
+ * - `'sem-leitor'`: espera `ESPERA_DO_LEITOR_MS` (F5, troca de tela) antes de avisar;
+ * - `'janela-aberta'`: avisa na hora ("feche-a e bipe de novo") e segue.
+ *
+ * Separada do `retirar` de propósito: código esperando aqui não segura a retirada, e a fila do
+ * servidor não envelhece enquanto a tela está ocupada. `entregar(codigo)` é o
+ * `entregarCodigoDeFora` de `leitor.js`; `avisar(texto)` mostra o aviso; `aoErro(erro)` recebe
+ * a falha do `aoLer`; `agora()` e `agendar(fn, ms)` (devolve o cancelar) são o relógio — o teste
+ * troca os dois.
+ */
+export function criarEntrega({
+  entregar,
+  avisar,
+  aoErro = () => {},
+  agora = () => Date.now(),
+  agendar = (fn, ms) => {
+    const t = setTimeout(fn, ms);
+    return () => clearTimeout(t);
+  },
+}) {
+  let fila = [];
+  let rodando = false;
+  let cancelar = null;
+  // `limpar` abre uma geração nova: o laço antigo, parado num `await`, acorda e sai quieto.
+  let geracao = 0;
+
+  async function esvaziar() {
+    if (rodando) return;
+    rodando = true;
+    const minha = geracao;
+    cancelar?.();
+    cancelar = null;
+    try {
+      while (fila.length && minha === geracao) {
+        const { codigo, desde } = fila[0];
+        let resultado;
+        try {
+          resultado = await entregar(codigo);
+        } catch (erro) {
+          if (minha !== geracao) return;
+          fila.shift();
+          aoErro(erro);
+          continue;
+        }
+        if (minha !== geracao) return;
+        const esperou = agora() - desde;
+        const esperar =
+          (resultado === 'tela-ocupada' && esperou < ESPERA_DA_TELA_MS) ||
+          (resultado === 'sem-leitor' && esperou < ESPERA_DO_LEITOR_MS);
+        if (esperar) {
+          cancelar = agendar(() => {
+            cancelar = null;
+            void esvaziar();
+          }, REENTREGA_MS);
+          return;
+        }
+        fila.shift();
+        const texto = avisoDaEntrega(resultado, codigo);
+        if (texto) avisar(texto);
+      }
+    } finally {
+      if (minha === geracao) rodando = false;
+    }
+  }
+
+  return {
+    /** Os códigos de um `retirar`, na ordem: entram no fim da fila e a entrega começa. */
+    receber(codigos) {
+      const quando = agora();
+      for (const codigo of codigos) fila.push({ codigo, desde: quando });
+      return esvaziar();
+    },
+    /** Esquece o que esperava (a sessão saiu: não entra na tela de quem vier depois). */
+    limpar() {
+      geracao += 1;
+      fila = [];
+      rodando = false;
+      cancelar?.();
+      cancelar = null;
+    },
+    /** Quantos esperam a vez (para o teste). */
+    esperando: () => fila.length,
+  };
+}
+
+/** Quanto a aba que retoma um leitor espera a dona dele responder. */
+export const ESPERA_DA_DONA_MS = 300;
+
+/**
+ * Um leitor, uma aba. "Duplicar aba" copia o `sessionStorage` — e, com ele, o id do leitor:
+ * sem isto as duas abas retirariam a mesma fila e os bipes se dividiriam entre dois carrinhos,
+ * um deles numa aba escondida. Antes de retomar um leitor, a aba pergunta no `canal` (um
+ * `BroadcastChannel`, que não exige HTTPS: a loja na rede local é HTTP) se outra já cuida dele;
+ * a que cuida (`meu()` devolve o id dela) responde, e quem perguntou não retoma.
+ *
+ * Sem `canal` (navegador muito antigo), a pergunta responde "ninguém" e nada muda.
+ */
+export function criarDonaDaAba({
+  canal,
+  meu,
+  esperaMs = ESPERA_DA_DONA_MS,
+  agendar = (fn, ms) => {
+    const t = setTimeout(fn, ms);
+    return () => clearTimeout(t);
+  },
+}) {
+  const perguntas = new Map();
+  canal?.addEventListener('message', (evento) => {
+    const { tipo, id } = evento?.data ?? {};
+    if (!Number.isInteger(id)) return;
+    if (tipo === 'quem-cuida' && meu() === id) canal.postMessage({ tipo: 'eu-cuido', id });
+    else if (tipo === 'eu-cuido') perguntas.get(id)?.(true);
+  });
+
+  return {
+    /** Resolve `true` se outra aba já cuida do leitor `id`. */
+    outraCuida(id) {
+      if (!canal) return Promise.resolve(false);
+      return new Promise((resolve) => {
+        let desistir = () => {};
+        const responder = (sim) => {
+          desistir();
+          perguntas.delete(id);
+          resolve(sim);
+        };
+        perguntas.set(id, responder);
+        desistir = agendar(() => responder(false), esperaMs);
+        canal.postMessage({ tipo: 'quem-cuida', id });
+      });
+    },
+  };
+}

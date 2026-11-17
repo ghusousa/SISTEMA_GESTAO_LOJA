@@ -19,16 +19,16 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { baseAtual, mensagemDoErro } from '@/api/client';
 import { leitor } from '@/api/endpoints';
-import { LeitorPareado } from '@/components/LeitorPareado';
+import { LeitorPareado, ListaDeBipes } from '@/components/LeitorPareado';
 import { Scanner, SO_QR, type ScannerRef } from '@/components/Scanner';
 import { Botao, Campo, Cartao } from '@/components/ui';
 import { useTelaVisivel } from '@/hooks/useTelaVisivel';
 import {
+  conviteDoLink,
   formatarCodigo,
   hostDoEndereco,
   lerConvite,
   mesmoServidor,
-  montarConvite,
   normalizarCodigo,
   type Convite,
 } from '@/lib/leitorRemoto';
@@ -45,6 +45,9 @@ export default function LeitorDoComputador() {
 type Modo = 'inicio' | 'qr' | 'digitar';
 
 const NAO_E_CONVITE = 'Isso não é o QR do leitor. Aponte para o QR na tela do computador.';
+const CONVITE_DE_OUTRA_VERSAO =
+  'Este link do leitor é de outra versão do sistema. Leia o QR pela câmera do app ou digite o código.';
+
 
 /** A API do app no mesmo formato da do convite (`…/api/v1`). */
 function apiDoApp(): string {
@@ -52,11 +55,15 @@ function apiDoApp(): string {
 }
 
 function SemPareamento({ visivel }: { visivel: boolean }) {
-  const params = useLocalSearchParams<{ c?: string; api?: string }>();
+  const params = useLocalSearchParams<{ v?: string; c?: string; api?: string }>();
   const router = useRouter();
   const ligar = useLeitorStore((e) => e.ligar);
   const aviso = useLeitorStore((e) => e.aviso);
   const esquecerAviso = useLeitorStore((e) => e.esquecerAviso);
+  // O que não saiu do leitor que acabou de parar: a pessoa vê o que refazer até dispensar.
+  // (Filtra fora do seletor: array novo a cada leitura da store faria o zustand 5 girar.)
+  const bipes = useLeitorStore((e) => e.bipes);
+  const naoSairam = bipes.filter((b) => b.estado === 'nao-enviado' || b.estado === 'sem-confirmacao');
 
   const [modo, setModo] = useState<Modo>('inicio');
   const [texto, setTexto] = useState('');
@@ -69,20 +76,29 @@ function SemPareamento({ visivel }: { visivel: boolean }) {
   // chega preenchido, mas ligar continua sendo um toque da pessoa. Lido, sai da rota —
   // senão, depois de desligar, a tela voltaria com o código velho no campo.
   useEffect(() => {
-    const codigo = normalizarCodigo(params.c);
-    if (!codigo) return;
-    setTexto(formatarCodigo(codigo));
-    // Pelo mesmo leitor do QR: `api` que não é http(s) vira null do mesmo jeito.
-    setApiDoConvite(lerConvite(montarConvite(codigo, params.api))?.api ?? null);
+    if (!normalizarCodigo(params.c)) return;
+    // Pelo mesmo leitor do QR (versão, código, `api` que não é http(s)): o link e a câmera
+    // do app aceitam e recusam as mesmas coisas.
+    const convite = lerConvite(conviteDoLink({ v: params.v, c: params.c, api: params.api }));
+    router.setParams({ v: undefined, c: undefined, api: undefined } as never);
+    if (!convite) {
+      setErro(CONVITE_DE_OUTRA_VERSAO);
+      return;
+    }
+    setTexto(formatarCodigo(convite.codigo));
+    setApiDoConvite(convite.api);
     setModo('digitar');
-    router.setParams({ c: undefined, api: undefined } as never);
-  }, [params.c, params.api, router]);
+  }, [params.v, params.c, params.api, router]);
 
   const aceitar = useMutation({
-    mutationFn: (convite: Convite) => leitor.aceitar(convite.codigo),
-    onSuccess: (novo) => {
+    mutationFn: async (convite: Convite) => {
+      // A sessão de quando o aceite saiu: se ela sair antes da resposta, nada liga.
+      const sessao = useLeitorStore.getState().sessao;
+      return { novo: await leitor.aceitar(convite.codigo), sessao };
+    },
+    onSuccess: ({ novo, sessao }) => {
       setErro(null);
-      ligar(novo);
+      ligar(novo, sessao);
     },
     onError: (falha, convite) => {
       let mensagem = mensagemDoErro(falha, 'Não deu para ligar o leitor.');
@@ -105,15 +121,17 @@ function SemPareamento({ visivel }: { visivel: boolean }) {
   const aoLerQr = useCallback((lido: string) => {
     const convite = lerConvite(lido);
     if (!convite) {
-      // A câmera segue lendo; a trava do Scanner segura a repetição do mesmo QR.
+      // A câmera segue lendo; a trava do Scanner segura a repetição do mesmo QR. `false`:
+      // a leitura foi recusada — sem a vibração de "deu certo" nem o "Último: <Pix>".
       setAvisoQr(NAO_E_CONVITE);
-      return;
+      return false;
     }
     scanner.current?.pausar();
     setAvisoQr(null);
     setErro(null);
     setApiDoConvite(convite.api);
     mutar.current(convite);
+    return true;
   }, []);
 
   function ligarDigitado() {
@@ -126,7 +144,8 @@ function SemPareamento({ visivel }: { visivel: boolean }) {
   function abrir(novo: Modo) {
     setErro(null);
     setAvisoQr(null);
-    esquecerAviso();
+    // O aviso do leitor que parou (e a lista do que não chegou) fica até a pessoa tocar
+    // nele, ou até ligar de novo: é a lista do que ela tem de bipar outra vez.
     if (novo !== 'digitar') setApiDoConvite(null);
     setModo(novo);
   }
@@ -164,9 +183,17 @@ function SemPareamento({ visivel }: { visivel: boolean }) {
       {!!aviso && (
         <Cartao estilo={s.cartaoAviso} onPress={esquecerAviso}>
           <Text style={s.avisoTexto}>{aviso}</Text>
+          {naoSairam.length > 0 && (
+            <Text style={s.avisoTexto}>
+              {naoSairam.length === 1
+                ? 'Esta leitura não saiu (ou não foi confirmada) — bipe de novo o que faltar:'
+                : `Estas ${naoSairam.length} leituras não saíram (ou não foram confirmadas) — bipe de novo o que faltar:`}
+            </Text>
+          )}
           <Text style={s.dispensar}>Tocar para fechar</Text>
         </Cartao>
       )}
+      {!!aviso && naoSairam.length > 0 && <ListaDeBipes bipes={[...naoSairam].reverse()} />}
 
       <Cartao>
         <Text style={s.titulo}>Usar o celular como leitor</Text>
@@ -188,7 +215,11 @@ function SemPareamento({ visivel }: { visivel: boolean }) {
           <Campo
             rotulo="Código que aparece no computador"
             value={texto}
-            onChangeText={setTexto}
+            onChangeText={(novo) => {
+              setTexto(novo);
+              // Outro código, talvez de outro computador: a dica do QR de antes não vale mais.
+              setApiDoConvite(null);
+            }}
             placeholder="ABC 234"
             autoCapitalize="characters"
             autoCorrect={false}

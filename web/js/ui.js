@@ -312,8 +312,10 @@ export function modal({ titulo, render, aoAbrir, largura = '520px' }) {
 
     const fechar = (valor) => {
       document.removeEventListener('keydown', aoTeclar);
+      // Fora do documento, quem tirou foi a troca de rota (`router.js`): o foco é da tela nova.
+      const naTela = fundo.isConnected;
       fundo.remove();
-      focoAnterior?.focus?.();
+      if (naTela) focoAnterior?.focus?.();
       resolve(valor);
     };
     const aoTeclar = (e) => {

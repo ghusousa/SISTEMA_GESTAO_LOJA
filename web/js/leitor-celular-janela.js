@@ -11,11 +11,13 @@ import { avisarErro, html, modal } from './ui.js';
 
 /**
  * Abre o modal com o convite de `primeiro` (`{ p, venceEm }`, venceEm no relógio desta
- * máquina). "Gerar outro" chama `gerarOutro()`, que devolve o próximo `{ p, venceEm }`.
+ * máquina). "Gerar outro" chama `gerarOutro()`, que devolve o próximo `{ p, venceEm }` (ou
+ * `null`, se a sessão saiu no meio).
  *
  * Devolve o controle: `fechar()` (o celular aceitou), `vencer()` (o servidor disse que o
- * código venceu) e `fechou`, a promessa que resolve quando o modal sai da tela por
- * qualquer caminho (aceite, ✕, Esc, clique fora).
+ * código venceu), `naTela()` (o roteador tira o modal do documento ao trocar de rota sem
+ * fechá-lo — quem abriu confere) e `fechou`, a promessa que resolve quando o modal fecha
+ * (aceite, ✕, Esc, clique fora, ou `fechar()`).
  */
 export function mostrarConvite({ primeiro, gerarOutro }) {
   let relogio = null;
@@ -82,7 +84,7 @@ export function mostrarConvite({ primeiro, gerarOutro }) {
         outro.disabled = true;
         try {
           const novo = await gerarOutro();
-          if (aberto) pintar(novo);
+          if (aberto && novo) pintar(novo);
         } catch (erro) {
           avisarErro(erro);
         } finally {
@@ -93,6 +95,7 @@ export function mostrarConvite({ primeiro, gerarOutro }) {
       controle = {
         fechar: () => fechar(undefined),
         vencer,
+        naTela: () => corpo.isConnected,
         marcarFechado: () => {
           aberto = false;
         },
@@ -105,5 +108,10 @@ export function mostrarConvite({ primeiro, gerarOutro }) {
   });
 
   // `modal` chama `aoAbrir` antes de devolver a promessa: o controle já existe aqui.
-  return { fechar: () => controle?.fechar(), vencer: () => controle?.vencer(), fechou };
+  return {
+    fechar: () => controle?.fechar(),
+    vencer: () => controle?.vencer(),
+    naTela: () => !!controle?.naTela(),
+    fechou,
+  };
 }

@@ -21,7 +21,12 @@ import { Botao, Cartao } from '@/components/ui';
 import { useLoja } from '@/hooks/useLoja';
 import { chaves } from '@/lib/queryClient';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
-import { HISTORICO_DE_BIPES, useLeitorStore, type EstadoDoBipe } from '@/stores/leitorStore';
+import {
+  HISTORICO_DE_BIPES,
+  useLeitorStore,
+  type BipeDaFila,
+  type EstadoDoBipe,
+} from '@/stores/leitorStore';
 
 const CONSULTA_A_CADA_MS = 15_000;
 
@@ -29,7 +34,38 @@ const ROTULO: Record<EstadoDoBipe, { texto: string; cor: string; fundo: string }
   enviando: { texto: 'enviando…', cor: cores.alerta, fundo: cores.alertaFraco },
   enviado: { texto: 'enviado', cor: cores.acaoEscura, fundo: cores.sucessoFraco },
   'nao-enviado': { texto: 'não enviado', cor: cores.perigo, fundo: cores.perigoFraco },
+  // A rede não respondeu: pode ter chegado. Bipar de novo sem conferir põe a peça duas vezes.
+  'sem-confirmacao': { texto: 'confira no computador', cor: cores.alerta, fundo: cores.alertaFraco },
 };
+
+/** A lista de bipes com o estado de cada um (mais novo em cima), e o que cada rótulo quer dizer. */
+export function ListaDeBipes({ bipes }: { bipes: readonly BipeDaFila[] }) {
+  const incertos = bipes.some((b) => b.estado === 'sem-confirmacao');
+  return (
+    <Cartao estilo={s.lista}>
+      {bipes.map((bipe) => {
+        const rotulo = ROTULO[bipe.estado];
+        return (
+          <View key={bipe.uuid} style={s.linha}>
+            <Text style={s.codigo} numberOfLines={1}>
+              {bipe.codigo}
+            </Text>
+            <Text style={[s.estado, { color: rotulo.cor, backgroundColor: rotulo.fundo }]}>
+              {rotulo.texto}
+            </Text>
+          </View>
+        );
+      })}
+      <Text style={s.legenda}>
+        “Enviado” é chegou ao servidor: se o computador não pegar a leitura em 2 min, é ele
+        quem avisa que ela não entrou.
+        {incertos
+          ? ' “Confira no computador”: a rede não respondeu e a leitura pode ter chegado — olhe a tela de lá antes de bipar de novo.'
+          : ''}
+      </Text>
+    </Cartao>
+  );
+}
 
 /** Hora no fuso da LOJA (vem de `GET /configuracao`), nunca no do aparelho. */
 function horaNaLoja(iso: string | null, fuso: string | undefined): string {
@@ -61,8 +97,12 @@ export function LeitorPareado({ pareamento, visivel }: Props) {
   const atualizar = useLeitorStore((e) => e.atualizar);
   const encerrar = useLeitorStore((e) => e.encerrar);
   const desligar = useLeitorStore((e) => e.desligar);
+  const alerta = useLeitorStore((e) => e.alerta);
   const scanner = useRef<ScannerRef | null>(null);
   const [desligando, setDesligando] = useState(false);
+  // Em estado da TELA, não só na pausa de dentro do Scanner: o celular que bloqueia com o
+  // diálogo aberto desmonta a câmera, e a que volta nasceria lendo por baixo dele.
+  const [perguntando, setPerguntando] = useState(false);
 
   const consulta = useQuery({
     queryKey: chaves.leitor(pareamento.id),
@@ -92,7 +132,11 @@ export function LeitorPareado({ pareamento, visivel }: Props) {
   function confirmarDesligar() {
     // Diálogo na frente da câmera: ela para, senão segue lendo por baixo (CLAUDE.md).
     scanner.current?.pausar();
-    const retomar = () => scanner.current?.retomar();
+    setPerguntando(true);
+    const retomar = () => {
+      setPerguntando(false);
+      scanner.current?.retomar();
+    };
     Alert.alert(
       'Desligar o leitor?',
       'O computador para de receber os bipes deste celular.',
@@ -128,6 +172,7 @@ export function LeitorPareado({ pareamento, visivel }: Props) {
           <Scanner
             aoLer={aoLer}
             modo="continuo"
+            ativo={!perguntando && !desligando}
             controle={scanner}
             dica="Bipe as peças: cada uma vai para o computador"
           />
@@ -137,26 +182,17 @@ export function LeitorPareado({ pareamento, visivel }: Props) {
       </View>
 
       <ScrollView contentContainerStyle={s.conteudo}>
+        {!!alerta && (
+          <Cartao estilo={s.alerta}>
+            <Text style={s.alertaTexto}>{alerta}</Text>
+          </Cartao>
+        )}
         {ultimos.length === 0 ? (
           <Text style={s.vazio}>
             Nenhuma peça bipada ainda. O que você bipar aparece aqui e no computador.
           </Text>
         ) : (
-          <Cartao estilo={s.lista}>
-            {ultimos.map((bipe) => {
-              const rotulo = ROTULO[bipe.estado];
-              return (
-                <View key={bipe.uuid} style={s.linha}>
-                  <Text style={s.codigo} numberOfLines={1}>
-                    {bipe.codigo}
-                  </Text>
-                  <Text style={[s.estado, { color: rotulo.cor, backgroundColor: rotulo.fundo }]}>
-                    {rotulo.texto}
-                  </Text>
-                </View>
-              );
-            })}
-          </Cartao>
+          <ListaDeBipes bipes={ultimos} />
         )}
 
         <Botao
@@ -195,4 +231,7 @@ const s = StyleSheet.create({
     borderRadius: raio.sm,
     overflow: 'hidden',
   },
+  legenda: { fontSize: fonte.pequena, color: cores.textoSuave, lineHeight: 18 },
+  alerta: { backgroundColor: cores.alertaFraco, borderColor: cores.alerta, borderWidth: 1 },
+  alertaTexto: { fontSize: fonte.base, color: cores.texto, fontWeight: '600' },
 });

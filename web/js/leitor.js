@@ -25,7 +25,7 @@ const SILENCIO_MAXIMO_MS = 300; // Leitor não pausa entre dígitos; dedo humano
 const MINIMO_CARACTERES = 4;
 const CARACTERE_VALIDO = /^[0-9A-Za-z]$/;
 
-/** O leitor da tela aberta: o último que ligou e ainda não desligou. `{ aoLer }` */
+/** O leitor da tela aberta: o último que ligou e ainda não desligou. `{ aoLer, ocupadoQuando }` */
 let leitorDaTela = null;
 
 /** Modal aberto: a pessoa está resolvendo outra coisa (mesma regra do teclado e do foco). */
@@ -38,6 +38,23 @@ function ehCampoDeTexto(elemento) {
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
 }
 
+/** Onde se DIGITA (texto, número, data): caixa de marcar e botão não contam. */
+const SEM_DIGITACAO = new Set(['checkbox', 'radio', 'button', 'submit', 'reset', 'file', 'range', 'color', 'image']);
+
+/**
+ * A pessoa está com o cursor num campo de digitar dentro de `area` — a quantidade e o custo da
+ * lista da conferência, o motivo da devolução. Serve ao `ocupadoQuando` das telas: o código que
+ * vem do celular redesenha a lista por baixo, e o que ela digitou e ainda não confirmou sumiria
+ * (o campo novo nasce com o valor antigo). Com o leitor USB isso não acontecia: quem digita é
+ * quem bipa.
+ */
+export function digitandoEm(area) {
+  const atual = document.activeElement;
+  if (!area || !atual || !area.contains(atual)) return false;
+  if (atual.isContentEditable || atual.tagName === 'TEXTAREA') return true;
+  return atual.tagName === 'INPUT' && !SEM_DIGITACAO.has(String(atual.type || 'text').toLowerCase());
+}
+
 /**
  * @param {(codigo: string) => void} aoLer chamado com o código lido, já limpo.
  * @param {number} repeticaoMs janela em que o mesmo código não dispara duas vezes.
@@ -46,8 +63,13 @@ function ehCampoDeTexto(elemento) {
  * @param {() => boolean} [ignorarQuando] o Enter é de outra pessoa agora.
  *   O mesmo campo aceita bipe E nome digitado: com a lista de resultados aberta, o Enter
  *   escolhe da lista, e sem isto ele viraria uma bipada de "camiseta" — que não existe.
+ * @param {() => boolean} [ocupadoQuando] a tela não pode receber código DE FORA agora (o
+ *   celular, `entregarCodigoDeFora`): está gravando — a lista já foi copiada para o POST e
+ *   será limpa quando a resposta chegar, levando junto o que entrasse no meio — ou a pessoa
+ *   está digitando na lista que o código redesenharia (`digitandoEm`). Quem entrega guarda o
+ *   código e tenta de novo. O leitor USB não passa por aqui: quem bipa é quem clicou.
  */
-export function criarLeitor({ aoLer, repeticaoMs = 1200, ignorarQuando = null }) {
+export function criarLeitor({ aoLer, repeticaoMs = 1200, ignorarQuando = null, ocupadoQuando = null }) {
   let buffer = '';
   let ultimoCaractere = 0;
   let ultimoCodigo = '';
@@ -100,7 +122,7 @@ export function criarLeitor({ aoLer, repeticaoMs = 1200, ignorarQuando = null })
     buffer += evento.key;
   }
 
-  const registro = { aoLer };
+  const registro = { aoLer, ocupadoQuando };
 
   return {
     ligar() {
@@ -157,19 +179,46 @@ export function manterFoco(input) {
  *
  * Chama o `aoLer` DIRETO: sem a trava de repetição (duas peças iguais bipadas na câmera
  * são duas peças — quem filtra a leitura dupla é o celular) e sem esperar Enter. Espera o
- * `aoLer` terminar, para um lote de bipes cair na ordem em que foi lido.
+ * `aoLer` terminar, para um lote de bipes cair na ordem em que foi lido — mas não espera a
+ * PESSOA: se o `aoLer` abrir uma janela (a "peça ainda não cadastrada" da Entrada), o código
+ * conta como entregue já, e os próximos encontram a janela aberta. Esperar a resposta dela
+ * seguraria a fila inteira, que envelheceria no servidor e seria descartada calada.
  *
- * Devolve o que aconteceu: `'entregue'`, `'janela-aberta'` (um modal na frente: o código
- * não atropela o que a pessoa está resolvendo) ou `'sem-leitor'` (a tela aberta não lê
- * código). Quem chama avisa a pessoa.
+ * Devolve o que aconteceu, e quem chama avisa a pessoa: `'entregue'`; `'janela-aberta'` (um
+ * modal na frente: o código não atropela o que a pessoa está resolvendo); `'tela-ocupada'` (o
+ * `ocupadoQuando` da tela: gravando, ou alguém digitando na lista — guarde e tente de novo);
+ * ou `'sem-leitor'` (nenhuma tela que lê código ligada — ainda, num F5, ou nesta tela).
  */
 export async function entregarCodigoDeFora(codigo) {
   if (haJanelaAberta()) return 'janela-aberta';
   const alvo = leitorDaTela;
   if (!alvo) return 'sem-leitor';
+  if (alvo.ocupadoQuando?.()) return 'tela-ocupada';
   piscarCampo();
-  await alvo.aoLer(codigo);
+  const janela = quandoAbrirJanela();
+  try {
+    const lendo = Promise.resolve(alvo.aoLer(codigo));
+    // Se a janela ganhar, a leitura segue sozinha; a falha dela é da tela (que avisa).
+    lendo.catch(() => {});
+    await Promise.race([lendo, janela.abriu]);
+  } finally {
+    janela.parar();
+  }
   return 'entregue';
+}
+
+/** Resolve quando um modal aparece na página; `parar()` solta o observador. */
+function quandoAbrirJanela() {
+  let observador = null;
+  const abriu = new Promise((resolve) => {
+    if (typeof MutationObserver !== 'function' || !document.body) return;
+    observador = new MutationObserver(() => {
+      if (haJanelaAberta()) resolve();
+    });
+    // O `modal` de `ui.js` pendura o fundo direto no `body`.
+    observador.observe(document.body, { childList: true });
+  });
+  return { abriu, parar: () => observador?.disconnect() };
 }
 
 let fimDoPisca = null;

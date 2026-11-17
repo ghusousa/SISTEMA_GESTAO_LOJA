@@ -10,8 +10,10 @@
 import { Redirect, useLocalSearchParams } from 'expo-router';
 
 export default function AtalhoDoLeitor() {
-  const { c, api } = useLocalSearchParams<{ c?: string; api?: string }>();
+  const { v, c, api } = useLocalSearchParams<{ v?: string; c?: string; api?: string }>();
   const params: Record<string, string> = {};
+  // A versão vai junto: quem decide se o convite serve é `lerConvite`, como na câmera do app.
+  if (typeof v === 'string') params.v = v;
   if (typeof c === 'string') params.c = c;
   if (typeof api === 'string') params.api = api;
   return <Redirect href={{ pathname: '/mais/leitor', params } as never} />;

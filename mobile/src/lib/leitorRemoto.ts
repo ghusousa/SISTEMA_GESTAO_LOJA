@@ -193,6 +193,19 @@ export function venceu(bipe: { lidoEm: number }, agora: number): boolean {
 
 // ------------------------------------------------------------------ só do app
 
+/**
+ * O link do convite (`gestaoloja://leitor?v=…&c=…&api=…`, aberto pela câmera do aparelho)
+ * remontado como texto a partir dos parâmetros da rota, para passar pela MESMA `lerConvite`
+ * da câmera do app: versão desconhecida, código torto e `api` que não é http(s) são tratados
+ * igual nos dois caminhos.
+ */
+export function conviteDoLink(params: { v?: string; c?: string; api?: string }): string {
+  const partes = (['v', 'c', 'api'] as const)
+    .filter((k) => typeof params[k] === 'string')
+    .map((k) => `${k}=${encodeURIComponent(params[k] as string)}`);
+  return `${ESQUEMA_DO_CONVITE}://leitor?${partes.join('&')}`;
+}
+
 /** Primeira espera entre tentativas de envio; dobra a cada falha. */
 export const ESPERA_INICIAL_MS = 1000;
 
@@ -245,7 +258,9 @@ export function avisoDoFim(pareamento: {
   if (pareamento?.status === 'ENCERRADO') {
     if (pareamento.motivo_encerramento === 'CELULAR') return 'O leitor foi desligado neste celular.';
     if (pareamento.motivo_encerramento === 'TROCOU') {
-      return 'Este celular passou a ser o leitor de outro computador.';
+      // "Um celular, um computador" vale por LOGIN: com a mesma conta em dois aparelhos, o
+      // outro computador pode ter sido ligado no outro aparelho — a frase não afirma qual.
+      return 'O seu login ligou o leitor de outro computador (neste ou em outro aparelho).';
     }
   }
   return 'O computador desligou o leitor.';

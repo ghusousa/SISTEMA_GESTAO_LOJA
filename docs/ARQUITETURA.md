@@ -1634,13 +1634,37 @@ Fulana" toma o lugar do botão (clicar oferece Desligar). Com o leitor ATIVO, a 
 fila **na hora** do aviso "leitor" — `ouvirNaHora` do `tempo-real.js`, fora da rodada de 1–2 s,
 que continua só para redesenhar tela —, quando o canal volta, e como rede de segurança de 10 em
 10 s (sem canal, de 2 em 2 s: o bipe leva até ~2 s). Uma retirada por vez (`umaPorVez`): aviso
-que chega no meio vira UMA rodada a mais, e lote cheio (50) pede outra. Cada código vai, em
-ordem, ao `criarLeitor` montado por último (`entregarCodigoDeFora` de `leitor.js`), que chama o
-`aoLer` da tela direto — sem a trava de repetição do leitor USB, porque o celular já tem a dele
-e duas bipadas da mesma peça são duas peças —; com uma janela aberta o código não entra e a tela
-avisa "bipe de novo"; numa tela sem leitor, o aviso manda abrir o PDV, a Devolução, a Entrada, o
-Inventário ou a Condicional. O id do pareamento fica no `sessionStorage` da aba (o F5 não
-desliga; outra aba não herda). Sair do sistema manda o DELETE (até 3 s) ANTES do logout — o
+que chega no meio vira UMA rodada a mais, e lote cheio (50) pede outra. `descartados > 0` vira
+aviso no computador ("N leituras do celular chegaram depois de 2 min…"): o celular mostrou
+"enviado" para elas, e sem o aviso ninguém saberia que não entraram. O que a retirada traz
+passa pela **fila de entrega** (`criarEntrega`, `leitor-remoto.js`, com teste) — separada da
+retirada, para código esperando a tela não segurar o `retirar` (a fila do servidor envelheceria
+e seria descartada calada). Cada código vai, em ordem, ao `criarLeitor` montado por último
+(`entregarCodigoDeFora` de `leitor.js`), que chama o `aoLer` da tela direto — sem a trava de
+repetição do leitor USB, porque o celular já tem a dele e duas bipadas da mesma peça são duas
+peças. O `aoLer` é esperado (a busca da peça) para o lote cair em ordem, mas não a PESSOA: se
+ele abrir uma janela ("peça ainda não cadastrada"), o código conta como entregue e os próximos
+encontram a janela aberta. Com uma janela aberta o código não entra e a tela avisa "bipe de
+novo". **Tela ocupada** (`ocupadoQuando` do `criarLeitor`): gravando — a lista já foi copiada
+para o POST e é limpa quando a resposta chega, e o código que entrasse no meio sumiria sem
+aviso — ou com a pessoa digitando na lista que o bipe redesenharia (`digitandoEm`: a quantidade
+digitada e ainda não confirmada voltaria a 1). Aí o código ESPERA e tenta de novo a cada 250 ms,
+por até 60 s; passou, avisa "bipe de novo" (entrar minutos depois numa lista já gravada seria a
+surpresa que o prazo do servidor evita). Entrada, Inventário, Condicional nova e Devolução dizem
+quando estão ocupadas; o PDV fecha a venda num modal. A Entrada, ao gravar, tira da lista só o
+que foi no envio (`oQueSobrou`): a leitura que já vinha a caminho quando a pessoa clicou fica
+para a próxima, em vez de sumir na limpeza; a Condicional nova, que sai da tela, avisa que uma
+peça lida no meio ficou de fora. Numa tela sem leitor o código espera 3 s (no F5 o leitor é
+retomado antes de a tela terminar de carregar; numa troca de tela há um instante sem nenhuma) e
+então o aviso manda abrir o PDV, a Devolução, a Entrada, o Inventário ou a Condicional. O id do
+pareamento fica no `sessionStorage` da aba (o F5 não desliga; outra aba não herda). "Duplicar
+aba" copia o `sessionStorage`: antes de retomar, a aba pergunta por um `BroadcastChannel`
+(`criarDonaDaAba`; não exige HTTPS, e a loja na rede local é HTTP) se outra aba já cuida daquele
+leitor, e a cópia não retoma — senão as duas retirariam a mesma fila e os bipes se dividiriam
+entre dois carrinhos, um numa aba escondida. O roteador tira o modal do QR da tela ao trocar de
+rota sem fechá-lo: o `rota-trocada` (e o próximo clique) fecha de vez a janela que saiu do
+documento, senão o botão ficava morto até um F5. O código gerado com a sessão saindo no meio
+não é adotado nem mostrado (e é encerrado, se ainda houver token). Sair do sistema manda o DELETE (até 3 s) ANTES do logout — o
 servidor não amarra o logout ao leitor, e o pareamento de uma tela que não pôde avisar (aba
 fechada, energia, sessão perdida) vence sozinho nas 12 h. **App** — Mais → "Leitor do
 computador", para todo papel: lê o QR (a câmera só com o tipo `qr`; o que não é convite mostra
@@ -1652,8 +1676,24 @@ a câmera lê sem parar (as travas de `lib/leitura.ts`), e cada leitura entra co
 próprio numa fila em memória (`stores/leitorStore.ts`, laço testado em `lib/filaDoLeitor.ts`): um
 bipe por vez, em ordem; rede caída, timeout, 5xx, 408, 429 e `LEITOR_FILA_CHEIA` reenviam a MESMA
 chave com espera de 1, 2, 4, 8 e 10 s, e o que **não saiu em 120 s** vira "não enviado"
-(`PRAZO_DO_BIPE_MS`, o mesmo prazo do servidor); 422 e `DUPLICADO` descartam só aquele bipe; 404
-ou 409 `LEITOR_DESLIGADO` param a fila e saem do modo leitor dizendo por quê. A tela consulta o
+(`PRAZO_DO_BIPE_MS`, o mesmo prazo do servidor) — ou **"confira no computador"**, quando a
+última tentativa ficou sem resposta (rede, timeout, 5xx: o servidor pode ter gravado e o
+computador recebido, e quem lê "não enviado" bipa de novo e a peça entra duas vezes). Resposta
+do servidor tira a dúvida: a chave é conferida antes de tudo, então o bipe que já estava lá
+voltaria 200, nunca 409 ou 404. A fila cheia (`LEITOR_FILA_CHEIA`) aparece na hora como alerta
+("o computador não está recebendo as leituras…"), sem esperar o bipe vencer. 422 e `DUPLICADO`
+descartam só aquele bipe; 404 ou 409 `LEITOR_DESLIGADO` param a fila e saem do modo leitor
+dizendo por quê — o 409 só traz o status, então o app consulta o pareamento para dizer o
+motivo (o computador desligou? o MESMO login ligou outro computador — "um celular, um
+computador" vale por login, e a frase não afirma que foi este aparelho?). O que não saiu fica
+listado com o aviso, na tela de ligar, até a pessoa dispensar: é o que ela tem de bipar de
+novo. "Enviado" quer dizer "chegou ao servidor" (a tela diz); o que o computador não pegar a
+tempo, ele avisa lá. O aceite que responde depois do logout não liga leitor nenhum (contador de
+sessão na store); o diálogo "Desligar o leitor?" para a câmera pelo estado da TELA, não só pela
+pausa de dentro do `Scanner` (bloquear o celular com o diálogo aberto desmonta a câmera, e a que
+volta nasceria lendo); o QR que não é convite vibra como recusa e não vira o "Último:"; e o link
+`gestaoloja://leitor?v=…` passa pela mesma `lerConvite` da câmera (versão desconhecida é
+recusada nas duas). A tela consulta o
 pareamento de 15 em 15 s só com ela em foco e o app na frente (fora disso, câmera e consulta
 param). O pareamento não é guardado no aparelho: fechar o app esquece do lado do celular, e o
 servidor o mantém até alguém desligar, um novo aceite deste celular (TROCOU) ou as 12 h. O logout
@@ -1999,8 +2039,8 @@ módulos ES em `js/`.
 | `js/store.js` | Sessão e carrinho do PDV — um objeto e quem quiser ser avisado se inscreve. Carrinho e conferência saem com a sessão (`limparTudoDaSessao`), no botão Sair **e** quando ela cai |
 | `js/ui.js` | Template `html` com escape automático, modal, avisos, paginação, formatação pt-BR, campo de dinheiro |
 | `js/dinheiro.js` | Espelho de `mobile/src/lib/money.ts`. Centavos inteiros; **se mudar lá, mude aqui** |
-| `js/leitor.js` | Captura do leitor USB (teclado) e foco permanente no campo de leitura. O último `criarLeitor` ligado é o da tela; `entregarCodigoDeFora` entrega a ele o bipe do celular (ADR-43) |
-| `js/leitor-remoto.js` | Espelho de `mobile/src/lib/leitorRemoto.ts` (teste em `testes/web/leitor-remoto.test.mjs`): o convite do QR do celular-leitor, o código normalizado e formatado, `mesmoServidor` e o prazo de 120 s do bipe; e, só do web, o ritmo da retirada e `umaPorVez` (ADR-43) |
+| `js/leitor.js` | Captura do leitor USB (teclado) e foco permanente no campo de leitura. O último `criarLeitor` ligado é o da tela; `entregarCodigoDeFora` entrega a ele o bipe do celular, respeitando o `ocupadoQuando` da tela (gravando, ou `digitandoEm` a lista) (ADR-43) |
+| `js/leitor-remoto.js` | Espelho de `mobile/src/lib/leitorRemoto.ts` (teste em `testes/web/leitor-remoto.test.mjs`): o convite do QR do celular-leitor, o código normalizado e formatado, `mesmoServidor` e o prazo de 120 s do bipe; e, só do web, o ritmo da retirada, `umaPorVez`, a fila de entrega à tela (`criarEntrega`), o aviso dos descartados e a dona da aba (`criarDonaDaAba`) (ADR-43) |
 | `js/leitor-celular.js`, `js/leitor-celular-janela.js` | O celular como leitor (ADR-43): botão e selo da lateral, retirada da fila na hora do aviso (`ouvirNaHora` do `tempo-real.js`) e o modal do QR. `js/qr.js` desenha o QR em SVG pelo DOM com `js/vendor/qrcode.js` (qrcode-generator 1.4.4, MIT, copiado inteiro) |
 | `js/grafico.js` | Barras e proporções em SVG escrito à mão — sem biblioteca, sem CDN |
 | `js/parcelas.js`, `js/condicional.js` | Espelhos de `mobile/src/lib/parcelas.ts` e `condicional.ts` (com teste lá): parcelas da nota do fornecedor e a conta do fechamento da condicional |

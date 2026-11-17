@@ -14,9 +14,16 @@ import test from 'node:test';
 
 import {
   ALFABETO,
+  avisoDaEntrega,
   avisoDoFimNoComputador,
+  avisoDosDescartados,
   BUSCA_COM_CANAL_MS,
   BUSCA_SEM_CANAL_MS,
+  criarDonaDaAba,
+  criarEntrega,
+  ESPERA_DA_DONA_MS,
+  ESPERA_DA_TELA_MS,
+  ESPERA_DO_LEITOR_MS,
   formatarCodigo,
   hostDoEndereco,
   intervaloDaBusca,
@@ -386,4 +393,283 @@ test('entregarCodigoDeFora: vale o leitor da tela que montou por último', async
   assert.equal(await entregarCodigoDeFora('1234'), 'entregue');
   assert.deepEqual(deQuem, ['novo']);
   novo.desligar();
+});
+
+// ------------------------------------------------------------ a tela ocupada e a janela que abre
+
+/** O `document` de mentira com foco, área da lista e `body` para o observador de janelas. */
+function documentoComFoco() {
+  const doc = documentoFalso();
+  doc.body = {};
+  doc.activeElement = null;
+  return doc;
+}
+
+/** `MutationObserver` de mentira: o teste chama `mutou()` quando "pendura" um modal. */
+function observadorFalso() {
+  const vivos = new Set();
+  globalThis.MutationObserver = class {
+    constructor(aoMudar) {
+      this.aoMudar = aoMudar;
+    }
+    observe() {
+      vivos.add(this);
+    }
+    disconnect() {
+      vivos.delete(this);
+    }
+  };
+  return {
+    mutou: () => [...vivos].forEach((o) => o.aoMudar([])),
+    quantos: () => vivos.size,
+  };
+}
+
+test('entregarCodigoDeFora: tela gravando não recebe — o código espera (tela-ocupada)', async () => {
+  globalThis.document = documentoComFoco();
+  const { criarLeitor, entregarCodigoDeFora } = await import('../../web/js/leitor.js');
+  let enviando = true;
+  const lidos = [];
+  const leitor = criarLeitor({ aoLer: (c) => lidos.push(c), ocupadoQuando: () => enviando });
+  leitor.ligar();
+
+  assert.equal(await entregarCodigoDeFora('7891234567895'), 'tela-ocupada');
+  assert.deepEqual(lidos, [], 'no meio da gravação o código entraria na lista que vai ser limpa');
+  enviando = false;
+  assert.equal(await entregarCodigoDeFora('7891234567895'), 'entregue');
+  assert.deepEqual(lidos, ['7891234567895']);
+  leitor.desligar();
+});
+
+test('digitandoEm: o cursor num campo de digitar dentro da lista, e só isso', async () => {
+  globalThis.document = documentoComFoco();
+  const { digitandoEm } = await import('../../web/js/leitor.js');
+  const dentro = new Set();
+  const area = { contains: (el) => dentro.has(el) };
+  const quantidade = { tagName: 'INPUT', type: 'number' };
+  const marcar = { tagName: 'INPUT', type: 'checkbox' };
+  const motivo = { tagName: 'TEXTAREA' };
+  const fornecedor = { tagName: 'INPUT', type: 'text' };
+  dentro.add(quantidade).add(marcar).add(motivo);
+
+  document.activeElement = quantidade;
+  assert.equal(digitandoEm(area), true, 'digitando a quantidade da lista');
+  document.activeElement = motivo;
+  assert.equal(digitandoEm(area), true);
+  document.activeElement = marcar;
+  assert.equal(digitandoEm(area), false, 'caixa de marcar não se digita: não segura o bipe');
+  document.activeElement = fornecedor;
+  assert.equal(digitandoEm(area), false, 'campo fora da lista não é redesenhado pelo bipe');
+  document.activeElement = null;
+  assert.equal(digitandoEm(area), false);
+  assert.equal(digitandoEm(null), false);
+});
+
+test('entregarCodigoDeFora: aoLer que abre janela não segura a entrega', async () => {
+  globalThis.document = documentoComFoco();
+  const observador = observadorFalso();
+  const { criarLeitor, entregarCodigoDeFora } = await import('../../web/js/leitor.js');
+  let responder;
+  // A Entrada: código desconhecido abre "Peça ainda não cadastrada" e espera a pessoa.
+  const leitor = criarLeitor({
+    aoLer: async () => {
+      await Promise.resolve();
+      document.modalAberto = true;
+      observador.mutou();
+      await new Promise((r) => {
+        responder = r;
+      });
+    },
+  });
+  leitor.ligar();
+
+  assert.equal(await entregarCodigoDeFora('0000000000000'), 'entregue', 'não espera a pessoa');
+  assert.equal(observador.quantos(), 0, 'o observador foi solto');
+  assert.equal(await entregarCodigoDeFora('7891234567895'), 'janela-aberta', 'o próximo vê a janela');
+  responder();
+  delete globalThis.MutationObserver;
+  leitor.desligar();
+});
+
+// ------------------------------------------------------------ a fila de entrega
+
+/** Relógio de mentira: `andar(ms)` dispara o que venceu e deixa a fila trabalhar. */
+function relogio() {
+  const r = { agora: 1_000_000, timers: [] };
+  r.agendar = (fn, ms) => {
+    const t = { quando: r.agora + ms, fn, vivo: true };
+    r.timers.push(t);
+    return () => {
+      t.vivo = false;
+    };
+  };
+  r.andar = async (ms) => {
+    const fim = r.agora + ms;
+    for (;;) {
+      const proximo = r.timers.filter((t) => t.vivo && t.quando <= fim).sort((a, b) => a.quando - b.quando)[0];
+      if (!proximo) break;
+      r.agora = proximo.quando;
+      proximo.vivo = false;
+      proximo.fn();
+      await microtarefas();
+    }
+    r.agora = fim;
+    await microtarefas();
+  };
+  return r;
+}
+
+function montarEntrega(responder) {
+  const r = relogio();
+  const ctx = { tentativas: [], avisos: [], erros: [] };
+  const entrega = criarEntrega({
+    entregar: async (codigo) => {
+      ctx.tentativas.push(codigo);
+      return responder(codigo);
+    },
+    avisar: (texto) => ctx.avisos.push(texto),
+    aoErro: (erro) => ctx.erros.push(erro.message),
+    agora: () => r.agora,
+    agendar: r.agendar,
+  });
+  return { r, ctx, entrega };
+}
+
+test('criarEntrega: entrega em ordem e avisa na hora o que encontrou janela aberta', async () => {
+  const { ctx, entrega } = montarEntrega((c) => (c === 'B' ? 'janela-aberta' : 'entregue'));
+  await entrega.receber(['A', 'B', 'C']);
+  assert.deepEqual(ctx.tentativas, ['A', 'B', 'C']);
+  assert.deepEqual(ctx.avisos, [avisoDaEntrega('janela-aberta', 'B')]);
+  assert.equal(entrega.esperando(), 0);
+});
+
+test('criarEntrega: tela ocupada segura o código (e os de trás) até ela liberar', async () => {
+  let ocupada = true;
+  const { r, ctx, entrega } = montarEntrega(() => (ocupada ? 'tela-ocupada' : 'entregue'));
+  // A rodada do `retirar` não espera a tela: `receber` volta logo.
+  await entrega.receber(['A']);
+  await entrega.receber(['B']);
+  assert.equal(entrega.esperando(), 2, 'nada se perde enquanto a tela grava');
+  await r.andar(4000);
+  assert.equal(entrega.esperando(), 2);
+  assert.deepEqual(ctx.avisos, []);
+
+  ocupada = false;
+  await r.andar(300);
+  assert.equal(entrega.esperando(), 0);
+  assert.deepEqual(ctx.tentativas.filter((c) => c !== 'A').slice(-1), ['B']);
+  assert.deepEqual(ctx.tentativas.slice(-2), ['A', 'B'], 'na ordem da leitura');
+  assert.deepEqual(ctx.avisos, []);
+});
+
+test('criarEntrega: tela ocupada por tempo demais — avisa e segue, não entra minutos depois', async () => {
+  let ocupada = true;
+  const { r, ctx, entrega } = montarEntrega((c) => (ocupada && c === 'A' ? 'tela-ocupada' : 'entregue'));
+  await entrega.receber(['A', 'B']);
+  await r.andar(ESPERA_DA_TELA_MS + 500);
+  assert.deepEqual(ctx.avisos, [avisoDaEntrega('tela-ocupada', 'A')]);
+  assert.deepEqual(ctx.tentativas.slice(-1), ['B'], 'o de trás segue');
+  assert.equal(entrega.esperando(), 0);
+  ocupada = false;
+});
+
+test('criarEntrega: F5 — o código espera a tela que lê código aparecer', async () => {
+  let comLeitor = false;
+  const { r, ctx, entrega } = montarEntrega(() => (comLeitor ? 'entregue' : 'sem-leitor'));
+  await entrega.receber(['7891234567895']);
+  await r.andar(400);
+  assert.deepEqual(ctx.avisos, [], 'a tela ainda está carregando: nada de "abra o PDV"');
+  comLeitor = true;
+  await r.andar(300);
+  assert.equal(entrega.esperando(), 0);
+  assert.deepEqual(ctx.avisos, []);
+
+  // Numa tela que não lê código, o aviso vem depois da espera curta.
+  comLeitor = false;
+  await entrega.receber(['ABCD']);
+  await r.andar(ESPERA_DO_LEITOR_MS + 300);
+  assert.deepEqual(ctx.avisos, [avisoDaEntrega('sem-leitor', 'ABCD')]);
+});
+
+test('criarEntrega: falha do aoLer vai para aoErro e a fila segue', async () => {
+  const { ctx, entrega } = montarEntrega((c) => {
+    if (c === 'A') throw new Error('rede');
+    return 'entregue';
+  });
+  await entrega.receber(['A', 'B']);
+  assert.deepEqual(ctx.erros, ['rede']);
+  assert.deepEqual(ctx.tentativas, ['A', 'B']);
+});
+
+test('criarEntrega: limpar (a sessão saiu) esquece o que esperava e para de tentar', async () => {
+  const { r, ctx, entrega } = montarEntrega(() => 'tela-ocupada');
+  await entrega.receber(['A', 'B']);
+  entrega.limpar();
+  const antes = ctx.tentativas.length;
+  await r.andar(ESPERA_DA_TELA_MS * 2);
+  assert.equal(ctx.tentativas.length, antes, 'nenhuma tentativa depois do logout');
+  assert.equal(entrega.esperando(), 0);
+  assert.deepEqual(ctx.avisos, []);
+});
+
+test('avisoDosDescartados: o celular disse "enviado" — o computador avisa o que não entrou', () => {
+  assert.equal(avisoDosDescartados(0, 'ATIVO'), null);
+  assert.equal(avisoDosDescartados(undefined, 'ATIVO'), null);
+  assert.equal(
+    avisoDosDescartados(1, 'ATIVO'),
+    '1 leitura do celular chegou depois de 2 min e foi descartada — bipe de novo.',
+  );
+  assert.equal(
+    avisoDosDescartados(3, 'ATIVO'),
+    '3 leituras do celular chegaram depois de 2 min e foram descartadas — bipe de novo.',
+  );
+  assert.equal(
+    avisoDosDescartados(2, 'ENCERRADO'),
+    '2 leituras do celular não entraram: o leitor foi desligado antes de chegarem aqui.',
+  );
+});
+
+// ------------------------------------------------------------ um leitor, uma aba
+
+/** Dois (ou mais) `BroadcastChannel` de mentira ligados entre si, como abas do mesmo site. */
+function abas() {
+  const canais = [];
+  return () => {
+    const ouvintes = [];
+    const canal = {
+      ouvintes,
+      addEventListener: (_tipo, fn) => ouvintes.push(fn),
+      postMessage: (dados) => {
+        for (const outro of canais) {
+          if (outro !== canal) queueMicrotask(() => outro.ouvintes.forEach((fn) => fn({ data: dados })));
+        }
+      },
+    };
+    canais.push(canal);
+    return canal;
+  };
+}
+
+test('criarDonaDaAba: a cópia de "Duplicar aba" não retoma o leitor da aba de origem', async () => {
+  const novaAba = abas();
+  let daOrigem = 7;
+  criarDonaDaAba({ canal: novaAba(), meu: () => daOrigem });
+  const r = relogio();
+  const copia = criarDonaDaAba({ canal: novaAba(), meu: () => null, agendar: r.agendar });
+
+  assert.equal(await copia.outraCuida(7), true, 'a origem responde: a cópia não retoma');
+
+  const outro = copia.outraCuida(8);
+  await r.andar(ESPERA_DA_DONA_MS);
+  assert.equal(await outro, false, 'ninguém cuida do 8: retoma (o F5 da própria aba)');
+
+  daOrigem = null; // a origem desligou o leitor
+  const depois = copia.outraCuida(7);
+  await r.andar(ESPERA_DA_DONA_MS);
+  assert.equal(await depois, false);
+});
+
+test('criarDonaDaAba: sem BroadcastChannel, ninguém responde e nada muda', async () => {
+  const dona = criarDonaDaAba({ canal: null, meu: () => 7 });
+  assert.equal(await dona.outraCuida(7), false);
 });

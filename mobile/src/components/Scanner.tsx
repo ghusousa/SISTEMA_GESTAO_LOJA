@@ -40,7 +40,11 @@ export interface ScannerRef {
 }
 
 interface Props {
-  aoLer: (codigo: string) => void;
+  /**
+   * Recebe o código lido. Devolver `false` é a tela recusando a leitura (o QR que não é o
+   * convite do leitor): vibra o aviso em vez do "deu certo" e não vira o "Último".
+   */
+  aoLer: (codigo: string) => void | boolean;
   /** 'continuo' mantém a leitura ativa (bipar vários); 'unico' para após o primeiro código. */
   modo?: 'unico' | 'continuo';
   ativo?: boolean;
@@ -139,9 +143,12 @@ export function Scanner({
 
       if (modo === 'unico') pausado.current = true;
 
+      if (aoLer(data) === false) {
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+        return;
+      }
       setUltimoLido(data);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      aoLer(data);
     },
     [ativo, aoLer, modo],
   );

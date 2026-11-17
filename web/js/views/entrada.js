@@ -23,11 +23,11 @@ import { api, ErroApi } from '../api.js';
 import { ligarBuscaDePeca } from '../busca-peca.js';
 import { formatar, paraDecimalString, somar } from '../dinheiro.js';
 import { notaDepoisDoDuplicado, tirarOQueJaEntrou } from '../entrada-gravada.js';
-import { criarLeitor, manterFoco } from '../leitor.js';
+import { criarLeitor, digitandoEm, manterFoco } from '../leitor.js';
 import { ir } from '../router.js';
 import { conferencia, limparConferencia, novoClientUuid } from '../store.js';
 import { PODE, pode } from '../permissoes.js';
-import { MAX_POR_PECA, pintarConferencia } from '../tabela-conferencia.js';
+import { MAX_POR_PECA, oQueSobrou, pintarConferencia } from '../tabela-conferencia.js';
 import { ligarNotaFornecedor } from '../nota-fornecedor.js';
 import { ajuda, aviso, avisarErro, confirmar, cru, html, ligarCampoDinheiro, plural } from '../ui.js';
 
@@ -228,7 +228,11 @@ export function render(raiz) {
         })),
         ...(notaApi ? { nota: notaApi } : {}),
       });
+      // A peça que entrou na lista DURANTE a gravação (a leitura que já vinha a caminho)
+      // fica para a próxima entrada; limpar tudo a apagaria sem ninguém ver.
+      const sobra = oQueSobrou(itens(), registrados);
       limparConferencia();
+      if (sobra.length) definir(sobra);
       nota?.limpar();
       campoFornecedor.value = '';
       campoObservacao.value = '';
@@ -331,6 +335,9 @@ export function render(raiz) {
     aoLer: lerCodigo,
     repeticaoMs: 250,
     ignorarQuando: busca.aberta,
+    // O código do celular espera: gravando, a lista já foi para o POST e vai ser limpa; e
+    // digitando uma quantidade, o redesenho levaria o que a pessoa digitou.
+    ocupadoQuando: () => enviando || digitandoEm(areaItens),
   });
   leitor.ligar();
   const pararFoco = manterFoco(campo);

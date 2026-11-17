@@ -121,3 +121,15 @@ export function pintarConferencia({ area, itens, veDinheiro, aoMudar, ligarCusto
 
   return numero(itens.reduce((t, i) => t + i.quantidade, 0));
 }
+
+/**
+ * O que está na lista e NÃO foi no envio: `atual` menos `enviados`, peça a peça. A tela grava
+ * uma cópia da lista; o que entrou depois da cópia (a leitura que já vinha a caminho quando a
+ * pessoa clicou em Registrar) fica para a próxima, em vez de sumir na limpeza.
+ */
+export function oQueSobrou(atual, enviados) {
+  const foi = new Map(enviados.map((i) => [i.variante_id, i.quantidade]));
+  return atual
+    .map((i) => ({ ...i, quantidade: i.quantidade - (foi.get(i.variante_id) ?? 0) }))
+    .filter((i) => i.quantidade > 0);
+}
