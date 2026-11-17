@@ -31,6 +31,13 @@ const OPCOES: Opcao[] = [
     rota: '/mais/vendas',
   },
   {
+    // Para qualquer papel (ADR-43): quem bipa no balcão é quem estiver no computador.
+    rotulo: 'Leitor do computador',
+    descricao: 'Bipe pelo celular e a peça cai na tela do computador',
+    icone: 'barcode-scan',
+    rota: '/mais/leitor',
+  },
+  {
     rotulo: 'Devolução',
     descricao: 'A cliente voltou com a peça',
     icone: 'keyboard-return',

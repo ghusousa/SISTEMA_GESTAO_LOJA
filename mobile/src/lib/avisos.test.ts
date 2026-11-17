@@ -151,6 +151,16 @@ test('clientes, que o servidor manda, derruba a lista de clientes', () => {
   assert.deepEqual(chavesDosAssuntos(['clientes']), [['clientes']]);
 });
 
+test('leitor (celular-leitor, ADR-43) não refaz consulta nenhuma no app', () => {
+  // Sai um aviso por bipe gravado: derrubar qualquer chave aqui seria uma busca por peça.
+  assert.deepEqual(chavesDosAssuntos(['leitor']), []);
+  assert.deepEqual(
+    chavesDosAssuntos(['leitor', 'clientes']),
+    chavesDosAssuntos(['clientes']),
+    'misturado a outro assunto, não acrescenta nada',
+  );
+});
+
 test('assunto desconhecido e sinais de vida não derrubam nada', () => {
   assert.deepEqual(chavesDosAssuntos(['ping', 'conectado', 'novidade' as Assunto]), []);
 });

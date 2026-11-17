@@ -18,6 +18,12 @@ import { ALVO_TOQUE, cores, espaco, fonte, raio } from '@/lib/tema';
 /** EAN-13/EAN-8 cobrem etiqueta de fornecedor; Code 128 e UPC aparecem em peças importadas. */
 const TIPOS: BarcodeType[] = ['ean13', 'ean8', 'code128', 'upc_a', 'upc_e'];
 
+/**
+ * Só QR: o convite do celular-leitor (ADR-43). Fora das etiquetas de propósito — com QR
+ * ligado no PDV, um Pix na bancada viraria "código não cadastrado".
+ */
+export const SO_QR: BarcodeType[] = ['qr'];
+
 export interface ScannerRef {
   /** Libera uma nova leitura no modo 'unico' (ex.: o código bipado não existia). */
   reativar: () => void;
@@ -48,6 +54,11 @@ interface Props {
   dica?: string;
   /** Recebe o controle para reativar a leitura depois de um erro. */
   controle?: React.MutableRefObject<ScannerRef | null>;
+  /**
+   * Que códigos a câmera procura. Padrão: as etiquetas de peça. Passe uma constante de
+   * módulo (como `SO_QR`): array novo a cada render reconfiguraria a câmera.
+   */
+  tipos?: BarcodeType[];
 }
 
 export function Scanner({
@@ -58,6 +69,7 @@ export function Scanner({
   rodape,
   dica = 'Aponte para o código de barras da peça',
   controle,
+  tipos = TIPOS,
 }: Props) {
   const [permissao, pedirPermissao] = useCameraPermissions();
   const [lanterna, setLanterna] = useState(false);
@@ -162,7 +174,7 @@ export function Scanner({
         style={StyleSheet.absoluteFill}
         facing="back"
         enableTorch={lanterna}
-        barcodeScannerSettings={{ barcodeTypes: TIPOS }}
+        barcodeScannerSettings={{ barcodeTypes: tipos }}
         onBarcodeScanned={ativo ? tratarLeitura : undefined}
       />
 

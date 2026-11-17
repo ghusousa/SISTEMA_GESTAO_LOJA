@@ -582,6 +582,8 @@ export interface Auditoria {
 export interface ConfiguracaoPublica {
   nome: string;
   segmento: string;
+  /** Fuso da loja (IANA). Opcional: servidor antigo não manda, e aí vale São Paulo. */
+  timezone?: string;
   vocabulario: {
     icone: string;
     exemplo_produto: string;
@@ -756,4 +758,43 @@ export interface NotaFornecedor {
   numero: string | null;
   valor_total: string;
   parcelas: { vencimento: string; valor: string }[];
+}
+
+// ------------------------------------------------------------------ leitor pelo celular (ADR-43)
+
+/** Calculado no servidor (nunca coluna): ver `lib/leitorRemoto.ts`. */
+export type StatusPareamento = 'AGUARDANDO' | 'ATIVO' | 'EXPIRADO' | 'ENCERRADO';
+
+export type MotivoEncerramento = 'COMPUTADOR' | 'CELULAR' | 'TROCOU' | 'SUBSTITUIDO';
+
+/** Um computador e o celular que bipa para ele. Datas em ISO UTC. */
+export interface Pareamento {
+  id: number;
+  codigo: string;
+  status: StatusPareamento;
+  computador_nome: string;
+  aparelho_nome: string | null;
+  criado_em: string;
+  codigo_expira_em: string;
+  aceito_em: string | null;
+  /** Aceite + 12 h, fixo: não desliza com o uso. */
+  expira_em: string | null;
+  encerrado_em: string | null;
+  motivo_encerramento: MotivoEncerramento | null;
+}
+
+export interface BipeEnviado {
+  id: number;
+  client_uuid: string;
+  pareamento_id: number;
+  codigo: string;
+  criado_em: string;
+}
+
+/** O lote que o computador retira (até 50). Não é listagem paginada: é uma fila. */
+export interface BipesRetirados {
+  items: { id: number; codigo: string; criado_em: string }[];
+  /** Pendentes velhos demais (ou de leitor já desligado): marcados, não entregues. */
+  descartados: number;
+  pareamento: Pareamento;
 }

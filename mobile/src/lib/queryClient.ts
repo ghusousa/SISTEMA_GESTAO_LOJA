@@ -68,6 +68,8 @@ export const chaves = {
   condicional: (id: number) => ['condicionais', id] as const,
   /** NÃO é relatório: conta a pagar fica fora do Resultado (ADR-40). */
   contasPagar: ['contas-pagar'] as const,
+  /** O pareamento do celular-leitor (ADR-43); a tela consulta de 15 em 15 s. */
+  leitor: (id: number) => ['leitor', id] as const,
 };
 
 /**

@@ -29,6 +29,7 @@ export type Assunto =
   | 'usuarios'
   | 'condicionais'
   | 'contas_pagar'
+  | 'leitor'
   | 'conectado'
   | 'ping';
 
@@ -69,6 +70,10 @@ const CHAVES_POR_ASSUNTO: Record<Assunto, readonly QueryKey[]> = {
   usuarios: [chaves.usuarios, chaves.meuDia],
   condicionais: [chaves.condicionais],
   contas_pagar: [chaves.contasPagar],
+  // Celular-leitor (ADR-43): o assunto sai a cada bipe gravado. Quem precisa dele é o
+  // computador pareado; no app, a tela do leitor consulta o pareamento no próprio ritmo
+  // (15 s), e refazer algo a cada bipe seria uma ida ao servidor por peça bipada.
+  leitor: [],
   // Sinais de vida, não mudança: quem trata `conectado` é a reconexão, que recarrega tudo.
   conectado: [],
   ping: [],
