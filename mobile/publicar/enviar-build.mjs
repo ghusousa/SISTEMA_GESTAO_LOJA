@@ -5,7 +5,8 @@
  *
  *   npm run publicar:build
  *
- * Na primeira vez ele também cria o registro do app na conta da Apple.
+ * O registro do app tem de existir na conta da Apple: com chave de API ninguém o cria (só o
+ * site, uma vez — README desta pasta).
  */
 
 import { spawnSync } from 'node:child_process';

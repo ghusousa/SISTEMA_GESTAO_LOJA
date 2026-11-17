@@ -1,23 +1,34 @@
 # Publica o app do iOS na App Store — o caminho todo, sem Mac e sem digitar nada no site.
 # Mesmo molde do "Publicar iOS na App Store" do Sistema Obras, com o publicador desta loja
-# (mobile/publicar/publicar.mjs) no lugar do fastlane: ele já sobe ficha, capturas e envia
-# para a revisão pela API da Apple.
+# (mobile/publicar/publicar.mjs) no lugar do fastlane: ele sobe ficha, capturas, classificação,
+# disponibilidade e envia para a revisão pela API da Apple.
 #
-# COMO DISPARAR: GitHub → Actions → "Publicar iOS na App Store" → Run workflow.
-# Passo a passo (e o que é uma vez só): mobile/publicar/README.md, seção "Pelo GitHub".
+# COMO DISPARAR (passo a passo em mobile/publicar/README.md, seção "Pelo GitHub"):
+#   • botão: GitHub → Actions → "Publicar iOS na App Store" → Run workflow. O botão só aparece
+#     depois que este arquivo chega na branch padrão;
+#   • etiqueta: `git tag ios-v1.0.0 && git push origin ios-v1.0.0` roda o modo COMPLETO, de
+#     qualquer branch. A versão da etiqueta tem de ser a do mobile/app.json; para tentar de novo a
+#     mesma versão, use um sufixo: ios-v1.0.0-2, ios-v1.0.0-3...
 #
 # O QUE CADA CAIXA FAZ:
+#   completo  → tudo numa rodada só: compila esperando (--wait; o envio automático do EAS sobe o
+#               binário à Apple), sobe a ficha, ESPERA a Apple processar o build (até 60 min) e
+#               manda para a revisão. Gasta minutos do Actions parado esperando a Expo e a Apple
+#               (até ~2 h de runner, job com teto de 150 min) — e a conta já parou uma vez por
+#               limite de gasto. Por isso vem DESMARCADO: as caixas abaixo fazem o mesmo em duas
+#               rodadas curtas. Marcado, ignora as outras caixas.
 #   compilar  → eas build na nuvem da Expo (assinado, número de build sobe sozinho) e, se o
 #               app já existe no App Store Connect, o próprio EAS envia o binário à Apple ao
 #               terminar (--auto-submit-with-profile=ci). --no-wait: compilar iOS leva ~20 min
-#               NO SERVIDOR DA EXPO; prender a máquina do GitHub esperando só queimaria minutos
-#               (a conta já parou uma vez por limite de gasto). Acompanhe em https://expo.dev.
+#               NO SERVIDOR DA EXPO; prender a máquina do GitHub esperando só queimaria minutos.
+#               Acompanhe em https://expo.dev.
 #   enviar    → manda à Apple o ÚLTIMO build pronto na Expo (para quando o app foi criado no
 #               App Store Connect depois do build, ou o envio automático falhou).
-#   ficha     → nome, descrição, palavras-chave, capturas (media/app-store/iphone-6.5),
-#               classificação, preço grátis e a conta demo do revisor.
+#   ficha     → nome, textos, capturas (media/app-store/iphone-6.5 e iphone-6.9), classificação
+#               etária completa, direitos de conteúdo, disponibilidade, preço grátis e a conta demo.
 #   revisao   → depois de a Apple processar o build (~10 a 30 min após o envio; chega e-mail),
 #               prende o build à versão e ENVIA PARA A REVISÃO. Rode separado, depois.
+# O resumo de cada rodada (feito, avisos, pendências) aparece na página da execução.
 #
 # SEGREDOS (Settings → Secrets and variables → Actions → Secrets):
 #   EXPO_TOKEN            compilar/enviar (expo.dev → Account settings → Access tokens)
@@ -40,6 +51,10 @@ on:
         description: "Conferir a versão (ex.: 1.1.0) — tem de ser a do mobile/app.json. Vazio = usa a do app.json"
         type: string
         default: ""
+      completo:
+        description: "COMPLETO: compila, espera a Apple e manda para a revisão numa rodada só (até ~2 h de minutos do Actions; ignora as caixas abaixo)"
+        type: boolean
+        default: false
       compilar:
         description: "Compilar um build NOVO e enviar à Apple quando terminar"
         type: boolean
@@ -49,13 +64,18 @@ on:
         type: boolean
         default: false
       ficha:
-        description: "Atualizar a ficha da loja (textos, capturas, conta demo)"
+        description: "Atualizar a ficha da loja (textos, capturas, classificação, conta demo)"
         type: boolean
         default: true
       revisao:
         description: "Enviar para a REVISÃO da Apple (só depois de o build aparecer processado)"
         type: boolean
         default: false
+  # Etiqueta ios-v<versão> = modo completo. Funciona antes de o arquivo chegar na branch padrão:
+  # quem dispara é o próprio commit etiquetado.
+  push:
+    tags:
+      - "ios-v*"
 
 concurrency:
   group: publicar-apple # dois disparos seguidos não geram dois envios
@@ -72,7 +92,9 @@ defaults:
 jobs:
   publicar:
     runs-on: ubuntu-latest
-    timeout-minutes: 20 # teto: o padrão do GitHub é 6 h de minutos
+    # Teto: 150 min no modo completo (etiqueta ou caixa) — compilar esperando + até 60 min de
+    # espera pela Apple + a ficha; 20 min nos outros. O padrão do GitHub seria 6 h de minutos.
+    timeout-minutes: ${{ (github.event_name == 'push' || inputs.completo) && 150 || 20 }}
     steps:
       - uses: actions/checkout@v4
 
@@ -82,17 +104,37 @@ jobs:
           cache: npm
           cache-dependency-path: mobile/package-lock.json
 
-      # A versão vem SEMPRE do mobile/app.json; o campo só CONFERE. Ela vai por variável de
-      # ambiente, nunca colada no script com ${{ }}: o GitHub cola o texto antes de o shell
-      # rodar, e um "1.0'; curl …" no campo viraria comando num runner que tem o EXPO_TOKEN.
-      - name: Conferir a versão
+      # Decide o modo e confere a versão. Tudo o que vem do formulário ou da etiqueta entra por
+      # variável de ambiente, nunca colado no script com ${{ }}: o GitHub cola o texto antes de
+      # o shell rodar, e um "1.0'; curl …" viraria comando num runner que tem o EXPO_TOKEN.
+      # A versão vem SEMPRE do mobile/app.json; o campo e a etiqueta só CONFEREM.
+      - name: Decidir o que fazer e conferir a versão
+        id: modo
         env:
+          EVENTO: ${{ github.event_name }}
+          ETIQUETA: ${{ github.ref_name }}
           VERSAO_INFORMADA: ${{ inputs.versao }}
+          COMPLETO: ${{ inputs.completo }}
+          COMPILAR: ${{ inputs.compilar }}
+          ENVIAR: ${{ inputs.enviar }}
+          FICHA: ${{ inputs.ficha }}
+          REVISAO: ${{ inputs.revisao }}
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
           APP="$(node -p "require('./app.json').expo.version")"
-          V="$VERSAO_INFORMADA"
+          if [ "$EVENTO" = "push" ]; then
+            # ios-v1.2.3, ou ios-v1.2.3-2 para tentar de novo a mesma versão. O =~ ancora no texto
+            # INTEIRO; a Apple só aceita 1 a 3 números separados por ponto.
+            if ! [[ "$ETIQUETA" =~ ^ios-v([0-9]+(\.[0-9]+){0,2})(-[0-9]+)?$ ]]; then
+              echo "::error::Etiqueta \"$ETIQUETA\" fora do padrão: use ios-v1.2.3 (ou ios-v1.2.3-2 para repetir a mesma versão)."
+              exit 1
+            fi
+            V="${BASH_REMATCH[1]}"
+            COMPLETO=true
+          else
+            V="$VERSAO_INFORMADA"
+          fi
           if [ -n "$V" ]; then
-            # A Apple só aceita 1 a 3 números separados por ponto. O =~ ancora no texto INTEIRO.
             if ! [[ "$V" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
               echo "::error::Versão inválida — use só números e pontos, ex.: 1.1.0"
               exit 1
@@ -102,16 +144,11 @@ jobs:
               exit 1
             fi
           fi
-          echo "Versão deste envio: $APP"
-
-      - name: Conferir o que foi pedido e o que está configurado
-        env:
-          COMPILAR: ${{ inputs.compilar }}
-          ENVIAR: ${{ inputs.enviar }}
-          FICHA: ${{ inputs.ficha }}
-          REVISAO: ${{ inputs.revisao }}
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: |
+          if [ "$COMPLETO" = "true" ]; then
+            COMPILAR=true ENVIAR=false FICHA=true REVISAO=true
+          else
+            COMPLETO=false
+          fi
           if [ "$COMPILAR" != "true" ] && [ "$ENVIAR" != "true" ] && [ "$FICHA" != "true" ] && [ "$REVISAO" != "true" ]; then
             echo "::error::Nenhuma caixa marcada — nada a fazer."
             exit 1
@@ -120,6 +157,14 @@ jobs:
             echo "::error::Falta o Secret EXPO_TOKEN (expo.dev → Account settings → Access tokens). Sem ele não há build nem envio."
             exit 1
           fi
+          echo "Versão deste envio: $APP — completo=$COMPLETO compilar=$COMPILAR enviar=$ENVIAR ficha=$FICHA revisao=$REVISAO"
+          {
+            echo "completo=$COMPLETO"
+            echo "compilar=$COMPILAR"
+            echo "enviar=$ENVIAR"
+            echo "ficha=$FICHA"
+            echo "revisao=$REVISAO"
+          } >> "$GITHUB_OUTPUT"
 
       # Monta chave e ficha numa pasta do runner FORA do repositório (permissão 600), acha o
       # app no App Store Connect pelo bundle e liga o envio automático. Nunca imprime segredo.
@@ -143,14 +188,32 @@ jobs:
           APPLE_URL_ETIQUETAS_DEMO: ${{ vars.APPLE_URL_ETIQUETAS_DEMO }}
         run: node publicar/ci.mjs preparar
 
+      # No modo completo, falta de peça para AGORA — antes de gastar 20+ min compilando um build
+      # que não teria para onde ir, nem ficha para acompanhar.
+      - name: Conferir o que o modo completo precisa
+        if: ${{ steps.modo.outputs.completo == 'true' }}
+        env:
+          TEM_FICHA: ${{ steps.apple.outputs.tem_ficha }}
+          FALTANDO: ${{ steps.apple.outputs.faltando_ficha }}
+          APP_ID: ${{ steps.apple.outputs.app_id }}
+        run: |
+          if [ "$TEM_FICHA" != "sim" ]; then
+            echo "::error::Modo completo sem a ficha: faltam $FALTANDO (Secrets/Variables do repositório; guia em mobile/publicar/README.md)."
+            exit 1
+          fi
+          if [ -z "$APP_ID" ]; then
+            echo "::error::O app ainda não existe no App Store Connect — é a ÚNICA coisa que a API da Apple não cria. Crie no site (passo anterior diz como) e rode de novo."
+            exit 1
+          fi
+
       - name: Instalar dependências
-        if: ${{ inputs.compilar || inputs.enviar }}
+        if: ${{ steps.modo.outputs.compilar == 'true' || steps.modo.outputs.enviar == 'true' }}
         run: npm ci
 
       # O app.json desta loja ainda não tem o projectId da Expo. "eas init" cria (na 1ª vez) ou
       # liga (nas outras) o projeto @conta-do-token/gestao-loja — só na cópia do runner.
       - name: Ligar o projeto à Expo
-        if: ${{ inputs.compilar || inputs.enviar }}
+        if: ${{ steps.modo.outputs.compilar == 'true' || steps.modo.outputs.enviar == 'true' }}
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
@@ -163,9 +226,10 @@ jobs:
           fi
 
       - name: Compilar (e enviar à Apple ao terminar)
-        if: ${{ inputs.compilar }}
+        if: ${{ steps.modo.outputs.compilar == 'true' }}
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          COMPLETO: ${{ steps.modo.outputs.completo }}
           APP_ID: ${{ steps.apple.outputs.app_id }}
           CHAVE: ${{ steps.apple.outputs.chave_p8 }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
@@ -189,11 +253,15 @@ jobs:
           else
             echo "::warning::O build sai, mas NÃO vai para a Apple: o app ainda não existe no App Store Connect (ou faltou a chave). Veja o passo anterior; depois rode só com \"Enviar o último build\"."
           fi
+          # Completo: espera o build terminar aqui (o passo da ficha precisa dele na Apple).
+          # Nos outros modos, --no-wait: a Expo compila sozinha e o runner é liberado.
+          ESPERA=--no-wait
+          if [ "$COMPLETO" = "true" ]; then ESPERA=--wait; fi
           npx --yes eas-cli build --platform ios --profile production \
-            --non-interactive --no-wait "${ENVIO[@]}"
+            --non-interactive "$ESPERA" "${ENVIO[@]}"
 
       - name: Enviar o último build à Apple
-        if: ${{ inputs.enviar }}
+        if: ${{ steps.modo.outputs.enviar == 'true' }}
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           APP_ID: ${{ steps.apple.outputs.app_id }}
@@ -208,20 +276,23 @@ jobs:
           export ASC_API_KEY_PATH="$CHAVE"
           npx --yes eas-cli submit --platform ios --latest --profile ci --non-interactive --no-wait
 
+      # Completo: --enviar --aguardar-build 60 — a ficha sobe enquanto a Apple processa o binário
+      # que o EAS acabou de enviar; o publicador espera ele ficar VALID (até 60 min, uma consulta
+      # por minuto), prende e manda para a revisão.
       - name: Atualizar a ficha da loja (e enviar para a revisão, se pedido)
-        if: ${{ inputs.ficha || inputs.revisao }}
+        if: ${{ steps.modo.outputs.ficha == 'true' || steps.modo.outputs.revisao == 'true' }}
         env:
           TEM_FICHA: ${{ steps.apple.outputs.tem_ficha }}
           FALTANDO: ${{ steps.apple.outputs.faltando_ficha }}
           PUBLICAR_CONFIG: ${{ steps.apple.outputs.config }}
-          REVISAO: ${{ inputs.revisao }}
+          REVISAO: ${{ steps.modo.outputs.revisao }}
+          COMPLETO: ${{ steps.modo.outputs.completo }}
         run: |
           if [ "$TEM_FICHA" != "sim" ]; then
             echo "::error::A ficha não pode subir: faltam $FALTANDO (Secrets/Variables do repositório; guia em mobile/publicar/README.md)."
             exit 1
           fi
-          if [ "$REVISAO" = "true" ]; then
-            node publicar/publicar.mjs --enviar
-          else
-            node publicar/publicar.mjs
-          fi
+          ARGS=()
+          if [ "$REVISAO" = "true" ]; then ARGS+=(--enviar); fi
+          if [ "$COMPLETO" = "true" ]; then ARGS+=(--aguardar-build 60); fi
+          node publicar/publicar.mjs "${ARGS[@]}"
