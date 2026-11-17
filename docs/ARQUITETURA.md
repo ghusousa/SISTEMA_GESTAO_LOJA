@@ -1510,6 +1510,32 @@ principal — o `atualizar.sh` exige TODAS verdes (ADR-34), e aí um deploy verm
 demonstração seguraria a atualização das lojas (a integração costuma publicar *commit status*,
 que ele não lê; conferir no primeiro deploy em `GET /repos/.../commits/<sha>/check-runs`).
 
+**ADR-44 — Publicar o iOS por um botão do GitHub Actions, no molde do Sistema Obras.**
+*Contexto:* publicar exigia o computador do dono (`eas build`, `npm run publicar:build`,
+`npm run publicar -- --enviar`), com `config.json` e `.p8` numa pasta local. O Sistema Obras,
+da mesma pessoa, já publica por um botão (`publicar-apple.yml`), e as notas do revisor desta
+loja mandavam conectar em `sistemaobras.com.br` — que hoje serve o Obras: a revisão voltaria.
+*Decisão:* `.github/workflows/publicar-apple.yml` (só `workflow_dispatch`) com quatro caixas:
+compilar (EAS na nuvem, `--no-wait`, `--auto-submit-with-profile=ci`), enviar o último build,
+ficha e revisão. Quem sobe a ficha é o MESMO `publicar.mjs` da máquina do dono, não o fastlane
+do Obras: ele já faz ficha, capturas, conta demo e envio para revisão pela API da Apple, e tem
+teste contra uma Apple de mentira. `publicar/ci.mjs` monta `config.json` + `.p8` a partir de
+Secrets (chave, senha da demo) e Variables (contato, time) numa pasta do runner fora do
+repositório, com permissão 600, e acha o `ascAppId` pelo bundle do `app.json` — sem ele o
+eas não envia em modo não interativo, e o app NÃO pode ser criado pela API da Apple, então
+app inexistente vira aviso com o passo do site e o build sai mesmo assim. O perfil de envio
+`ci` do `eas.json` lê caminho e ids da chave das variáveis do runner (o eas interpola só esses
+três campos); o `ascAppId` entra só na cópia do runner. Com `APPLE_TEAM_ID`/`APPLE_TEAM_TYPE`,
+o build recebe `EXPO_ASC_*`/`EXPO_APPLE_*` e a Expo cria ou conserta certificado e perfil sem
+perguntar. O app.json ainda não tem `projectId`: o passo `eas init --non-interactive --force`
+cria/liga `@conta/gestao-loja` a cada disparo, só no runner. O endereço que o revisor usa é
+`url_servidor_demo` (padrão `https://loja-tria.vercel.app`, ADR-42) e a política de
+privacidade sai de `<servidor>/privacidade`, que o próprio sistema serve. Entrada do formulário
+vai por `env`, nunca colada no script (`${{ }}` no `run:` viraria comando num runner com
+token). *Consequências:* publicar é um clique por rodada (build; depois, revisão), sem Mac;
+os segredos são os mesmos do Obras e moram no GitHub, nunca no repositório nem no log
+(`ci.test.mjs` procura a senha e a chave na saída). O CI roda `ci.test.mjs` e `rodar.mjs`.
+
 ## 4. Contratos de API
 
 Prefixo `/api/v1`. Auth: `Authorization: Bearer <access_token>`.

@@ -230,7 +230,7 @@ Ainda na aba "Conteúdo do app", duas declarações vizinhas que derrubam envio 
 
 ## App Store
 
-Textos verificados contra o código do app (`mobile/src/app/(auth)/login.tsx`, `servidor.ts`, PDV e tela de pagamento) — rótulos, posição da engrenagem e passos conferem com a UI real. Servidor de demonstração testado: `https://sistemaobras.com.br/health` responde `{"status":"ok","ambiente":"producao"}`.
+Textos verificados contra o código do app (`mobile/src/app/(auth)/login.tsx`, `servidor.ts`, PDV e tela de pagamento) — rótulos, posição da engrenagem e passos conferem com a UI real. Servidor de demonstração do revisor: o da LOJA, `https://loja-tria.vercel.app` (Vercel, ADR-42) — `GET /api/v1/configuracao` responde com o nome da loja. O `sistemaobras.com.br` hoje é o site do Sistema Obras: notas que mandem o revisor para lá derrubam a revisão. No publicador, o endereço é o campo `url_servidor_demo` (no GitHub Actions, a variável `APPLE_SERVIDOR_DEMO`).
 
 ---
 

@@ -8,7 +8,7 @@ O sistema é auto-hospedado: cada loja instala o servidor e é dona dos próprio
 
 3) SERVIDOR DE DEMONSTRAÇÃO PARA A REVISÃO
 Mantemos um servidor completo, com dados de exemplo, exclusivamente para esta revisão:
-  Endereço: https://sistemaobras.com.br   (HTTPS válido)
+  Endereço: {{SERVIDOR_DEMO}}   (HTTPS válido)
   E-mail:   {{EMAIL_DEMO}}
   Senha:    {{SENHA_DEMO}}
 A conta é de perfil "dono", então todas as abas ficam visíveis. O banco é de teste: podem vender, cancelar e devolver à vontade.
@@ -17,7 +17,7 @@ A conta é de perfil "dono", então todas as abas ficam visíveis. O banco é de
 1. Abra o app. Aparece a tela de entrada.
 2. Toque na ENGRENAGEM no canto superior direito. Abre "Conectar à loja".
 3. No campo "Endereço do servidor", digite exatamente, com o https://:
-     https://sistemaobras.com.br
+     {{SERVIDOR_DEMO}}
 4. Toque em "Conectar". O app testa o endereço e volta para a tela de entrada.
 5. Informe {{EMAIL_DEMO}} e {{SENHA_DEMO}} e toque em "Entrar".
 6. Abre a aba "Vender" (o PDV), com o carrinho vazio.

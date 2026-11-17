@@ -194,6 +194,8 @@ jobs:
       # O web não tem build nem package.json: o canal de tempo real dele (espelho do
       # `lib/canal.ts`) roda com o node que este job já instalou.
       - run: node --test ../testes/web/*.test.mjs
+      # O publicador da App Store e o preparo do botão "Publicar iOS", contra uma Apple de mentira.
+      - run: node --test publicar/teste/ci.test.mjs && node publicar/teste/rodar.mjs
       # O tsc não vê import quebrado de dependência nativa; o bundle vê.
       - run: npm run bundle
 

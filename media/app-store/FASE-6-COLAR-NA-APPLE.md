@@ -45,11 +45,13 @@ código,barras,leitor,varejo,fiado,crediário,vendas,despesas,inventário,lucro,
 
 **URL de Privacidade**
 ```
-https://sistemaobras.com.br/privacidade
+https://loja-tria.vercel.app/privacidade
 ```
+(a página que o próprio sistema serve em `/privacidade` — troque pelo endereço do seu
+servidor de demonstração, se for outro)
 
 **URL de Suporte** → o site ou e-mail público que você quiser dar (obrigatório; pode ser
-`https://sistemaobras.com.br`).
+o próprio servidor de demonstração, `https://loja-tria.vercel.app`).
 
 **Descrição** e **Novidades desta versão** → copie de `docs/LOJAS-DE-APP.md`, seção
 "App Store", itens 3 e 4 (já contados: 2.828 e 480 caracteres). Antes de colar, troque
@@ -71,14 +73,15 @@ Kids Category.
 **Informações de Revisão (App Review)** →
 - Marque **"É necessário fazer login"** e preencha a conta de demonstração (abaixo).
 - No campo de notas, cole o item 6 de `docs/LOJAS-DE-APP.md` ("Notas para a revisão") —
-  é o passo a passo que ensina o revisor a conectar em `https://sistemaobras.com.br`
+  é o passo a passo que ensina o revisor a conectar no servidor de demonstração DA LOJA
+  (`https://loja-tria.vercel.app`; o `sistemaobras.com.br` hoje é o site de outro sistema)
   e a vender sem precisar de câmera.
 
 ---
 
 ## O que SÓ VOCÊ pode preencher (4 coisas)
 
-1. **Conta de demonstração**: crie no servidor `sistemaobras.com.br` um usuário de perfil
+1. **Conta de demonstração**: crie no servidor de demonstração (`loja-tria.vercel.app`) um usuário de perfil
    **dono** só para a Apple (ex.: `revisao@sualoja.com`) e ponha e-mail e senha no campo
    de conta de demonstração e nas notas (onde está `{{EMAIL_DEMO}}` / `{{SENHA_DEMO}}`).
 2. **Um código de barras que exista** nesse servidor de demonstração — entra nas notas no

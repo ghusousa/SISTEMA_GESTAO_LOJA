@@ -1,0 +1,227 @@
+# Publica o app do iOS na App Store — o caminho todo, sem Mac e sem digitar nada no site.
+# Mesmo molde do "Publicar iOS na App Store" do Sistema Obras, com o publicador desta loja
+# (mobile/publicar/publicar.mjs) no lugar do fastlane: ele já sobe ficha, capturas e envia
+# para a revisão pela API da Apple.
+#
+# COMO DISPARAR: GitHub → Actions → "Publicar iOS na App Store" → Run workflow.
+# Passo a passo (e o que é uma vez só): mobile/publicar/README.md, seção "Pelo GitHub".
+#
+# O QUE CADA CAIXA FAZ:
+#   compilar  → eas build na nuvem da Expo (assinado, número de build sobe sozinho) e, se o
+#               app já existe no App Store Connect, o próprio EAS envia o binário à Apple ao
+#               terminar (--auto-submit-with-profile=ci). --no-wait: compilar iOS leva ~20 min
+#               NO SERVIDOR DA EXPO; prender a máquina do GitHub esperando só queimaria minutos
+#               (a conta já parou uma vez por limite de gasto). Acompanhe em https://expo.dev.
+#   enviar    → manda à Apple o ÚLTIMO build pronto na Expo (para quando o app foi criado no
+#               App Store Connect depois do build, ou o envio automático falhou).
+#   ficha     → nome, descrição, palavras-chave, capturas (media/app-store/iphone-6.5),
+#               classificação, preço grátis e a conta demo do revisor.
+#   revisao   → depois de a Apple processar o build (~10 a 30 min após o envio; chega e-mail),
+#               prende o build à versão e ENVIA PARA A REVISÃO. Rode separado, depois.
+#
+# SEGREDOS (Settings → Secrets and variables → Actions → Secrets):
+#   EXPO_TOKEN            compilar/enviar (expo.dev → Account settings → Access tokens)
+#   ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8   chave da API da Apple (o .p8 inteiro, BEGIN/END)
+#   APPLE_DEMO_PASSWORD   senha da conta demo do revisor (fica só na memória do runner)
+# VARIÁVEIS (mesma tela, aba Variables — não são segredo):
+#   APPLE_TEAM_ID, APPLE_TEAM_TYPE (INDIVIDUAL ou COMPANY_OR_ORGANIZATION) — deixam a Expo criar
+#     ou consertar sozinha o certificado e o perfil do app, sem perguntar nada;
+#   APPLE_EMAIL_SUPORTE, APPLE_URL_SUPORTE, APPLE_NOME_CONTATO, APPLE_TELEFONE_CONTATO,
+#   APPLE_COPYRIGHT, APPLE_EMAIL_DEMO, APPLE_CODIGO_DEMO — a ficha e o contato do revisor;
+#   APPLE_SERVIDOR_DEMO (opcional; padrão https://loja-tria.vercel.app), APPLE_URL_PRIVACIDADE
+#   e APPLE_URL_ETIQUETAS_DEMO (opcionais).
+# Faltou peça? O passo que depende dela diz QUAIS nomes faltam; os outros seguem.
+name: Publicar iOS na App Store
+
+on:
+  workflow_dispatch:
+    inputs:
+      versao:
+        description: "Conferir a versão (ex.: 1.1.0) — tem de ser a do mobile/app.json. Vazio = usa a do app.json"
+        type: string
+        default: ""
+      compilar:
+        description: "Compilar um build NOVO e enviar à Apple quando terminar"
+        type: boolean
+        default: true
+      enviar:
+        description: "Enviar à Apple o ÚLTIMO build já pronto na Expo (sem compilar)"
+        type: boolean
+        default: false
+      ficha:
+        description: "Atualizar a ficha da loja (textos, capturas, conta demo)"
+        type: boolean
+        default: true
+      revisao:
+        description: "Enviar para a REVISÃO da Apple (só depois de o build aparecer processado)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: publicar-apple # dois disparos seguidos não geram dois envios
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+    working-directory: mobile
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20 # teto: o padrão do GitHub é 6 h de minutos
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      # A versão vem SEMPRE do mobile/app.json; o campo só CONFERE. Ela vai por variável de
+      # ambiente, nunca colada no script com ${{ }}: o GitHub cola o texto antes de o shell
+      # rodar, e um "1.0'; curl …" no campo viraria comando num runner que tem o EXPO_TOKEN.
+      - name: Conferir a versão
+        env:
+          VERSAO_INFORMADA: ${{ inputs.versao }}
+        run: |
+          APP="$(node -p "require('./app.json').expo.version")"
+          V="$VERSAO_INFORMADA"
+          if [ -n "$V" ]; then
+            # A Apple só aceita 1 a 3 números separados por ponto. O =~ ancora no texto INTEIRO.
+            if ! [[ "$V" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+              echo "::error::Versão inválida — use só números e pontos, ex.: 1.1.0"
+              exit 1
+            fi
+            if [ "$V" != "$APP" ]; then
+              echo "::error::Você pediu a versão $V, mas o mobile/app.json está em $APP. Edite \"version\" no mobile/app.json e rode de novo."
+              exit 1
+            fi
+          fi
+          echo "Versão deste envio: $APP"
+
+      - name: Conferir o que foi pedido e o que está configurado
+        env:
+          COMPILAR: ${{ inputs.compilar }}
+          ENVIAR: ${{ inputs.enviar }}
+          FICHA: ${{ inputs.ficha }}
+          REVISAO: ${{ inputs.revisao }}
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if [ "$COMPILAR" != "true" ] && [ "$ENVIAR" != "true" ] && [ "$FICHA" != "true" ] && [ "$REVISAO" != "true" ]; then
+            echo "::error::Nenhuma caixa marcada — nada a fazer."
+            exit 1
+          fi
+          if { [ "$COMPILAR" = "true" ] || [ "$ENVIAR" = "true" ]; } && [ -z "$EXPO_TOKEN" ]; then
+            echo "::error::Falta o Secret EXPO_TOKEN (expo.dev → Account settings → Access tokens). Sem ele não há build nem envio."
+            exit 1
+          fi
+
+      # Monta chave e ficha numa pasta do runner FORA do repositório (permissão 600), acha o
+      # app no App Store Connect pelo bundle e liga o envio automático. Nunca imprime segredo.
+      - name: Preparar a chave da Apple e a ficha
+        id: apple
+        env:
+          PASTA_SAIDA: ${{ runner.temp }}/apple
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          APPLE_DEMO_PASSWORD: ${{ secrets.APPLE_DEMO_PASSWORD }}
+          APPLE_EMAIL_SUPORTE: ${{ vars.APPLE_EMAIL_SUPORTE }}
+          APPLE_URL_SUPORTE: ${{ vars.APPLE_URL_SUPORTE }}
+          APPLE_NOME_CONTATO: ${{ vars.APPLE_NOME_CONTATO }}
+          APPLE_TELEFONE_CONTATO: ${{ vars.APPLE_TELEFONE_CONTATO }}
+          APPLE_COPYRIGHT: ${{ vars.APPLE_COPYRIGHT }}
+          APPLE_EMAIL_DEMO: ${{ vars.APPLE_EMAIL_DEMO }}
+          APPLE_CODIGO_DEMO: ${{ vars.APPLE_CODIGO_DEMO }}
+          APPLE_SERVIDOR_DEMO: ${{ vars.APPLE_SERVIDOR_DEMO }}
+          APPLE_URL_PRIVACIDADE: ${{ vars.APPLE_URL_PRIVACIDADE }}
+          APPLE_URL_ETIQUETAS_DEMO: ${{ vars.APPLE_URL_ETIQUETAS_DEMO }}
+        run: node publicar/ci.mjs preparar
+
+      - name: Instalar dependências
+        if: ${{ inputs.compilar || inputs.enviar }}
+        run: npm ci
+
+      # O app.json desta loja ainda não tem o projectId da Expo. "eas init" cria (na 1ª vez) ou
+      # liga (nas outras) o projeto @conta-do-token/gestao-loja — só na cópia do runner.
+      - name: Ligar o projeto à Expo
+        if: ${{ inputs.compilar || inputs.enviar }}
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          ID="$(node -p "require('./app.json').expo.extra?.eas?.projectId ?? ''")"
+          if [ -n "$ID" ]; then
+            echo "Projeto da Expo: $ID"
+          else
+            npx --yes eas-cli init --non-interactive --force
+            echo "::notice::O app.json ainda não guarda o projectId da Expo; este disparo ligou pelo nome (gestao-loja). Para fixar, copie o projectId de expo.dev para expo.extra.eas.projectId no mobile/app.json."
+          fi
+
+      - name: Compilar (e enviar à Apple ao terminar)
+        if: ${{ inputs.compilar }}
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          APP_ID: ${{ steps.apple.outputs.app_id }}
+          CHAVE: ${{ steps.apple.outputs.chave_p8 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          APPLE_TEAM_TYPE: ${{ vars.APPLE_TEAM_TYPE }}
+        run: |
+          # Com a chave da Apple e o time, a Expo cria/conserta certificado e perfil sozinha.
+          # Sem eles, usa o que já estiver guardado na Expo (do primeiro build feito à mão).
+          if [ -n "$CHAVE" ] && [ -n "$APPLE_TEAM_ID" ]; then
+            export EXPO_ASC_API_KEY_PATH="$CHAVE" EXPO_ASC_KEY_ID="$ASC_KEY_ID" EXPO_ASC_ISSUER_ID="$ASC_ISSUER_ID"
+            export EXPO_APPLE_TEAM_ID="$APPLE_TEAM_ID" EXPO_APPLE_TEAM_TYPE="${APPLE_TEAM_TYPE:-INDIVIDUAL}"
+          else
+            echo "::notice::Sem APPLE_TEAM_ID (Variables) ou sem a chave: o build usa as credenciais já guardadas na Expo."
+          fi
+          ENVIO=()
+          if [ -n "$APP_ID" ]; then
+            # O perfil "ci" do eas.json lê o caminho e os ids da chave destas variáveis.
+            export ASC_API_KEY_PATH="$CHAVE"
+            ENVIO=(--auto-submit-with-profile=ci)
+          else
+            echo "::warning::O build sai, mas NÃO vai para a Apple: o app ainda não existe no App Store Connect (ou faltou a chave). Veja o passo anterior; depois rode só com \"Enviar o último build\"."
+          fi
+          npx --yes eas-cli build --platform ios --profile production \
+            --non-interactive --no-wait "${ENVIO[@]}"
+
+      - name: Enviar o último build à Apple
+        if: ${{ inputs.enviar }}
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          APP_ID: ${{ steps.apple.outputs.app_id }}
+          CHAVE: ${{ steps.apple.outputs.chave_p8 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          if [ -z "$APP_ID" ]; then
+            echo "::error::Sem o app no App Store Connect (ou sem a chave) não há para onde enviar. Veja o passo \"Preparar a chave da Apple e a ficha\"."
+            exit 1
+          fi
+          export ASC_API_KEY_PATH="$CHAVE"
+          npx --yes eas-cli submit --platform ios --latest --profile ci --non-interactive --no-wait
+
+      - name: Atualizar a ficha da loja (e enviar para a revisão, se pedido)
+        if: ${{ inputs.ficha || inputs.revisao }}
+        env:
+          TEM_FICHA: ${{ steps.apple.outputs.tem_ficha }}
+          FALTANDO: ${{ steps.apple.outputs.faltando_ficha }}
+          PUBLICAR_CONFIG: ${{ steps.apple.outputs.config }}
+          REVISAO: ${{ inputs.revisao }}
+        run: |
+          if [ "$TEM_FICHA" != "sim" ]; then
+            echo "::error::A ficha não pode subir: faltam $FALTANDO (Secrets/Variables do repositório; guia em mobile/publicar/README.md)."
+            exit 1
+          fi
+          if [ "$REVISAO" = "true" ]; then
+            node publicar/publicar.mjs --enviar
+          else
+            node publicar/publicar.mjs
+          fi

@@ -52,6 +52,7 @@ npm run typecheck    # tsc --noEmit
 npm test             # camada de dinheiro (node --test via tsx)
 npm run bundle       # expo export: pega erro de import que o tsc não vê
 npm run publicar     # ficha inteira na App Store via API (mobile/publicar/, -- --enviar submete)
+# GitHub → Actions → "Publicar iOS na App Store": build na Expo + envio + ficha, sem Mac (mobile/publicar/README.md)
 ```
 
 ## Convenções da API

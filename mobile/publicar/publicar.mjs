@@ -77,9 +77,19 @@ function lerConfig() {
     'senha_demo',
     'codigo_demo',
     'titular_copyright',
+    'url_servidor_demo',
   ];
   const faltando = obrigatorios.filter((campo) => !c[campo] || /COLE_AQUI|exemplo\./.test(String(c[campo])));
   if (faltando.length) falhar(`Preencha no config.json: ${faltando.join(', ')}`);
+  // O revisor conecta o app NESTE endereço: sem HTTPS o iOS recusa a conexão (ATS) e a
+  // revisão volta. Antes ele vinha escrito nas notas e apontava para o site de outro
+  // sistema — o revisor entraria num servidor que não é o da loja.
+  c.url_servidor_demo = String(c.url_servidor_demo).trim().replace(/\/+$/, '');
+  if (!/^https:\/\/[^/\s]+$/i.test(c.url_servidor_demo)) {
+    falhar(`url_servidor_demo tem de ser só https://endereço (sem caminho): ${c.url_servidor_demo}`);
+  }
+  c.url_privacidade = String(c.url_privacidade || `${c.url_servidor_demo}/privacidade`).trim();
+  if (!/^https:\/\//i.test(c.url_privacidade)) falhar(`url_privacidade tem de começar com https://`);
   const p8Caminho = resolve(dirname(caminho), c.arquivo_p8);
   if (!existsSync(p8Caminho)) falhar(`Não achei a chave ${p8Caminho}. Baixe o .p8 no App Store Connect e ponha aí.`);
   c.p8 = readFileSync(p8Caminho, 'utf8');
@@ -94,6 +104,7 @@ function lerFicha(config) {
   const trocar = (texto) =>
     texto
       .replaceAll('{{EMAIL_SUPORTE}}', config.email_suporte)
+      .replaceAll('{{SERVIDOR_DEMO}}', config.url_servidor_demo)
       .replaceAll('{{EMAIL_DEMO}}', config.email_demo)
       .replaceAll('{{SENHA_DEMO}}', config.senha_demo)
       .replaceAll('{{CODIGO_DEMO}}', config.codigo_demo)
@@ -190,7 +201,7 @@ async function principal() {
   const atributosInfo = {
     name: ficha.nome,
     subtitle: ficha.subtitulo,
-    privacyPolicyUrl: 'https://sistemaobras.com.br/privacidade',
+    privacyPolicyUrl: config.url_privacidade,
   };
   if (infoLoc) {
     await asc.patch(`/v1/appInfoLocalizations/${infoLoc.id}`, {

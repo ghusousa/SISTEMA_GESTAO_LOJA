@@ -31,7 +31,7 @@ writeFileSync(
     issuer_id: '00000000-0000-0000-0000-000000000000',
     arquivo_p8: 'chave-apple.p8',
     email_suporte: 'suporte@teste.dev',
-    url_suporte: 'https://sistemaobras.com.br',
+    url_suporte: 'https://demo-da-loja.teste.dev',
     nome_contato: 'Dona Teste',
     telefone_contato: '+55 11 90000-0000',
     titular_copyright: 'Loja Teste',
@@ -39,6 +39,7 @@ writeFileSync(
     senha_demo: 'segredo-demo',
     codigo_demo: '7890000000000',
     url_etiquetas_demo: '',
+    url_servidor_demo: 'https://demo-da-loja.teste.dev/',
   }),
 );
 
@@ -73,7 +74,7 @@ const conferir = (condicao, rotulo) => {
 conferir(estado.app.primaryLocale === 'pt-BR', 'idioma principal virou pt-BR');
 conferir(estado.infoLoc?.name === 'Gestão de Loja', 'nome na ficha');
 conferir([...(estado.infoLoc?.subtitle ?? '')].length <= 30, 'subtítulo dentro do limite');
-conferir(estado.infoLoc?.privacyPolicyUrl?.includes('/privacidade'), 'URL de privacidade');
+conferir(estado.infoLoc?.privacyPolicyUrl === 'https://demo-da-loja.teste.dev/privacidade', 'URL de privacidade sai do servidor da demo');
 conferir(estado.categorias?.principal === 'BUSINESS' && estado.categorias?.secundaria === 'PRODUCTIVITY', 'categorias');
 conferir(estado.idade?.gambling === false && estado.idade?.violenceRealistic === 'NONE', 'classificação etária toda "não"');
 conferir(estado.versao?.copyright?.includes('Loja Teste'), 'copyright');
@@ -87,6 +88,10 @@ conferir(estado.ordem?.length === recebidas.length, 'ordem das capturas gravada'
 conferir(estado.revisao?.demoAccountName === 'revisao@teste.dev' && estado.revisao?.demoAccountRequired === true, 'conta demo do revisor');
 conferir(estado.revisao?.notes?.includes('7890000000000'), 'código demo entrou nas notas');
 conferir(!estado.revisao?.notes?.includes('{{'), 'nenhum {{marcador}} sobrou nos textos');
+conferir(
+  estado.revisao?.notes?.includes('https://demo-da-loja.teste.dev') && !estado.revisao?.notes?.includes('sistemaobras'),
+  'o revisor conecta no servidor da LOJA (não no de outro sistema)',
+);
 conferir(estado.preco === 'PP0', 'preço grátis');
 conferir(estado.buildPreso === 'B1', 'build preso à versão');
 conferir(estado.envio?.enviado === true && estado.envio?.itens === 1, 'ENVIADO para revisão');
