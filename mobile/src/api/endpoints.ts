@@ -8,6 +8,9 @@ import axios from 'axios';
 import { api } from './client';
 import type {
   Backup,
+  BipeEnviado,
+  BipesRetirados,
+  Pareamento,
   ConfiguracaoLoja,
   ConfiguracaoPublica,
   CurvaAbc,
@@ -739,6 +742,46 @@ export const contasPagar = {
   },
   async desfazerPagamento(id: number) {
     const { data } = await api.delete<ContaPagar>(`/contas-pagar/${id}/pagamento`);
+    return data;
+  },
+};
+
+// ------------------------------------------------------------------ leitor pelo celular (ADR-43)
+/**
+ * O celular como leitor de código de barras do computador. Qualquer pessoa logada usa
+ * (sem capacidade própria). O app aceita, consulta, desliga e manda bipe; criar e
+ * retirar são do computador (web), e ficam aqui para o contrato morar num lugar só.
+ */
+export const leitor = {
+  /** Computador: gera o código (AGUARDANDO). `substitui_id` encerra o anterior. */
+  async criar(substitui_id: number | null = null) {
+    const { data } = await api.post<Pareamento>('/leitor/pareamentos', { substitui_id });
+    return data;
+  },
+  /** Celular: aceita o código lido ou digitado. 404 `LEITOR_CODIGO_INVALIDO` para tudo. */
+  async aceitar(codigo: string) {
+    const { data } = await api.post<Pareamento>('/leitor/pareamentos/aceitar', { codigo });
+    return data;
+  },
+  async consultar(id: number) {
+    const { data } = await api.get<Pareamento>(`/leitor/pareamentos/${id}`);
+    return data;
+  },
+  /**
+   * Desliga (204). O `timeout` curto serve ao logout: sair do app não pode esperar 15 s
+   * por um servidor que não responde.
+   */
+  async desligar(id: number, opcoes: { timeout?: number } = {}) {
+    await api.delete(`/leitor/pareamentos/${id}`, opcoes);
+  },
+  /** Idempotente por `client_uuid`: o reenvio idêntico volta 200 com o mesmo bipe. */
+  async enviarBipe(dados: { client_uuid: string; pareamento_id: number; codigo: string }) {
+    const { data } = await api.post<BipeEnviado>('/leitor/bipes', dados);
+    return data;
+  },
+  /** Computador: retira até 50 bipes, cada um entregue uma vez só. */
+  async retirar(id: number) {
+    const { data } = await api.post<BipesRetirados>(`/leitor/pareamentos/${id}/retirar`);
     return data;
   },
 };

@@ -8,6 +8,7 @@ import { create } from 'zustand';
 import { auth } from '@/api/endpoints';
 import { queryClient } from '@/lib/queryClient';
 import { useCartStore } from '@/stores/cartStore';
+import { useLeitorStore } from '@/stores/leitorStore';
 import {
   lerRefreshToken,
   lerUsuarioSalvo,
@@ -34,12 +35,17 @@ interface AuthState {
  *
  * O carrinho é global e sobreviveria à troca de usuário: a vendedora sai no meio de uma
  * venda, o colega entra e encontra as peças dela no PDV — com os preços daquele momento e
- * o client_uuid da sessão anterior. O cache do React Query some pelo mesmo motivo.
+ * o client_uuid da sessão anterior. O cache do React Query some pelo mesmo motivo. E o
+ * celular-leitor (ADR-43): o próximo usuário não pode bipar para o computador do anterior.
  */
 function limparEstadoDaSessao(): void {
   useCartStore.getState().limpar();
+  useLeitorStore.getState().limpar();
   queryClient.clear();
 }
+
+/** Teto da espera pelo servidor ao desligar o leitor na saída. */
+const ESPERA_DESLIGAR_LEITOR_MS = 4000;
 
 export const useAuthStore = create<AuthState>((set, get) => ({
   usuario: null,
@@ -53,6 +59,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   async sair() {
+    // Primeiro, com os tokens ainda valendo: o celular-leitor termina junto com a sessão,
+    // e o computador para de esperar bipe deste aparelho. Melhor esforço — sem rede, o
+    // pareamento acaba sozinho nas 12 h, ou quando alguém desligar no computador.
+    await useLeitorStore.getState().desligar({ timeout: ESPERA_DESLIGAR_LEITOR_MS });
     const refresh = await lerRefreshToken();
     if (refresh) {
       // Revogar no servidor é o que faz o logout valer de verdade; se a rede falhar,

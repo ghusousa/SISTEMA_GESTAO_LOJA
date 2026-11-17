@@ -51,6 +51,9 @@ export default function AppLayout() {
       <Stack.Screen name="mais/categorias" options={{ title: 'Categorias' }} />
       <Stack.Screen name="mais/taxas" options={{ title: 'Taxas do cartão' }} />
       <Stack.Screen name="mais/aniversariantes" options={{ title: 'Aniversariantes' }} />
+      <Stack.Screen name="mais/leitor" options={{ title: 'Leitor do computador' }} />
+      {/* Atalho do link gestaoloja://leitor?c=…: só repassa para mais/leitor. */}
+      <Stack.Screen name="leitor" options={{ headerShown: false }} />
     </Stack>
   );
 }
