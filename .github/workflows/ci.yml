@@ -71,11 +71,19 @@ jobs:
       # Os testes do atualizar.sh/backup.sh rodam os scripts de verdade, com psql/pg_dump/
       # pg_restore da máquina contra o Postgres do serviço. Sem eles, esses testes seriam
       # pulados calados — e são os que guardam a volta atrás e a restauração.
-      - name: Clientes do Postgres
+      #
+      # Na MESMA versão do servidor (16): na loja, pg_dump/pg_restore/psql rodam dentro do
+      # contêiner postgres:16, e os testes fazem o papel desse contêiner com os da máquina. O
+      # runner passou a trazer o cliente 18, cujo script de restauração começa com
+      # `SET transaction_timeout`, que o 16 não conhece — a restauração falhava só no CI.
+      - name: Clientes do Postgres (16, os do contêiner da loja)
         run: |
-          command -v pg_dump >/dev/null \
-            || { sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client; }
-          pg_dump --version
+          BIN=/usr/lib/postgresql/16/bin
+          if [ ! -x "$BIN/pg_dump" ]; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client-16
+          fi
+          echo "$BIN" >> "$GITHUB_PATH"
+          "$BIN/pg_dump" --version
 
       - name: Migrations sobem e descem
         run: |
