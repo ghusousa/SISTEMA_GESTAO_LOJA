@@ -19,6 +19,13 @@ import { sessao } from './store.js';
 
 const BASE = '/api/v1';
 
+/**
+ * A base da API por inteiro ("https://loja.exemplo/api/v1"): mesma origem da página, que é
+ * servida pela própria API. Vai no convite do celular-leitor, para o app saber de qual
+ * servidor o código é.
+ */
+export const baseDaApi = () => new URL(BASE, location.href).href;
+
 let accessToken = null;
 let renovacaoEmCurso = null;
 let aoPerderSessao = () => {};

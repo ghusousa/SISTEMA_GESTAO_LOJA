@@ -39,6 +39,41 @@ export function ouvir(assuntos, aoMudar) {
 }
 
 /**
+ * Quem precisa saber NA HORA, sem esperar a rodada. `{ assuntos: Set, aoMudar: fn }`
+ *
+ * Só o celular-leitor (ADR-43) usa: o bipe da câmera tem de cair no carrinho já, e a
+ * rodada segura o aviso de 1 a 2 s. Redesenhar tela continua indo pela rodada — o que
+ * passa por aqui é um `retirar` barato, que não redesenha nada. Só do web: no app o
+ * celular é quem MANDA o bipe, e o espelho (`mobile/src/lib/tempoReal.ts`) não precisa.
+ */
+const naHora = new Set();
+
+/**
+ * Como `ouvir`, mas chamado no instante em que o aviso chega (e no "conectado" de cada
+ * religação, com o assunto `reconectado`). Não muda nada para quem ouve pela rodada.
+ */
+export function ouvirNaHora(assuntos, aoMudar) {
+  const inscrito = { assuntos: new Set(assuntos), aoMudar };
+  naHora.add(inscrito);
+  return () => naHora.delete(inscrito);
+}
+
+function avisarNaHora(assunto) {
+  for (const inscrito of [...naHora]) {
+    if (!inscrito.assuntos.has(assunto)) continue;
+    try {
+      inscrito.aoMudar(assunto);
+    } catch {
+      // Mesmo cuidado da rodada: quem quebra não derruba o canal.
+    }
+  }
+}
+
+/** O canal recebeu o "conectado" e não caiu desde então: os avisos estão chegando. */
+let conectado = false;
+export const canalConectado = () => conectado;
+
+/**
  * Uma rodada: cada tela inscrita em QUALQUER dos assuntos redesenha uma vez só. `aoMudar`
  * recebe o primeiro assunto da rodada que interessa a ela — as telas de hoje nem olham.
  */
@@ -102,6 +137,9 @@ function urlDoCanal() {
   return `${protocolo}//${location.host}/api/v1/tempo-real`;
 }
 
+/** O socket da ligação de agora: a queda de um velho não desmente o "conectado" do novo. */
+let socketAtual = null;
+
 /**
  * Quando cair e como voltar mora em `canal.js` (teste em `testes/web/`, fora da pasta
  * servida): espera crescente, zera só no "conectado", e o "conectado" — inclusive o de toda
@@ -112,8 +150,16 @@ const canal = criarCanal({
     const ws = new WebSocket(urlDoCanal());
     ws.addEventListener('open', () => ouvidos.aoAbrir());
     ws.addEventListener('message', (evento) => ouvidos.aoReceber(evento.data));
-    ws.addEventListener('close', () => ouvidos.aoCair());
-    ws.addEventListener('error', () => ouvidos.aoCair());
+    ws.addEventListener('close', () => {
+      if (socketAtual === ws) conectado = false;
+      ouvidos.aoCair();
+    });
+    ws.addEventListener('error', () => {
+      if (socketAtual === ws) conectado = false;
+      ouvidos.aoCair();
+    });
+    socketAtual = ws;
+    conectado = false; // até o "conectado" desta ligação
     return {
       enviar: (dados) => ws.send(dados),
       fechar: () => ws.close(),
@@ -123,8 +169,15 @@ const canal = criarCanal({
   lerToken: acessoAtual,
   // Ficamos um tempo sem ouvir: o que mudou nesse meio-tempo não gerou aviso para esta
   // aba. Redesenhar agora fecha o buraco da reconexão.
-  aoConectar: redesenharTudo,
-  aoAvisar: avisar,
+  aoConectar() {
+    conectado = true;
+    avisarNaHora('reconectado');
+    redesenharTudo();
+  },
+  aoAvisar(assunto) {
+    avisarNaHora(assunto);
+    avisar(assunto);
+  },
 });
 
 /** Liga o canal. Chamado quando a sessão abre. */
@@ -135,6 +188,8 @@ export function conectarTempoReal() {
 /** Desliga de vez: logout. */
 export function desconectarTempoReal() {
   canal.desligar();
+  conectado = false;
+  socketAtual = null;
   // Rodada pendente da sessão que saiu não redesenha a tela de quem entrar depois.
   clearTimeout(rodada);
   rodada = null;

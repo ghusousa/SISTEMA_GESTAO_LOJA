@@ -261,3 +261,75 @@ test('tempo-real.js: o conectado de cada religação redesenha a tela inscrita',
     mock.timers.reset();
   }
 });
+
+test('tempo-real.js: ouvirNaHora chama no instante do aviso, sem esperar a rodada', async () => {
+  // O celular-leitor (ADR-43): o bipe tem de cair no carrinho já, e a rodada segura o
+  // aviso de 1 a 2 s. Quem ouve pela rodada continua igual.
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const criados = [];
+    globalThis.location = { protocol: 'https:', host: 'loja.exemplo' };
+    globalThis.WebSocket = class {
+      static OPEN = 1;
+      constructor() {
+        this.readyState = 0;
+        this.ouvintes = {};
+        criados.push(this);
+      }
+      addEventListener(tipo, fn) {
+        (this.ouvintes[tipo] ??= []).push(fn);
+      }
+      send() {}
+      close() {
+        this.readyState = 3;
+      }
+      disparar(tipo, evento = {}) {
+        if (tipo === 'open') this.readyState = 1;
+        if (tipo === 'close') this.readyState = 3;
+        for (const fn of this.ouvintes[tipo] ?? []) fn(evento);
+      }
+      receber(assunto) {
+        this.disparar('message', { data: JSON.stringify({ assunto }) });
+      }
+    };
+    globalThis.fetch = async () =>
+      new Response(JSON.stringify({ access_token: 'tok', usuario: { id: 1 } }), { status: 200 });
+
+    const { entrar } = await import('../../web/js/api.js');
+    const tr = await import('../../web/js/tempo-real.js');
+    await entrar('dona@loja.com', 'senha');
+
+    const naHora = [];
+    const naRodada = [];
+    const pararNaHora = tr.ouvirNaHora(['leitor', 'reconectado'], (a) => naHora.push(a));
+    const pararRodada = tr.ouvir(['leitor'], (a) => naRodada.push(a));
+
+    tr.conectarTempoReal();
+    await microtarefas();
+    const ws = criados.at(-1);
+    ws.disparar('open');
+    assert.equal(tr.canalConectado(), false, 'socket aberto ainda não é "conectado"');
+    ws.receber('conectado');
+    assert.equal(tr.canalConectado(), true);
+    assert.deepEqual(naHora, ['reconectado'], 'o canal de volta também acorda o leitor');
+
+    ws.receber('leitor');
+    assert.deepEqual(naHora, ['reconectado', 'leitor'], 'na hora, sem tick');
+    assert.deepEqual(naRodada, [], 'a rodada ainda espera');
+    mock.timers.tick(1000);
+    assert.deepEqual(naRodada, ['leitor'], 'quem ouve pela rodada não mudou');
+
+    ws.receber('estoque');
+    assert.equal(naHora.length, 2, 'assunto que não interessa não chama');
+
+    ws.disparar('close');
+    assert.equal(tr.canalConectado(), false, 'caiu: o leitor volta a buscar de 2 em 2 s');
+
+    pararNaHora();
+    pararRodada();
+    tr.desconectarTempoReal();
+    assert.equal(tr.canalConectado(), false);
+  } finally {
+    mock.timers.reset();
+  }
+});
