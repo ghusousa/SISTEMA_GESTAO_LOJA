@@ -7,6 +7,7 @@ abas retirando a mesma fila) rodam de verdade, em sessões separadas.
 """
 
 import asyncio
+import contextlib
 import uuid
 from datetime import timedelta
 
@@ -109,6 +110,16 @@ def _encontro(monkeypatch, metodo: str, *, depois: bool = False) -> list[str]:
 
     monkeypatch.setattr(LeitorRepository, metodo, com_encontro)
     return chegaram
+
+
+async def _diario() -> list[tuple[str, str]]:
+    """O que o dono lê no diário sobre o leitor: (ação, quem), na ordem."""
+    return [
+        (acao, quem)
+        for acao, quem in await _sql(
+            "SELECT acao, user_nome FROM audit_log WHERE entidade = 'leitor' ORDER BY id"
+        )
+    ]
 
 
 async def _encher_fila(pareamento_id: int, quantos: int, *, idade_s: int = 0) -> None:
@@ -301,6 +312,100 @@ async def test_aceitar_outro_computador_desliga_o_anterior(
     assert (await _bipar(client, auth_vendedor, segundo)).status_code == 201
 
 
+async def test_o_mesmo_celular_aceitando_dois_codigos_ao_mesmo_tempo_fica_com_um(
+    client, auth_admin, auth_gerente, auth_vendedor, monkeypatch
+) -> None:
+    """Um celular, um computador também na corrida: o mesmo login aceitando dois códigos
+    juntos (dois aparelhos com a mesma conta, ou o toque duplo) termina com UM ativo.
+
+    Quem garante é a trava por celular (`travar_aparelho`). Sem ela os dois aceites leem os
+    ativos do celular antes de qualquer um gravar, nenhum vê o outro, e o celular fica
+    ligado em dois computadores. O encontro abaixo segura cada aceite logo depois dessa
+    leitura até o outro chegar — com prazo, porque COM a trava o segundo só chega lá
+    depois do commit do primeiro.
+    """
+    do_admin = await _criar(client, auth_admin)
+    do_gerente = await _criar(client, auth_gerente)
+
+    original = LeitorRepository.ativos_do_aparelho
+    chegaram: list[int] = []
+    os_dois = asyncio.Event()
+
+    async def com_encontro(self, *args, **kwargs):
+        resultado = await original(self, *args, **kwargs)
+        chegaram.append(len(resultado))
+        if len(chegaram) == 2:
+            os_dois.set()
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(os_dois.wait(), timeout=1.5)
+        return resultado
+
+    monkeypatch.setattr(LeitorRepository, "ativos_do_aparelho", com_encontro)
+
+    async def aceitar(codigo: str) -> int:
+        async with _cliente() as c:
+            return (await _aceitar(c, auth_vendedor, codigo)).status_code
+
+    resultados = await asyncio.gather(aceitar(do_admin["codigo"]), aceitar(do_gerente["codigo"]))
+    assert resultados == [200, 200]
+    assert len(chegaram) == 2
+    # O segundo aceite viu o primeiro ativo — e o encerrou.
+    assert sorted(chegaram) == [0, 1]
+
+    situacoes = [
+        await _status(client, auth_admin, do_admin["id"]),
+        await _status(client, auth_gerente, do_gerente["id"]),
+    ]
+    assert sorted(s["status"] for s in situacoes) == ["ATIVO", "ENCERRADO"]
+    (encerrado,) = [s for s in situacoes if s["status"] == "ENCERRADO"]
+    assert encerrado["motivo_encerramento"] == "TROCOU"
+
+
+async def test_reenvio_do_aceite_pelo_mesmo_celular_devolve_o_mesmo(
+    client, auth_admin, auth_vendedor, auth_gerente
+) -> None:
+    """A resposta do aceite se perdeu (Wi-Fi fraco, partida a frio): o celular manda de novo
+    o MESMO código e recebe o pareamento que ele mesmo ligou. Sem isto, só desligando no
+    computador e gerando outro código. Para qualquer outra pessoa nada muda: o 404 de sempre.
+    """
+    criado = await _criar(client, auth_admin)
+    primeiro = await _aceitar(client, auth_vendedor, criado["codigo"])
+    assert primeiro.status_code == 200
+
+    codigo = criado["codigo"]
+    de_novo = await _aceitar(client, auth_vendedor, f"{codigo[:3]}-{codigo[3:]}".lower())
+    assert de_novo.status_code == 200
+    assert de_novo.json() == primeiro.json()
+
+    outro = await _aceitar(client, auth_gerente, criado["codigo"])
+    assert outro.status_code == 404
+    assert outro.json()["message"] == MENSAGEM_CODIGO
+
+    # O reenvio não é um segundo "Ligou" no diário: nada mudou.
+    assert await _diario() == [("LEITOR_PAREADO", "Ana Vendedora")]
+
+    # Só dentro dos 5 min do código: depois, nem para quem aceitou.
+    await _sql(
+        "UPDATE leitor_pareamentos SET codigo_expira_em = now() - interval '1 second' "
+        "WHERE id = :id",
+        id=criado["id"],
+    )
+    vencido = await _aceitar(client, auth_vendedor, criado["codigo"])
+    assert vencido.status_code == 404 and vencido.json()["message"] == MENSAGEM_CODIGO
+
+
+async def test_reenvio_do_aceite_depois_de_desligado_e_404(
+    client, auth_admin, auth_vendedor
+) -> None:
+    criado = await _criar(client, auth_admin)
+    assert (await _aceitar(client, auth_vendedor, criado["codigo"])).status_code == 200
+    assert (
+        await client.delete(f"/leitor/pareamentos/{criado['id']}", headers=auth_admin)
+    ).status_code == 204
+    r = await _aceitar(client, auth_vendedor, criado["codigo"])
+    assert r.status_code == 404 and r.json()["code"] == "LEITOR_CODIGO_INVALIDO"
+
+
 async def test_um_celular_nao_desliga_o_outro(
     client, auth_admin, auth_gerente, auth_vendedor, auth_supervisora
 ) -> None:
@@ -489,12 +594,51 @@ async def test_desligar_de_qualquer_ponta(
     assert retirada["items"] == [] and retirada["descartados"] == 1
     assert retirada["pareamento"]["status"] == "ENCERRADO"
 
-    # Desligar de novo não muda o motivo.
+    # Desligar de novo não muda o motivo — nem vira um segundo "Desligou" no diário, no nome
+    # de quem não desligou nada (a outra ponta saindo do sistema depois).
     outra_ponta = auth_vendedor if quem == "computador" else auth_admin
     assert (
         await client.delete(f"/leitor/pareamentos/{pid}", headers=outra_ponta)
     ).status_code == 204
     assert (await _status(client, auth_admin, pid))["motivo_encerramento"] == motivo
+    assert await _diario() == [
+        ("LEITOR_PAREADO", "Ana Vendedora"),
+        ("LEITOR_DESLIGADO", "Dona Maria" if quem == "computador" else "Ana Vendedora"),
+    ]
+
+
+async def test_desligar_sem_efeito_nao_entra_no_diario(client, auth_admin, auth_vendedor) -> None:
+    """O diário conta o que aconteceu. O DELETE que não desliga celular nenhum responde 204
+    (as duas pontas saem sem erro) mas não vira "Desligou o celular-leitor" no nome de quem
+    só estava saindo do sistema."""
+    # O código que ninguém leu: a pessoa abriu o QR e saiu do sistema. Não havia celular.
+    criado = await _criar(client, auth_admin)
+    r = await client.delete(f"/leitor/pareamentos/{criado['id']}", headers=auth_admin)
+    assert r.status_code == 204
+    assert (await _status(client, auth_admin, criado["id"]))["status"] == "ENCERRADO"
+
+    # Vencido nas 12 h: a vendedora sai do app no dia seguinte.
+    vencido = await _parear(client, auth_admin, auth_vendedor)
+    await _sql(
+        "UPDATE leitor_pareamentos SET expira_em = now() - interval '1 second' WHERE id = :id",
+        id=vencido,
+    )
+    r = await client.delete(f"/leitor/pareamentos/{vencido}", headers=auth_vendedor)
+    assert r.status_code == 204
+
+    # Já desligado no computador; o app não ficou sabendo e desliga de novo na saída.
+    desligado = await _parear(client, auth_admin, auth_vendedor)
+    assert (
+        await client.delete(f"/leitor/pareamentos/{desligado}", headers=auth_admin)
+    ).status_code == 204
+    r = await client.delete(f"/leitor/pareamentos/{desligado}", headers=auth_vendedor)
+    assert r.status_code == 204
+
+    assert await _diario() == [
+        ("LEITOR_PAREADO", "Ana Vendedora"),
+        ("LEITOR_PAREADO", "Ana Vendedora"),
+        ("LEITOR_DESLIGADO", "Dona Maria"),
+    ]
 
 
 async def test_doze_horas_depois_o_leitor_vence(client, auth_admin, auth_vendedor) -> None:

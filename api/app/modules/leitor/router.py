@@ -1,9 +1,10 @@
 """O celular como leitor do computador (ADR-43). Qualquer pessoa da equipe logada pareia:
 não há capacidade nova — ler código de barras não mostra nada que a pessoa já não veja."""
 
-from fastapi import APIRouter, Response, status
+from fastapi import APIRouter, Request, Response, status
 
 from app.core.deps import CurrentUser, SessionDep
+from app.modules.auditoria.middleware import fora_do_diario
 from app.modules.leitor.schemas import (
     AceiteIn,
     BipeIn,
@@ -35,8 +36,15 @@ async def criar(
     response_model=PareamentoOut,
     summary="Celular: aceita o código e vira o leitor daquele computador (12 h)",
 )
-async def aceitar(session: SessionDep, usuario: CurrentUser, dados: AceiteIn) -> PareamentoOut:
-    return await LeitorService(session).aceitar(dados, usuario)
+async def aceitar(
+    request: Request, session: SessionDep, usuario: CurrentUser, dados: AceiteIn
+) -> PareamentoOut:
+    servico = LeitorService(session)
+    pareamento = await servico.aceitar(dados, usuario)
+    if servico.replay:
+        # O reenvio de quem já tinha aceitado: nada ligou de novo.
+        fora_do_diario(request)
+    return pareamento
 
 
 @router.get(
@@ -53,8 +61,13 @@ async def obter(session: SessionDep, usuario: CurrentUser, pareamento_id: int) -
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Desliga o leitor (de qualquer uma das pontas)",
 )
-async def encerrar(session: SessionDep, usuario: CurrentUser, pareamento_id: int) -> Response:
-    await LeitorService(session).encerrar(pareamento_id, usuario)
+async def encerrar(
+    request: Request, session: SessionDep, usuario: CurrentUser, pareamento_id: int
+) -> Response:
+    if not await LeitorService(session).encerrar(pareamento_id, usuario):
+        # Nenhum celular desligado (já tinha terminado, ou era só o código esperando): o
+        # 204 deixa as duas pontas saírem sem erro, mas não é "Desligou" no diário.
+        fora_do_diario(request)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

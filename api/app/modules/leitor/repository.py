@@ -124,6 +124,28 @@ class LeitorRepository:
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
+    async def aceito_pelo_aparelho(
+        self, codigo: str, user_id: int, agora: datetime
+    ) -> LeitorPareamento | None:
+        """O pareamento que ESTE celular já ligou com este código, para o reenvio do aceite.
+
+        Só ainda ATIVO e dentro dos 5 min do código: o reenvio é de uma resposta que se
+        perdeu agora há pouco, não um jeito de reabrir leitor antigo.
+        """
+        stmt = (
+            select(LeitorPareamento)
+            .where(
+                LeitorPareamento.codigo == codigo,
+                LeitorPareamento.aparelho_user_id == user_id,
+                LeitorPareamento.encerrado_em.is_(None),
+                LeitorPareamento.expira_em > agora,
+                LeitorPareamento.codigo_expira_em > agora,
+            )
+            .order_by(LeitorPareamento.id.desc())
+            .limit(1)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
     async def travar_aparelho(self, user_id: int) -> None:
         """Um aceite por vez do MESMO celular (usuário), até o commit.
 

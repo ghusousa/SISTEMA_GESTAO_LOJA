@@ -84,6 +84,8 @@ npm run publicar     # ficha inteira na App Store via API (mobile/publicar/, -- 
   `(método, caminho)` na frase que o dono lê; rota nova de mutação → uma linha nova ali. Nome
   e papel de quem agiu são **congelados** na linha (renomear depois não reescreve o passado).
   Login (sucesso/falha) é gravado pelo `AuthService`, pela porta pública `AuditoriaService`.
+  2xx que não mudou nada (desligar o que já terminou, reenvio idempotente) não é ato: a rota
+  chama `fora_do_diario(request)` (`auditoria/middleware.py`) e a borda pula a linha.
   **LGPD x auditoria**: o nome congelado de quem AGIU nunca muda, mas e-mail não fica à toa —
   `LOGIN_FALHOU` grava `user_id`+nome se a conta existe e o e-mail MASCARADO se não existe;
   excluir usuário mascara o e-mail dele nas linhas antigas; `RETENCAO_AUDITORIA_DIAS` (730,
@@ -171,7 +173,7 @@ npm run publicar     # ficha inteira na App Store via API (mobile/publicar/, -- 
   RETIRA a fila (`.../retirar`: `UPDATE ... FOR UPDATE SKIP LOCKED`, 50 por vez, uma vez só, bipe
   com mais de 120 s descartado) por **SQL Core** — retirar pelo ORM avisaria "leitor" e cada tela
   retiraria de novo, em eco. Aceite: a mesma 404 `LEITOR_CODIGO_INVALIDO` para todo código que não
-  serve. `web/js/leitor-remoto.js` e `mobile/src/lib/leitorRemoto.ts` (convite do QR) são espelhos.
+  serve — menos o reenvio de quem já aceitou (200 com o mesmo pareamento, a resposta se perdeu). `web/js/leitor-remoto.js` e `mobile/src/lib/leitorRemoto.ts` (convite do QR) são espelhos.
   No web, o bipe retirado vai ao `criarLeitor` da tela por `entregarCodigoDeFora` (`leitor.js`),
   na hora do aviso (`ouvirNaHora`, fora da rodada); tela nova com leitor ganha isso de graça
   se chamar `ligar()`/`desligar()`.

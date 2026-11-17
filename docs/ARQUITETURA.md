@@ -911,7 +911,11 @@ lugar só, impossível de esquecer ao criar rota nova, e o texto sai do próprio
 A gravação é embrulhada em `try/except` largo: auditoria **nunca** derruba a requisição que
 ela observa — registro que falha vira log, não erro para o cliente. A middleware decodifica o
 token ela mesma (o `contextvar` do usuário, setado lá adentro, não volta visível depois do
-`call_next` no Starlette).
+`call_next` no Starlette). **O 2xx que não mudou nada não é ato:** a rota idempotente que
+responde sucesso sem efeito (desligar o leitor que já tinha terminado, o reenvio de um aceite —
+ADR-43) chama `fora_do_diario(request)` e a borda pula a linha; senão o dono leria atos que não
+aconteceram, no nome de quem só estava saindo do sistema. É opt-out de propósito: esquecer de
+chamar deixa uma linha a mais, nunca esconde um ato.
 **LGPD x auditoria — o equilíbrio.** O diário prova quem fez o quê, e para isso nome e papel de
 quem AGIU continuam congelados, inclusive depois de a conta ser excluída: é a parte que tem
 finalidade (prestação de contas, e inocentar quem foi acusado sem razão). O que não prova ato
@@ -1556,9 +1560,14 @@ hora, e duas instâncias com relógios diferentes discordariam do SQL. *O códig
 `secrets.choice`, válido 5 min, único só enquanto AGUARDANDO (UNIQUE parcial); colisão no
 sorteio desfaz só a tentativa (savepoint) e sorteia outro. O aceite normaliza (maiúsculas, sem
 espaços e hífens) e responde **a mesma coisa** — 404 `LEITOR_CODIGO_INVALIDO`, "Código não
-encontrado ou vencido. Gere outro no computador." — para inexistente, vencido, já aceito e
-encerrado: a tela não precisa saber qual foi, e quem chuta códigos não aprende nada com a
-diferença. *Força bruta:* o alfabeto tem 32 símbolos (8 algarismos e 24 letras), então são
+encontrado ou vencido. Gere outro no computador." — para inexistente, vencido, já aceito por
+OUTRO e encerrado: a tela não precisa saber qual foi, e quem chuta códigos não aprende nada com a
+diferença. A exceção é o **reenvio de quem já aceitou**: a resposta do aceite se perdeu (Wi-Fi
+fraco, partida a frio da Vercel) e o mesmo celular manda o mesmo código — recebe 200 com o
+pareamento que ele mesmo ligou, sem mudar nada (nem linha no diário), enquanto ele estiver
+ATIVO e dentro dos 5 min do código. Sem isso o computador mostrava "📱 Celular de Fulana" e o
+celular, o erro — e o anterior dele já tinha virado TROCOU. Não vaza nada a quem chuta: a
+resposta só muda para o próprio dono do aceite. *Força bruta:* o alfabeto tem 32 símbolos (8 algarismos e 24 letras), então são
 32^6 ≈ 1,07 bilhão de códigos, cada um válido 5 min, e só para quem já
 tem sessão (a rota exige login: quem chuta é alguém da equipe, ou uma sessão roubada, que já
 teria coisa melhor a fazer). Com dez computadores esperando ao mesmo tempo, cada chute acerta
@@ -1575,7 +1584,8 @@ computador que gera código novo passa `substitui_id` (o antigo vira SUBSTITUIDO
 saiu da tela não pode continuar abrindo o leitor); mais de 10 vivos da mesma pessoa no computador
 (o mesmo login em várias abas é normal; dezenas esquecidas, não), os mais velhos também. Desligar
 vale de qualquer ponta (COMPUTADOR ou CELULAR; com o mesmo login nas duas, não há como saber o
-lado e conta COMPUTADOR); desligar o que já terminou é 204 sem mudar nada. *Bipe:* idempotente
+lado e conta COMPUTADOR); desligar o que já terminou é 204 sem mudar nada — e sem linha no
+diário. *Bipe:* idempotente
 por `client_uuid`, **conferido antes de qualquer outra coisa** — o reenvio de um bipe que já
 entrou responde 200 com o mesmo corpo mesmo que o leitor tenha sido desligado nesse meio-tempo
 (o bipe entrou; o celular só não soube). A mesma chave com outro código ou outro pareamento é
@@ -1600,7 +1610,9 @@ fila entregue uma vez, com teto de 50 por chamada; quem quer o resto chama de no
 (ADR-16): criar, aceitar, encerrar e bipar avisam; retirar não. Só o assunto trafega — **nunca o
 código lido** —, e quem busca é a rota REST, que confere de quem é o pareamento. *Auditoria*
 (ADR-23): aceitar é `LEITOR_PAREADO` ("Ligou o celular como leitor de código de barras de um
-computador") e desligar é `LEITOR_DESLIGADO` ("Desligou o celular-leitor #id"). Gerar o código,
+computador") e desligar um celular LIGADO é `LEITOR_DESLIGADO` ("Desligou o celular-leitor
+#id"). O 204 sem efeito (o que já tinha terminado; o código que ninguém leu, cancelado por quem
+abriu o QR e saiu) e o reenvio do aceite ficam fora (`fora_do_diario`, ADR-23). Gerar o código,
 bipar e retirar ficam fora (`_IGNORAR`): o código na tela não é ato, cada bipe é uma tecla (o ato
 é a venda depois) e a tela retira a cada aviso e, sem canal, de 2 em 2 s. *Faxina:* a cada código gerado, apaga bipe com mais
 de 1 dia e pareamento terminado há mais de 30; FKs para `users` em CASCADE, como os do refresh
@@ -1698,7 +1710,7 @@ Erros: `{"code": "...", "message": "...", "detail": {...}}`.
 | `EMISSOR_NAO_CONFIGURADO` | 409 | NFC-e sem emissor ligado no `.env`; `detail.faltando` (ADR-41) |
 | `DADOS_FISCAIS_INCOMPLETOS` | 409 | NFC-e sem NCM, CNPJ, IE ou regime; `detail.faltando`, `detail.produtos_sem_ncm` |
 | `MUITAS_TENTATIVAS` | 429 | logins errados demais na janela; `detail.retry_after` em segundos, header `Retry-After` |
-| `LEITOR_CODIGO_INVALIDO` | 404 | código do leitor pelo celular inexistente, vencido, já aceito ou encerrado — a MESMA resposta (ADR-43) |
+| `LEITOR_CODIGO_INVALIDO` | 404 | código do leitor pelo celular inexistente, vencido, já aceito por outro ou encerrado — a MESMA resposta (ADR-43) |
 | `LEITOR_DESLIGADO` | 409 | bipe num pareamento que não está ATIVO; `detail.status` diz qual (ADR-43) |
 | `LEITOR_FILA_CHEIA` | 409 | 100 bipes esperando o computador retirar (ADR-43) |
 
@@ -1919,9 +1931,9 @@ motivo_encerramento: COMPUTADOR|CELULAR|TROCOU|SUBSTITUIDO|null}` (datas ISO em 
 | método | rota | notas |
 |---|---|---|
 | POST | `/leitor/pareamentos` | computador: corpo opcional `{substitui_id?}` → 201 `PareamentoOut` AGUARDANDO (código de 6, vale 5 min). `substitui_id` do próprio computador e não encerrado é encerrado (SUBSTITUIDO); de outra pessoa, ignorado. Mais de 10 vivos (AGUARDANDO/ATIVO) da mesma pessoa no computador: os mais velhos viram SUBSTITUIDO. Faz a faxina |
-| POST | `/leitor/pareamentos/aceitar` | celular: `{codigo}` (maiúsculas, espaços e hífens tanto faz) → 200 `PareamentoOut` ATIVO por 12 h; encerra (TROCOU) os outros ATIVOS deste celular. Inexistente, vencido, já aceito ou encerrado → 404 `LEITOR_CODIGO_INVALIDO`, a mesma resposta; dois celulares no mesmo código: um 200, o outro 404 |
+| POST | `/leitor/pareamentos/aceitar` | celular: `{codigo}` (maiúsculas, espaços e hífens tanto faz) → 200 `PareamentoOut` ATIVO por 12 h; encerra (TROCOU) os outros ATIVOS deste celular. Inexistente, vencido, já aceito por outro ou encerrado → 404 `LEITOR_CODIGO_INVALIDO`, a mesma resposta; dois celulares no mesmo código: um 200, o outro 404. O reenvio do MESMO celular (a resposta se perdeu), com o pareamento ainda ATIVO e dentro dos 5 min do código → 200 com o mesmo `PareamentoOut`, sem mudar nada e sem linha no diário |
 | GET | `/leitor/pareamentos/{id}` | `PareamentoOut` para as duas pontas; para mais ninguém, 404 |
-| DELETE | `/leitor/pareamentos/{id}` | 204 de qualquer ponta (COMPUTADOR ou CELULAR; o mesmo login nas duas conta como COMPUTADOR); já encerrado ou vencido → 204 sem mudar nada; de terceiro → 404 |
+| DELETE | `/leitor/pareamentos/{id}` | 204 de qualquer ponta (COMPUTADOR ou CELULAR; o mesmo login nas duas conta como COMPUTADOR); já encerrado ou vencido → 204 sem mudar nada; de terceiro → 404. Só o que desligou um celular ATIVO entra no diário |
 | POST | `/leitor/bipes` | celular: `{client_uuid, pareamento_id, codigo}` → 201 `{id, client_uuid, pareamento_id, codigo, criado_em}`. A chave é conferida antes de tudo: reenvio idêntico → 200 com o mesmo corpo; a mesma chave com outro código, outro pareamento ou de outro celular → 409 `DUPLICADO`. `codigo` sem espaços nas pontas, 1–64, sem caractere de controle (senão 422). Pareamento que não é deste celular → 404; não ATIVO → 409 `LEITOR_DESLIGADO` `detail.status`; 100 pendentes → 409 `LEITOR_FILA_CHEIA` |
 | POST | `/leitor/pareamentos/{id}/retirar` | só o computador: → 200 `{items:[{id, codigo, criado_em}], descartados, pareamento: PareamentoOut}`. Até 50 por chamada, na ordem da leitura, entregues uma vez (consumidos na mesma instrução; duas abas pegam lotes disjuntos). Bipe com mais de 120 s é consumido e NÃO entregue (conta em `descartados`); pareamento que não está ATIVO entrega `[]`, descarta a fila e devolve o status. **Não é listagem paginada** (é uma fila com teto) e **não gera aviso de tempo real** |
 

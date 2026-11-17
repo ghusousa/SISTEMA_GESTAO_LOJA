@@ -63,8 +63,9 @@ _TENTATIVAS_DE_CODIGO = 8
 
 
 class CodigoInvalido(AppError):
-    """A MESMA resposta para código inexistente, vencido, já aceito ou encerrado: a tela não
-    precisa saber qual foi, e quem testa códigos não aprende nada com a diferença."""
+    """A MESMA resposta para código inexistente, vencido, já aceito por outro ou encerrado: a
+    tela não precisa saber qual foi, e quem testa códigos não aprende nada com a diferença.
+    (O reenvio de quem já aceitou não cai aqui: recebe o pareamento dele — `aceitar`.)"""
 
     code = "LEITOR_CODIGO_INVALIDO"
     http_status = http.HTTP_404_NOT_FOUND
@@ -117,7 +118,8 @@ class LeitorService:
     def __init__(self, session: AsyncSession):
         self.session = session
         self.repo = LeitorRepository(session)
-        #: True quando o bipe já existia (replay idempotente): o router responde 200.
+        #: True no replay idempotente — o bipe que já existia (o router responde 200) ou o
+        #: aceite reenviado por quem já aceitou (nada mudou: fora do diário).
         self.replay = False
 
     # ------------------------------------------------------------------ pareamento
@@ -174,7 +176,15 @@ class LeitorService:
         agora = await self.repo.agora()
         pareamento = await self.repo.aguardando_por_codigo(codigo, agora)
         if pareamento is None:
-            raise CodigoInvalido()
+            # O reenvio de quem JÁ aceitou este código (a resposta se perdeu: Wi-Fi fraco,
+            # partida a frio) recebe o mesmo pareamento, sem mudar nada — senão o celular
+            # ficaria sem leitor e o computador com ele ligado. Só muda a resposta para o
+            # próprio dono do aceite: quem testa códigos continua vendo o 404 de sempre.
+            meu = await self.repo.aceito_pelo_aparelho(codigo, usuario_id, agora)
+            if meu is None:
+                raise CodigoInvalido()
+            self.replay = True
+            return await self._montar(meu, agora)
 
         pareamento.aparelho_user_id = usuario_id
         pareamento.aceito_em = agora
@@ -198,11 +208,15 @@ class LeitorService:
             raise NaoEncontrado("Leitor não encontrado.")
         return await self._montar(pareamento, agora)
 
-    async def encerrar(self, pareamento_id: int, usuario: User) -> None:
+    async def encerrar(self, pareamento_id: int, usuario: User) -> bool:
         """Desliga. Quem desligou fica no motivo; o que já terminou fica como estava.
 
         Com o MESMO login nas duas pontas não há como saber de qual lado veio: conta como
         COMPUTADOR, que é quem gerou o pareamento.
+
+        Devolve se havia um celular LIGADO (ATIVO) e ele foi desligado — só isso é ato para o
+        diário. Encerrar um código que ninguém leu (AGUARDANDO) tira o código de circulação,
+        mas não desliga celular nenhum; o que já tinha terminado não muda nada.
         """
         usuario_id = usuario.id
         agora = await self.repo.agora()
@@ -216,13 +230,12 @@ class LeitorService:
         else:
             raise NaoEncontrado("Leitor não encontrado.")
 
-        if status_do_pareamento(pareamento, agora) in (
-            StatusPareamento.ENCERRADO,
-            StatusPareamento.EXPIRADO,
-        ):
-            return
+        antes = status_do_pareamento(pareamento, agora)
+        if antes in (StatusPareamento.ENCERRADO, StatusPareamento.EXPIRADO):
+            return False
         _encerrar(pareamento, agora, motivo)
         await self.session.commit()
+        return antes == StatusPareamento.ATIVO
 
     # ------------------------------------------------------------------ bipes
 

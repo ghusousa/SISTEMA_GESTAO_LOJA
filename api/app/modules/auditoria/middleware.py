@@ -39,6 +39,17 @@ def _ip(request: Request) -> str | None:
     return request.client.host if request.client else None
 
 
+def fora_do_diario(request: Request) -> None:
+    """A rota avisa a borda: esta resposta 2xx não foi um ato, não vira linha no diário.
+
+    Só para o caminho idempotente que não mudou nada — desligar o que já tinha terminado, o
+    reenvio de um aceite (ADR-43). Sem isto o diário mostraria atos que não aconteceram, no
+    nome de quem só estava saindo do sistema. Esquecer de chamar deixa uma linha a mais;
+    nunca esconde um ato, que é o que o registro na borda protege.
+    """
+    request.state.fora_do_diario = True
+
+
 def _quem(request: Request) -> tuple[int, str] | None:
     """(user_id, papel) do token da requisição, ou None se não houver token válido."""
     cabecalho = request.headers.get("authorization", "")
@@ -63,6 +74,9 @@ class AuditoriaMiddleware(BaseHTTPMiddleware):
             # Só o que de fato aconteceu: 2xx/3xx. Um 4xx é uma tentativa barrada (o
             # 403 da vendedora, o 422 de dado inválido) — não é um ato consumado.
             if resposta.status_code >= 400:
+                return resposta
+            # A rota disse que nada mudou (`fora_do_diario`): um 204 sem efeito não é ato.
+            if getattr(request.state, "fora_do_diario", False):
                 return resposta
 
             caminho = request.url.path[len(_PREFIXO):]
