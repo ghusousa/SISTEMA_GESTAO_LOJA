@@ -1,44 +1,44 @@
 APP DE USO PROFISSIONAL (B2B) QUE EXIGE UM SERVIDOR — POR FAVOR, LEIA ANTES DE TESTAR
 
 1) O QUE É
-Gestão para lojas de balcão (varejo físico): estoque por código de barras, PDV, devolução, crediário, despesas, relatórios, caixa e auditoria. Não é app de consumidor final e não vende nada dentro do app.
+Gestão para lojas de balcão (varejo físico): estoque por código de barras, PDV, devolução, crediário, condicional, despesas, relatórios, caixa e auditoria. Não é app de consumidor final e não vende nada dentro do app.
 
 2) POR QUE EXIGE SERVIDOR
-O sistema é auto-hospedado: cada loja instala o servidor e é dona dos próprios dados; o app é só o cliente. Por isso o endereço do servidor é DIGITADO NO APARELHO — um mesmo app serve várias lojas. Não existe autocadastro: as contas dos funcionários são criadas pelo dono ou pelo gerente dentro do sistema.
+O sistema é auto-hospedado: cada loja instala o servidor e é dona dos próprios dados; o app é só o cliente. Por isso o endereço do servidor é DIGITADO NO APARELHO — um mesmo app serve várias lojas. Não há autocadastro: as contas são criadas pelo dono ou pelo gerente dentro do sistema.
 
 3) SERVIDOR DE DEMONSTRAÇÃO PARA A REVISÃO
-Mantemos um servidor completo, com dados de exemplo, exclusivamente para esta revisão:
+Servidor completo, com dados de exemplo, só para esta revisão:
   Endereço: {{SERVIDOR_DEMO}}   (HTTPS válido)
   E-mail:   {{EMAIL_DEMO}}
   Senha:    {{SENHA_DEMO}}
-A conta é de perfil "dono", então todas as abas ficam visíveis. O banco é de teste: podem vender, cancelar e devolver à vontade.
+A conta é de perfil "dono": todas as abas ficam visíveis. O banco é de teste: podem vender, cancelar e devolver à vontade.
 
-4) PASSO A PASSO PARA TESTAR (5 minutos)
+4) PASSO A PASSO (5 minutos)
 1. Abra o app. Aparece a tela de entrada.
 2. Toque na ENGRENAGEM no canto superior direito. Abre "Conectar à loja".
-3. No campo "Endereço do servidor", digite exatamente, com o https://:
+3. Em "Endereço do servidor", digite exatamente, com o https://:
      {{SERVIDOR_DEMO}}
 4. Toque em "Conectar". O app testa o endereço e volta para a tela de entrada.
 5. Informe {{EMAIL_DEMO}} e {{SENHA_DEMO}} e toque em "Entrar".
 6. Abre a aba "Vender" (o PDV), com o carrinho vazio.
-7. Para colocar uma peça no carrinho, use QUALQUER um dos três caminhos:
+7. Para pôr uma peça no carrinho, use QUALQUER um dos três caminhos:
    a) "Ler código de barras" — liga a câmera (o iOS pedirá permissão). Aponte para um código de barras.
 {{LINHA_ETIQUETAS}}
    b) "Digitar código" — digite {{CODIGO_DEMO}} e confirme. Não precisa de câmera.
    c) "Buscar" — digite parte do nome da peça (ex.: "cami") e escolha na lista.
-8. A peça entra no carrinho com preço e quantidade. Repita se quiser.
+8. A peça entra no carrinho com preço e quantidade.
 9. Toque em "Cobrar".
-10. Toque na forma de pagamento "Dinheiro" (isso quita o valor inteiro; digitando um valor no teclado antes, o pagamento vira parcial e dá para dividir entre formas).
+10. Toque em "Dinheiro" (quita o valor inteiro; digitando um valor antes, o pagamento vira parcial e dá para dividir entre formas).
 11. Toque em "Confirmar venda". Aparece o recibo, e o estoque baixa na hora.
-O resto está nas abas "Estoque" (entrada, inventário), "Financeiro" (caixa, despesas, relatórios) e "Mais" (devolução, crediário, usuários, auditoria).
+O resto está nas abas "Estoque" (entrada, inventário), "Financeiro" (caixa, despesas, relatórios) e "Mais" (devolução, condicional, crediário, usuários, auditoria).
 
 5) PONTOS QUE COSTUMAM GERAR DÚVIDA
-• Nada é comprado dentro do app. As vendas registradas são de mercadoria física, paga presencialmente no balcão (dinheiro, PIX, maquininha). O app só ANOTA forma e valor: não processa pagamento, não guarda número de cartão e não vende bem digital (3.1.1).
-• O recibo enviado pelo compartilhamento do iPhone é um comprovante da loja, não documento fiscal, e está escrito no rodapé dele.
-• Sem criação de conta no app: não havendo autocadastro, a exclusão (5.1.1(v)) é feita pelo administrador da loja em "Mais > Usuários" — e o dono pode apagar o servidor inteiro, que é dele.
-• Sem conteúdo público e sem contato entre usuários: fotos e textos ficam no servidor de uma única loja, visíveis só para os funcionários dela. Não há feed, comentários, mensagens nem descoberta de usuários.
-• Câmera: só para ler código de barras e fotografar a peça no cadastro. Galeria: só para escolher a imagem do produto. Nada vai para terceiros.
-• ATS: o app declara NSAllowsLocalNetworking porque muitas lojas rodam o servidor na própria rede, em IP local, sem certificado. Servidores na internet, como o da demonstração, usam HTTPS normalmente. O iOS pode pedir permissão de Rede Local nesse cenário.
+• Nada é comprado no app. As vendas são de mercadoria física, paga no balcão (dinheiro, PIX, maquininha). O app só ANOTA forma e valor: não processa pagamento, não guarda cartão e não vende bem digital (3.1.1).
+• O recibo compartilhado pelo iPhone é comprovante da loja, não documento fiscal (está no rodapé). A NFC-e depende de um emissor fiscal que cada loja contrata e liga no servidor; sem ele, a tela da venda diz o que falta.
+• Sem autocadastro, a exclusão de conta (5.1.1(v)) é feita pelo administrador da loja em "Mais > Usuários" — e o dono pode apagar o servidor inteiro, que é dele.
+• Sem conteúdo público e sem contato entre usuários: fotos e textos ficam no servidor de uma única loja, visíveis só para a equipe dela. Não há feed, comentários, mensagens nem descoberta de usuários.
+• Câmera: só para ler códigos de barras (e o QR de "Mais > Leitor do computador", que liga o celular a uma venda aberta no navegador) e fotografar a peça. Galeria: só para a foto do produto. Nada vai para terceiros.
+• ATS: o app declara NSAllowsLocalNetworking porque muitas lojas rodam o servidor na rede local, em IP, sem certificado. Servidores na internet, como o da demonstração, usam HTTPS.
 • Sem analytics, sem SDK de rastreamento, sem publicidade e sem IDFA — por isso não há prompt de ATT.
 
 6) CONTATO DURANTE A REVISÃO
