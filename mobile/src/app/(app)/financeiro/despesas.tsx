@@ -7,13 +7,17 @@ import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } 
 
 import { mensagemDoErro } from '@/api/client';
 import { despesas } from '@/api/endpoints';
-import { Botao, Carregando, ErroEstado, Etiqueta, Vazio } from '@/components/ui';
+import { Botao, Carregando, ErroEstado, Etiqueta, useRespiroDeBaixo, Vazio } from '@/components/ui';
 import { formatar, paraCentavos } from '@/lib/money';
 import { chaves, invalidarAposDespesa, queryClient } from '@/lib/queryClient';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
+import { primeiraMaiuscula } from '@/lib/texto';
 
 export default function Despesas() {
   const router = useRouter();
+  // O botão flutuante encosta na base da tela: no Face ID ele sobe do indicador de início,
+  // e a lista ganha o mesmo tanto para a última despesa não ficar embaixo dele.
+  const respiroDeBaixo = useRespiroDeBaixo();
   const hoje = new Date();
   const inicio = format(startOfMonth(hoje), 'yyyy-MM-dd');
   const fim = format(endOfMonth(hoje), 'yyyy-MM-dd');
@@ -60,7 +64,7 @@ export default function Despesas() {
   return (
     <View style={s.tela}>
       <ScrollView
-        contentContainerStyle={s.conteudo}
+        contentContainerStyle={[s.conteudo, { paddingBottom: respiroDeBaixo + 80 }]}
         refreshControl={
           <RefreshControl
             refreshing={consulta.isRefetching}
@@ -70,7 +74,9 @@ export default function Despesas() {
       >
         <View style={s.cabecalho}>
           <View>
-            <Text style={s.mes}>{format(hoje, "MMMM 'de' yyyy", { locale: ptBR })}</Text>
+            <Text style={s.mes}>
+              {primeiraMaiuscula(format(hoje, "MMMM 'de' yyyy", { locale: ptBR }))}
+            </Text>
             <Text style={s.total}>{formatar(total)}</Text>
           </View>
           <Botao
@@ -127,7 +133,7 @@ export default function Despesas() {
       </ScrollView>
 
       <Pressable
-        style={s.botaoFlutuante}
+        style={[s.botaoFlutuante, { bottom: respiroDeBaixo }]}
         onPress={() => router.push('/financeiro/despesa-nova')}
         accessibilityLabel="Nova despesa"
       >
@@ -139,7 +145,7 @@ export default function Despesas() {
 
 const s = StyleSheet.create({
   tela: { flex: 1, backgroundColor: cores.fundo },
-  conteudo: { padding: espaco.lg, paddingBottom: 96 },
+  conteudo: { padding: espaco.lg },
 
   cabecalho: {
     flexDirection: 'row',
@@ -152,7 +158,6 @@ const s = StyleSheet.create({
     fontSize: fonte.pequena,
     color: cores.textoSuave,
     fontWeight: '700',
-    textTransform: 'capitalize',
   },
   total: { fontSize: fonte.titulo, fontWeight: '800', color: cores.perigo },
 

@@ -12,14 +12,12 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-import pytest
 
 from app.core.config import settings
 from app.modules.usuarios.models import User
 
 from conftest import criar_produto
 
-pytestmark = pytest.mark.anyio
 
 
 async def _peca(client, auth_admin, nome: str, preco: str, custo: str = "20.00"):
@@ -239,6 +237,107 @@ async def test_venda_fiado_cancelada_para_de_cobrar(client, auth_admin) -> None:
     ) == Decimal("0.00"), "venda cancelada não pode continuar sendo cobrada"
 
 
+async def test_cancelar_fiado_que_a_cliente_ja_pagou_e_recusado(client, auth_admin) -> None:
+    """O ADR-21 pela outra porta: o fiado sai da conta, o pagamento fica, e o saldo vira −30.
+
+    A loja passaria a dever à cliente sem nada na tela dizendo isso. A recusa manda para a
+    Devolução, que abate só o que ainda se deve e entrega o já pago em vale.
+    """
+    cliente = await _cliente(client, auth_admin, "Dona Pagou Parte")
+    variante = await _peca(client, auth_admin, "Peca Paga Parte", "100.00")
+    venda = (
+        await client.post(
+            "/vendas",
+            headers=auth_admin,
+            json={
+                "client_uuid": str(uuid.uuid4()),
+                "cliente_id": cliente["id"],
+                "itens": [{"variante_id": variante, "quantidade": 1}],
+                "pagamentos": [{"forma": "FIADO", "valor": "100.00"}],
+            },
+        )
+    ).json()
+    pago = await client.post(
+        f"/clientes/{cliente['id']}/pagamentos",
+        headers=auth_admin,
+        json={"forma": "DINHEIRO", "valor": "30.00", "client_uuid": str(uuid.uuid4())},
+    )
+    assert pago.status_code == 201, pago.text
+
+    cancelamento = await client.post(
+        f"/vendas/{venda['id']}/cancelamento",
+        headers=auth_admin,
+        json={"motivo": "Cliente desistiu"},
+    )
+    assert cancelamento.status_code == 409, cancelamento.text
+    assert "devolução" in cancelamento.json()["message"].lower()
+
+    # Nada mudou: a venda continua de pé, a peça não voltou e a dívida é a mesma.
+    detalhe = (await client.get(f"/vendas/{venda['id']}", headers=auth_admin)).json()
+    assert detalhe["status"] == "CONCLUIDA"
+    saldos = (
+        await client.get("/estoque/saldos", headers=auth_admin, params={"q": "Peca Paga Parte"})
+    ).json()
+    assert saldos["items"][0]["saldo"] == 19
+    deve = (await client.get(f"/clientes/{cliente['id']}", headers=auth_admin)).json()["deve"]
+    assert Decimal(deve) == Decimal("70.00")
+
+    # E o caminho indicado fecha a conta: 70 abatem a dívida, os 30 já pagos viram vale.
+    devolucao = await client.post(
+        f"/vendas/{venda['id']}/devolucoes",
+        headers=auth_admin,
+        json={
+            "client_uuid": str(uuid.uuid4()),
+            "itens": [{"item_id": venda["itens"][0]["id"], "quantidade": 1}],
+        },
+    )
+    assert devolucao.status_code == 201, devolucao.text
+    por_forma = {p["forma"]: Decimal(p["valor"]) for p in devolucao.json()["pagamentos"]}
+    assert por_forma == {"FIADO": Decimal("70.00"), "VALE": Decimal("30.00")}
+    deve = (await client.get(f"/clientes/{cliente['id']}", headers=auth_admin)).json()["deve"]
+    assert Decimal(deve) == Decimal("0.00")
+
+
+async def test_cancelar_fiado_que_a_divida_ainda_cobre_e_permitido(client, auth_admin) -> None:
+    """A recusa é só para o saldo negativo, não para toda venda de quem já pagou algo.
+
+    Duas compras de R$ 100,00 e um pagamento de R$ 100,00: cancelar uma delas leva a dívida
+    a zero, não abaixo — o sistema não sabe qual compra o pagamento quitou, e não finge.
+    """
+    cliente = await _cliente(client, auth_admin, "Dona Duas Compras")
+    variante = await _peca(client, auth_admin, "Peca Duas Compras", "100.00")
+    vendas = []
+    for _ in range(2):
+        vendas.append(
+            (
+                await client.post(
+                    "/vendas",
+                    headers=auth_admin,
+                    json={
+                        "client_uuid": str(uuid.uuid4()),
+                        "cliente_id": cliente["id"],
+                        "itens": [{"variante_id": variante, "quantidade": 1}],
+                        "pagamentos": [{"forma": "FIADO", "valor": "100.00"}],
+                    },
+                )
+            ).json()
+        )
+    await client.post(
+        f"/clientes/{cliente['id']}/pagamentos",
+        headers=auth_admin,
+        json={"forma": "PIX", "valor": "100.00", "client_uuid": str(uuid.uuid4())},
+    )
+
+    cancelamento = await client.post(
+        f"/vendas/{vendas[0]['id']}/cancelamento",
+        headers=auth_admin,
+        json={"motivo": "Cliente desistiu"},
+    )
+    assert cancelamento.status_code == 200, cancelamento.text
+    deve = (await client.get(f"/clientes/{cliente['id']}", headers=auth_admin)).json()["deve"]
+    assert Decimal(deve) == Decimal("0.00")
+
+
 async def test_devolucao_de_venda_fiado_abate_a_divida(client, auth_admin) -> None:
     """Não sai dinheiro da gaveta para quem ainda não pagou — abate o que ela deve."""
     cliente = await _cliente(client, auth_admin, "Dona Devolveu")
@@ -288,6 +387,75 @@ async def test_cliente_devendo_nao_pode_ser_excluido(client, auth_admin) -> None
     )
     resposta = await client.delete(f"/clientes/{cliente['id']}", headers=auth_admin)
     assert resposta.status_code == 409
+
+
+async def test_excluir_cliente_quitada_apaga_o_dado_pessoal(client, auth_admin, session) -> None:
+    """LGPD: excluir só marcava `deleted_at`, e CPF, telefone e observação ficavam para
+    sempre no banco (e em todo backup), contra o que a página de exclusão promete.
+
+    Quitada, a cliente é anonimizada; a venda continua inteira, apontando para o mesmo id,
+    para o caixa e os relatórios do passado não mudarem.
+    """
+    from sqlalchemy import select
+
+    from app.modules.clientes.models import Customer
+
+    criada = await client.post(
+        "/clientes",
+        headers=auth_admin,
+        json={
+            "nome": "Dona Privada",
+            "telefone": "11977776666",
+            "documento": "12345678900",
+            "observacao": "Mora na rua de trás, prefere azul",
+        },
+    )
+    assert criada.status_code == 201, criada.text
+    cliente = criada.json()
+    variante = await _peca(client, auth_admin, "Peca Privada", "90.00")
+    venda = await client.post(
+        "/vendas",
+        headers=auth_admin,
+        json={
+            "client_uuid": str(uuid.uuid4()),
+            "cliente_id": cliente["id"],
+            "itens": [{"variante_id": variante, "quantidade": 1}],
+            "pagamentos": [{"forma": "FIADO", "valor": "90.00"}],
+        },
+    )
+    assert venda.status_code == 201, venda.text
+    pago = await client.post(
+        f"/clientes/{cliente['id']}/pagamentos",
+        headers=auth_admin,
+        json={"forma": "PIX", "valor": "90.00", "client_uuid": str(uuid.uuid4())},
+    )
+    assert pago.status_code == 201, pago.text
+
+    excluiu = await client.delete(f"/clientes/{cliente['id']}", headers=auth_admin)
+    assert excluiu.status_code == 204, excluiu.text
+
+    linha = (
+        await session.execute(select(Customer).where(Customer.id == cliente["id"]))
+    ).scalar_one()
+    assert linha.deleted_at is not None
+    assert linha.name == f"Cliente removido #{cliente['id']}"
+    assert linha.phone is None
+    assert linha.document is None
+    assert linha.note is None
+
+    # o histórico ficou: a venda existe, com o valor de antes e o nome já anônimo
+    detalhe = await client.get(f"/vendas/{venda.json()['id']}", headers=auth_admin)
+    assert detalhe.status_code == 200, detalhe.text
+    assert Decimal(detalhe.json()["total"]) == Decimal("90.00")
+    assert detalhe.json()["cliente"] == f"Cliente removido #{cliente['id']}"
+
+    # e a mesma pessoa pode voltar a ser cadastrada com o mesmo telefone e CPF
+    de_novo = await client.post(
+        "/clientes",
+        headers=auth_admin,
+        json={"nome": "Dona Privada", "telefone": "11977776666", "documento": "12345678900"},
+    )
+    assert de_novo.status_code == 201, de_novo.text
 
 
 async def test_vendedora_nao_vende_no_fiado(client, auth_vendedor, auth_admin) -> None:
@@ -492,6 +660,200 @@ async def test_segundo_recebimento_da_mesma_divida_e_recusado(client, auth_admin
 
     depois = (await client.get(f"/clientes/{cliente['id']}", headers=auth_admin)).json()
     assert Decimal(depois["deve"]) == Decimal("0.00")
+
+
+async def _quando_alguem_parar_numa_trava() -> None:
+    """Espera, sem relógio, até outra sessão estar parada numa trava do banco.
+
+    É o que torna a corrida determinística: em vez de dormir "o bastante" e torcer, pergunta
+    ao Postgres. `pg_stat_activity` é uma foto tirada uma vez por transação, por isso cada
+    volta do laço abre a sua — senão a pergunta repetiria a mesma resposta para sempre.
+    """
+    from sqlalchemy import text
+
+    from app.core.db import engine
+
+    async with engine.connect() as conexao:
+        while True:
+            parada = await conexao.scalar(
+                text(
+                    "SELECT EXISTS (SELECT 1 FROM pg_stat_activity"
+                    " WHERE datname = current_database() AND wait_event_type = 'Lock'"
+                    " AND pid <> pg_backend_pid())"
+                )
+            )
+            await conexao.rollback()
+            if parada:
+                return
+
+
+async def test_retry_simultaneo_do_recebimento_devolve_o_existente(
+    client, auth_admin, admin
+) -> None:
+    """O app reenvia o MESMO recebimento enquanto o primeiro ainda não fez commit.
+
+    O retry passa pela checagem de idempotência sem ver nada e fica parado na trava da
+    cliente. Quando ela solta, a dívida já caiu de 100 para 40, e ele respondia "o valor é
+    maior do que a dívida" para um pagamento que entrou — quem está no balcão via erro e
+    cobrava de novo. A ordem aqui é forçada pela trava: a primeira tentativa só faz commit
+    depois que o Postgres diz que o retry está parado esperando por ela.
+    """
+    import asyncio
+
+    from app.core.db import SessionLocal
+    from app.modules.clientes.schemas import PagamentoClienteIn
+    from app.modules.clientes.service import ClienteService
+
+    cliente = await _cliente(client, auth_admin, "Dona Retry")
+    variante = await _peca(client, auth_admin, "Peca Retry", "100.00")
+    await client.post(
+        "/vendas",
+        headers=auth_admin,
+        json={
+            "client_uuid": str(uuid.uuid4()),
+            "cliente_id": cliente["id"],
+            "itens": [{"variante_id": variante, "quantidade": 1}],
+            "pagamentos": [{"forma": "FIADO", "valor": "100.00"}],
+        },
+    )
+    chave = uuid.uuid4()
+    primeira_no_commit = asyncio.Event()
+    liberar_commit = asyncio.Event()
+
+    async def receber(segurar_commit: bool):
+        async with SessionLocal() as sessao:
+            if segurar_commit:
+                commit = sessao.commit
+
+                async def commit_segurado():
+                    primeira_no_commit.set()
+                    await liberar_commit.wait()
+                    await commit()
+
+                sessao.commit = commit_segurado  # type: ignore[method-assign]
+            else:
+                await primeira_no_commit.wait()
+            usuario = await sessao.get(User, admin.id)
+            dados = PagamentoClienteIn(forma="DINHEIRO", valor=Decimal("60.00"), client_uuid=chave)
+            return await ClienteService(sessao).receber(cliente["id"], dados, usuario)
+
+    async def soltar_quando_o_retry_parar():
+        await primeira_no_commit.wait()
+        try:
+            await asyncio.wait_for(_quando_alguem_parar_numa_trava(), timeout=15)
+        finally:
+            liberar_commit.set()
+
+    primeira, retry, soltou = await asyncio.gather(
+        receber(True), receber(False), soltar_quando_o_retry_parar(), return_exceptions=True
+    )
+    assert soltou is None, f"o retry nunca parou na trava: {soltou!r}"
+    assert not isinstance(primeira, Exception), repr(primeira)
+    assert not isinstance(retry, Exception), f"retry do mesmo recebimento recusado: {retry!r}"
+    assert retry.id == primeira.id
+
+    depois = (await client.get(f"/clientes/{cliente['id']}", headers=auth_admin)).json()
+    assert Decimal(depois["deve"]) == Decimal("40.00")
+
+
+async def test_reenvio_do_recebimento_com_outro_valor_e_recusado(client, auth_admin) -> None:
+    """O mesmo `client_uuid` com outro valor (ou outra forma) não é o mesmo recebimento.
+
+    Responder o gravado como sucesso dizia "R$ 30 recebidos" quando entraram R$ 60 — ou
+    PIX quando entrou dinheiro, e a gaveta não fechava. O reenvio idêntico continua sendo
+    replay, agora com 200 (ADR-2), e a dívida cai uma vez só.
+    """
+    cliente = await _cliente(client, auth_admin, "Dona Mesma Chave")
+    variante = await _peca(client, auth_admin, "Peca Mesma Chave", "100.00")
+    await client.post(
+        "/vendas",
+        headers=auth_admin,
+        json={
+            "client_uuid": str(uuid.uuid4()),
+            "cliente_id": cliente["id"],
+            "itens": [{"variante_id": variante, "quantidade": 1}],
+            "pagamentos": [{"forma": "FIADO", "valor": "100.00"}],
+        },
+    )
+    chave = str(uuid.uuid4())
+    url = f"/clientes/{cliente['id']}/pagamentos"
+    primeira = await client.post(
+        url, headers=auth_admin, json={"forma": "DINHEIRO", "valor": "60.00", "client_uuid": chave}
+    )
+    assert primeira.status_code == 201, primeira.text
+
+    outro_valor = await client.post(
+        url, headers=auth_admin, json={"forma": "DINHEIRO", "valor": "30.00", "client_uuid": chave}
+    )
+    outra_forma = await client.post(
+        url, headers=auth_admin, json={"forma": "PIX", "valor": "60.00", "client_uuid": chave}
+    )
+    for resposta in (outro_valor, outra_forma):
+        assert resposta.status_code == 409, resposta.text
+        assert resposta.json()["code"] == "DUPLICADO"
+        assert resposta.json()["detail"]["pagamento_id"] == primeira.json()["id"]
+
+    mesma = await client.post(
+        url, headers=auth_admin, json={"forma": "DINHEIRO", "valor": "60.00", "client_uuid": chave}
+    )
+    assert mesma.status_code == 200, mesma.text
+    assert mesma.json()["id"] == primeira.json()["id"]
+    depois = (await client.get(f"/clientes/{cliente['id']}", headers=auth_admin)).json()
+    assert Decimal(depois["deve"]) == Decimal("40.00")
+
+
+async def test_extrato_pagina_as_listas_e_os_totais_sao_da_conta_inteira(
+    client, auth_admin
+) -> None:
+    """A caderneta antiga não vem inteira numa resposta só, e a conta continua fechando.
+
+    O extrato mandava todas as compras e todos os pagamentos da vida da cliente. As duas
+    listas agora vêm em `{items, total, page, size}`, pelo mesmo `?page=&size=`; os totais
+    (levou, pagou, devolveu, deve) são da conta inteira, não da página.
+    """
+    cliente = await _cliente(client, auth_admin, "Dona Caderneta")
+    variante = await _peca(client, auth_admin, "Peca Caderneta", "50.00")
+    vendas = []
+    for _ in range(3):
+        vendas.append(
+            (
+                await client.post(
+                    "/vendas",
+                    headers=auth_admin,
+                    json={
+                        "client_uuid": str(uuid.uuid4()),
+                        "cliente_id": cliente["id"],
+                        "itens": [{"variante_id": variante, "quantidade": 1}],
+                        "pagamentos": [{"forma": "FIADO", "valor": "50.00"}],
+                    },
+                )
+            ).json()["id"]
+        )
+    for valor in ("10.00", "20.00", "30.00"):
+        await client.post(
+            f"/clientes/{cliente['id']}/pagamentos",
+            headers=auth_admin,
+            json={"forma": "DINHEIRO", "valor": valor, "client_uuid": str(uuid.uuid4())},
+        )
+
+    url = f"/clientes/{cliente['id']}/extrato"
+    pagina1 = (await client.get(url, headers=auth_admin, params={"size": 2})).json()
+    pagina2 = (await client.get(url, headers=auth_admin, params={"size": 2, "page": 2})).json()
+
+    for pagina, quantas in ((pagina1, 2), (pagina2, 1)):
+        for lista in ("vendas", "pagamentos"):
+            assert pagina[lista]["total"] == 3
+            assert pagina[lista]["size"] == 2
+            assert len(pagina[lista]["items"]) == quantas
+        assert pagina["total_fiado"] == "150.00"
+        assert pagina["total_pago"] == "60.00"
+        assert pagina["deve"] == "90.00"
+
+    # Mais recente primeiro, e nenhuma linha repetida ou perdida entre as páginas.
+    ids = [v["venda_id"] for v in pagina1["vendas"]["items"] + pagina2["vendas"]["items"]]
+    assert ids == sorted(vendas, reverse=True)
+    valores = [p["valor"] for p in pagina1["pagamentos"]["items"] + pagina2["pagamentos"]["items"]]
+    assert valores == ["30.00", "20.00", "10.00"]
 
 
 # ----------------------------------------------------------------------- vale

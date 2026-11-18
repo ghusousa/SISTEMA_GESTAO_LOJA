@@ -131,7 +131,8 @@ function CartaoProduto({ produto, aoAbrir }: { produto: Produto; aoAbrir: () => 
 
         <View style={s.cartaoTexto}>
           <View style={s.cartaoTopo}>
-            <Text style={s.cartaoNome} numberOfLines={1}>
+            {/* Duas linhas: no SE, uma só cortava "Blusa Cropped Canelada" ao lado do preço. */}
+            <Text style={s.cartaoNome} numberOfLines={2}>
               {produto.nome}
             </Text>
             <Text style={s.cartaoPreco}>{formatar(menorPreco)}</Text>

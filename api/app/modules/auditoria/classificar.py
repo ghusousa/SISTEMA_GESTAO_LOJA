@@ -25,6 +25,7 @@ _REGRAS: list[tuple[str, re.Pattern[str], str, str, str | None]] = [
     ("POST", re.compile(r"^/vendas$"), "VENDA_CRIADA", "Registrou uma venda", "venda"),
     ("POST", re.compile(r"^/vendas/(\d+)/cancelamento$"), "VENDA_CANCELADA", "Cancelou a venda #{id}", "venda"),
     ("POST", re.compile(r"^/vendas/(\d+)/devolucoes$"), "DEVOLUCAO", "Registrou uma devolução na venda #{id}", "venda"),
+    ("POST", re.compile(r"^/vendas/(\d+)/nfce$"), "NFCE_EMITIDA", "Pediu a NFC-e da venda #{id}", "venda"),
     # estoque
     ("POST", re.compile(r"^/estoque/entradas$"), "ENTRADA", "Deu entrada de mercadoria", "estoque"),
     ("POST", re.compile(r"^/estoque/ajustes$"), "AJUSTE", "Ajustou o estoque à mão", "estoque"),
@@ -42,6 +43,7 @@ _REGRAS: list[tuple[str, re.Pattern[str], str, str, str | None]] = [
     ("DELETE", re.compile(r"^/categorias/(\d+)$"), "CATEGORIA_EXCLUIDA", "Excluiu a categoria #{id}", "categoria"),
     # crediário
     ("POST", re.compile(r"^/clientes$"), "CLIENTE_CRIADO", "Cadastrou um cliente no crediário", "cliente"),
+    ("POST", re.compile(r"^/clientes/balcao$"), "CLIENTE_CRIADO_BALCAO", "Cadastrou um cliente no balcão", "cliente"),
     ("PATCH", re.compile(r"^/clientes/(\d+)$"), "CLIENTE_EDITADO", "Editou o cliente #{id}", "cliente"),
     ("DELETE", re.compile(r"^/clientes/(\d+)$"), "CLIENTE_EXCLUIDO", "Excluiu o cliente #{id}", "cliente"),
     ("POST", re.compile(r"^/clientes/(\d+)/pagamentos$"), "FIADO_RECEBIDO", "Recebeu um pagamento de fiado do cliente #{id}", "cliente"),
@@ -51,18 +53,37 @@ _REGRAS: list[tuple[str, re.Pattern[str], str, str, str | None]] = [
     ("DELETE", re.compile(r"^/despesas/(\d+)$"), "DESPESA_EXCLUIDA", "Excluiu a despesa #{id}", "despesa"),
     ("POST", re.compile(r"^/despesas/replicar-recorrentes$"), "DESPESAS_REPLICADAS", "Trouxe as contas fixas do mês", "despesa"),
     ("POST", re.compile(r"^/despesas/categorias$"), "CATEGORIA_DESPESA", "Criou uma categoria de despesa", "despesa"),
+    ("PATCH", re.compile(r"^/despesas/categorias/(\d+)$"), "CATEGORIA_DESPESA_EDITADA", "Renomeou a categoria de despesa #{id}", "despesa"),
     ("DELETE", re.compile(r"^/despesas/categorias/(\d+)$"), "CATEGORIA_DESPESA_EXCLUIDA", "Excluiu uma categoria de despesa", "despesa"),
     # caixa
     ("POST", re.compile(r"^/caixa/fechamentos$"), "CAIXA_FECHADO", "Fechou o caixa do dia", "caixa"),
+    # condicional — a peça que foi para a casa da cliente provar
+    ("POST", re.compile(r"^/condicionais$"), "CONDICIONAL_ABERTA", "Abriu uma condicional (peças saíram para a cliente provar)", "condicional"),
+    ("POST", re.compile(r"^/condicionais/(\d+)/fechamento$"), "CONDICIONAL_FECHADA", "Fechou a condicional #{id}", "condicional"),
+    # contas a pagar do fornecedor
+    ("POST", re.compile(r"^/contas-pagar$"), "CONTA_PAGAR_LANCADA", "Lançou uma conta a pagar de fornecedor", "conta_pagar"),
+    ("PATCH", re.compile(r"^/contas-pagar/(\d+)$"), "CONTA_PAGAR_EDITADA", "Corrigiu a conta a pagar #{id}", "conta_pagar"),
+    ("DELETE", re.compile(r"^/contas-pagar/(\d+)$"), "CONTA_PAGAR_EXCLUIDA", "Excluiu a conta a pagar #{id}", "conta_pagar"),
+    ("POST", re.compile(r"^/contas-pagar/(\d+)/pagamento$"), "CONTA_PAGA", "Marcou como paga a conta #{id}", "conta_pagar"),
+    ("DELETE", re.compile(r"^/contas-pagar/(\d+)/pagamento$"), "CONTA_PAGAMENTO_DESFEITO", "Desfez o pagamento da conta #{id}", "conta_pagar"),
     # usuários — os mais sensíveis: mexer em quem entra no sistema
     ("POST", re.compile(r"^/usuarios$"), "USUARIO_CRIADO", "Criou um usuário", "usuario"),
     ("PATCH", re.compile(r"^/usuarios/(\d+)/senha$"), "SENHA_REDEFINIDA", "Redefiniu a senha do usuário #{id}", "usuario"),
     ("PATCH", re.compile(r"^/usuarios/me/senha$"), "SENHA_PROPRIA", "Trocou a própria senha", "usuario"),
-    ("PATCH", re.compile(r"^/usuarios/(\d+)$"), "USUARIO_EDITADO", "Editou o usuário #{id} (papel ou acesso)", "usuario"),
+    ("DELETE", re.compile(r"^/usuarios/me$"), "USUARIO_EXCLUIU_PROPRIA_CONTA", "Excluiu a própria conta", "usuario"),
+    ("PATCH", re.compile(r"^/usuarios/(\d+)$"), "USUARIO_EDITADO", "Editou o usuário #{id} (papel, acesso, comissão ou meta)", "usuario"),
     ("DELETE", re.compile(r"^/usuarios/(\d+)$"), "USUARIO_EXCLUIDO", "Excluiu o usuário #{id}", "usuario"),
     # identidade da loja
-    ("PATCH", re.compile(r"^/configuracao$"), "LOJA_CONFIGURADA", "Mudou o nome ou o ramo da loja", "loja"),
+    ("PATCH", re.compile(r"^/configuracao$"), "LOJA_CONFIGURADA", "Mudou os dados da loja (nome, ramo, contato ou fiscais)", "loja"),
     ("PUT", re.compile(r"^/backup$"), "BACKUP_CONFIGURADO", "Mexeu na configuração do backup", "backup"),
+    # taxa da maquininha — muda o resultado de toda venda no cartão dali em diante
+    ("POST", re.compile(r"^/taxas-cartao$"), "TAXA_CRIADA", "Cadastrou uma taxa da maquininha", "taxa"),
+    ("PATCH", re.compile(r"^/taxas-cartao/(\d+)$"), "TAXA_EDITADA", "Mudou a taxa da maquininha #{id}", "taxa"),
+    ("DELETE", re.compile(r"^/taxas-cartao/(\d+)$"), "TAXA_EXCLUIDA", "Excluiu a taxa da maquininha #{id}", "taxa"),
+    # celular como leitor do computador (ADR-43): ligar e desligar. Os bipes não entram
+    # (ver `_IGNORAR`); o que entra é a venda, a entrada ou a devolução que vem depois.
+    ("POST", re.compile(r"^/leitor/pareamentos/aceitar$"), "LEITOR_PAREADO", "Ligou o celular como leitor de código de barras de um computador", "leitor"),
+    ("DELETE", re.compile(r"^/leitor/pareamentos/(\d+)$"), "LEITOR_DESLIGADO", "Desligou o celular-leitor #{id}", "leitor"),
     # sessão
     ("POST", re.compile(r"^/auth/logout$"), "LOGOUT", "Saiu do sistema", None),
 ]
@@ -71,6 +92,15 @@ _REGRAS: list[tuple[str, re.Pattern[str], str, str, str | None]] = [
 _IGNORAR = [
     ("POST", re.compile(r"^/auth/login$")),  # login tem tratamento próprio (sucesso/falha)
     ("POST", re.compile(r"^/auth/refresh$")),  # renovar sessão acontece toda hora, sozinho
+    # Só reserva o próximo número de etiqueta (a sequência anda, nada mais muda). O ato é o
+    # cadastro que vem depois, e esse já tem frase; aqui seria um "OUTRO" a cada peça nova.
+    ("POST", re.compile(r"^/variantes/gerar-codigo-interno$")),
+    # Leitor pelo celular (ADR-43). Gerar o código só mostra um código na tela — o ato é o
+    # aceite, que tem frase. Cada bipe é uma tecla do leitor: o ato é a venda depois, e uma
+    # linha por bipe afogaria o diário. E a tela do computador retira a fila de 2 em 2 s.
+    ("POST", re.compile(r"^/leitor/pareamentos$")),
+    ("POST", re.compile(r"^/leitor/bipes$")),
+    ("POST", re.compile(r"^/leitor/pareamentos/\d+/retirar$")),
 ]
 
 

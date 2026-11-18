@@ -1,0 +1,3 @@
+Nesta versão: correções e ajustes nas telas de venda, estoque e financeiro.
+
+Lembrete: o app conversa com o servidor da sua própria loja. As funções novas do sistema chegam quando o servidor também é atualizado — quem cuida do sistema da loja faz isso.

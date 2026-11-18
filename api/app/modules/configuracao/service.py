@@ -20,6 +20,9 @@ class ConfiguracaoService:
     async def atualizar(self, dados: ConfiguracaoUpdate) -> StoreConfig:
         config = await self.repo.obter_ou_criar()
         campos = dados.model_dump(exclude_unset=True)
+        # A série nunca fica vazia: `null` não é uma série, e o banco recusaria.
+        if campos.get("serie_nfce", 0) is None:
+            campos.pop("serie_nfce")
         for campo, valor in campos.items():
             setattr(config, campo, valor.value if isinstance(valor, Segmento) else valor)
         await self.session.commit()

@@ -4,6 +4,10 @@
  * **Espelho de `api/app/core/segmentos.py` e de `web/js/loja.js` — mudou um, mude os
  * três.** O servidor manda o vocabulário pronto em `GET /configuracao`; a tabela daqui é
  * a rede de segurança de quando a tela precisa desenhar antes da resposta chegar.
+ *
+ * Essa rota é a FACHADA, lida sem login: nome, ramo e palavras. Documento, telefone e
+ * endereço da loja só saem com sessão, por `GET /configuracao/completa`
+ * (`useDadosDaLoja`, em `hooks/useLoja.ts`) — no web, `garantirDadosDaLoja` em `loja.js`.
  */
 
 export const SEGMENTOS = [

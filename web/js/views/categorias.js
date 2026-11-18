@@ -7,7 +7,7 @@ import {
   avisarErro,
   carregando,
   confirmar,
-  data,
+  diaNaLoja,
   erroBloco,
   html,
   modal,
@@ -69,7 +69,7 @@ export async function render(raiz) {
               (c) => html`
                 <tr>
                   <td class="celula-principal">${c.nome}</td>
-                  <td class="texto-suave">${data(c.criada_em)}</td>
+                  <td class="texto-suave">${diaNaLoja(c.criada_em)}</td>
                   <td class="direita">
                     <button class="botao-icone" data-renomear="${c.id}" data-nome="${c.nome}" title="Renomear" aria-label="Renomear ${c.nome}">✏️</button>
                     <button class="botao-icone botao-icone--perigo" data-excluir="${c.id}" data-nome="${c.nome}" title="Excluir" aria-label="Excluir ${c.nome}">🗑️</button>

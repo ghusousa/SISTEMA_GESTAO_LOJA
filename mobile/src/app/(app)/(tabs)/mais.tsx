@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import { Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { baseAtual } from '@/api/client';
-import { sistema } from '@/api/endpoints';
+import { backup, sistema } from '@/api/endpoints';
 import { Cartao, Etiqueta } from '@/components/ui';
 import { PODE, pode, titulo, type Capacidade } from '@/lib/permissoes';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
@@ -12,6 +12,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useServidorStore } from '@/stores/servidorStore';
 import { useLoja } from '@/hooks/useLoja';
 import { ROTULOS, type Segmento } from '@/lib/segmento';
+import { backupPrecisaDeAtencao, CHAVE_BACKUP } from '@/lib/backup';
 
 interface Opcao {
   rotulo: string;
@@ -30,6 +31,13 @@ const OPCOES: Opcao[] = [
     rota: '/mais/vendas',
   },
   {
+    // Para qualquer papel (ADR-43): quem bipa no balcão é quem estiver no computador.
+    rotulo: 'Leitor do computador',
+    descricao: 'Bipe pelo celular e a peça cai na tela do computador',
+    icone: 'barcode-scan',
+    rota: '/mais/leitor',
+  },
+  {
     rotulo: 'Devolução',
     descricao: 'A cliente voltou com a peça',
     icone: 'keyboard-return',
@@ -37,11 +45,32 @@ const OPCOES: Opcao[] = [
     pode: PODE.DEVOLVER_VENDA,
   },
   {
+    rotulo: 'Condicional',
+    descricao: 'Peças na casa da cliente, com prazo',
+    icone: 'shopping-outline',
+    rota: '/condicional',
+    pode: PODE.FAZER_CONDICIONAL,
+  },
+  {
     rotulo: 'Crediário',
     descricao: 'Quem levou fiado e quanto deve',
     icone: 'handshake-outline',
     rota: '/clientes',
     pode: PODE.GERIR_CREDIARIO,
+  },
+  {
+    rotulo: 'Aniversariantes',
+    descricao: 'Quem faz aniversário no mês',
+    icone: 'cake-variant-outline',
+    rota: '/mais/aniversariantes',
+    pode: PODE.ATENDER_CLIENTE,
+  },
+  {
+    rotulo: 'Taxas do cartão',
+    descricao: 'Quanto a maquininha cobra e quando paga',
+    icone: 'credit-card-outline',
+    rota: '/mais/taxas',
+    pode: PODE.VER_DINHEIRO,
   },
   {
     rotulo: 'Categorias de produto',
@@ -65,11 +94,25 @@ const OPCOES: Opcao[] = [
     pode: PODE.VER_AUDITORIA,
   },
   {
+    rotulo: 'Backup na nuvem',
+    descricao: 'A cópia do banco no seu Google Drive',
+    icone: 'cloud-upload-outline',
+    rota: '/mais/backup',
+    pode: PODE.GERIR_BACKUP,
+  },
+  {
     rotulo: 'A loja',
     descricao: 'Nome, ramo e o que sai no recibo',
     icone: 'storefront-outline',
     rota: '/mais/loja',
     pode: PODE.CONFIGURAR_LOJA,
+  },
+  {
+    // Para qualquer papel (ADR-45): trocar a senha e excluir a própria conta.
+    rotulo: 'Minha conta',
+    descricao: 'Sua senha, ou excluir a sua conta',
+    icone: 'account-circle-outline',
+    rota: '/mais/conta',
   },
   {
     rotulo: 'Trocar minha senha',
@@ -115,6 +158,37 @@ function SeloDeVersao() {
   );
 }
 
+/**
+ * "O backup parou?" — para o dono, logo abaixo do selo de versão e no mesmo desenho, mas
+ * só quando há problema (atrasado ou falhou). Quem decide o atraso é o servidor. Sem isto,
+ * a cópia parada só aparecia para quem abrisse a tela do backup: no dia de precisar dela.
+ */
+function SeloDoBackup() {
+  const router = useRouter();
+  const consulta = useQuery({
+    queryKey: CHAVE_BACKUP,
+    queryFn: backup.obter,
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+  if (!consulta.data || !backupPrecisaDeAtencao(consulta.data)) return null;
+  const falhou = consulta.data.ultimo_ok === false;
+  const quando = consulta.data.ultimo_em
+    ? new Date(consulta.data.ultimo_em).toLocaleString('pt-BR')
+    : 'nunca';
+  return (
+    <Pressable style={s.versao} onPress={() => router.push('/mais/backup' as never)}>
+      <View style={[s.versaoPonto, { backgroundColor: falhou ? cores.perigo : cores.alerta }]} />
+      <View style={{ flex: 1 }}>
+        <Text style={[s.versaoTitulo, { color: falhou ? cores.perigo : cores.alerta }]}>
+          {falhou ? 'Backup falhou' : 'Backup atrasado'}
+        </Text>
+        <Text style={s.versaoDetalhe}>Última cópia: {quando}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
 export default function Mais() {
   const router = useRouter();
   const usuario = useAuthStore((e) => e.usuario);
@@ -153,6 +227,7 @@ export default function Mais() {
         </View>
 
         <SeloDeVersao />
+        {pode(usuario?.papel, PODE.GERIR_BACKUP) ? <SeloDoBackup /> : null}
       </Cartao>
 
       {OPCOES.filter((o) => !o.pode || pode(usuario?.papel, o.pode)).map((opcao) => (

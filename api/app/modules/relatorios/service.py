@@ -13,14 +13,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import Validacao
 from app.core.datas import dia_da_loja
+from app.core.pagination import Pagina, Paginacao
 from app.modules.catalogo.models import Product, ProductVariant
 from app.modules.despesas.models import Expense, ExpenseCategory
 from app.modules.estoque.models import StockBalance
+from app.modules.relatorios.cartao import agenda_de_recebiveis, taxas_do_periodo
 from app.modules.relatorios.schemas import (
     DespesaCategoriaOut,
     DiaVendaOut,
     EstoqueBaixoOut,
     MaisVendidoOut,
+    RecebivelOut,
     ResumoOut,
 )
 from app.modules.clientes.models import CustomerPayment
@@ -137,6 +140,10 @@ class RelatorioService:
             )
         )
 
+        # A maquininha fica com 2 a 5% do que entrou no cartão: sem abater, o resultado sai
+        # inflado todo mês (ADR-35).
+        taxas_cartao = _centavos(await taxas_do_periodo(self.session, inicio, fim))
+
         faturamento = _centavos(faturamento)
         devolvido = _centavos(devolvido)
         cmv = _centavos(cmv)
@@ -146,11 +153,14 @@ class RelatorioService:
         # O lucro sai do líquido dos dois lados: a peça que voltou não faturou e também
         # não consumiu mercadoria (quando voltou vendável).
         lucro_bruto = faturamento_liquido - (cmv - cmv_devolvido)
+        # Margem na MESMA base do lucro: líquido sobre líquido. Dividir pelo bruto encolhia
+        # a margem na proporção da devolução — vendeu duas blusas, uma voltou, e a margem
+        # de 50% aparecia como 25%.
         margem = (
-            (lucro_bruto / faturamento * 100).quantize(
+            (lucro_bruto / faturamento_liquido * 100).quantize(
                 Decimal("0.01"), rounding=ROUND_HALF_UP
             )
-            if faturamento > 0
+            if faturamento_liquido > 0
             else ZERO
         )
         ticket = _centavos(faturamento / qtd_vendas) if qtd_vendas else ZERO
@@ -168,7 +178,8 @@ class RelatorioService:
             recebimentos_de_fiado=_centavos(recebido),
             lucro_bruto=lucro_bruto,
             despesas=despesas,
-            resultado=lucro_bruto - despesas,
+            taxas_cartao=taxas_cartao,
+            resultado=lucro_bruto - despesas - taxas_cartao,
             margem_bruta_pct=margem,
             quantidade_vendas=int(qtd_vendas),
             quantidade_pecas=int(qtd_pecas),
@@ -299,9 +310,27 @@ class RelatorioService:
             for categoria_id, nome, total, quantidade in linhas
         ]
 
-    async def estoque_baixo(self) -> list[EstoqueBaixoOut]:
-        """Fotografia do agora: peças no mínimo ou abaixo. Não tem período por natureza."""
+    async def estoque_baixo(self, p: Paginacao) -> Pagina[EstoqueBaixoOut]:
+        """Fotografia do agora: peças no mínimo ou abaixo. Não tem período por natureza.
+
+        Paginada como toda listagem: numa loja com milhares de peças esgotadas (mínimo 0 e
+        saldo 0 entram) eram 7 mil linhas e 1,5 MB a cada venda, só para a aba Financeiro
+        mostrar "N peças no mínimo". O total sai contado pelo banco; quem só quer o número
+        pede `size=1` e lê `total`.
+        """
         saldo = func.coalesce(StockBalance.quantity, 0)
+        filtros = (
+            ProductVariant.deleted_at.is_(None),
+            Product.deleted_at.is_(None),
+            saldo <= ProductVariant.min_stock,
+        )
+        total = await self.session.scalar(
+            select(func.count())
+            .select_from(ProductVariant)
+            .join(Product, Product.id == ProductVariant.product_id)
+            .outerjoin(StockBalance, StockBalance.variant_id == ProductVariant.id)
+            .where(*filtros)
+        )
         linhas = (
             await self.session.execute(
                 select(
@@ -316,19 +345,21 @@ class RelatorioService:
                 )
                 .join(Product, Product.id == ProductVariant.product_id)
                 .outerjoin(StockBalance, StockBalance.variant_id == ProductVariant.id)
-                .where(
-                    ProductVariant.deleted_at.is_(None),
-                    Product.deleted_at.is_(None),
-                    saldo <= ProductVariant.min_stock,
-                )
+                .where(*filtros)
+                # Mais urgente primeiro: quem tem mínimo definido e está mais abaixo dele.
+                # O id desempata — sem ele, duas peças empatadas podiam trocar de lugar
+                # entre uma página e outra, e uma aparecia duas vezes enquanto a outra sumia.
                 .order_by(
                     case((ProductVariant.min_stock == 0, 1), else_=0),
                     saldo - ProductVariant.min_stock,
                     Product.name,
+                    ProductVariant.id,
                 )
+                .offset(p.offset)
+                .limit(p.limit)
             )
         ).all()
-        return [
+        itens = [
             EstoqueBaixoOut(
                 variante_id=variante_id,
                 produto=produto,
@@ -342,3 +373,19 @@ class RelatorioService:
             )
             for variante_id, produto, tamanho, cor, codigo, quantidade, minimo, custo in linhas
         ]
+        return Pagina.montar(itens, int(total or 0), p)
+
+    async def recebiveis(self, inicio: date, fim: date, p: Paginacao) -> Pagina[RecebivelOut]:
+        """Agenda do cartão: quanto cai na conta em cada dia do período (ADR-35)."""
+        self.validar_periodo(inicio, fim)
+        dias, total = await agenda_de_recebiveis(self.session, inicio, fim, p)
+        itens = [
+            RecebivelOut(
+                data=dia,
+                bruto=_centavos(bruto),
+                taxa=_centavos(taxa),
+                liquido=_centavos(bruto) - _centavos(taxa),
+            )
+            for dia, bruto, taxa in dias
+        ]
+        return Pagina.montar(itens, total, p)

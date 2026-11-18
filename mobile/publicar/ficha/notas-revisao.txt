@@ -1,45 +1,41 @@
-APP DE USO PROFISSIONAL (B2B) QUE EXIGE UM SERVIDOR — POR FAVOR, LEIA ANTES DE TESTAR
+B2B APP FOR SHOP STAFF; IT NEEDS THE SHOP'S SERVER. Answers to Guideline 2.1 below; the attached "app-review-guide.pdf" has them in full, with screenshots.
 
-1) O QUE É
-Gestão para lojas de balcão (varejo físico): estoque por código de barras, PDV, devolução, crediário, despesas, relatórios, caixa e auditoria. Não é app de consumidor final e não vende nada dentro do app.
+DEMO SERVER (stays online after the review; it also serves our privacy policy)
+Server: {{SERVIDOR_DEMO}}
+E-mail: {{EMAIL_DEMO}}
+Password: {{SENHA_DEMO}}
+Barcode to type: {{CODIGO_DEMO}}
+Shop OWNER account: every screen is visible. Test data: sell, cancel, return freely.
 
-2) POR QUE EXIGE SERVIDOR
-O sistema é auto-hospedado: cada loja instala o servidor e é dona dos próprios dados; o app é só o cliente. Por isso o endereço do servidor é DIGITADO NO APARELHO — um mesmo app serve várias lojas. Não existe autocadastro: as contas dos funcionários são criadas pelo dono ou pelo gerente dentro do sistema.
+1) SCREEN RECORDING: attachment {{VIDEO}}, made on a physical {{APARELHO_DO_VIDEO}}. From app launch: server setup, sign-in, camera permission, a sale, creating a staff account, deleting accounts.
 
-3) SERVIDOR DE DEMONSTRAÇÃO PARA A REVISÃO
-Mantemos um servidor completo, com dados de exemplo, exclusivamente para esta revisão:
-  Endereço: https://sistemaobras.com.br   (HTTPS válido)
-  E-mail:   {{EMAIL_DEMO}}
-  Senha:    {{SENHA_DEMO}}
-A conta é de perfil "dono", então todas as abas ficam visíveis. O banco é de teste: podem vender, cancelar e devolver à vontade.
+2) TESTED ON (physical devices): {{APARELHOS_TESTADOS}}. Minimum iOS 15.1; iPhone only, portrait.
 
-4) PASSO A PASSO PARA TESTAR (5 minutos)
-1. Abra o app. Aparece a tela de entrada.
-2. Toque na ENGRENAGEM no canto superior direito. Abre "Conectar à loja".
-3. No campo "Endereço do servidor", digite exatamente, com o https://:
-     https://sistemaobras.com.br
-4. Toque em "Conectar". O app testa o endereço e volta para a tela de entrada.
-5. Informe {{EMAIL_DEMO}} e {{SENHA_DEMO}} e toque em "Entrar".
-6. Abre a aba "Vender" (o PDV), com o carrinho vazio.
-7. Para colocar uma peça no carrinho, use QUALQUER um dos três caminhos:
-   a) "Ler código de barras" — liga a câmera (o iOS pedirá permissão). Aponte para um código de barras.
+3) PURPOSE: point of sale and stock control for small physical shops in Brazil (clothing, shoes, auto parts), used by the owner and staff at the counter. It replaces notebooks and spreadsheets: barcode sales, cash/PIX/card/store credit, returns, consignment, stock by size and color, cash count, expenses, profit, reports. Not a consumer app.
+
+4) SET UP AND ACCESS
+1. On the sign-in screen tap the GEAR (top right): "Conectar à loja" opens.
+2. In "Endereço do servidor" type the server above, with https://, and tap "Conectar".
+3. Enter e-mail and password, tap "Entrar": the "Vender" tab (point of sale) opens.
+4. Add an item: "Ler código de barras" (camera), "Digitar código" (type the barcode above) or "Buscar" (part of a name, e.g. "cami").
 {{LINHA_ETIQUETAS}}
-   b) "Digitar código" — digite {{CODIGO_DEMO}} e confirme. Não precisa de câmera.
-   c) "Buscar" — digite parte do nome da peça (ex.: "cami") e escolha na lista.
-8. A peça entra no carrinho com preço e quantidade. Repita se quiser.
-9. Toque em "Cobrar".
-10. Toque na forma de pagamento "Dinheiro" (isso quita o valor inteiro; digitando um valor no teclado antes, o pagamento vira parcial e dá para dividir entre formas).
-11. Toque em "Confirmar venda". Aparece o recibo, e o estoque baixa na hora.
-O resto está nas abas "Estoque" (entrada, inventário), "Financeiro" (caixa, despesas, relatórios) e "Mais" (devolução, crediário, usuários, auditoria).
+5. Tap "Cobrar", "Dinheiro", then "Confirmar venda". The completed sale opens; tap "Recibo para a cliente" to see the receipt.
+More in the "Produtos", "Estoque", "Financeiro" and "Mais" tabs.
+Phone as the computer's barcode reader: in a computer browser, sign in at the server address and click "Celular como leitor" (left bar) for a QR code; in the app: Mais > Leitor do computador > "Ler o QR do computador".
 
-5) PONTOS QUE COSTUMAM GERAR DÚVIDA
-• Nada é comprado dentro do app. As vendas registradas são de mercadoria física, paga presencialmente no balcão (dinheiro, PIX, maquininha). O app só ANOTA forma e valor: não processa pagamento, não guarda número de cartão e não vende bem digital (3.1.1).
-• O recibo enviado pelo compartilhamento do iPhone é um comprovante da loja, não documento fiscal, e está escrito no rodapé dele.
-• Sem criação de conta no app: não havendo autocadastro, a exclusão (5.1.1(v)) é feita pelo administrador da loja em "Mais > Usuários" — e o dono pode apagar o servidor inteiro, que é dele.
-• Sem conteúdo público e sem contato entre usuários: fotos e textos ficam no servidor de uma única loja, visíveis só para os funcionários dela. Não há feed, comentários, mensagens nem descoberta de usuários.
-• Câmera: só para ler código de barras e fotografar a peça no cadastro. Galeria: só para escolher a imagem do produto. Nada vai para terceiros.
-• ATS: o app declara NSAllowsLocalNetworking porque muitas lojas rodam o servidor na própria rede, em IP local, sem certificado. Servidores na internet, como o da demonstração, usam HTTPS normalmente. O iOS pode pedir permissão de Rede Local nesse cenário.
-• Sem analytics, sem SDK de rastreamento, sem publicidade e sem IDFA — por isso não há prompt de ATT.
+ACCOUNTS: no sign-up. The owner creates staff accounts in Mais > Usuários > "+" (bottom right).
+ACCOUNT DELETION (5.1.1(v)), inside the app:
+- Any user, own account: Mais > Minha conta > Excluir minha conta. It asks for the password, lists what is deleted and confirms; the sign-in screen then shows "Conta excluída".
+- Owner, a staff account: Mais > Usuários > (pessoa) > Excluir conta ("pessoa" is the person's card).
+The demo account is protected (can't be deleted) for the next reviewer: please create a staff account and delete it either way.
 
-6) CONTATO DURANTE A REVISÃO
-{{EMAIL_SUPORTE}} — respondemos no mesmo dia útil. Se o servidor de demonstração não responder, avise por aqui antes de rejeitar: ele é nosso e religamos rápido.
+5) EXTERNAL SERVICES: data and sign-in come only from the shop's own server (FastAPI + PostgreSQL, installed by the shop). The demo server runs on Vercel, with Neon (PostgreSQL) and Vercel Blob (item photos). NFC-e (Brazilian e-receipt) is optional, via an accredited issuer (Focus NFe); off in the demo. No payments in the app (the card terminal is separate; the app only records the method), no AI, no third-party sign-in, no analytics or ad SDKs. The network library only checks connectivity (empty request to Google's generate_204).
+
+6) REGIONS: Brazil only, in Portuguese (Brazil); the same everywhere.
+
+7) REGULATION: not a regulated industry; no third-party protected content. The optional NFC-e is issued by the accredited issuer with the shop's own digital certificate.
+
+USER CONTENT: item names, photos and notes stay private to one shop's team. No publishing, feed or messaging between users, so nothing to report or block.
+PERMISSIONS: camera (barcode reader, item photo), photos (pick an item photo), local network (only when the server is on the shop's network).
+IN-APP PURCHASES: none; goods are paid at the counter.
+Contact: {{EMAIL_SUPORTE}}

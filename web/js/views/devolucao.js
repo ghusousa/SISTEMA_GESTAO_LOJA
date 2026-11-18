@@ -18,7 +18,7 @@
 import { api, ErroApi } from '../api.js';
 import { ligarBuscaDePeca } from '../busca-peca.js';
 import { formatar, paraCentavos } from '../dinheiro.js';
-import { criarLeitor, manterFoco } from '../leitor.js';
+import { criarLeitor, digitandoEm, manterFoco } from '../leitor.js';
 import { ir } from '../router.js';
 import { novoClientUuid } from '../store.js';
 import {
@@ -27,7 +27,7 @@ import {
   avisarErro,
   confirmar,
   cru,
-  data as formatarData,
+  diaNaLoja,
   grade,
   html,
   numero,
@@ -44,6 +44,8 @@ export function render(raiz, _params, consulta) {
   // resposta se perder no caminho (timeout, 502) e a vendedora tentar de novo, o servidor
   // reconhece o mesmo uuid e responde a MESMA devolução — em vez de devolver a peça duas
   // vezes e tirar o dinheiro duas vezes da gaveta. Mesmo cuidado do PDV e da entrada.
+  // E morre com ela: gravou, ou trocou de venda, é outra devolução e outro uuid (ver
+  // `abrirVenda` e `mostrarComprovante`).
   let clientUuid = novoClientUuid();
 
   raiz.innerHTML = html`
@@ -108,7 +110,7 @@ export function render(raiz, _params, consulta) {
                 (v) => html`
                   <tr>
                     <td>#${v.id}</td>
-                    <td>${formatarData(v.vendida_em)}</td>
+                    <td>${diaNaLoja(v.vendida_em)}</td>
                     <td>${v.vendedor}</td>
                     <td class="direita dinheiro">${formatar(paraCentavos(v.total))}</td>
                     <td class="direita">
@@ -149,7 +151,11 @@ export function render(raiz, _params, consulta) {
   async function abrirVenda(vendaId) {
     area.innerHTML = '<div class="carregando">Abrindo a venda…</div>';
     try {
-      venda = await api.get(`/vendas/${vendaId}`);
+      const aberta = await api.get(`/vendas/${vendaId}`);
+      // Outra venda é outra devolução. Reabrir a MESMA (a resposta se perdeu e a vendedora
+      // bipou de novo) mantém o uuid: é aí que o replay do servidor evita devolver duas vezes.
+      if (aberta.id !== venda?.id) clientUuid = novoClientUuid();
+      venda = aberta;
       marcados = new Map();
       pintarVenda();
     } catch (erro) {
@@ -166,7 +172,7 @@ export function render(raiz, _params, consulta) {
     area.innerHTML = html`
       <div class="cartao">
         <div class="cartao__topo">
-          <h2>Venda #${venda.id} · ${formatarData(venda.vendida_em)}</h2>
+          <h2>Venda #${venda.id} · ${diaNaLoja(venda.vendida_em)}</h2>
           <a class="botao botao--fantasma botao--pequeno" href="#/vendas/${venda.id}">Ver a venda</a>
         </div>
         ${podeDevolver
@@ -292,6 +298,11 @@ export function render(raiz, _params, consulta) {
 
   function mostrarComprovante(devolucao) {
     enviando = false;
+    // Gravada, o uuid já cumpriu o papel. O leitor continua ligado (e com foco) embaixo do
+    // comprovante: a vendedora bipa a peça da próxima cliente sem passar por "Devolver outra
+    // peça", e com o uuid antigo o servidor responderia a devolução ANTERIOR como replay —
+    // a nova não seria gravada, e o dinheiro sairia da gaveta sem registro.
+    clientUuid = novoClientUuid();
     const vale = devolucao.pagamentos.find((p) => p.codigo_vale);
     area.innerHTML = html`
       <div class="cartao">
@@ -332,9 +343,6 @@ export function render(raiz, _params, consulta) {
       venda = null;
       marcados = new Map();
       enviando = false;
-      // Outra devolução é outra devolução: uuid novo, senão o servidor devolveria o
-      // registro da anterior como se fosse replay desta.
-      clientUuid = novoClientUuid();
       area.innerHTML = '';
       campo.focus();
     });
@@ -348,7 +356,12 @@ export function render(raiz, _params, consulta) {
     aoEscolher: (peca) =>
       void procurarVendas(peca.id, `${peca.produto} ${grade(peca.tamanho, peca.cor)}`),
   });
-  const leitor = criarLeitor({ aoLer: lerCodigo, ignorarQuando: busca.aberta });
+  const leitor = criarLeitor({
+    aoLer: lerCodigo,
+    ignorarQuando: busca.aberta,
+    // Devolvendo, ou digitando a quantidade e o motivo: o bipe do celular trocaria a área.
+    ocupadoQuando: () => enviando || digitandoEm(area),
+  });
   leitor.ligar();
   const pararFoco = manterFoco(campo);
 

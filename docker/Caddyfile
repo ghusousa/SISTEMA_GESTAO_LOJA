@@ -6,6 +6,36 @@
 {$ENDERECO} {
 	encode gzip
 
+	# Cabeçalhos de navegador que a API não põe — eles são do PROXY, que é quem fala com o
+	# navegador (a API já manda X-Content-Type-Options, X-Frame-Options e Referrer-Policy).
+	#
+	# CSP: o access token mora em memória, e um XSS o levaria. Esta é a segunda barreira,
+	# depois do escape do `html` de ui.js. O SPA não carrega nada de fora: um script só
+	# (js/main.js, módulo), CSS e imagens da própria loja, a foto da peça como blob: antes
+	# de subir, o ícone em data: e o WebSocket do tempo real na mesma origem. `'self'` já
+	# casa ws/wss da mesma origem nos navegadores atuais; o {hostport} explícito cobre os
+	# antigos. Estilo inline existe (style="" nas telas e no recibo impresso), por isso
+	# 'unsafe-inline' SÓ em style-src. Script inline não: nenhum atributo onclick="".
+	#
+	# HSTS: só vale quando a resposta vem por HTTPS (o navegador ignora em HTTP), então pode
+	# ir sempre. Sem includeSubDomains: o domínio da loja pode ser subdomínio de um site
+	# que ainda tem coisa em HTTP.
+	#
+	# /docs e /redoc ficam de fora da CSP: o Swagger vem de CDN, e só existe fora de
+	# produção (ambiente local), onde quebrá-lo não protegeria nada.
+	@app not path /docs* /redoc*
+	header @app {
+		defer
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ws://{hostport} wss://{hostport}; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+	}
+	header {
+		defer
+		Strict-Transport-Security "max-age=31536000"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+		# O Caddy anuncia o próprio nome em toda resposta; não precisa.
+		-Server
+	}
+
 	# O sistema web e a API são a mesma origem: a página em /app e os dados em /api/v1.
 	reverse_proxy api:8000
 

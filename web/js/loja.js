@@ -6,11 +6,15 @@
  * tabela daqui é só a rede de segurança para o momento em que a tela precisa desenhar
  * antes de a resposta chegar (ou quando a API não responde).
  *
- * A configuração é lida SEM login: a tela de entrada mostra o nome da loja antes de
- * existir sessão. Por isso a chamada vive aqui e não no fluxo autenticado.
+ * A configuração é lida em DOIS tempos. Sem login, `GET /configuracao` dá só a fachada
+ * (nome, ramo, fuso, palavras): a tela de entrada precisa do nome antes de existir sessão.
+ * Com login, `GET /configuracao/completa` acrescenta documento, telefone e endereço, que o
+ * recibo imprime — para MEI, o CPF e o endereço de casa do dono, que não podem ficar
+ * abertos a quem digitar a URL. Ao sair, os três somem da memória da aba.
  */
 
 import { api } from './api.js';
+import { sessao } from './store.js';
 import { definirFusoDaLoja } from './ui.js';
 
 /** O neutro, usado enquanto a resposta não chega e quando o ramo é desconhecido. */
@@ -78,7 +82,11 @@ function aplicar(config) {
  */
 export async function carregarLoja() {
   try {
-    return aplicar(await api.get('/configuracao'));
+    // Por cima do que já havia: se a leitura completa (com documento e contato) chegou
+    // antes desta, a fachada não pode apagá-la. O `atual` é lido DEPOIS do await — no
+    // spread junto com o await, ele seria o retrato de antes da completa chegar.
+    const publica = await api.get('/configuracao');
+    return aplicar({ ...atual, ...publica });
   } catch {
     return atual;
   }
@@ -86,3 +94,44 @@ export async function carregarLoja() {
 
 /** Depois de salvar na tela de configuração, atualiza todo mundo sem recarregar a página. */
 export const definirLoja = (config) => aplicar(config);
+
+/* ----------------------------------------------- documento e contato, só com sessão */
+
+const CAMPOS_PRIVADOS = ['documento', 'telefone', 'endereco'];
+let leituraCompleta = null;
+
+/**
+ * Documento, telefone e endereço da loja — o cabeçalho do recibo. Quem imprime chama isto
+ * antes de desenhar: abrir o recibo direto pelo F5 chega antes da leitura disparada pelo
+ * login, e o papel sairia sem o CNPJ. Falha de rede devolve o que já havia.
+ */
+export function garantirDadosDaLoja() {
+  const dono = sessao.get().usuario?.id;
+  if (dono == null) return Promise.resolve(atual);
+  leituraCompleta ??= api
+    .get('/configuracao/completa')
+    // Resposta que chega depois de a pessoa sair não pode repor o documento na memória.
+    .then((config) => (sessao.get().usuario?.id === dono ? aplicar(config) : atual))
+    .catch(() => {
+      leituraCompleta = null; // a próxima chamada tenta de novo
+      return atual;
+    });
+  return leituraCompleta;
+}
+
+// A leitura completa acompanha a sessão: nasce com ela e morre com ela. A comparação é por
+// id porque cada renovação de token republica o mesmo usuário.
+let quem = null;
+sessao.inscrever(({ usuario }) => {
+  const id = usuario?.id ?? null;
+  if (id === quem) return;
+  quem = id;
+  leituraCompleta = null;
+  if (id !== null) {
+    void garantirDadosDaLoja();
+    return;
+  }
+  const publico = { ...atual };
+  CAMPOS_PRIVADOS.forEach((campo) => delete publico[campo]);
+  aplicar(publico);
+});

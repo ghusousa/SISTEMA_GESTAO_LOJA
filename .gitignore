@@ -16,6 +16,15 @@ venv/
 # Uploads em disco
 api/media/
 
+# Cópia do web/ que o build da Vercel faz dentro do Root Directory (ADR-42). Gerada,
+# nunca editada: a fonte é o web/ da raiz.
+api/web_vercel/
+.vercel/
+
+# Grafo do código (graphify): ~7 MB, reescrito inteiro a cada build e refeito em ~10 s pelo
+# .claude/hooks/session-start.sh. No git, cada commit carregaria um diff de megabytes.
+graphify-out/
+
 # Node / Expo
 node_modules/
 .expo/

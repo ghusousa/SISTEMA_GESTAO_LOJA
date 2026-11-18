@@ -5,7 +5,7 @@
   "issuer_id": "COLE_AQUI o Issuer ID (aparece no topo da mesma tela)",
   "arquivo_p8": "chave-apple.p8",
   "email_suporte": "voce@exemplo.com",
-  "url_suporte": "https://sistemaobras.com.br",
+  "url_suporte": "https://loja-tria.vercel.app",
   "nome_contato": "Nome Sobrenome",
   "telefone_contato": "+55 11 90000-0000",
   "titular_copyright": "Seu nome ou o da sua empresa",
@@ -13,5 +13,9 @@
   "email_demo": "revisao@exemplo.com",
   "senha_demo": "senha-da-conta-demo",
   "codigo_demo": "um código de barras que exista no servidor de demonstração",
-  "url_etiquetas_demo": ""
+  "url_etiquetas_demo": "",
+  "_servidor_demo": "Onde o revisor da Apple conecta o app (só https://endereço). É o servidor de demonstração DA LOJA — hoje a demo na Vercel.",
+  "url_servidor_demo": "https://loja-tria.vercel.app",
+  "_privacidade": "Opcional. Vazio = <url_servidor_demo>/privacidade (a página que o próprio sistema serve).",
+  "url_privacidade": ""
 }

@@ -3,10 +3,17 @@ import uuid
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
 
+from app.core.config import settings
+from app.core.db import SessionLocal
+from app.core.pagination import Paginacao
 from app.main import app
+from app.modules.clientes.service import ClienteService
+from app.modules.vendas.repository import VendaRepository
 
 from conftest import criar_produto
+from planos import capturar_sql, planos
 
 
 @pytest.fixture
@@ -250,9 +257,147 @@ async def test_reenvio_da_mesma_venda_nao_duplica(
     primeira = await client.post("/vendas", headers=auth_vendedor, json=payload)
     segunda = await client.post("/vendas", headers=auth_vendedor, json=payload)
 
+    # ADR-2: o reenvio responde 200 com a venda que já existia — 201 é só de quem criou.
+    assert (primeira.status_code, segunda.status_code) == (201, 200)
     assert primeira.json()["id"] == segunda.json()["id"]
     assert await _saldo(client, auth_vendedor, loja["camiseta"]) == 8
     assert (await client.get("/vendas", headers=auth_vendedor)).json()["total"] == 1
+
+
+async def test_reenvio_que_perde_a_corrida_devolve_a_vencedora_sem_500(
+    client: AsyncClient, auth_vendedor: dict[str, str], loja: dict, monkeypatch
+) -> None:
+    """Os dois POSTs da mesma venda passam juntos pela checagem do `client_uuid`.
+
+    O perdedor só descobre no INSERT (IntegrityError), faz rollback e responde a vencedora.
+    O rollback expira o `usuario` da sessão, e ler `usuario.role` depois dele em sessão
+    async é MissingGreenlet: o ramo que existe para a corrida dava 500 justo nela. Aqui a
+    corrida é forçada sem relógio: a primeira checagem "não vê" a venda que já existe.
+    """
+    from app.modules.vendas.repository import VendaRepository
+
+    payload = {
+        "client_uuid": str(uuid.uuid4()),
+        "itens": [{"variante_id": loja["camiseta"], "quantidade": 1}],
+        "pagamentos": [{"forma": "PIX", "valor": "49.90"}],
+    }
+    primeira = await client.post("/vendas", headers=auth_vendedor, json=payload)
+    assert primeira.status_code == 201, primeira.text
+
+    original = VendaRepository.por_client_uuid
+    chamadas = 0
+
+    async def cega_na_primeira(self, client_uuid):
+        nonlocal chamadas
+        chamadas += 1
+        return None if chamadas == 1 else await original(self, client_uuid)
+
+    monkeypatch.setattr(VendaRepository, "por_client_uuid", cega_na_primeira)
+    perdedora = await client.post("/vendas", headers=auth_vendedor, json=payload)
+
+    assert chamadas == 2, "a corrida tem de passar pelo ramo do IntegrityError"
+    assert perdedora.status_code == 200, perdedora.text
+    assert perdedora.json()["id"] == primeira.json()["id"]
+    assert await _saldo(client, auth_vendedor, loja["camiseta"]) == 9
+
+
+async def test_reenvio_com_outro_carrinho_e_recusado_e_nao_devolve_a_venda_antiga(
+    client: AsyncClient, auth_vendedor: dict[str, str], loja: dict
+) -> None:
+    """A resposta se perdeu e a moça mudou a cobrança antes de mandar de novo.
+
+    Com o mesmo `client_uuid`, o servidor devolvia a venda antiga como sucesso: a tela
+    mostrava o recibo de uma cobrança que não aconteceu — a peça a mais saía sem baixa de
+    estoque, e a gaveta esperava PIX onde entrou dinheiro. Agora é 409, com o número da
+    venda que já existe; o reenvio idêntico continua sendo replay.
+    """
+    chave = str(uuid.uuid4())
+    primeira = await client.post(
+        "/vendas",
+        headers=auth_vendedor,
+        json={
+            "client_uuid": chave,
+            "itens": [{"variante_id": loja["camiseta"], "quantidade": 1}],
+            "pagamentos": [{"forma": "PIX", "valor": "49.90"}],
+        },
+    )
+    assert primeira.status_code == 201, primeira.text
+
+    outra_forma = await client.post(
+        "/vendas",
+        headers=auth_vendedor,
+        json={
+            "client_uuid": chave,
+            "itens": [{"variante_id": loja["camiseta"], "quantidade": 1}],
+            "pagamentos": [{"forma": "DINHEIRO", "valor": "49.90"}],
+        },
+    )
+    mais_pecas = await client.post(
+        "/vendas",
+        headers=auth_vendedor,
+        json={
+            "client_uuid": chave,
+            "itens": [
+                {"variante_id": loja["camiseta"], "quantidade": 1},
+                {"variante_id": loja["calca"], "quantidade": 1},
+            ],
+            "pagamentos": [{"forma": "PIX", "valor": "199.80"}],
+        },
+    )
+    for resposta in (outra_forma, mais_pecas):
+        assert resposta.status_code == 409, resposta.text
+        assert resposta.json()["code"] == "DUPLICADO"
+        assert resposta.json()["detail"]["venda_id"] == primeira.json()["id"]
+
+    assert await _saldo(client, auth_vendedor, loja["camiseta"]) == 9
+    assert await _saldo(client, auth_vendedor, loja["calca"]) == 1
+    venda = (await client.get(f"/vendas/{primeira.json()['id']}", headers=auth_vendedor)).json()
+    assert [(p["forma"], p["valor"]) for p in venda["pagamentos"]] == [("PIX", "49.90")]
+
+
+async def test_reenvio_pago_com_outro_vale_e_recusado(
+    client: AsyncClient, auth_vendedor: dict[str, str], loja: dict
+) -> None:
+    """O vale é papel na mão da cliente: o mesmo valor em OUTRO vale é outra cobrança.
+
+    A resposta se perdeu e a moça, com a cliente mostrando o segundo vale, cobra de novo
+    com a mesma chave. Devolver a venda antiga como sucesso diria que o vale que está na
+    mão dela foi usado — e foi o outro que o servidor gastou. A régua do reenvio é a mesma
+    do fechamento da condicional (`VendaService._cobrada_assim`).
+    """
+    async with SessionLocal() as s:
+        for codigo in ("VPDV01", "VPDV02"):
+            await s.execute(
+                text("INSERT INTO vouchers (code, value, used_value) VALUES (:c, 49.90, 0)"),
+                {"c": codigo},
+            )
+        await s.commit()
+    pedido = {
+        "client_uuid": str(uuid.uuid4()),
+        "itens": [{"variante_id": loja["camiseta"], "quantidade": 1}],
+        "pagamentos": [{"forma": "VALE", "valor": "49.90", "codigo_vale": "VPDV01"}],
+    }
+    primeira = await client.post("/vendas", headers=auth_vendedor, json=pedido)
+    assert primeira.status_code == 201, primeira.text
+    # O reenvio idêntico continua sendo replay.
+    assert (await client.post("/vendas", headers=auth_vendedor, json=pedido)).status_code == 200
+
+    outro = await client.post(
+        "/vendas",
+        headers=auth_vendedor,
+        json={
+            **pedido,
+            "pagamentos": [{"forma": "VALE", "valor": "49.90", "codigo_vale": "VPDV02"}],
+        },
+    )
+    assert outro.status_code == 409, outro.text
+    assert outro.json()["code"] == "DUPLICADO"
+    assert outro.json()["detail"]["venda_id"] == primeira.json()["id"]
+    async with SessionLocal() as s:
+        usado = (
+            await s.execute(text("SELECT used_value FROM vouchers WHERE code = 'VPDV02'"))
+        ).scalar_one()
+    assert usado == 0
 
 
 async def test_duas_vendas_simultaneas_da_ultima_peca_so_uma_passa(
@@ -514,3 +659,47 @@ async def test_vendedor_nao_abre_venda_de_outro_pelo_id(
     ).json()["id"]
     resp = await client.get(f"/vendas/{venda_id}", headers=auth_vendedor)
     assert resp.status_code == 404
+
+
+# ------------------------------------------------- desempenho: o banco não pode travar
+
+
+async def test_conexao_da_api_tem_teto_de_tempo_por_consulta() -> None:
+    """O app desiste em 15 s e o retry manda a MESMA consulta de novo.
+
+    Sem teto no banco, a primeira continuava rodando sozinha — a lista de Clientes sem
+    índice prendia o Postgres por 70 s a cada abertura, duas vezes. Com o teto, o próprio
+    Postgres cancela o que passou do limite.
+    """
+    async with SessionLocal() as s:
+        teto = await s.scalar(text("SHOW statement_timeout"))
+    assert teto == f"{settings.db_statement_timeout_ms // 1000}s"
+    assert teto != "0", "sem teto, uma consulta lenta segura o banco depois que o app desistiu"
+
+
+async def test_divida_das_clientes_acha_as_vendas_pelo_indice_da_cliente(session) -> None:
+    """A lista "quem está devendo" calcula a dívida de cada cliente somando as vendas DELA.
+
+    O único índice com customer_id era o UNIQUE (id, customer_id), onde ele é a 2ª
+    coluna: cada cliente varria o índice inteiro, e a tela levava 49 s com 20 mil
+    clientes. O plano da consulta real tem de achar as vendas pelo índice da cliente.
+    """
+    resultado = await planos(
+        session, lambda: ClienteService(session).listar(Paginacao(1, 20), None, True)
+    )
+    contagem = resultado[0][1]
+    assert "ix_sales_customer_id" in contagem, contagem
+
+
+async def test_contagem_da_lista_de_vendas_nao_monta_o_join_do_vendedor(
+    session, loja: dict
+) -> None:
+    """O vendedor entra por FK obrigatória, um para um: não muda o total.
+
+    Contar o JOIN fazia o banco montá-lo para o histórico inteiro a cada página.
+    """
+    consultas = await capturar_sql(
+        lambda: VendaRepository(session).listar(Paginacao(1, 20), None, None, None, None)
+    )
+    contagem = next(sql for sql, _ in consultas if "count(" in sql.lower())
+    assert "users" not in contagem and "JOIN" not in contagem.upper(), contagem

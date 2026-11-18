@@ -29,7 +29,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import NaoEncontrado, OperacaoInvalida, Validacao
+from app.core.exceptions import Duplicado, NaoEncontrado, OperacaoInvalida, Validacao
 from app.core.permissoes import Pode, pode
 from app.modules.estoque import movimentos
 from app.modules.estoque.models import TipoMovimento
@@ -71,6 +71,9 @@ async def gerar_codigo_de_vale(session: AsyncSession) -> str:
 class DevolucaoService:
     def __init__(self, session: AsyncSession):
         self.session = session
+        #: A última `devolver` respondeu com uma devolução que já existia (ADR-2): o router
+        #: devolve 200 em vez de 201.
+        self.replay = False
 
     # ------------------------------------------------------------- leitura
     async def _venda_travada(self, venda_id: int) -> Sale:
@@ -191,17 +194,56 @@ class DevolucaoService:
         return saida
 
     # ---------------------------------------------------------------- ação
-    async def devolver(self, venda_id: int, dados, usuario: User):
-        """Recebe as peças de volta. Tudo numa transação — ou nada."""
-        ja = (
+    async def _por_client_uuid(self, client_uuid) -> SaleReturn | None:
+        return (
             await self.session.execute(
-                select(SaleReturn).where(SaleReturn.client_uuid == dados.client_uuid)
+                select(SaleReturn).where(SaleReturn.client_uuid == client_uuid)
             )
         ).scalar_one_or_none()
+
+    async def _replay(self, devolucao: SaleReturn, venda_id: int, dados):
+        """Responde a devolução que este `client_uuid` já gravou — se o pedido for o MESMO.
+
+        O uuid identifica UM pedido: esta venda, estas peças, nesta quantidade. Devolver a
+        gravada sem conferir respondia sucesso para outro pedido com a chave reaproveitada
+        — outra venda, ou a mesma com outras peças: a tela mostrava o comprovante de uma
+        devolução alheia e a peça que a cliente trouxe não voltava, nem o dinheiro dela. O
+        409 diz que a chave já foi usada; o retry de verdade continua respondido.
+        """
+        gravados = (
+            await self.session.execute(
+                select(
+                    SaleReturnItem.sale_item_id, SaleReturnItem.quantity, SaleReturnItem.restock
+                ).where(SaleReturnItem.return_id == devolucao.id)
+            )
+        ).all()
+        pedido = sorted((i.item_id, i.quantidade, i.voltar_ao_estoque) for i in dados.itens)
+        if devolucao.sale_id != venda_id or sorted(tuple(g) for g in gravados) != pedido:
+            raise Duplicado(
+                f"Este pedido já foi gravado como a devolução #{devolucao.id}, com outra "
+                "venda ou outras peças. Confira o que já voltou antes de devolver de novo; "
+                "para uma devolução nova, recomece a tela.",
+                {"devolucao_id": devolucao.id},
+            )
+        self.replay = True
+        return await self.montar(devolucao)
+
+    async def devolver(self, venda_id: int, dados, usuario: User):
+        """Recebe as peças de volta. Tudo numa transação — ou nada."""
+        ja = await self._por_client_uuid(dados.client_uuid)
         if ja is not None:
-            return await self.montar(ja)
+            return await self._replay(ja, venda_id, dados)
 
         venda = await self._venda_travada(venda_id)
+
+        # A mesma pergunta de novo, agora com a venda travada. O retry que chega enquanto
+        # a primeira tentativa ainda não fez commit passa pela checagem lá de cima sem ver
+        # nada e fica parado na trava; quando ela solta, a primeira já gravou. Sem esta
+        # releitura ele seguia até o INSERT, batia no UNIQUE do `client_uuid` e a tela
+        # mostrava erro (500) para uma devolução que aconteceu.
+        ja = await self._por_client_uuid(dados.client_uuid)
+        if ja is not None:
+            return await self._replay(ja, venda_id, dados)
 
         itens_da_venda = {
             item.id: item

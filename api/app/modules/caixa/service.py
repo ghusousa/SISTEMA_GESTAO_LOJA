@@ -142,28 +142,48 @@ class CaixaService:
         )
         return (await self.session.execute(stmt)).unique().scalar_one_or_none()
 
+    async def dia_fechado(self, dia: date) -> bool:
+        """Público: o cancelamento de venda pergunta antes de mexer num dia já conferido."""
+        return (
+            await self.session.scalar(
+                select(CashClosing.id).where(CashClosing.closing_date == dia)
+            )
+        ) is not None
+
     async def fechar(self, dados: FechamentoIn, usuario: User) -> FechamentoOut:
         """Registra a conferência do dia. Refechar o mesmo dia atualiza o registro.
 
-        O fechamento não trava nada: é conferência, não bloqueio. Uma venda lançada
-        depois simplesmente muda o esperado, e o dia pode ser refechado.
+        O fechamento não trava vendas: é conferência, não bloqueio. Uma venda lançada
+        depois simplesmente muda o esperado, e o dia pode ser refechado. O que ele trava é
+        o CANCELAMENTO de venda daquele dia (`VendaService.cancelar`), que reescreveria o
+        que foi contado sem passar pelo caixa de hoje — para isso existe a devolução.
         """
         hoje_loja = hoje_na_loja()
         if dados.data > hoje_loja:
             raise Validacao("Não dá para fechar o caixa de um dia que ainda não aconteceu.")
+        # Lido já, enquanto o objeto está fresco: o rollback da corrida lá embaixo expira
+        # tudo o que a sessão carregou, e ler `usuario.id` depois dele, em sessão async,
+        # é MissingGreenlet — o ramo que existe para a corrida dava 500 justo nela.
+        usuario_id = usuario.id
 
         formas = [c.forma for c in dados.contagens]
         if len(formas) != len(set(formas)):
             raise Validacao("A mesma forma de pagamento foi contada duas vezes.")
 
+        # UMA leitura do esperado, usada para validar E para gravar. Eram duas: uma venda em
+        # crédito que entrasse entre elas passava pela validação com esperado zero ("ninguém
+        # precisa contar crédito") e caía no snapshot com R$ 50 esperados e zero contado — o
+        # fechamento gravava uma falta que ninguém conferiu. Venda que chega depois desta
+        # leitura fica para o refechamento, como qualquer venda lançada depois de fechar.
+        esperado, _, _ = await self._esperado_do_dia(dados.data)
+
         # Forma com dinheiro esperado precisa ser conferida: gravar "contado zero" para uma
         # forma que ninguém contou inventaria uma diferença enorme e mentiria sobre o dia.
-        esperado_previa, _, _ = await self._esperado_do_dia(dados.data)
         # `!= ZERO` e não `> ZERO`: um dia em que se devolveu mais do que se vendeu numa
         # forma tem esperado NEGATIVO — e é justamente o dia que mais precisa de contagem.
         nao_conferidas = [
             forma
-            for forma, valor in esperado_previa.items()
+            for forma, valor in esperado.items()
             if valor != ZERO and forma not in set(formas)
         ]
         if nao_conferidas:
@@ -172,12 +192,11 @@ class CaixaService:
                 {"formas": sorted(nao_conferidas)},
             )
 
-        esperado, _, _ = await self._esperado_do_dia(dados.data)
         contados = {c.forma: c.valor_contado for c in dados.contagens}
 
         fechamento = await self._fechamento_do_dia(dados.data)
         if fechamento is None:
-            fechamento = CashClosing(closing_date=dados.data, user_id=usuario.id)
+            fechamento = CashClosing(closing_date=dados.data, user_id=usuario_id)
             self.session.add(fechamento)
             try:
                 await self.session.flush()
@@ -188,13 +207,13 @@ class CaixaService:
                 fechamento = await self._fechamento_do_dia(dados.data)
                 if fechamento is None:
                     raise
-                fechamento.user_id = usuario.id
+                fechamento.user_id = usuario_id
                 fechamento.closed_at = datetime.now(UTC)
                 for linha in list(fechamento.lines):
                     await self.session.delete(linha)
                 await self.session.flush()
         else:
-            fechamento.user_id = usuario.id
+            fechamento.user_id = usuario_id
             fechamento.closed_at = datetime.now(UTC)
             for linha in list(fechamento.lines):
                 await self.session.delete(linha)

@@ -1,9 +1,21 @@
+import asyncio
+import time
+import uuid
+from decimal import Decimal
+
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import text
 
+from app.core.db import SessionLocal, engine
+from app.core.pagination import Paginacao
 from app.modules.catalogo.barcode import ean13_valido, montar_codigo_interno
+from app.modules.catalogo.repository import CatalogoRepository
+from app.modules.estoque import movimentos
+from app.modules.estoque.models import TipoMovimento
 
 from conftest import criar_produto, dar_entrada
+from planos import planos
 
 
 @pytest.fixture
@@ -328,3 +340,264 @@ async def test_busca_por_nome_nao_vaza_custo_para_vendedora(client, auth_vendedo
     assert achou.status_code == 200
     for item in achou.json()["items"]:
         assert "preco_custo" not in item
+
+
+async def test_busca_de_produtos_ignora_acento(
+    client: AsyncClient, auth_admin: dict[str, str], categoria: int
+) -> None:
+    """`/produtos?q=` achata como `/variantes?q=`: "basica" acha a "Básica"."""
+    await client.post("/produtos", headers=auth_admin, json=_produto_payload(categoria))
+    for termo in ("basica", "BÁSICA", "camiseta basica"):
+        resp = await client.get("/produtos", headers=auth_admin, params={"q": termo})
+        assert resp.status_code == 200
+        assert resp.json()["total"] == 1, f"'{termo}' não achou o produto"
+
+
+async def test_busca_por_nome_usa_o_indice_trigram(client, auth_admin, session) -> None:
+    """A busca de cada tecla não pode achatar o catálogo inteiro (ADR-31).
+
+    Era `translate(lower(nome))` aplicado às 15 mil peças a cada tecla, duas vezes (página
+    e contagem), com as tabelas de acento indo como PARÂMETRO — e no plano genérico que o
+    asyncpg reaproveita nenhum índice de expressão casa com parâmetro. Agora o nome e a cor
+    achatados têm índice trigram, a expressão vai literal, e o produto é filtrado antes de
+    encostar nas peças. Se a tabela de acentos de `catalogo/busca.py` mudar sem uma
+    migration que recrie os índices, é aqui que quebra.
+    """
+    categoria = (
+        await client.post("/categorias", headers=auth_admin, json={"nome": "Calças"})
+    ).json()
+    await _peca(client, auth_admin, categoria["id"], "Calça Rosé", "Rosé", "7891000000062")
+
+    # Nome e cor casam com a mesma peça: ela conta uma vez só.
+    achou = await client.get("/variantes", headers=auth_admin, params={"q": "rose"})
+    assert achou.json()["total"] == 1 and len(achou.json()["items"]) == 1
+
+    repo = CatalogoRepository(session)
+    variantes = await planos(
+        session, lambda: repo.listar_variantes(Paginacao(1, 20), None, "calca")
+    )
+    for _, plano in variantes[:2]:  # a contagem e a página
+        assert "ix_products_nome_achatado" in plano, plano
+        assert "ix_product_variants_cor_achatada" in plano, plano
+    produtos = await planos(
+        session, lambda: repo.listar_produtos(Paginacao(1, 20), "calca", None)
+    )
+    assert "ix_products_nome_achatado" in produtos[0][1], produtos[0][1]
+
+
+# ------------------------------------------- peça que volta de produto excluído (ADR-30)
+
+
+async def _vender_tudo(client, auth, variante_id: int, quantidade: int, preco: str) -> dict:
+    total = f"{Decimal(preco) * quantidade:.2f}"
+    resp = await client.post("/vendas", headers=auth, json={
+        "client_uuid": str(uuid.uuid4()),
+        "itens": [{"variante_id": variante_id, "quantidade": quantidade}],
+        "pagamentos": [{"forma": "PIX", "valor": total}],
+    })
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+async def _extrato(client, auth, variante_id: int) -> list[dict]:
+    resp = await client.get(
+        "/estoque/movimentacoes", headers=auth, params={"variante_id": variante_id}
+    )
+    return resp.json()["items"]
+
+
+async def test_cancelar_venda_de_produto_excluido_traz_a_peca_de_volta(
+    client: AsyncClient, auth_admin: dict[str, str], categoria: int
+) -> None:
+    """A peça esgota, a dona tira do catálogo, a venda é cancelada.
+
+    Antes, as 2 peças voltavam para uma peça excluída: fora da tela de Estoque, o bipe
+    dava 404 e nenhuma Entrada, Ajuste ou Inventário a alcançava. Peça devolvida está de
+    volta na arara: a peça (e o produto) voltam ao catálogo.
+    """
+    variante = await _peca(client, auth_admin, categoria, "Calça Linho", "Areia", "7891000000055")
+    produto_id = (
+        await client.get("/variantes/codigo-barras/7891000000055", headers=auth_admin)
+    ).json()["produto_id"]
+    venda = await _vender_tudo(client, auth_admin, variante, 2, "59.90")
+    assert (await client.delete(f"/produtos/{produto_id}", headers=auth_admin)).status_code == 204
+
+    cancelamento = await client.post(
+        f"/vendas/{venda['id']}/cancelamento", headers=auth_admin, json={"motivo": "desistiu"}
+    )
+    assert cancelamento.status_code == 200, cancelamento.text
+
+    bipe = await client.get("/variantes/codigo-barras/7891000000055", headers=auth_admin)
+    assert bipe.status_code == 200, "a peça devolvida não pode sumir do bipe"
+    assert bipe.json()["saldo"] == 2
+    saldos = await client.get("/estoque/saldos", headers=auth_admin, params={"q": "7891000000055"})
+    assert saldos.json()["total"] == 1
+    assert (await client.get(f"/produtos/{produto_id}", headers=auth_admin)).status_code == 200
+    movimento = (await _extrato(client, auth_admin, variante))[0]
+    assert movimento["tipo"] == "ESTORNO"
+    assert "excluída do catálogo" in movimento["observacao"]
+
+
+async def test_devolucao_de_peca_recadastrada_entra_na_peca_ativa_com_a_mesma_etiqueta(
+    client: AsyncClient, auth_admin: dict[str, str], categoria: int
+) -> None:
+    """A dona excluiu o produto e recadastrou a peça com a MESMA etiqueta. A cliente devolve.
+
+    Mesma etiqueta é a mesma peça: ela entra na peça ativa (a que o bipe acha), em vez de
+    reativar a antiga — que nem caberia, o código já está em uso. O extrato diz por quê.
+    """
+    antiga = await _peca(client, auth_admin, categoria, "Vestido Floral", "Azul", "7891000000062")
+    produto_antigo = (
+        await client.get("/variantes/codigo-barras/7891000000062", headers=auth_admin)
+    ).json()["produto_id"]
+    venda = await _vender_tudo(client, auth_admin, antiga, 2, "59.90")
+    assert (
+        await client.delete(f"/produtos/{produto_antigo}", headers=auth_admin)
+    ).status_code == 204
+    recadastrada = (
+        await client.post("/produtos", headers=auth_admin, json={
+            "categoria_id": categoria,
+            "nome": "Vestido Floral Midi",
+            "variantes": [{"tamanho": "M", "cor": "Azul", "codigo_barras": "7891000000062",
+                           "preco_custo": "20.00", "preco_venda": "59.90"}],
+        })
+    ).json()["variantes"][0]["id"]
+
+    devolucao = await client.post(f"/vendas/{venda['id']}/devolucoes", headers=auth_admin, json={
+        "client_uuid": str(uuid.uuid4()),
+        "motivo": "não serviu",
+        "itens": [{"item_id": venda["itens"][0]["id"], "quantidade": 1, "voltar_ao_estoque": True}],
+    })
+    assert devolucao.status_code == 201, devolucao.text
+
+    bipe = await client.get("/variantes/codigo-barras/7891000000062", headers=auth_admin)
+    assert bipe.json()["variante_id"] == recadastrada
+    assert bipe.json()["saldo"] == 1
+    movimento = (await _extrato(client, auth_admin, recadastrada))[0]
+    assert movimento["tipo"] == "DEVOLUCAO"
+    assert movimento["quantidade"] == 1
+    assert "mesma etiqueta" in movimento["observacao"]
+    # A antiga continua fora do catálogo: não há duas peças com a mesma etiqueta.
+    assert (
+        await client.get(f"/produtos/{produto_antigo}", headers=auth_admin)
+    ).status_code == 404
+
+
+async def test_peca_excluida_e_refeita_na_grade_recebe_a_devolucao_na_nova(
+    client: AsyncClient, auth_admin: dict[str, str], categoria: int
+) -> None:
+    """Excluiu só a peça M e criou outra M/Preta no mesmo produto (código novo).
+
+    O UNIQUE da grade diz que é a mesma peça: reativar a antiga estouraria esse UNIQUE e
+    derrubaria o cancelamento. A mercadoria entra na M que está ativa.
+    """
+    antiga = await _peca(client, auth_admin, categoria, "Saia Plissada", "Preta", "7891000000079")
+    produto_id = (
+        await client.get("/variantes/codigo-barras/7891000000079", headers=auth_admin)
+    ).json()["produto_id"]
+    venda = await _vender_tudo(client, auth_admin, antiga, 2, "59.90")
+    assert (await client.delete(f"/variantes/{antiga}", headers=auth_admin)).status_code == 204
+    grade = await client.post(f"/produtos/{produto_id}/variantes", headers=auth_admin, json={
+        "tamanho": "M", "cor": "Preta", "preco_custo": "20.00", "preco_venda": "59.90",
+    })
+    nova = grade.json()["variantes"][0]["id"]
+
+    cancelamento = await client.post(
+        f"/vendas/{venda['id']}/cancelamento", headers=auth_admin, json={"motivo": "desistiu"}
+    )
+    assert cancelamento.status_code == 200, cancelamento.text
+    produto = (await client.get(f"/produtos/{produto_id}", headers=auth_admin)).json()
+    assert [(v["id"], v["saldo"]) for v in produto["variantes"]] == [(nova, 2)]
+
+
+# ------------------------------------------- excluir confere o saldo travado (ADR-30)
+
+
+async def _esperar_alguem_na_trava(tarefa: asyncio.Task, limite: float = 10.0) -> None:
+    """Espera a requisição ficar PARADA numa trava do banco (ou terminar sem parar).
+
+    A ordem é forçada pela trava, não por relógio. Cada volta abre conexão nova porque
+    `pg_stat_activity` é uma foto por transação. Se a tarefa terminar antes, é o defeito:
+    ela não esperou ninguém.
+    """
+    prazo = time.monotonic() + limite
+    while not tarefa.done():
+        async with engine.connect() as observador:
+            esperando = await observador.scalar(
+                text(
+                    "SELECT count(*) FROM pg_stat_activity "
+                    "WHERE datname = current_database() AND wait_event_type = 'Lock'"
+                )
+            )
+        if esperando:
+            return
+        assert time.monotonic() < prazo, "a requisição nunca chegou à trava"
+        await asyncio.sleep(0.01)  # intervalo da consulta, não da ordem
+
+
+async def test_excluir_peca_espera_a_entrada_em_andamento(
+    client: AsyncClient, auth_admin: dict[str, str], admin, categoria: int
+) -> None:
+    """Uma Entrada da peça zerada está gravando; a dona exclui a peça no mesmo instante.
+
+    Antes, a exclusão lia o saldo solto (0), excluía, e as 5 peças da Entrada caíam numa
+    peça invisível. Agora ela espera a Entrada confirmar, vê as 5 e recusa.
+    """
+    produto = (
+        await client.post("/produtos", headers=auth_admin, json=_produto_payload(categoria))
+    ).json()
+    peca_g = next(v["id"] for v in produto["variantes"] if v["tamanho"] == "G")
+
+    async with SessionLocal() as entrada:
+        await movimentos.aplicar_movimento(
+            entrada, variante_id=peca_g, delta=5, tipo=TipoMovimento.ENTRADA, user_id=admin.id
+        )
+        excluir = asyncio.create_task(client.delete(f"/variantes/{peca_g}", headers=auth_admin))
+        try:
+            await _esperar_alguem_na_trava(excluir)
+        finally:
+            await entrada.commit()
+    resp = await excluir
+
+    assert resp.status_code == 409, resp.text
+    depois = (await client.get(f"/produtos/{produto['id']}", headers=auth_admin)).json()
+    assert {v["id"]: v["saldo"] for v in depois["variantes"]}[peca_g] == 5
+
+
+async def _entrada(client, auth, variante_id: int, quantidade: int):
+    return await client.post("/estoque/entradas", headers=auth, json={
+        "client_uuid": str(uuid.uuid4()),
+        "itens": [{"variante_id": variante_id, "quantidade": quantidade}],
+    })
+
+
+async def test_entrada_de_peca_excluida_no_meio_da_conferencia_e_recusada(
+    client: AsyncClient, auth_admin: dict[str, str], categoria: int
+) -> None:
+    """A ordem inversa: a exclusão já marcou a peça e ainda não confirmou; chega a Entrada.
+
+    Antes, a Entrada passava (a exclusão ainda não era visível) e somava 5 numa peça que
+    saía do catálogo. Agora ela espera a peça, vê que foi excluída e recusa — nada entra.
+    """
+    produto = (
+        await client.post("/produtos", headers=auth_admin, json=_produto_payload(categoria))
+    ).json()
+    peca_g = next(v["id"] for v in produto["variantes"] if v["tamanho"] == "G")
+
+    async with SessionLocal() as exclusao:
+        await exclusao.execute(
+            text("UPDATE product_variants SET deleted_at = now() WHERE id = :id"), {"id": peca_g}
+        )
+        entrada = asyncio.create_task(_entrada(client, auth_admin, peca_g, 5))
+        try:
+            await _esperar_alguem_na_trava(entrada)
+        finally:
+            await exclusao.commit()
+    resp = await entrada
+
+    assert resp.status_code == 404, resp.text
+    async with SessionLocal() as s:
+        saldo = await s.scalar(
+            text("SELECT quantity FROM stock_balances WHERE variant_id = :id"), {"id": peca_g}
+        )
+    assert not saldo, "a mercadoria entrou numa peça que saiu do catálogo"

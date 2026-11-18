@@ -7,6 +7,52 @@ from app.modules.catalogo.models import TipoCodigo
 
 TAMANHOS_SUGERIDOS = ["PP", "P", "M", "G", "GG", "XG", "U"]
 
+#: CFOP de quem revende mercadoria comprada de terceiros, dentro do estado. É o caso de
+#: quase toda loja de roupa; o contador troca peça a peça quando não for (ex.: 5405, ST).
+CFOP_PADRAO = "5102"
+
+
+def _codigo_fiscal(v: str | None, digitos: int, nome: str) -> str | None:
+    """NCM, CEST e CFOP chegam do jeito que vêm no papel do contador: "6109.10.00",
+    "28.038.00", "5.102". Guardamos só os dígitos — e só se forem a quantidade certa.
+    Vazio é "não informado", nunca um código."""
+    if v is None:
+        return None
+    limpo = "".join(c for c in v if not c.isspace() and c not in ".-/")
+    if not limpo:
+        return None
+    if not limpo.isdigit() or len(limpo) != digitos:
+        raise ValueError(f"{nome} tem {digitos} dígitos (ex.: {_EXEMPLO[nome]}).")
+    return limpo
+
+
+_EXEMPLO = {"NCM": "6109.10.00", "CEST": "28.038.00", "CFOP": "5102"}
+
+
+class DadosFiscaisIn(BaseModel):
+    """Campos fiscais do produto (ADR-41). Todos opcionais no cadastro: a loja que não
+    emite NFC-e não precisa deles, e a emissão recusa dizendo o que falta."""
+
+    ncm: str | None = Field(default=None, max_length=20)
+    cest: str | None = Field(default=None, max_length=20)
+    origem: int | None = Field(default=None, ge=0, le=8)
+    cfop: str | None = Field(default=None, max_length=10)
+
+    @field_validator("ncm")
+    @classmethod
+    def _ncm(cls, v: str | None) -> str | None:
+        return _codigo_fiscal(v, 8, "NCM")
+
+    @field_validator("cest")
+    @classmethod
+    def _cest(cls, v: str | None) -> str | None:
+        return _codigo_fiscal(v, 7, "CEST")
+
+    @field_validator("cfop")
+    @classmethod
+    def _cfop(cls, v: str | None) -> str | None:
+        return _codigo_fiscal(v, 4, "CFOP")
+
 
 # ---------------------------------------------------------------- categorias
 class CategoriaIn(BaseModel):
@@ -84,7 +130,7 @@ class VarianteAdminOut(VarianteOut):
 
 
 # ---------------------------------------------------------------- produtos
-class ProdutoIn(BaseModel):
+class ProdutoIn(DadosFiscaisIn):
     categoria_id: int
     nome: str = Field(min_length=2, max_length=120)
     descricao: str | None = Field(default=None, max_length=2000)
@@ -107,7 +153,10 @@ class ProdutoIn(BaseModel):
         return v
 
 
-class ProdutoUpdate(BaseModel):
+class ProdutoUpdate(DadosFiscaisIn):
+    """Os campos fiscais seguem o `exclude_unset`: mandar `"cest": null` apaga o CEST;
+    não mandar a chave deixa como está."""
+
     categoria_id: int | None = None
     nome: str | None = Field(default=None, min_length=2, max_length=120)
     descricao: str | None = Field(default=None, max_length=2000)
@@ -122,6 +171,10 @@ class ProdutoOut(BaseModel):
     foto_url: str | None = Field(default=None, validation_alias="photo_url")
     categoria_id: int = Field(validation_alias="category_id")
     categoria: str
+    ncm: str | None = None
+    cest: str | None = None
+    origem: int = 0
+    cfop: str = CFOP_PADRAO
     variantes: list[VarianteOut] = Field(default_factory=list)
     saldo_total: int = 0
 
@@ -144,6 +197,22 @@ class VarianteLookupOut(BaseModel):
     preco_venda: Decimal
     saldo: int
     foto_url: str | None = None
+
+
+class DadosFiscaisPecaOut(BaseModel):
+    """O que a NFC-e precisa saber de cada peça vendida. Lido também de peça excluída do
+    catálogo: a venda de ontem continua precisando de nota hoje."""
+
+    variante_id: int
+    produto_id: int
+    produto: str
+    tamanho: str
+    cor: str
+    codigo_barras: str
+    ncm: str | None
+    cest: str | None
+    origem: int
+    cfop: str
 
 
 class CodigoInternoOut(BaseModel):

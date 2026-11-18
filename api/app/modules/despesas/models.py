@@ -12,13 +12,15 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
-    UniqueConstraint,
     func,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base, TimestampMixin
+
+#: O índice que segura a réplica duplicada. O service reconhece a colisão pelo nome.
+UQ_RECORRENCIA = "uq_expenses_recurring_source_competencia"
 
 
 class ExpenseCategory(Base):
@@ -44,8 +46,16 @@ class Expense(Base, TimestampMixin):
     __tablename__ = "expenses"
     __table_args__ = (
         CheckConstraint("amount > 0", name="amount"),
-        # Replicar as recorrentes do mês duas vezes não duplica o aluguel.
-        UniqueConstraint("recurring_source_id", "competencia", name="recurring_source_id_competencia"),
+        # Replicar as recorrentes do mês duas vezes não duplica o aluguel. Parcial, como todo
+        # soft delete: a réplica excluída não pode continuar ocupando o mês, senão "Lançar
+        # fixas" nunca mais traz aquele aluguel de volta.
+        Index(
+            UQ_RECORRENCIA,
+            "recurring_source_id",
+            "competencia",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
         Index("ix_expenses_expense_date", "expense_date"),
         Index("ix_expenses_category_id", "category_id"),
     )

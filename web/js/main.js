@@ -12,6 +12,7 @@ import { PODE, pode, titulo } from './permissoes.js';
 import { conectarTempoReal, desconectarTempoReal } from './tempo-real.js';
 import { html, confirmar, cru, aviso } from './ui.js';
 import { carregarLoja, loja, aoMudarLoja } from './loja.js';
+import { desligarLeitorCelular, ligarLeitorCelular, pararLeitorCelular } from './leitor-celular.js';
 
 /* ------------------------------------------------------------------------- telas */
 
@@ -23,6 +24,10 @@ rota('/vendas', () => import('./views/vendas.js'));
 rota('/vendas/devolucao', () => import('./views/devolucao.js'), { pode: PODE.DEVOLVER_VENDA });
 rota('/vendas/:id/recibo', () => import('./views/recibo.js'));
 rota('/vendas/:id', () => import('./views/venda-detalhe.js'));
+rota('/condicionais', () => import('./views/condicionais.js'), { pode: PODE.FAZER_CONDICIONAL });
+// Antes de '/condicionais/:id', pelo mesmo motivo de '/vendas/devolucao'.
+rota('/condicionais/nova', () => import('./views/condicionais-nova.js'), { pode: PODE.FAZER_CONDICIONAL });
+rota('/condicionais/:id', () => import('./views/condicionais-detalhe.js'), { pode: PODE.FAZER_CONDICIONAL });
 
 rota('/produtos', () => import('./views/produtos.js'));
 rota('/produtos/novo', () => import('./views/produto-novo.js'));
@@ -43,8 +48,11 @@ rota('/estoque/extrato', () => import('./views/extrato.js'));
 rota('/caixa', () => import('./views/caixa.js'), { pode: PODE.FECHAR_CAIXA });
 rota('/despesas', () => import('./views/despesas.js'), { pode: PODE.LANCAR_DESPESA });
 rota('/relatorios', () => import('./views/relatorios.js'), { pode: PODE.VER_DINHEIRO });
+rota('/taxas', () => import('./views/taxas.js'), { pode: PODE.VER_DINHEIRO });
+rota('/contas-pagar', () => import('./views/contas-pagar.js'), { pode: PODE.VER_DINHEIRO });
 
 rota('/clientes', () => import('./views/clientes.js'), { pode: PODE.GERIR_CREDIARIO });
+rota('/aniversariantes', () => import('./views/aniversariantes.js'), { pode: PODE.ATENDER_CLIENTE });
 rota('/usuarios', () => import('./views/usuarios.js'), { pode: PODE.GERIR_USUARIOS });
 rota('/auditoria', () => import('./views/auditoria.js'), { pode: PODE.VER_AUDITORIA });
 rota('/configuracao', () => import('./views/configuracao.js'), { pode: PODE.CONFIGURAR_LOJA });
@@ -60,6 +68,8 @@ const MENU = [
       { href: '/pdv', icone: '🛒', texto: 'Vender (PDV)' },
       { href: '/vendas', icone: '🧾', texto: 'Vendas' },
       { href: '/vendas/devolucao', icone: '↩️', texto: 'Devolução', pode: PODE.DEVOLVER_VENDA },
+      { href: '/aniversariantes', icone: '🎂', texto: 'Aniversariantes', pode: PODE.ATENDER_CLIENTE },
+      { href: '/condicionais', icone: '🛍️', texto: 'Condicional', pode: PODE.FAZER_CONDICIONAL },
     ],
   },
   {
@@ -83,7 +93,9 @@ const MENU = [
     itens: [
       { href: '/caixa', icone: '💰', texto: 'Caixa do dia', pode: PODE.FECHAR_CAIXA },
       { href: '/despesas', icone: '💸', texto: 'Despesas', pode: PODE.LANCAR_DESPESA },
+      { href: '/contas-pagar', icone: '📅', texto: 'Contas a pagar', pode: PODE.VER_DINHEIRO },
       { href: '/relatorios', icone: '📊', texto: 'Relatórios', pode: PODE.VER_DINHEIRO },
+      { href: '/taxas', icone: '💳', texto: 'Taxas do cartão', pode: PODE.VER_DINHEIRO },
       { href: '/clientes', icone: '🤝', texto: 'Crediário', pode: PODE.GERIR_CREDIARIO },
     ],
   },
@@ -138,6 +150,15 @@ function molduraHtml(usuario) {
         </div>
         <div class="lateral__menu">${cru(menuHtml())}</div>
         <div class="lateral__rodape">
+          <button class="lateral__leitor" type="button" data-leitor-celular
+            title="Use a câmera do celular como leitor de código de barras deste computador">
+            <span aria-hidden="true">📱</span><span>Celular como leitor</span>
+          </button>
+          <button class="lateral__leitor is-ativo" type="button" data-leitor-selo hidden
+            title="O celular está lendo para este computador. Clique para desligar.">
+            <span class="lateral__versao-ponto" aria-hidden="true"></span>
+            <span aria-hidden="true">📱</span><span data-leitor-nome></span>
+          </button>
           <div class="lateral__quem-linha">
             <span class="lateral__avatar" aria-hidden="true">${iniciais(usuario.nome)}</span>
             <span class="lateral__quem">
@@ -147,6 +168,8 @@ function molduraHtml(usuario) {
             <button class="lateral__sair" data-sair title="Sair do sistema" aria-label="Sair do sistema">⏻</button>
           </div>
           <div class="lateral__versao" data-versao hidden></div>
+          <a class="lateral__versao is-atencao" data-backup href="#/backup" style="text-decoration:none;color:inherit" hidden></a>
+          <a class="lateral__versao is-atencao" data-contas href="#/contas-pagar" style="text-decoration:none;color:inherit" hidden></a>
           <a class="lateral__privacidade" href="/privacidade" target="_blank" rel="noopener">Privacidade</a>
         </div>
       </nav>
@@ -198,6 +221,70 @@ async function pintarVersao(raizMoldura) {
   }
 }
 
+/**
+ * "O backup parou?" — para o dono, na mesma barra e no mesmo desenho do selo de versão,
+ * mas só quando há problema: o backup em dia não precisa ocupar a barra de ninguém.
+ * Quem decide o atraso é o servidor (`atrasado`: ligado e sem cópia nova há mais de 2× o
+ * intervalo). Sem isto, a cópia parada só aparecia para quem abrisse a tela do backup —
+ * isto é, no dia em que precisasse dela.
+ */
+let backupPintadoEm = 0;
+async function pintarBackup(raizMoldura) {
+  const area = raizMoldura.querySelector('[data-backup]');
+  if (!area || !pode(PODE.GERIR_BACKUP)) return;
+  backupPintadoEm = Date.now();
+  try {
+    const b = await api.get('/backup');
+    const falhou = b.ativo && b.ultimo_ok === false;
+    area.hidden = !(b.atrasado || falhou);
+    if (area.hidden) return;
+    area.title = 'Abrir a tela do backup';
+    area.innerHTML = html`
+      <span class="lateral__versao-ponto" aria-hidden="true"></span>
+      <span>
+        <strong>${falhou ? 'Backup falhou' : 'Backup atrasado'}</strong>
+        <span>última cópia ${b.ultimo_em ? desdeQuando(b.ultimo_em) : 'nunca'}</span>
+      </span>
+    `;
+  } catch {
+    area.hidden = true;
+  }
+}
+
+/**
+ * "Tem boleto vencendo?" — para quem vê dinheiro, no mesmo desenho dos outros selos, e só
+ * quando há o que pagar: vencida ou vencendo nos próximos 7 dias (`/contas-pagar/resumo`,
+ * ADR-40). Sem isto o boleto da coleção só aparecia para quem abrisse Contas a pagar.
+ */
+let contasPintadasEm = 0;
+async function pintarContas(raizMoldura) {
+  const area = raizMoldura.querySelector('[data-contas]');
+  if (!area || !pode(PODE.VER_DINHEIRO)) return;
+  contasPintadasEm = Date.now();
+  try {
+    const r = await api.get('/contas-pagar/resumo');
+    const qtd = r.vencidas.quantidade + r.proximos_7_dias.quantidade;
+    area.hidden = qtd === 0;
+    if (area.hidden) return;
+    area.title = 'Abrir Contas a pagar';
+    area.innerHTML = html`
+      <span class="lateral__versao-ponto" aria-hidden="true"></span>
+      <span>
+        <strong>${r.vencidas.quantidade ? 'Conta vencida' : 'Contas da semana'}</strong>
+        <span>${qtd} a pagar até 7 dias</span>
+      </span>
+    `;
+  } catch {
+    area.hidden = true;
+  }
+}
+
+// O PDV fica aberto o dia inteiro: o selo se refaz na navegação, no máximo a cada 5 min.
+document.addEventListener('rota-trocada', () => {
+  if (Date.now() - backupPintadoEm > 5 * 60_000) void pintarBackup(raiz);
+  if (Date.now() - contasPintadasEm > 5 * 60_000) void pintarContas(raiz);
+});
+
 /* --------------------------------------------------------------------- moldura */
 
 const raiz = document.getElementById('raiz');
@@ -229,6 +316,9 @@ function areaDeConteudo(caminho, usuario) {
     if (usuario) {
       raiz.innerHTML = molduraHtml(usuario);
       void pintarVersao(raiz);
+      void pintarBackup(raiz);
+      void pintarContas(raiz);
+      ligarLeitorCelular(raiz);
       raiz.querySelector('[data-sair]').addEventListener('click', async () => {
         const confirmou = await confirmar({
           titulo: 'Sair do sistema',
@@ -236,6 +326,8 @@ function areaDeConteudo(caminho, usuario) {
           confirmarTexto: 'Sair',
         });
         if (!confirmou) return;
+        // O celular-leitor desliga no servidor enquanto ainda há sessão para isso.
+        await desligarLeitorCelular();
         // Carrinho e conferência são de quem estava trabalhando: não podem sobrar para o
         // próximo turno — a venda e a sacola do turno anterior entrariam no nome de outra
         // pessoa.
@@ -256,7 +348,15 @@ document.addEventListener('rota-trocada', marcarItemAtivo);
 /* ------------------------------------------------------------------------ boot */
 
 definirTratadorDeSessaoPerdida(() => {
+  // Mesma limpeza do botão Sair. A sessão que cai (refresh vencido, conta desativada,
+  // família revogada) leva para a tela de entrada, e quem entra depois no mesmo navegador
+  // herdaria o carrinho — com o client_uuid — e a conferência de quem estava antes: a
+  // venda e a entrada sairiam no nome da pessoa errada.
+  limparTudoDaSessao();
   desconectarTempoReal();
+  // Sem token não dá para desligar no servidor. A aba guarda o id: se a mesma pessoa
+  // entrar de novo, o leitor volta; se for outra, o servidor responde 404 e ele some.
+  pararLeitorCelular({ esquecerAba: false });
   aviso('Sua sessão expirou. Entre de novo para continuar.', 'alerta');
 });
 

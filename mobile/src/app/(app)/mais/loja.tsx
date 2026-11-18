@@ -3,6 +3,10 @@
  *
  * Só o dono chega aqui (`CONFIGURAR_LOJA`) — a entrada em "Mais" já não aparece para
  * ninguém mais, e o servidor recusa de qualquer jeito.
+ *
+ * "Nota fiscal" guarda regime, inscrição estadual e série da NFC-e (ADR-41) e mostra se
+ * há emissor ligado. O emissor em si (token, certificado A1, CSC) NÃO se configura aqui:
+ * o token mora no .env do servidor e nunca passa por tela nenhuma.
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -20,22 +24,26 @@ import {
 } from 'react-native';
 
 import { mensagemDoErro } from '@/api/client';
-import { sistema } from '@/api/endpoints';
+import { fiscal, sistema } from '@/api/endpoints';
 import { Botao, Campo } from '@/components/ui';
-import { useLoja } from '@/hooks/useLoja';
+import { CHAVE_CONFIGURACAO_COMPLETA, useDadosDaLoja } from '@/hooks/useLoja';
+import { REGIMES } from '@/lib/fiscal';
 import { chaves } from '@/lib/queryClient';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
 
 export default function ConfiguracaoDaLoja() {
   const router = useRouter();
   const cliente = useQueryClient();
-  const atual = useLoja();
+  const atual = useDadosDaLoja();
 
   const [nome, setNome] = useState(atual.nome);
   const [segmento, setSegmento] = useState(atual.segmento);
   const [documento, setDocumento] = useState(atual.documento ?? '');
   const [telefone, setTelefone] = useState(atual.telefone ?? '');
   const [endereco, setEndereco] = useState(atual.endereco ?? '');
+  const [regime, setRegime] = useState<number | null>(atual.regime_tributario);
+  const [ie, setIe] = useState(atual.inscricao_estadual ?? '');
+  const [serie, setSerie] = useState(String(atual.serie_nfce ?? 1));
   const [erro, setErro] = useState<string | null>(null);
 
   // A primeira renderização acontece com o padrão, antes de a consulta responder; quando
@@ -46,7 +54,21 @@ export default function ConfiguracaoDaLoja() {
     setDocumento(atual.documento ?? '');
     setTelefone(atual.telefone ?? '');
     setEndereco(atual.endereco ?? '');
-  }, [atual.nome, atual.segmento, atual.documento, atual.telefone, atual.endereco]);
+    setRegime(atual.regime_tributario);
+    setIe(atual.inscricao_estadual ?? '');
+    setSerie(String(atual.serie_nfce ?? 1));
+  }, [
+    atual.nome,
+    atual.segmento,
+    atual.documento,
+    atual.telefone,
+    atual.endereco,
+    atual.regime_tributario,
+    atual.inscricao_estadual,
+    atual.serie_nfce,
+  ]);
+
+  const emissor = useQuery({ queryKey: ['fiscal', 'emissor'], queryFn: fiscal.emissor, retry: false });
 
   const ramos = useQuery({
     queryKey: [...chaves.configuracao, 'segmentos'],
@@ -56,9 +78,21 @@ export default function ConfiguracaoDaLoja() {
 
   const salvar = useMutation({
     mutationFn: () =>
-      sistema.salvarConfiguracao({ nome: nome.trim(), segmento, documento, telefone, endereco }),
+      sistema.salvarConfiguracao({
+        nome: nome.trim(),
+        segmento,
+        documento,
+        telefone,
+        endereco,
+        regime_tributario: regime,
+        inscricao_estadual: ie,
+        // Inteiro de verdade, nunca parseFloat; vazio volta a 1 (o servidor recusa nulo).
+        serie_nfce: /^\d+$/.test(serie.trim()) ? Number.parseInt(serie.trim(), 10) : 1,
+      }),
     onSuccess: (salvo) => {
+      // A resposta do PATCH é a configuração inteira: serve às duas leituras.
       cliente.setQueryData(chaves.configuracao, salvo);
+      cliente.setQueryData(CHAVE_CONFIGURACAO_COMPLETA, salvo);
       Alert.alert('Pronto', `A loja agora se chama ${salvo.nome}.`, [
         { text: 'Ok', onPress: () => router.back() },
       ]);
@@ -128,6 +162,44 @@ export default function ConfiguracaoDaLoja() {
           ajuda="Opcional — sai no recibo"
         />
 
+        <Text style={s.rotulo}>Nota fiscal (NFC-e)</Text>
+        <Text style={s.ajuda}>
+          {emissor.data?.configurado
+            ? `Emissor ${emissor.data.nome} ligado, em ${emissor.data.ambiente === 'producao' ? 'PRODUÇÃO' : 'homologação (teste)'}.`
+            : 'Emissor fiscal desligado: nenhuma NFC-e sai até ele ser ligado no servidor.'}
+        </Text>
+        {(emissor.data?.configurado ? [] : (emissor.data?.faltando ?? [])).map((f) => (
+          <Text key={f} style={s.ajuda}>
+            • {f}
+          </Text>
+        ))}
+        <Text style={s.ajuda}>Regime tributário — pergunte ao contador</Text>
+        <View style={s.ramos}>
+          {[[null, 'Não informado'] as [number | null, string], ...REGIMES].map(([valor, rotulo]) => (
+            <Pressable
+              key={String(valor)}
+              onPress={() => setRegime(valor)}
+              style={[s.ramo, regime === valor && s.ramoAtivo]}
+            >
+              <Text style={[s.ramoTexto, regime === valor && s.ramoTextoAtivo]}>{rotulo}</Text>
+            </Pressable>
+          ))}
+        </View>
+        <Campo
+          rotulo="Inscrição estadual"
+          value={ie}
+          onChangeText={setIe}
+          keyboardType="number-pad"
+          ajuda="Só números. A NFC-e sai no CNPJ acima — CPF não emite nota."
+        />
+        <Campo
+          rotulo="Série da NFC-e"
+          value={serie}
+          onChangeText={setSerie}
+          keyboardType="number-pad"
+          ajuda="A mesma do painel do emissor. Quase sempre 1."
+        />
+
         {erro ? <Text style={s.erro}>{erro}</Text> : null}
 
         <Botao
@@ -138,6 +210,9 @@ export default function ConfiguracaoDaLoja() {
             salvar.mutate();
           }}
           carregando={salvar.isPending}
+          // Antes de o documento chegar, os campos estão vazios por falta de resposta, não
+          // por escolha: salvar ali apagaria o CNPJ do recibo sem ninguém pedir.
+          desabilitado={!atual.carregado}
         />
       </ScrollView>
     </KeyboardAvoidingView>

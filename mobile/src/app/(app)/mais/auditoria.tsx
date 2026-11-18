@@ -56,6 +56,9 @@ const ACOES: Record<string, { rotulo: string; tom: 'ok' | 'alerta' | 'perigo' | 
   USUARIO_EDITADO: { rotulo: 'Editou usuário', tom: 'perigo' },
   SENHA_REDEFINIDA: { rotulo: 'Redefiniu senha', tom: 'perigo' },
   SENHA_PROPRIA: { rotulo: 'Trocou a senha', tom: 'neutro' },
+  // A carga da demonstração na Vercel (ADR-42): quem age é o build, não uma pessoa.
+  DEMONSTRACAO_INICIADA: { rotulo: 'Carga da demonstração', tom: 'neutro' },
+  DEMONSTRACAO_SEMEADA: { rotulo: 'Demonstração carregada', tom: 'ok' },
   OUTRO: { rotulo: 'Outra ação', tom: 'neutro' },
 };
 

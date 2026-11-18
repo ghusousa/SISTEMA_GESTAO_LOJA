@@ -14,18 +14,21 @@ import { useRouter } from 'expo-router';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { mensagemDoErro } from '@/api/client';
-import { relatorios } from '@/api/endpoints';
+import { contasPagar, relatorios } from '@/api/endpoints';
 import { Carregando, Cartao, ErroEstado } from '@/components/ui';
 import { formatar, formatarPercentual, paraCentavos } from '@/lib/money';
 import { chaves } from '@/lib/queryClient';
 import { PODE, pode } from '@/lib/permissoes';
+import { avisoDeContasAPagar, contasDoResumo, type LinhaDoResumo } from '@/lib/resumoFinanceiro';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
+import { plural, primeiraMaiuscula } from '@/lib/texto';
 import { useAuthStore } from '@/stores/authStore';
 
 const ATALHOS = [
   { rotulo: 'Despesas', icone: 'receipt', rota: '/financeiro/despesas', pode: PODE.LANCAR_DESPESA },
   { rotulo: 'Relatórios', icone: 'chart-line', rota: '/financeiro/relatorios', pode: PODE.VER_DINHEIRO },
   { rotulo: 'Caixa', icone: 'cash-register', rota: '/financeiro/caixa', pode: PODE.FECHAR_CAIXA },
+  { rotulo: 'A pagar', icone: 'calendar-clock', rota: '/financeiro/contas-pagar', pode: PODE.VER_DINHEIRO },
 ] as const;
 
 export default function Financeiro() {
@@ -45,11 +48,24 @@ export default function Financeiro() {
     enabled: veDinheiro,
   });
 
+  // Só o NÚMERO: `size: 1` e o `total` que o servidor conta. Esta consulta refaz a cada
+  // venda (aviso de estoque), e baixar a lista inteira para mostrar "N peças" custava
+  // 1,5 MB por venda numa loja grande.
   const estoqueBaixo = useQuery({
-    queryKey: chaves.estoqueBaixo,
-    queryFn: () => relatorios.estoqueBaixo(),
+    queryKey: [...chaves.estoqueBaixo, 'contagem'],
+    queryFn: () => relatorios.estoqueBaixo({ size: 1 }),
     enabled: veDinheiro,
   });
+  const pecasNoMinimo = estoqueBaixo.data?.total ?? 0;
+
+  // O aviso do boleto: vencidas e a semana que vem (ADR-40). Rota leve, três somas.
+  const contas = useQuery({
+    queryKey: [...chaves.contasPagar, 'resumo'],
+    queryFn: contasPagar.resumo,
+    enabled: veDinheiro,
+  });
+  // Cada faixa com o seu valor: vencidas e a semana são disjuntas no servidor.
+  const avisoDeBoleto = avisoDeContasAPagar(contas.data);
 
   if (!veDinheiro) return <SoCaixa atalhos={atalhos} aoAbrir={(rota) => router.push(rota as never)} />;
   if (resumo.isPending) return <Carregando />;
@@ -65,6 +81,9 @@ export default function Financeiro() {
   const r = resumo.data;
   const resultado = paraCentavos(r.resultado);
   const noVermelho = resultado < 0;
+  // Uma linha para cada parcela da conta do servidor — devolução e custo que voltou ao
+  // estoque inclusive: quem soma a tela chega no lucro bruto e no resultado que ela mostra.
+  const conta = contasDoResumo(r);
 
   return (
     <ScrollView
@@ -79,21 +98,20 @@ export default function Financeiro() {
         />
       }
     >
-      <Text style={s.periodo}>{format(hoje, "MMMM 'de' yyyy", { locale: ptBR })}</Text>
+      <Text style={s.periodo}>
+        {primeiraMaiuscula(format(hoje, "MMMM 'de' yyyy", { locale: ptBR }))}
+      </Text>
 
       <View style={[s.destaque, noVermelho && s.destaqueVermelho]}>
         <Text style={s.destaqueRotulo}>Resultado do mês</Text>
         <Text style={s.destaqueValor}>{formatar(resultado)}</Text>
-        <Text style={s.destaqueAjuda}>
-          Faturamento − custo das peças vendidas − despesas
-        </Text>
+        <Text style={s.destaqueAjuda}>{conta.formula}</Text>
       </View>
 
       <Cartao>
-        <Bloco rotulo="Faturamento" valor={r.faturamento} />
-        <Bloco rotulo="Custo das peças vendidas" valor={r.custo_mercadoria_vendida} negativo />
-        <Bloco rotulo="Lucro bruto" valor={r.lucro_bruto} forte />
-        <Bloco rotulo="Despesas" valor={r.despesas} negativo />
+        {conta.linhas.map((linha) => (
+          <Bloco key={linha.rotulo} linha={linha} />
+        ))}
         <View style={s.separador} />
         <View style={s.indicadores}>
           <Indicador rotulo="Vendas" valor={String(r.quantidade_vendas)} />
@@ -103,13 +121,22 @@ export default function Financeiro() {
         </View>
       </Cartao>
 
-      {(estoqueBaixo.data?.length ?? 0) > 0 && (
+      {pecasNoMinimo > 0 && (
         <Pressable onPress={() => router.push('/financeiro/relatorios')}>
           <View style={s.alerta}>
             <MaterialCommunityIcons name="alert-circle" size={22} color="#7A5A00" />
             <Text style={s.alertaTexto}>
-              {estoqueBaixo.data!.length} peça(s) no estoque mínimo — hora de repor
+              {plural(pecasNoMinimo, 'peça', 'peças')} no estoque mínimo — hora de repor
             </Text>
+          </View>
+        </Pressable>
+      )}
+
+      {!!avisoDeBoleto && (
+        <Pressable onPress={() => router.push('/financeiro/contas-pagar')}>
+          <View style={s.alerta}>
+            <MaterialCommunityIcons name="calendar-alert" size={22} color="#7A5A00" />
+            <Text style={s.alertaTexto}>{avisoDeBoleto}</Text>
           </View>
         </Pressable>
       )}
@@ -164,29 +191,19 @@ function SoCaixa({
   );
 }
 
-function Bloco({
-  rotulo,
-  valor,
-  negativo,
-  forte,
-}: {
-  rotulo: string;
-  valor: string;
-  negativo?: boolean;
-  forte?: boolean;
-}) {
+function Bloco({ linha }: { linha: LinhaDoResumo }) {
   return (
-    <View style={s.bloco}>
-      <Text style={s.blocoRotulo}>{rotulo}</Text>
+    <View style={[s.bloco, linha.subtotal && s.blocoSubtotal]}>
+      <Text style={[s.blocoRotulo, linha.subtotal && s.blocoRotuloSubtotal]}>{linha.rotulo}</Text>
       <Text
         style={[
           s.blocoValor,
-          negativo && s.blocoNegativo,
-          forte && s.blocoForte,
+          linha.sinal === '−' && s.blocoNegativo,
+          linha.subtotal && s.blocoForte,
         ]}
       >
-        {negativo ? '− ' : ''}
-        {formatar(paraCentavos(valor))}
+        {linha.sinal ? `${linha.sinal} ` : ''}
+        {formatar(linha.valor)}
       </Text>
     </View>
   );
@@ -214,7 +231,6 @@ const s = StyleSheet.create({
     fontSize: fonte.pequena,
     color: cores.textoSuave,
     fontWeight: '700',
-    textTransform: 'capitalize',
     marginBottom: espaco.sm,
   },
 
@@ -238,9 +254,14 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    gap: espaco.sm,
     paddingVertical: espaco.sm,
   },
-  blocoRotulo: { fontSize: fonte.base, color: cores.textoSuave },
+  // O traço da soma: o lucro bruto fecha as linhas de cima.
+  blocoSubtotal: { borderTopWidth: 1, borderTopColor: cores.borda, marginTop: espaco.xs },
+  // `flex: 1`: rótulo comprido quebra em duas linhas em vez de empurrar o valor para fora.
+  blocoRotulo: { flex: 1, fontSize: fonte.base, color: cores.textoSuave },
+  blocoRotuloSubtotal: { color: cores.texto, fontWeight: '700' },
   blocoValor: { fontSize: fonte.media, fontWeight: '700', color: cores.texto },
   blocoNegativo: { color: cores.perigo },
   blocoForte: { fontSize: fonte.grande, fontWeight: '800', color: cores.acaoEscura },

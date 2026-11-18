@@ -8,7 +8,7 @@
  * sai do lugar no dia em que alguém esquece de atualizar.
  */
 
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
@@ -25,8 +25,19 @@ import {
 import { mensagemDoErro } from '@/api/client';
 import { clientes } from '@/api/endpoints';
 import { FORMAS_DE_GAVETA, type FormaPagamento } from '@/api/tipos';
+import { ComprasDaCliente } from '@/components/ComprasDaCliente';
 import { TecladoNumerico } from '@/components/TecladoNumerico';
-import { Botao, Carregando, Cartao, ErroEstado, Etiqueta, Separador } from '@/components/ui';
+import {
+  Botao,
+  Carregando,
+  Cartao,
+  ErroEstado,
+  Etiqueta,
+  Separador,
+  useRespiroDeBaixo,
+  useRespiroDeCima,
+} from '@/components/ui';
+import { dataBR } from '@/lib/aniversario';
 import { formatar, paraCentavos, paraDecimalString, type Centavos } from '@/lib/money';
 import { PODE, pode } from '@/lib/permissoes';
 import { chaves, invalidarAposCrediario } from '@/lib/queryClient';
@@ -49,10 +60,32 @@ export default function ClienteDetalhe() {
   const clienteId = Number(id);
   const podeReceber = pode(useAuthStore((e) => e.usuario?.papel), PODE.GERIR_CREDIARIO);
   const [recebendo, setRecebendo] = useState(false);
+  // "Receber pagamento" encosta na base da tela: no Face ID, acima do indicador de início.
+  const respiroDeBaixo = useRespiroDeBaixo();
 
-  const extrato = useQuery({
+  // LGPD: excluir a pedido da cliente. O servidor anonimiza e mantém as vendas; a frase do
+  // diálogo diz exatamente isso, que é o que a página pública de exclusão promete.
+  const excluir = useMutation({
+    mutationFn: () => clientes.excluir(clienteId),
+    onSuccess: () => {
+      invalidarAposCrediario();
+      router.back();
+    },
+    onError: (erro) => Alert.alert('Não deu para excluir', mensagemDoErro(erro)),
+  });
+
+  // Compras e pagamentos vêm paginados juntos (o mesmo ?page=&size=): "Carregar mais" traz
+  // a próxima leva das duas listas. A caderneta de anos não desce numa resposta só, e os
+  // totais continuam sendo da conta inteira — iguais em toda página.
+  const extrato = useInfiniteQuery({
     queryKey: chaves.extratoCliente(clienteId),
-    queryFn: () => clientes.extrato(clienteId),
+    initialPageParam: 1,
+    queryFn: ({ pageParam }) => clientes.extrato(clienteId, { page: pageParam, size: 20 }),
+    getNextPageParam: (ultima) =>
+      ultima.vendas.page * ultima.vendas.size <
+      Math.max(ultima.vendas.total, ultima.pagamentos.total)
+        ? ultima.vendas.page + 1
+        : undefined,
     enabled: Number.isFinite(clienteId),
   });
 
@@ -66,7 +99,9 @@ export default function ClienteDetalhe() {
     );
   }
 
-  const e = extrato.data;
+  const e = extrato.data.pages[0];
+  const comprasNoFiado = extrato.data.pages.flatMap((p) => p.vendas.items);
+  const pagamentosFeitos = extrato.data.pages.flatMap((p) => p.pagamentos.items);
   const deve = paraCentavos(e.deve);
 
   return (
@@ -75,7 +110,7 @@ export default function ClienteDetalhe() {
         contentContainerStyle={s.conteudo}
         refreshControl={
           <RefreshControl
-            refreshing={extrato.isRefetching}
+            refreshing={extrato.isRefetching && !extrato.isFetchingNextPage}
             onRefresh={() => void extrato.refetch()}
           />
         }
@@ -85,6 +120,16 @@ export default function ClienteDetalhe() {
           <Text style={s.destaqueRotulo}>{deve > 0 ? 'Está devendo' : 'Em dia'}</Text>
           <Text style={s.destaqueValor}>{formatar(deve)}</Text>
           {!!e.cliente.telefone && <Text style={s.destaqueAjuda}>{e.cliente.telefone}</Text>}
+          {(!!e.cliente.nascimento || !!e.cliente.preferencias) && (
+            <Text style={s.destaqueAjuda}>
+              {[
+                e.cliente.nascimento ? `Aniversário ${dataBR(e.cliente.nascimento)}` : '',
+                e.cliente.preferencias ?? '',
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+            </Text>
+          )}
           {e.cliente.acima_do_limite && (
             <Etiqueta
               texto="acima do limite combinado"
@@ -104,10 +149,10 @@ export default function ClienteDetalhe() {
         </Cartao>
 
         <Text style={s.secao}>Compras no fiado</Text>
-        {e.vendas.length === 0 ? (
+        {comprasNoFiado.length === 0 ? (
           <Text style={s.vazio}>Nenhuma.</Text>
         ) : (
-          e.vendas.map((v) => (
+          comprasNoFiado.map((v) => (
             <Pressable
               key={v.venda_id}
               style={({ pressed }) => [s.item, pressed && s.itemPressionado]}
@@ -128,10 +173,10 @@ export default function ClienteDetalhe() {
         )}
 
         <Text style={s.secao}>Pagamentos</Text>
-        {e.pagamentos.length === 0 ? (
+        {pagamentosFeitos.length === 0 ? (
           <Text style={s.vazio}>Ainda não pagou nada.</Text>
         ) : (
-          e.pagamentos.map((p) => (
+          pagamentosFeitos.map((p) => (
             <View key={p.id} style={s.item}>
               <View style={s.itemTexto}>
                 <Text style={s.itemNome}>{ROTULO_FORMA[p.forma] ?? p.forma}</Text>
@@ -145,10 +190,41 @@ export default function ClienteDetalhe() {
             </View>
           ))
         )}
+
+        {extrato.hasNextPage && (
+          <Botao
+            titulo="Carregar mais"
+            variante="secundario"
+            carregando={extrato.isFetchingNextPage}
+            onPress={() => void extrato.fetchNextPage()}
+          />
+        )}
+
+        <ComprasDaCliente clienteId={clienteId} />
+
+        {podeReceber && deve <= 0 && (
+          <Botao
+            titulo="Excluir cadastro (pedido da cliente)"
+            variante="secundario"
+            carregando={excluir.isPending}
+            onPress={() =>
+              Alert.alert(
+                'Excluir o cadastro',
+                `Nome, telefone, CPF, aniversário, preferências e observação de ${e.cliente.nome} ` +
+                  'serão apagados de vez. ' +
+                  'As compras continuam no histórico, sem o nome. Não tem volta.',
+                [
+                  { text: 'Cancelar', style: 'cancel' },
+                  { text: 'Excluir', style: 'destructive', onPress: () => excluir.mutate() },
+                ],
+              )
+            }
+          />
+        )}
       </ScrollView>
 
       {podeReceber && deve > 0 && (
-        <View style={s.rodape}>
+        <View style={[s.rodape, { paddingBottom: respiroDeBaixo }]}>
           <Botao titulo="Receber pagamento" grande onPress={() => setRecebendo(true)} />
         </View>
       )}
@@ -203,6 +279,10 @@ function ModalReceber({
   // UUID por abertura do diálogo: o retry de um toque duplo é a mesma cobrança; um novo
   // recebimento, aberto de novo, é outra.
   const [uuid, setUuid] = useState(() => gerarUuid());
+  // Modal de tela cheia desenha a partir do zero: o painel desce da barra de status (e da
+  // ilha) e os botões sobem do indicador de início.
+  const respiroDeCima = useRespiroDeCima(espaco.lg);
+  const respiroDeBaixo = useRespiroDeBaixo();
 
   const receber = useMutation({
     mutationFn: () =>
@@ -233,7 +313,7 @@ function ModalReceber({
       onShow={abrirDoZero}
     >
       <View style={s.tela}>
-        <View style={s.painel}>
+        <View style={[s.painel, { paddingTop: respiroDeCima }]}>
           <Text style={s.painelRotulo}>Recebendo de {nome}</Text>
           <Text style={s.painelValor}>{formatar(valor)}</Text>
           <Text style={s.painelAjuda}>Deve {formatar(deve)}</Text>
@@ -266,7 +346,7 @@ function ModalReceber({
           />
         </ScrollView>
 
-        <View style={s.rodapeDuplo}>
+        <View style={[s.rodapeDuplo, { paddingBottom: respiroDeBaixo }]}>
           <Botao titulo="Cancelar" variante="secundario" estilo={s.metade} onPress={aoFechar} />
           <Botao
             titulo="Registrar"

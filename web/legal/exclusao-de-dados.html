@@ -12,14 +12,15 @@
   <header>
     <p class="marca">Gestão de Loja</p>
     <h1>Exclusão de conta e de dados</h1>
-    <p class="vigencia">Em vigor desde 24 de agosto de 2026.</p>
+    <p class="vigencia">Em vigor desde 24 de agosto de 2026. Atualizada em 18 de novembro de 2026: a própria pessoa exclui a sua conta de dentro do aplicativo.</p>
   </header>
 <h2>Em resumo</h2>
 
 <p>Esta página explica como excluir uma conta do aplicativo <strong>Gestão de Loja</strong> e como pedir a exclusão dos dados pessoais guardados por ele. Ela é pública: não é preciso ter conta nem fazer login para ler.</p>
 
 <ul>
-  <li><strong>Tem acesso ao aplicativo e é dono ou gerente:</strong> a exclusão é feita dentro do app, em <strong>Mais > Usuários</strong>.</li>
+  <li><strong>Tem acesso ao aplicativo:</strong> exclua a sua própria conta em <strong>Mais > Minha conta > Excluir minha conta</strong> (no computador, em <strong>Minha conta</strong>), confirmando com a sua senha.</li>
+  <li><strong>É dono ou gerente e quer excluir a conta de alguém da equipe:</strong> <strong>Mais > Usuários</strong>, escolha a pessoa e toque em <strong>Excluir conta</strong>.</li>
   <li><strong>Não tem mais acesso (saiu da loja, perdeu a senha, é cliente do crediário):</strong> escreva para <strong>privacidade@sistemaobras.com.br</strong>. O pedido é atendido em até 15 dias.</li>
 </ul>
 
@@ -29,7 +30,7 @@
 
 <p>É o único tipo de conta que existe. Ela dá acesso ao sistema da loja e tem um papel: dono, gerente, supervisora ou vendedora. Guarda <strong>nome, e-mail e senha</strong> (a senha nunca é guardada legível: fica cifrada com bcrypt no servidor).</p>
 
-<p><strong>Não existe autocadastro.</strong> Ninguém cria a própria conta pelo aplicativo. As contas são criadas dentro do sistema pelo dono ou pelo gerente da loja, para as pessoas que trabalham ali. Por isso, quem exclui uma conta também é o dono ou o gerente — ou nós, a pedido da pessoa, quando ela não tem mais acesso.</p>
+<p><strong>Não existe autocadastro.</strong> Ninguém cria a própria conta pelo aplicativo. As contas são criadas dentro do sistema pelo dono ou pelo gerente da loja, para as pessoas que trabalham ali. Excluir, por outro lado, qualquer pessoa pode: <strong>a própria conta se exclui de dentro do aplicativo</strong>, sem depender de ninguém. O dono ou o gerente também excluem a conta de alguém da equipe — e nós, a pedido da pessoa, quando ela não tem mais acesso.</p>
 
 <h3>Clientes do crediário (fiado)</h3>
 
@@ -48,21 +49,29 @@
 
 <h2>Como excluir uma conta dentro do aplicativo</h2>
 
-<p>Quem tem papel de dono ou gerente faz a exclusão sozinho, em poucos toques:</p>
+<p><strong>A sua própria conta</strong> — qualquer pessoa, de qualquer papel:</p>
 
 <ul>
   <li>Abra o aplicativo e entre com sua conta.</li>
-  <li>Toque em <strong>Mais</strong>.</li>
-  <li>Toque em <strong>Usuários</strong>.</li>
-  <li>Escolha a pessoa na lista.</li>
-  <li>Escolha <strong>excluir</strong> e confirme.</li>
+  <li>Toque em <strong>Mais</strong> e depois em <strong>Minha conta</strong>.</li>
+  <li>Em <strong>Excluir minha conta</strong>, leia o que some e o que fica e digite a sua senha.</li>
+  <li>Toque em <strong>Excluir minha conta</strong> e confirme em <strong>Excluir conta</strong>.</li>
+</ul>
+
+<p>O aplicativo volta para a tela de entrada dizendo "Conta excluída". No computador, o caminho é o mesmo, pelo menu <strong>Minha conta</strong>.</p>
+
+<p><strong>A conta de alguém da equipe</strong> — quem tem papel de dono ou gerente:</p>
+
+<ul>
+  <li>Toque em <strong>Mais</strong> e depois em <strong>Usuários</strong>.</li>
+  <li>Na pessoa, toque em <strong>Excluir conta</strong> e confirme.</li>
 </ul>
 
 <p>A exclusão é definitiva e derruba na hora as sessões abertas daquela pessoa: ela não consegue mais entrar em nenhum aparelho.</p>
 
 <p>Se a intenção for apenas tirar o acesso de alguém sem apagar a conta — por exemplo, uma funcionária afastada que vai voltar —, a mesma tela oferece <strong>desativar o acesso</strong>, que pode ser revertido depois. Excluir é o caminho sem volta.</p>
 
-<p>Uma observação de segurança: a loja não pode ficar sem nenhum dono ativo. Se a conta a ser excluída for a única conta de dono, é preciso primeiro promover outra pessoa a dono.</p>
+<p>Uma observação de segurança: a loja não pode ficar sem nenhum dono ativo. Se a conta a ser excluída for a única conta de dono, é preciso primeiro passar o papel de dono a outra pessoa, em <strong>Usuários</strong> — o aplicativo avisa isso no lugar de excluir.</p>
 
 <h2>Como pedir a exclusão se você não tem mais acesso</h2>
 
@@ -84,13 +93,16 @@
 
 <h2>O que é apagado na exclusão da conta</h2>
 
-<p>Ao excluir uma conta de funcionário, os dados pessoais dela deixam de existir no sistema:</p>
+<p>Ao excluir uma conta de funcionário, os dados de acesso e de identificação dela deixam de existir no sistema:</p>
 
 <ul>
-  <li><strong>Nome</strong> cadastrado na conta.</li>
-  <li><strong>E-mail</strong> de acesso.</li>
+  <li><strong>E-mail</strong> de acesso — e ele fica livre para uma conta nova, se a pessoa um dia voltar.</li>
   <li><strong>Senha</strong> (o registro cifrado dela).</li>
+  <li><strong>Sessões</strong> abertas em todos os aparelhos e o celular que estava ligado como leitor.</li>
+  <li><strong>Nome</strong> cadastrado na conta: se a pessoa nunca registrou uma venda ou movimento, o cadastro inteiro some do banco; se registrou, o nome fica apenas dentro desses registros, como explicado abaixo.</li>
 </ul>
+
+<p>O e-mail também sai do <strong>diário de auditoria</strong>: onde ele aparecia por extenso (em tentativas de login antigas), passa a aparecer só uma máscara, como <code>an***@l***.com</code>. Tentativas de login novas já não gravam o e-mail de uma conta existente — gravam a conta, que some na exclusão.</p>
 
 <p>Com isso, a pessoa desaparece da lista de usuários e não há mais como entrar no sistema com aquela conta.</p>
 
@@ -113,13 +125,13 @@
 
 <p>Se você comprou fiado em uma loja que usa este sistema e quer que seus dados sejam apagados, peça diretamente na loja ou escreva para <strong>privacidade@sistemaobras.com.br</strong> informando seu nome completo, o telefone ou documento que a loja cadastrou e o nome da loja.</p>
 
-<p>O cadastro de cliente pode ser excluído dentro do sistema pela própria loja. Ao excluir, nome, telefone e documento saem das listas e das buscas.</p>
+<p>O cadastro de cliente pode ser excluído dentro do sistema pela própria loja, na tela do crediário. Ao excluir, o cadastro é <strong>anonimizado na hora</strong>: telefone, CPF ou documento e a observação são apagados do banco, e o nome é trocado por "Cliente removido" seguido de um número. As compras continuam no histórico da loja, ligadas a esse cadastro anônimo, sem o seu nome. A exclusão não tem volta: a loja não consegue recuperar os dados apagados.</p>
 
 <p>Uma ressalva importante, dita sem rodeio:</p>
 
 <ul>
   <li><strong>Dívida em aberto não é apagada a pedido.</strong> Enquanto houver saldo devedor, a loja mantém os dados necessários para cobrar e para provar a compra, com base legal na <strong>execução do contrato</strong> entre você e a loja (art. 7º, V, da LGPD). Pagar o que se deve não é uma exigência nossa: é o contrato que você fez com a loja.</li>
-  <li><strong>Depois de quitada a dívida</strong>, os dados de identificação do cliente podem ser excluídos a pedido.</li>
+  <li><strong>Depois de quitada a dívida</strong>, os dados de identificação do cliente podem ser excluídos a pedido, do jeito descrito acima. O sistema recusa a exclusão enquanto houver saldo devedor.</li>
   <li><strong>As vendas em si permanecem</strong>, pelo mesmo motivo explicado acima: são o registro fiscal e contábil da loja.</li>
 </ul>
 
@@ -129,8 +141,9 @@
   <li><strong>Enquanto a conta ou o cadastro existir:</strong> os dados ficam no servidor da própria loja, e em nenhum outro lugar. Não há analytics, publicidade, rastreamento, relatórios de erro de terceiros nem compartilhamento com terceiros.</li>
   <li><strong>Na exclusão:</strong> os dados pessoais da conta são apagados imediatamente do sistema em uso.</li>
   <li><strong>Cópias de segurança:</strong> o servidor guarda cópias do banco por um período curto (no padrão do sistema, 14 dias; a loja pode ajustar) e as apaga automaticamente. Nesse intervalo, os dados excluídos ainda podem existir dentro dessas cópias, que servem apenas para restaurar o sistema em caso de falha — nunca para consulta comum.</li>
-  <li><strong>Registros fiscais e contábeis</strong> (vendas, pagamentos, devoluções, despesas) e <strong>linhas de auditoria</strong>: guardados pelo prazo exigido pela legislação fiscal e civil aplicável à loja, em geral cinco anos.</li>
-  <li><strong>Tentativas de login</strong> (e-mail digitado, endereço IP, sucesso ou falha): existem apenas para travar ataques de força bruta; o bloqueio considera somente os últimos 15 minutos.</li>
+  <li><strong>Registros fiscais e contábeis</strong> (vendas, pagamentos, devoluções, despesas): guardados pelo prazo exigido pela legislação fiscal e civil aplicável à loja, em geral cinco anos.</li>
+  <li><strong>Linhas de auditoria</strong> (quem fez o quê, quando e de qual endereço IP): apagadas automaticamente depois de <strong>dois anos</strong> no padrão do sistema; a loja pode ajustar esse prazo. Quando alguém erra o login com um e-mail que não tem conta, o diário guarda esse e-mail só mascarado.</li>
+  <li><strong>Tentativas de login</strong> (e-mail digitado, endereço IP, sucesso ou falha): existem apenas para travar ataques de força bruta; o bloqueio considera somente os últimos 15 minutos, e elas são apagadas depois de um dia.</li>
   <li><strong>Fotos de peça:</strong> são imagens de mercadoria, enviadas pela loja, e ficam no servidor dela. A câmera do aplicativo é usada só para ler código de barras e fotografar peça; nada disso é enviado a terceiros.</li>
 </ul>
 

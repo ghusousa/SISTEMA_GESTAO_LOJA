@@ -34,6 +34,8 @@ const TOM = {
   VENDA: 'neutro',
   AJUSTE: 'alerta',
   INVENTARIO: 'alerta',
+  CONDICIONAL_SAIDA: 'info',
+  CONDICIONAL_RETORNO: 'info',
 };
 
 export async function render(raiz, _params, consulta) {
@@ -63,7 +65,7 @@ export async function render(raiz, _params, consulta) {
           <input data-fim type="date" value="${filtros.fim}" />
         </label>
         <label class="campo">
-          <span>Tipo ${ajuda('Venda é a baixa do PDV; Entrada é o que chegou do fornecedor; Ajuste e Inventário são acertos de contagem; Estorno é venda cancelada; Devolução é peça que a cliente trouxe de volta.')}</span>
+          <span>Tipo ${ajuda('Venda é a baixa do PDV; Entrada é o que chegou do fornecedor; Ajuste e Inventário são acertos de contagem; Estorno é venda cancelada; Devolução é peça que a cliente trouxe de volta; Condicional é a peça que foi para a casa da cliente provar e a que voltou — o que ela ficou aparece logo depois como Venda.')}</span>
           <select data-tipo>
             <option value="">Todos</option>
             ${Object.entries(TIPOS_MOVIMENTO).map(
@@ -130,7 +132,9 @@ export async function render(raiz, _params, consulta) {
       ? `venda #${m.venda_id}`
       : m.entrada_id
         ? `entrada #${m.entrada_id}`
-        : '';
+        : m.condicional_id
+          ? `condicional #${m.condicional_id}`
+          : '';
     return html`
       <tr>
         <td class="texto-suave" style="white-space:nowrap">${dataHora(m.criado_em)}</td>
@@ -147,6 +151,9 @@ export async function render(raiz, _params, consulta) {
           <span>${m.usuario}</span>
           ${m.observacao || referencia
             ? cru(html`<span class="celula-secundaria">${m.observacao || referencia}</span>`)
+            : ''}
+          ${m.condicional_id
+            ? cru(html`<a class="celula-secundaria" href="#/condicionais/${m.condicional_id}">Abrir a condicional</a>`)
             : ''}
         </td>
       </tr>

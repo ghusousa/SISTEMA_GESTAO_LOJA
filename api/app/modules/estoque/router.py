@@ -1,7 +1,7 @@
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Response, status
 
 from app.core.datas import fim_exclusivo_do_dia, inicio_do_dia
 from app.core.deps import CurrentUser, ExigeCorrigirEstoque, SessionDep
@@ -28,9 +28,15 @@ router = APIRouter(prefix="/estoque", tags=["estoque"])
     summary="Registra entrada de mercadoria (bipagem contínua)",
 )
 async def registrar_entrada(
-    session: SessionDep, usuario: CurrentUser, dados: EntradaIn
+    session: SessionDep, usuario: CurrentUser, dados: EntradaIn, resposta: Response
 ) -> EntradaOut:
-    return await EstoqueService(session).registrar_entrada(dados, usuario)
+    servico = EstoqueService(session)
+    entrada = await servico.registrar_entrada(dados, usuario)
+    if servico.replay:
+        # ADR-2: o reenvio responde 200 com a entrada que já existia, não 201 — é o que
+        # deixa o app (e quem lê o log) distinguir "gravei agora" de "isto já estava lá".
+        resposta.status_code = status.HTTP_200_OK
+    return entrada
 
 
 @router.post(

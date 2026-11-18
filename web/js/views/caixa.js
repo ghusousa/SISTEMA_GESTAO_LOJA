@@ -7,6 +7,13 @@
  *
  * O dia é o dia da LOJA (fuso de São Paulo), definido pela API. Quem fecha às 23h de um
  * sábado ainda está no sábado, mesmo que em UTC já seja domingo.
+ *
+ * E o campo SEGUE o esperado enquanto ninguém digitar nele (espelho de
+ * `mobile/src/lib/caixa.ts`). Ele era preenchido uma vez, ao abrir: a venda que entrava com
+ * a tela aberta mudava o esperado, o campo ficava no valor velho, e quem confirmava direto
+ * o "bateu" gravava uma falta igual às vendas feitas desde então. Por isso a tela se
+ * redesenha com o aviso de tempo real e relê o esperado imediatamente antes de gravar. O
+ * que a pessoa digitou é dela e não muda.
  */
 
 import { api } from '../api.js';
@@ -28,9 +35,14 @@ import {
   numero,
   plural,
 } from '../ui.js';
+import { ouvir } from '../tempo-real.js';
 
 export async function render(raiz, _params, consulta) {
   let dia = consulta.data || hojeISO();
+  // Forma -> centavos, só das formas em que a pessoa digitou. As outras seguem o servidor.
+  let digitados = new Map();
+  let observacao = '';
+  let gravando = false;
 
   raiz.innerHTML = html`
     <div class="pagina">
@@ -54,16 +66,22 @@ export async function render(raiz, _params, consulta) {
   const area = raiz.querySelector('[data-conteudo]');
   const areaHistorico = raiz.querySelector('[data-historico]');
 
-  async function carregar() {
-    area.innerHTML = carregando();
+  async function carregar({ silencioso = false } = {}) {
+    if (!silencioso) area.innerHTML = carregando();
     try {
       const resumo = await api.get('/caixa/dia', { data: dia });
       desenhar(resumo);
     } catch (erro) {
-      area.innerHTML = erroBloco(erro.textoAmigavel);
+      if (!silencioso) area.innerHTML = erroBloco(erro.textoAmigavel);
     }
     carregarHistorico();
   }
+
+  /** O que vai no campo: o digitado; senão o contado do fechamento já feito, ou o esperado. */
+  const valorDoCampo = (linha) =>
+    digitados.has(linha.forma)
+      ? digitados.get(linha.forma)
+      : paraCentavos(linha.contado ?? linha.esperado);
 
   function desenhar(resumo) {
     const esperadoTotal = paraCentavos(resumo.total_esperado);
@@ -151,13 +169,22 @@ export async function render(raiz, _params, consulta) {
 
     const campos = new Map();
     resumo.linhas.forEach((linha) => {
-      const esperado = paraCentavos(linha.esperado);
-      // Já fechado: mostra o que foi contado. Aberto: parte do esperado.
-      const inicial = linha.contado !== null && linha.contado !== undefined ? paraCentavos(linha.contado) : esperado;
       campos.set(
         linha.forma,
-        ligarCampoDinheiro(area.querySelector(`[data-contado="${linha.forma}"]`), inicial, atualizar),
+        ligarCampoDinheiro(
+          area.querySelector(`[data-contado="${linha.forma}"]`),
+          valorDoCampo(linha),
+          (valor) => {
+            digitados.set(linha.forma, valor);
+            atualizar();
+          },
+        ),
       );
+    });
+    const campoObservacao = area.querySelector('[data-observacao]');
+    campoObservacao.value = observacao;
+    campoObservacao.addEventListener('input', () => {
+      observacao = campoObservacao.value;
     });
 
     function atualizar() {
@@ -185,15 +212,21 @@ export async function render(raiz, _params, consulta) {
       const botao = evento.currentTarget;
       botao.disabled = true;
       botao.innerHTML = cru('<span class="giro" aria-hidden="true"></span> Gravando…');
+      gravando = true;
       try {
+        // O esperado de AGORA, não o de quando a tela abriu: campo que ninguém digitou
+        // segue o servidor até o último instante.
+        const agora = await api.get('/caixa/dia', { data: dia });
         const fechamento = await api.post('/caixa/fechamentos', {
           data: dia,
-          contagens: resumo.linhas.map((linha) => ({
+          contagens: agora.linhas.map((linha) => ({
             forma: linha.forma,
-            valor_contado: paraDecimalString(campos.get(linha.forma).valor()),
+            valor_contado: paraDecimalString(valorDoCampo(linha)),
           })),
-          observacao: area.querySelector('[data-observacao]').value.trim() || null,
+          observacao: observacao.trim() || null,
         });
+        digitados = new Map();
+        observacao = '';
         const diferenca = paraCentavos(fechamento.diferenca);
         aviso(
           diferenca === 0
@@ -206,6 +239,8 @@ export async function render(raiz, _params, consulta) {
         avisarErro(erro);
         botao.disabled = false;
         botao.textContent = 'Fechar caixa do dia';
+      } finally {
+        gravando = false;
       }
     });
   }
@@ -268,8 +303,18 @@ export async function render(raiz, _params, consulta) {
 
   raiz.querySelector('[data-dia]').addEventListener('change', (e) => {
     dia = e.target.value || hojeISO();
+    digitados = new Map();
+    observacao = '';
     carregar();
   });
 
   await carregar();
+  // Venda, devolução ou fechamento de outro aparelho: o esperado mudou. Redesenha sem
+  // perder o que foi digitado. Pula no meio de uma gravação (ela já relê sozinha) e com o
+  // cursor num campo da conferência: redesenhar tiraria o foco de quem está digitando, e
+  // a gravação usa o esperado de agora de qualquer jeito.
+  return ouvir(['vendas', 'caixa', 'reconectado'], () => {
+    if (gravando || area.contains(document.activeElement)) return;
+    void carregar({ silencioso: true });
+  });
 }

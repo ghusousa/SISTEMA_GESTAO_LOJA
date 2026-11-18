@@ -1,9 +1,24 @@
 name: CI
 
+# Um gatilho por commit. Com `push` em todo ramo E `pull_request`, o mesmo commit de PR rodava
+# duas vezes (mesmos minutos, mesma resposta), numa conta que já parou por limite de gasto.
+# Push só no main (o que vai para as lojas); o resto é validado pelo PR.
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
+
+# Commit novo no mesmo PR cancela a rodada velha, que ninguém vai olhar. No main, não: o
+# ./atualizar.sh das lojas só implanta commit com CI verde, e uma rodada cancelada deixaria
+# aquele commit sem resposta.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# `bash` explícito liga o `-o pipefail`: `pentest.py | tee` falhando no pentest falha o passo.
+defaults:
+  run:
+    shell: bash
 
 jobs:
   api:
@@ -30,6 +45,7 @@ jobs:
 
     defaults:
       run:
+        shell: bash
         working-directory: api
 
     steps:
@@ -39,11 +55,40 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+          cache-dependency-path: |
+            api/requirements.lock
+            api/requirements-dev.lock
 
+      # As versões da trava, as mesmas que o Dockerfile põe na imagem: o CI testa o que vai
+      # para a loja, e não o que o PyPI tiver de mais novo no dia.
       - name: Instalar dependências
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install -r requirements.lock -r requirements-dev.lock
+          pip install -e . --no-deps
+          pip check
+
+      # Os testes do atualizar.sh/backup.sh rodam os scripts de verdade, com psql/pg_dump/
+      # pg_restore da máquina contra o Postgres do serviço. Sem eles, esses testes seriam
+      # pulados calados — e são os que guardam a volta atrás e a restauração.
+      #
+      # Na MESMA versão do servidor (16): na loja, pg_dump/pg_restore/psql rodam dentro do
+      # contêiner postgres:16, e os testes fazem o papel desse contêiner com os da máquina. O
+      # runner passou a trazer o cliente 18, cujo script de restauração começa com
+      # `SET transaction_timeout`, que o 16 não conhece — a restauração falhava só no CI.
+      - name: Clientes do Postgres (16, os do contêiner da loja)
+        run: |
+          BIN=/usr/lib/postgresql/16/bin
+          if [ ! -x "$BIN/pg_dump" ]; then
+            # O 16 não está nos repositórios do Ubuntu do runner: liga o repositório oficial
+            # do Postgres (PGDG) pelo script que o próprio postgresql-common traz.
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq postgresql-common
+            sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+            sudo apt-get install -y -qq postgresql-client-16
+          fi
+          echo "$BIN" >> "$GITHUB_PATH"
+          "$BIN/pg_dump" --version
 
       - name: Migrations sobem e descem
         run: |
@@ -54,18 +99,136 @@ jobs:
       - name: Testes
         run: pytest -q
 
+  e2e:
+    name: E2E + pentest (API no ar)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: loja
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 15
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/loja
+      JWT_SECRET: chave-de-ci-e2e
+      API: http://127.0.0.1:8000
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: api
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # O e2e.py cria a dona pelo `.venv/bin/python -m app.cli`, com a pasta do projeto
+      # escrita por extenso. O venv e o atalho reproduzem esse servidor aqui, sem mexer no
+      # script — o mesmo e2e que roda na máquina de quem desenvolve roda no CI.
+      - name: Preparar o servidor do e2e
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -q --upgrade pip
+          .venv/bin/pip install -q -r requirements.lock
+          .venv/bin/pip install -q -e . --no-deps
+          sudo mkdir -p /home/user
+          sudo ln -sfn "$GITHUB_WORKSPACE" /home/user/SISTEMA_GESTAO_LOJA
+
+      - name: Migrar e criar a dona
+        run: |
+          .venv/bin/alembic upgrade head
+          .venv/bin/python -m app.cli create-admin \
+            --nome "Dona Maria" --email dona@loja.com --senha senha12345
+
+      - name: Subir a API
+        run: |
+          nohup .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 \
+            > "$RUNNER_TEMP/uvicorn.log" 2>&1 &
+          for _ in $(seq 1 60); do
+            curl -fsS "$API/health" >/dev/null 2>&1 && exit 0
+            sleep 1
+          done
+          echo "a API não respondeu ao /health"; cat "$RUNNER_TEMP/uvicorn.log"; exit 1
+
+      - name: Um dia de loja (scripts/e2e.py)
+        run: .venv/bin/python scripts/e2e.py
+
+      # O pentest entra como a vendedora para provar o que ela NÃO vê. Ela nasce como na loja:
+      # a dona entra e a cadastra pela API.
+      - name: Cadastrar a vendedora do pentest
+        run: |
+          token="$(curl -fsS -X POST "$API/api/v1/auth/login" -H 'Content-Type: application/json' \
+            -d '{"email":"dona@loja.com","senha":"senha12345"}' | jq -r .access_token)"
+          curl -fsS -X POST "$API/api/v1/usuarios" \
+            -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+            -d '{"nome":"Ana","email":"ana@loja.com","senha":"senha12345","papel":"VENDEDOR"}'
+
+      # O pentest sai 0 mesmo com achado (é um relatório); quem reprova é a última linha.
+      - name: Teste de invasão (scripts/pentest.py)
+        run: |
+          .venv/bin/python scripts/pentest.py | tee "$RUNNER_TEMP/pentest.log"
+          grep -q "· 0 achados" "$RUNNER_TEMP/pentest.log"
+
+      - name: Log da API
+        if: failure()
+        run: cat "$RUNNER_TEMP/uvicorn.log"
+
   mobile:
-    name: Mobile (typecheck)
+    name: Mobile (typecheck, testes, bundle)
     runs-on: ubuntu-latest
     defaults:
       run:
+        shell: bash
         working-directory: mobile
     steps:
       - uses: actions/checkout@v4
+      # 22 (LTS): o Expo SDK 54 pede Node >= 20.19.4, e o 20 já saiu de suporte.
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: mobile/package-lock.json
       - run: npm ci
       - run: npx tsc --noEmit
+      # A camada de dinheiro — inclui a armadilha do aluguel que virou R$ 2,50.
+      - run: npm test
+      # O web não tem build nem package.json: o canal de tempo real dele (espelho do
+      # `lib/canal.ts`) roda com o node que este job já instalou.
+      - run: node --test ../testes/web/*.test.mjs
+      # O publicador da App Store e o preparo do botão "Publicar iOS", contra uma Apple de mentira;
+      # e a resposta à Apple (vídeo, aparelhos testados, notas, guia PDF em dia com as entradas).
+      - run: node --test publicar/teste/*.test.mjs && node publicar/teste/rodar.mjs
+      # As 20 capturas que vão para a Apple (media/app-store): conferidas nos bytes contra as
+      # cenas do gerador (tamanho, RGB sem alfa, nomes) e subidas na Apple de mentira.
+      - run: node publicar/capturas/compor.mjs --conferir && node publicar/teste/rodar.mjs --reais
+      # O tsc não vê import quebrado de dependência nativa; o bundle vê.
+      - run: npm run bundle
+
+  imagem:
+    name: Imagem Docker (build, sem publicar)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # O caminho que a loja usa (Dockerfile + requirements.lock) e que nenhum outro job
+      # percorre: dependência que não instala na imagem só aparecia no servidor da loja.
+      - run: docker build --pull -t loja-api:ci .
+
+  shell:
+    name: Scripts de operação (shellcheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # São os scripts que mexem no banco e no servidor da loja sem ninguém olhando.
+      - run: shellcheck --version && shellcheck -S warning ./*.sh docker/*.sh

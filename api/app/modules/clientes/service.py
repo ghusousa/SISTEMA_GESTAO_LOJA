@@ -17,12 +17,16 @@ cobrando. Sem a terceira, a cliente que devolveu a peça segue devendo por ela.
 from decimal import Decimal
 
 from sqlalchemy import Select, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import NaoEncontrado, OperacaoInvalida, Validacao
+from app.core.datas import hoje_na_loja
+from app.core.exceptions import Duplicado, NaoEncontrado, OperacaoInvalida, Validacao
 from app.core.pagination import Pagina, Paginacao
 from app.modules.clientes.models import Customer, CustomerPayment
 from app.modules.clientes.schemas import (
+    ClienteBalcaoIn,
+    ClienteBalcaoOut,
     ClienteIn,
     ClienteOut,
     ClienteUpdate,
@@ -42,6 +46,10 @@ from app.modules.vendas.models import (
 )
 
 ZERO = Decimal("0.00")
+#: O balcão acha a cliente pelo documento INTEIRO (igualdade), nunca por trecho — de qualquer
+#: tamanho, porque o cadastro aceita RG e CPF sem o zero da frente. Abaixo deste piso a
+#: igualdade vira chute de poucas tentativas, e o número é mais trecho de telefone que documento.
+MINIMO_DE_DIGITOS_DO_DOCUMENTO = 7
 
 
 def _fiado_das_vendas(cliente_id_col) -> Select:
@@ -95,6 +103,9 @@ def _deve_expr():
 class ClienteService:
     def __init__(self, session: AsyncSession):
         self.session = session
+        #: O último `receber` respondeu com um pagamento que já existia (ADR-2): o router
+        #: devolve 200 em vez de 201.
+        self.replay = False
 
     # ------------------------------------------------------------- cadastro
     async def _obter(self, cliente_id: int) -> Customer:
@@ -111,6 +122,8 @@ class ClienteService:
             document=dados.documento,
             credit_limit=dados.limite,
             note=dados.observacao,
+            nascimento=dados.nascimento,
+            preferencias=dados.preferencias,
         )
         self.session.add(cliente)
         await self.session.commit()
@@ -125,6 +138,8 @@ class ClienteService:
             ("documento", "document"),
             ("limite", "credit_limit"),
             ("observacao", "note"),
+            ("nascimento", "nascimento"),
+            ("preferencias", "preferencias"),
         ):
             valor = getattr(dados, campo)
             if valor is not None:
@@ -133,22 +148,48 @@ class ClienteService:
         return await self._com_saldo(cliente)
 
     async def excluir(self, cliente_id: int) -> None:
-        """Some da lista, mas só se não estiver devendo.
+        """Some da lista e leva junto o dado pessoal, mas só se não estiver devendo.
 
         Excluir cliente com dívida em aberto apagaria da conta da loja um dinheiro que
         existe — e o UNIQUE parcial ainda deixaria recadastrar a mesma pessoa do zero,
         limpinha, devendo nada.
+
+        Quitada, a exclusão ANONIMIZA (LGPD): telefone, documento e observação viram nulos
+        e o nome vira "Cliente removido #id". Só marcar `deleted_at` deixava CPF e telefone
+        para sempre no banco — e em todo backup dali em diante —, ao contrário do que a
+        página pública de exclusão promete. A linha fica, com o mesmo id: vendas,
+        pagamentos e devoluções continuam apontando para ela, e o caixa e os relatórios
+        de meses passados não mudam um centavo. Não há volta: o cadastro não se restaura.
         """
         cliente = await self._obter(cliente_id)
-        deve = await self.quanto_deve(cliente_id)
+        # Travado: uma venda no fiado que entrasse entre a conta e a anonimização deixaria
+        # uma dívida pendurada num cadastro sem nome nem telefone para cobrar.
+        deve = await self.quanto_deve(cliente_id, travar=True)
         if deve > ZERO:
             raise OperacaoInvalida(
                 "Este cliente ainda deve. Receba ou perdoe a dívida antes de excluir.",
                 {"deve": str(deve)},
             )
+        # Depois da trava: uma condicional que abre agora espera o FOR SHARE dela e, quando
+        # passa, já vê a cliente excluída; uma que abriu antes já está no COUNT (ADR-39).
+        from app.modules.condicionais.service import CondicionalService
+
+        abertas = await CondicionalService(self.session).abertas_da_cliente(cliente_id)
+        if abertas:
+            raise OperacaoInvalida(
+                "Esta cliente está com peças em condicional. Feche a condicional antes de excluir.",
+                {"condicionais_abertas": abertas},
+            )
         from datetime import UTC, datetime
 
         cliente.deleted_at = datetime.now(UTC)
+        cliente.name = f"Cliente removido #{cliente.id}"
+        cliente.phone = None
+        cliente.document = None
+        cliente.note = None
+        # Aniversário e gosto pessoal também são dado pessoal (ADR-36): somem junto.
+        cliente.nascimento = None
+        cliente.preferencias = None
         await self.session.commit()
 
     async def _recusar_repetido(
@@ -171,6 +212,117 @@ class ClienteService:
                 f"Já existe um cliente com esse telefone ou documento: {existente.name}.",
                 {"cliente_id": existente.id},
             )
+
+    # ---------------------------------------------------------------- balcão
+    # Buscar e cadastrar no balcão (`ATENDER_CLIENTE`, ADR-36). Tudo aqui responde
+    # `ClienteBalcaoOut` — nenhum saldo, limite ou observação do crediário sai por estas
+    # portas, nem calculado: a conta do `deve` nem chega a rodar.
+
+    @staticmethod
+    def _filtro_busca(stmt: Select, q: str | None, *, documento_por_trecho: bool) -> Select:
+        """Nome sem acento, telefone ou documento.
+
+        O documento casa por TRECHO só no crediário, que já o vê. O balcão não o devolve
+        (ADR-36), e por isso lá ele só casa INTEIRO, por igualdade: por trecho, "a Maria
+        aparece?" vira oráculo — um dígito por vez, a vendedora remontava o CPF que a
+        resposta esconde. O tamanho não entra na regra (RG também é documento); só o piso.
+        Telefone segue por trecho nas duas portas: ele já volta.
+        """
+        if not q:
+            return stmt
+        from app.modules.catalogo.repository import _achatar, achatar_termo
+
+        termo = f"%{achatar_termo(q)}%"
+        so_digitos = "".join(c for c in q if c.isdigit())
+        condicoes = [_achatar(Customer.name).like(termo)]
+        if so_digitos:
+            condicoes.append(Customer.phone.like(f"%{so_digitos}%"))
+            if documento_por_trecho:
+                condicoes.append(Customer.document.like(f"%{so_digitos}%"))
+            elif len(so_digitos) >= MINIMO_DE_DIGITOS_DO_DOCUMENTO:
+                condicoes.append(Customer.document == so_digitos)
+        return stmt.where(or_(*condicoes))
+
+    async def buscar_no_balcao(self, p: Paginacao, q: str | None) -> Pagina[ClienteBalcaoOut]:
+        stmt = self._filtro_busca(
+            select(Customer).where(Customer.deleted_at.is_(None)), q, documento_por_trecho=False
+        )
+        total = await self._contar(stmt)
+        linhas = (
+            await self.session.execute(
+                stmt.order_by(Customer.name, Customer.id).offset(p.offset).limit(p.limit)
+            )
+        ).scalars()
+        return Pagina.montar([ClienteBalcaoOut.model_validate(c) for c in linhas], total, p)
+
+    async def _por_client_uuid(self, client_uuid) -> Customer | None:
+        return (
+            await self.session.execute(
+                select(Customer).where(Customer.client_uuid == client_uuid)
+            )
+        ).scalar_one_or_none()
+
+    def _replay_balcao(self, cliente: Customer, dados: ClienteBalcaoIn) -> ClienteBalcaoOut:
+        """A mesma chave com OUTRO cadastro é 409, nunca o cadastro antigo como sucesso.
+
+        Devolver a "Ana" gravada para um pedido de "Maria" com a chave reaproveitada poria
+        a venda da Maria no nome da Ana — e o histórico das duas ficaria errado.
+        """
+        if (cliente.name, cliente.phone) != (dados.nome, dados.telefone):
+            raise Duplicado(
+                f"Este cadastro já foi gravado com outro nome ou telefone (cliente "
+                f"#{cliente.id}). Procure a cliente antes de cadastrar de novo.",
+                {"cliente_id": cliente.id},
+            )
+        self.replay = True
+        return ClienteBalcaoOut.model_validate(cliente)
+
+    async def cadastrar_no_balcao(self, dados: ClienteBalcaoIn) -> ClienteBalcaoOut:
+        ja = await self._por_client_uuid(dados.client_uuid)
+        if ja is not None:
+            return self._replay_balcao(ja, dados)
+        await self._recusar_repetido(dados.telefone, None)
+        cliente = Customer(
+            name=dados.nome,
+            phone=dados.telefone,
+            nascimento=dados.nascimento,
+            preferencias=dados.preferencias,
+            client_uuid=dados.client_uuid,
+        )
+        self.session.add(cliente)
+        try:
+            await self.session.commit()
+        except IntegrityError:
+            # Os dois toques chegaram juntos: o perdedor responde o que o vencedor gravou.
+            # (Ou o telefone entrou por outro aparelho no meio: aí o recado é o de sempre.)
+            await self.session.rollback()
+            ja = await self._por_client_uuid(dados.client_uuid)
+            if ja is not None:
+                return self._replay_balcao(ja, dados)
+            await self._recusar_repetido(dados.telefone, None)
+            raise
+        await self.session.refresh(cliente)
+        return ClienteBalcaoOut.model_validate(cliente)
+
+    async def aniversariantes(self, p: Paginacao, mes: int | None) -> Pagina[ClienteBalcaoOut]:
+        """Quem faz aniversário no mês (o da loja, se não vier), na ordem do calendário."""
+        mes = mes or hoje_na_loja().month
+        stmt = select(Customer).where(
+            Customer.deleted_at.is_(None),
+            Customer.nascimento.is_not(None),
+            func.extract("month", Customer.nascimento) == mes,
+        )
+        total = await self._contar(stmt)
+        linhas = (
+            await self.session.execute(
+                stmt.order_by(
+                    func.extract("day", Customer.nascimento), Customer.name, Customer.id
+                )
+                .offset(p.offset)
+                .limit(p.limit)
+            )
+        ).scalars()
+        return Pagina.montar([ClienteBalcaoOut.model_validate(c) for c in linhas], total, p)
 
     # --------------------------------------------------------------- saldos
     async def quanto_deve(self, cliente_id: int, *, travar: bool = False) -> Decimal:
@@ -213,17 +365,9 @@ class ClienteService:
     async def listar(
         self, p: Paginacao, q: str | None, somente_devendo: bool
     ) -> Pagina[ClienteOut]:
-        stmt = select(Customer).where(Customer.deleted_at.is_(None))
-        if q:
-            from app.modules.catalogo.repository import _achatar, achatar_termo
-
-            termo = f"%{achatar_termo(q)}%"
-            so_digitos = "".join(c for c in q if c.isdigit())
-            condicoes = [_achatar(Customer.name).like(termo)]
-            if so_digitos:
-                condicoes.append(Customer.phone.like(f"%{so_digitos}%"))
-                condicoes.append(Customer.document.like(f"%{so_digitos}%"))
-            stmt = stmt.where(or_(*condicoes))
+        stmt = self._filtro_busca(
+            select(Customer).where(Customer.deleted_at.is_(None)), q, documento_por_trecho=True
+        )
 
         deve = _deve_expr()
         if somente_devendo:
@@ -247,30 +391,70 @@ class ClienteService:
     async def obter(self, cliente_id: int) -> ClienteOut:
         return await self._com_saldo(await self._obter(cliente_id))
 
+    async def conferir_ativa_para_venda(self, cliente_id: int) -> None:
+        """A cliente existe e está ativa — e segue assim até o commit de quem pergunta.
+
+        `FOR SHARE`: a venda no fiado espera uma exclusão em andamento terminar (o `excluir`
+        trava a linha com FOR UPDATE) e relê a linha depois do commit dela. Ler sem trava
+        deixava a venda passar com a cliente já anonimizada: dívida nova numa ficha que
+        ninguém mais vê.
+        """
+        cliente = (
+            await self.session.execute(
+                select(Customer)
+                .where(Customer.id == cliente_id, Customer.deleted_at.is_(None))
+                .with_for_update(read=True)
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
+        if cliente is None:
+            raise NaoEncontrado("Cliente não encontrado.")
+
     # -------------------------------------------------------------- extrato
-    async def extrato(self, cliente_id: int) -> ExtratoClienteOut:
+    async def _contar(self, stmt: Select) -> int:
+        return int(
+            await self.session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+        )
+
+    async def extrato(self, cliente_id: int, p: Paginacao) -> ExtratoClienteOut:
+        """A conta da cliente: as duas listas paginadas, os totais sobre a vida inteira.
+
+        A freguesa de caderneta antiga tem anos de compras e pagamentos, e mandar tudo numa
+        resposta só pesava mais a cada mês — toda listagem é paginada (CLAUDE.md). As duas
+        listas andam juntas pelo mesmo `?page=&size=`: a tela mostra as mais recentes de
+        cada uma e o "carregar mais" traz a próxima leva das duas. Os totais NÃO saem da
+        página: vêm dos mesmos agregados do `quanto_deve`, senão a conta mudaria conforme o
+        tamanho da página e deixaria de fechar com o "deve" da lista de clientes.
+        """
         cliente = await self._obter(cliente_id)
 
+        vendas = (
+            select(Sale.id, Sale.sold_at, Sale.total, func.sum(SalePayment.amount))
+            .join(SalePayment, SalePayment.sale_id == Sale.id)
+            .where(
+                Sale.customer_id == cliente_id,
+                Sale.status == StatusVenda.CONCLUIDA,
+                SalePayment.method == FormaPagamento.FIADO,
+            )
+            .group_by(Sale.id, Sale.sold_at, Sale.total)
+        )
+        # `id` desempata: duas linhas no mesmo instante trocariam de página entre um
+        # "carregar mais" e outro, e uma apareceria duas vezes enquanto a outra sumia.
         linhas = (
             await self.session.execute(
-                select(Sale.id, Sale.sold_at, Sale.total, func.sum(SalePayment.amount))
-                .join(SalePayment, SalePayment.sale_id == Sale.id)
-                .where(
-                    Sale.customer_id == cliente_id,
-                    Sale.status == StatusVenda.CONCLUIDA,
-                    SalePayment.method == FormaPagamento.FIADO,
-                )
-                .group_by(Sale.id, Sale.sold_at, Sale.total)
-                .order_by(Sale.sold_at.desc())
+                vendas.order_by(Sale.sold_at.desc(), Sale.id.desc())
+                .offset(p.offset)
+                .limit(p.limit)
             )
         ).all()
 
+        pagos = select(CustomerPayment).where(CustomerPayment.customer_id == cliente_id)
         pagamentos = list(
             (
                 await self.session.execute(
-                    select(CustomerPayment)
-                    .where(CustomerPayment.customer_id == cliente_id)
-                    .order_by(CustomerPayment.paid_at.desc())
+                    pagos.order_by(CustomerPayment.paid_at.desc(), CustomerPayment.id.desc())
+                    .offset(p.offset)
+                    .limit(p.limit)
                 )
             )
             .scalars()
@@ -283,13 +467,21 @@ class ClienteService:
 
         return ExtratoClienteOut(
             cliente=await self._com_saldo(cliente),
-            vendas=[
-                VendaEmAbertoOut(
-                    venda_id=vid, vendida_em=quando, total_da_venda=total, no_fiado=fiado
-                )
-                for vid, quando, total, fiado in linhas
-            ],
-            pagamentos=[PagamentoClienteOut.model_validate(p) for p in pagamentos],
+            vendas=Pagina.montar(
+                [
+                    VendaEmAbertoOut(
+                        venda_id=vid, vendida_em=quando, total_da_venda=total, no_fiado=fiado
+                    )
+                    for vid, quando, total, fiado in linhas
+                ],
+                await self._contar(vendas),
+                p,
+            ),
+            pagamentos=Pagina.montar(
+                [PagamentoClienteOut.model_validate(pg) for pg in pagamentos],
+                await self._contar(pagos),
+                p,
+            ),
             total_fiado=total_fiado,
             total_pago=total_pago,
             total_devolvido=devolvido,
@@ -297,21 +489,57 @@ class ClienteService:
         )
 
     # ----------------------------------------------------------- recebimento
+    async def _recebimento_por_client_uuid(self, client_uuid) -> CustomerPayment | None:
+        return (
+            await self.session.execute(
+                select(CustomerPayment).where(CustomerPayment.client_uuid == client_uuid)
+            )
+        ).scalar_one_or_none()
+
+    def _replay(
+        self, pagamento: CustomerPayment, cliente_id: int, dados: PagamentoClienteIn
+    ) -> PagamentoClienteOut:
+        """Responde o recebimento que este `client_uuid` já gravou — se for o MESMO.
+
+        O uuid é de UM recebimento: desta cliente, deste valor, por esta forma. Responder o
+        gravado para outro pedido com a chave reaproveitada dizia "R$ 50 recebidos" quando
+        entraram R$ 30 — a tela mostra a quitação que a cliente pediu, e a dívida continua
+        do tamanho de antes. Ou dizia PIX quando entrou dinheiro, e a gaveta não fecha.
+        """
+        if (pagamento.customer_id, pagamento.method, pagamento.amount) != (
+            cliente_id,
+            dados.forma,
+            dados.valor,
+        ):
+            raise Duplicado(
+                "Este recebimento já foi gravado com outro valor, forma ou cliente "
+                f"(recebimento #{pagamento.id}). Confira o extrato antes de receber de novo.",
+                {"pagamento_id": pagamento.id},
+            )
+        self.replay = True
+        return PagamentoClienteOut.model_validate(pagamento)
+
     async def receber(
         self, cliente_id: int, dados: PagamentoClienteIn, usuario: User
     ) -> PagamentoClienteOut:
         # Idempotência antes de tudo: recebimento é a operação mais provável de ser
         # reenviada (sinal ruim no meio da rua), e reenviar aqui perdoaria uma dívida.
-        ja = (
-            await self.session.execute(
-                select(CustomerPayment).where(CustomerPayment.client_uuid == dados.client_uuid)
-            )
-        ).scalar_one_or_none()
+        ja = await self._recebimento_por_client_uuid(dados.client_uuid)
         if ja is not None:
-            return PagamentoClienteOut.model_validate(ja)
+            return self._replay(ja, cliente_id, dados)
 
         cliente = await self._obter(cliente_id)
         deve = await self.quanto_deve(cliente_id, travar=True)
+
+        # E de novo, já com a cliente travada. O retry que chega enquanto a primeira
+        # tentativa ainda não fez commit passa pela checagem lá de cima sem ver nada e
+        # fica parado na trava; quando ela solta, o pagamento já está gravado e a dívida
+        # já caiu. Sem esta releitura ele respondia "o valor é maior do que a dívida" para
+        # um recebimento que entrou — e quem está no balcão, vendo erro, cobrava de novo.
+        ja = await self._recebimento_por_client_uuid(dados.client_uuid)
+        if ja is not None:
+            return self._replay(ja, cliente_id, dados)
+
         if deve <= ZERO:
             raise OperacaoInvalida("Este cliente não está devendo nada.")
         if dados.valor > deve:

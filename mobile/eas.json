@@ -16,6 +16,13 @@
     },
     "production": {
       "autoIncrement": true
+    },
+    "teste-aparelhos": {
+      "distribution": "internal",
+      "ios": {
+        "simulator": false,
+        "enterpriseProvisioning": "adhoc"
+      }
     }
   },
   "submit": {
@@ -23,6 +30,16 @@
       "ios": {
         "language": "pt-BR",
         "sku": "gestao-loja"
+      }
+    },
+    "ci": {
+      "extends": "production",
+      "ios": {
+        "language": "pt-BR",
+        "sku": "gestao-loja",
+        "ascApiKeyPath": "$ASC_API_KEY_PATH",
+        "ascApiKeyId": "$ASC_KEY_ID",
+        "ascApiKeyIssuerId": "$ASC_ISSUER_ID"
       }
     }
   }

@@ -39,6 +39,29 @@ def _ip(request: Request) -> str | None:
     return request.client.host if request.client else None
 
 
+def fora_do_diario(request: Request) -> None:
+    """A rota avisa a borda: esta resposta 2xx não foi um ato, não vira linha no diário.
+
+    Só para o caminho idempotente que não mudou nada — desligar o que já tinha terminado, o
+    reenvio de um aceite (ADR-43). Sem isto o diário mostraria atos que não aconteceram, no
+    nome de quem só estava saindo do sistema. Esquecer de chamar deixa uma linha a mais;
+    nunca esconde um ato, que é o que o registro na borda protege.
+    """
+    request.state.fora_do_diario = True
+
+
+def congelar_autor(request: Request, usuario: User) -> None:
+    """A rota avisa a borda: a conta de quem age vai deixar de existir NESTE ato.
+
+    É o "Excluir minha conta" (ADR-45). A linha do diário é gravada depois do commit, e aí
+    a conta já saiu: buscá-la pelo id não acha nada, e o `user_id` dela quebraria o FK — a
+    linha inteira se perderia no `try/except`. Com isto, ela sai sem o vínculo e com o nome
+    e o papel de ANTES, congelados como em todo ato (ADR-23). Chamar antes do service: depois
+    do commit o objeto já não tem o que ler.
+    """
+    request.state.autor_congelado = (usuario.name, usuario.role)
+
+
 def _quem(request: Request) -> tuple[int, str] | None:
     """(user_id, papel) do token da requisição, ou None se não houver token válido."""
     cabecalho = request.headers.get("authorization", "")
@@ -64,6 +87,9 @@ class AuditoriaMiddleware(BaseHTTPMiddleware):
             # 403 da vendedora, o 422 de dado inválido) — não é um ato consumado.
             if resposta.status_code >= 400:
                 return resposta
+            # A rota disse que nada mudou (`fora_do_diario`): um 204 sem efeito não é ato.
+            if getattr(request.state, "fora_do_diario", False):
+                return resposta
 
             caminho = request.url.path[len(_PREFIXO):]
             ato = classificar(request.method, caminho)
@@ -76,12 +102,24 @@ class AuditoriaMiddleware(BaseHTTPMiddleware):
             user_id, papel = identidade
 
             async with SessionLocal() as sessao:
-                usuario = await sessao.get(User, user_id)
-                nome = usuario.name if usuario else f"usuário #{user_id}"
+                congelado = getattr(request.state, "autor_congelado", None)
+                if congelado is not None:
+                    # Excluiu a própria conta: nome e papel de antes de sair, sem vínculo.
+                    vinculo, (nome, papel_do_autor) = None, congelado
+                else:
+                    usuario = await sessao.get(User, user_id)
+                    # Conta que não existe mais vai sem vínculo: o FK derrubaria a linha.
+                    vinculo = usuario.id if usuario else None
+                    nome = usuario.name if usuario else f"usuário #{user_id}"
+                    # O papel do BANCO, não o do token: o claim é de quando o token saiu (até
+                    # 30 min atrás) e a autorização já usa o do banco. Rebaixada de gerente a
+                    # vendedora, o ato seguinte dela não pode entrar no diário como GERENTE.
+                    # O claim só serve se a conta nem existir mais.
+                    papel_do_autor = usuario.role if usuario else (papel or None)
                 AuditoriaRepository(sessao).registrar(
-                    user_id=user_id,
+                    user_id=vinculo,
                     user_nome=nome,
-                    user_papel=papel or (usuario.role if usuario else None),
+                    user_papel=papel_do_autor,
                     acao=ato.acao,
                     descricao=ato.descricao,
                     metodo=request.method,

@@ -11,7 +11,6 @@ Estes testes fixam o contrato: `inicio`/`fim` são DIAS no fuso da loja, e o int
 
 from datetime import date, datetime, time, timedelta
 
-import pytest
 from httpx import AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,7 +20,6 @@ from app.core.datas import fim_exclusivo_do_dia, hoje_na_loja, inicio_do_dia
 
 from conftest import criar_produto
 
-pytestmark = pytest.mark.anyio
 
 
 # ─────────────────────────────────────────────────────── os helpers, sem banco
@@ -159,3 +157,28 @@ async def test_data_com_hora_diferente_de_zero_e_recusada(
     """O parâmetro é DIA. Aceitar hora seria deixar a ambiguidade voltar pela janela."""
     resp = await client.get("/vendas?inicio=2026-08-23T22:43:00", headers=auth_admin)
     assert resp.status_code == 422
+
+
+async def test_vendas_do_periodo_vem_pela_hora_da_venda_e_nao_pelo_numero(
+    client: AsyncClient, auth_admin: dict, session: AsyncSession
+) -> None:
+    """Mais recente primeiro é pelo INSTANTE da venda; o número só desempata.
+
+    A listagem ordenava por id com o filtro em `sold_at`: para mostrar "março do ano
+    passado" o banco descia o índice da chave desde a venda mais nova e descartava 170 mil
+    linhas antes de chegar ao período. Ordenar pelo instante desce `ix_sales_sold_at` direto
+    do fim do período — e é a ordem do relógio, não a da numeração.
+    """
+    dia = hoje_na_loja() - timedelta(days=400)
+    da_tarde = await _venda_as(
+        client, auth_admin, session, datetime.combine(dia, time(15, 0), tzinfo=settings.tz_loja)
+    )
+    # Registrada DEPOIS (número maior), mas aconteceu de manhã.
+    da_manha = await _venda_as(
+        client, auth_admin, session, datetime.combine(dia, time(9, 0), tzinfo=settings.tz_loja)
+    )
+    assert da_manha > da_tarde
+
+    resp = await client.get(f"/vendas?inicio={dia}&fim={dia}", headers=auth_admin)
+    assert resp.status_code == 200, resp.text
+    assert [v["id"] for v in resp.json()["items"]] == [da_tarde, da_manha]

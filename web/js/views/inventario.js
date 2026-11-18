@@ -301,7 +301,13 @@ export function render(raiz) {
     aoEscolher: contar,
   });
   // Mesma janela curta da entrada: 250ms só descartam a rajada dupla do próprio leitor.
-  const leitor = criarLeitor({ aoLer: lerCodigo, repeticaoMs: 250, ignorarQuando: busca.aberta });
+  // Fechando, a contagem já foi para o POST e vai ser zerada: o código do celular espera.
+  const leitor = criarLeitor({
+    aoLer: lerCodigo,
+    repeticaoMs: 250,
+    ignorarQuando: busca.aberta,
+    ocupadoQuando: () => enviando,
+  });
   leitor.ligar();
   const pararFoco = manterFoco(campo);
   pintar();

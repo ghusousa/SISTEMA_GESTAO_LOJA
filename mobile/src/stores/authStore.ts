@@ -8,6 +8,7 @@ import { create } from 'zustand';
 import { auth } from '@/api/endpoints';
 import { queryClient } from '@/lib/queryClient';
 import { useCartStore } from '@/stores/cartStore';
+import { useLeitorStore } from '@/stores/leitorStore';
 import {
   lerRefreshToken,
   lerUsuarioSalvo,
@@ -15,16 +16,24 @@ import {
   salvarSessao,
 } from '@/api/sessao';
 import type { Usuario } from '@/api/tipos';
+import { AVISO_CONTA_EXCLUIDA } from '@/lib/exclusaoDeConta';
 import { pode, type Capacidade } from '@/lib/permissoes';
 import { conectarTempoReal, desconectarTempoReal } from '@/lib/tempoReal';
 
 interface AuthState {
   usuario: Usuario | null;
   carregando: boolean;
+  /** Recado da tela de entrada sobre como a sessão acabou ("Conta excluída"). */
+  avisoDaEntrada: string | null;
   entrar: (email: string, senha: string) => Promise<void>;
   sair: () => Promise<void>;
   restaurar: () => Promise<void>;
   encerrarPorTokenInvalido: () => void;
+  /**
+   * A própria conta acabou de ser excluída (ADR-45): fecha a sessão só deste lado — o
+   * servidor já derrubou tudo — e a entrada diz o que aconteceu.
+   */
+  encerrarPorContaExcluida: () => Promise<void>;
   /** Pergunta por capacidade, nunca por cargo — ver `lib/permissoes.ts`. */
   podeFazer: (capacidade: Capacidade) => boolean;
 }
@@ -34,25 +43,35 @@ interface AuthState {
  *
  * O carrinho é global e sobreviveria à troca de usuário: a vendedora sai no meio de uma
  * venda, o colega entra e encontra as peças dela no PDV — com os preços daquele momento e
- * o client_uuid da sessão anterior. O cache do React Query some pelo mesmo motivo.
+ * o client_uuid da sessão anterior. O cache do React Query some pelo mesmo motivo. E o
+ * celular-leitor (ADR-43): o próximo usuário não pode bipar para o computador do anterior.
  */
 function limparEstadoDaSessao(): void {
   useCartStore.getState().limpar();
+  useLeitorStore.getState().limpar();
   queryClient.clear();
 }
+
+/** Teto da espera pelo servidor ao desligar o leitor na saída. */
+const ESPERA_DESLIGAR_LEITOR_MS = 4000;
 
 export const useAuthStore = create<AuthState>((set, get) => ({
   usuario: null,
   carregando: true,
+  avisoDaEntrada: null,
 
   async entrar(email, senha) {
     const tokens = await auth.login(email.trim().toLowerCase(), senha);
     await salvarSessao(tokens.access_token, tokens.refresh_token, tokens.usuario);
-    set({ usuario: tokens.usuario, carregando: false });
+    set({ usuario: tokens.usuario, carregando: false, avisoDaEntrada: null });
     conectarTempoReal();
   },
 
   async sair() {
+    // Primeiro, com os tokens ainda valendo: o celular-leitor termina junto com a sessão,
+    // e o computador para de esperar bipe deste aparelho. Melhor esforço — sem rede, o
+    // pareamento acaba sozinho nas 12 h, ou quando alguém desligar no computador.
+    await useLeitorStore.getState().desligar({ timeout: ESPERA_DESLIGAR_LEITOR_MS });
     const refresh = await lerRefreshToken();
     if (refresh) {
       // Revogar no servidor é o que faz o logout valer de verdade; se a rede falhar,
@@ -90,6 +109,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     desconectarTempoReal();
     limparEstadoDaSessao();
     set({ usuario: null, carregando: false });
+  },
+
+  async encerrarPorContaExcluida() {
+    // Sem `auth.logout` nem desligar o leitor no servidor: a exclusão já revogou as sessões
+    // e levou o pareamento junto. Chamar agora daria 401, o interceptor tentaria renovar e
+    // a pessoa sairia por "sessão expirada" — e o cofre ficaria com os tokens mortos.
+    desconectarTempoReal();
+    await limparSessao();
+    limparEstadoDaSessao();
+    set({ usuario: null, carregando: false, avisoDaEntrada: AVISO_CONTA_EXCLUIDA });
   },
 
   podeFazer(capacidade) {

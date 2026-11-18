@@ -77,11 +77,16 @@ def _montar_rotas() -> None:
     from app.modules.catalogo.router import router as catalogo_router
     from app.modules.despesas.router import router as despesas_router
     from app.modules.estoque.router import router as estoque_router
+    from app.modules.fiscal.router import router as fiscal_router
+    from app.modules.leitor.router import router as leitor_router
     from app.modules.relatorios.router import router as relatorios_router
     from app.modules.tempo_real.router import router as tempo_real_router
     from app.modules.usuarios.router import router as usuarios_router
     from app.modules.clientes.router import router as clientes_router
+    from app.modules.condicionais.router import router as condicionais_router
+    from app.modules.contas_pagar.router import router as contas_pagar_router
     from app.modules.sistema.router import router as sistema_router
+    from app.modules.taxas.router import router as taxas_router
     from app.modules.vendas.router import router as vendas_router
 
     for r in (
@@ -90,6 +95,7 @@ def _montar_rotas() -> None:
         catalogo_router,
         estoque_router,
         vendas_router,
+        fiscal_router,
         despesas_router,
         caixa_router,
         relatorios_router,
@@ -99,6 +105,10 @@ def _montar_rotas() -> None:
         auditoria_router,
         configuracao_router,
         backup_router,
+        taxas_router,
+        condicionais_router,
+        contas_pagar_router,
+        leitor_router,
     ):
         app.include_router(r, prefix="/api/v1")
 
@@ -107,16 +117,23 @@ _montar_rotas()
 
 # Toda escrita que passa pelo ORM vira aviso para as telas abertas (ver core/eventos.py).
 registrar_avisos_automaticos()
+# NFC-e sozinha depois da venda, quando FISCAL_EMITIR_AUTOMATICO=1 (ADR-41).
+from app.modules.fiscal.automatico import registrar_emissao_automatica  # noqa: E402
 
-# Fotos de produto. Em produção o Nginx serve /media direto do disco.
-_media = Path(settings.media_dir)
-_media.mkdir(parents=True, exist_ok=True)
-app.mount("/media", StaticFiles(directory=str(_media)), name="media")
+registrar_emissao_automatica()
+
+# Fotos de produto em /media, só quando moram no disco. Com BLOB_READ_WRITE_TOKEN elas estão
+# no Vercel Blob, com URL absoluta, e nada se cria nem se monta aqui; na Vercel sem o token,
+# também nada — o envio responde 503 (ADR-42).
+from app.modules.catalogo.fotos import servir_fotos_do_disco  # noqa: E402
+
+servir_fotos_do_disco(app)
 
 # O sistema web é HTML e módulos ES, sem build: o próprio FastAPI entrega os arquivos e a
 # loja não precisa de um segundo processo no servidor. Em produção o Nginx pode servir a
-# mesma pasta direto, mas nada quebra se ele não fizer isso.
-_web = Path(__file__).resolve().parent.parent.parent / "web"
+# mesma pasta direto, mas nada quebra se ele não fizer isso. A pasta vem da config: `web/` ao
+# lado de `api/` (repositório e Docker), ou a cópia que o build da Vercel faz (ADR-42).
+_web = Path(settings.web_dir)
 if _web.is_dir():
     app.mount("/app", StaticFiles(directory=str(_web), html=True), name="web")
 

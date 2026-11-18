@@ -18,6 +18,27 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "httpx>=0.27"]
 
+# Sem isto o `pip install -e .` do CI morre: a descoberta automática acha `app` E `alembic`
+# (e `media`/`estado` na máquina de quem já rodou) como pacotes de topo e se recusa a escolher.
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+# Vercel (ADR-42): a SEGUNDA forma de rodar, só para demonstração (Root Directory = api/).
+# Nada daqui é lido pela loja — Docker, uvicorn na mão e CI ignoram [tool.vercel].
+[tool.vercel]
+entrypoint = "app.main:app"
+
+[tool.vercel.scripts]
+# Depois de instalar (vercel.json → installCommand, do requirements.lock) e antes de publicar:
+# confere a trava, copia o web/ para dentro do projeto e, SÓ em produção, migra e semeia.
+build = "python scripts/vercel_build.py"
+
+[tool.vercel.fastapi.static]
+# Tudo pela função, nada promovido à CDN: /app, /legal e o redirect de / saem do MESMO
+# FastAPI que serve a loja, com os mesmos cabeçalhos — e o resto (CSP, HSTS) vem do
+# vercel.json, como na loja vem do Caddy.
+cdn = false
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 # Fixtures e testes precisam do MESMO loop: a engine async e suas conexões ficam presas ao

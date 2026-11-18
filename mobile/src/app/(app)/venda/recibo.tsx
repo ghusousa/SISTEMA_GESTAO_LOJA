@@ -20,13 +20,15 @@ import { useLocalSearchParams } from 'expo-router';
 import { Alert, Share, StyleSheet, Text, View, ScrollView } from 'react-native';
 
 import { mensagemDoErro } from '@/api/client';
-import { vendas } from '@/api/endpoints';
+import { fiscal, vendas } from '@/api/endpoints';
 import type { ConfiguracaoLoja, FormaPagamento, Venda } from '@/api/tipos';
-import { Botao, Carregando, ErroEstado } from '@/components/ui';
+import { Botao, Carregando, ErroEstado, useRespiroDeBaixo } from '@/components/ui';
+import { rotuloPagamento } from '@/lib/cartao';
+import { linhaDoRecibo } from '@/lib/fiscal';
 import { formatar, formatarSemSimbolo, paraCentavos } from '@/lib/money';
 import { chaves } from '@/lib/queryClient';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
-import { useLoja } from '@/hooks/useLoja';
+import { useDadosDaLoja } from '@/hooks/useLoja';
 
 const ROTULO_FORMA: Record<FormaPagamento, string> = {
   DINHEIRO: 'Dinheiro',
@@ -44,7 +46,7 @@ const RODAPE_FISCAL = 'Documento sem valor fiscal.';
 type DadosDaLoja = Pick<ConfiguracaoLoja, 'nome' | 'documento' | 'telefone' | 'endereco'>;
 
 /** O mesmo recibo em texto puro, do jeito que chega legível no WhatsApp. */
-export function reciboEmTexto(venda: Venda, loja?: DadosDaLoja): string {
+export function reciboEmTexto(venda: Venda, loja?: DadosDaLoja, nfce?: string | null): string {
   const linhas: string[] = [
     `*${loja?.nome ?? 'Minha Loja'}*`,
     ...[loja?.documento, loja?.endereco, loja?.telefone].filter(Boolean).map(String),
@@ -72,7 +74,7 @@ export function reciboEmTexto(venda: Venda, loja?: DadosDaLoja): string {
   linhas.push('');
 
   for (const p of venda.pagamentos) {
-    linhas.push(`${ROTULO_FORMA[p.forma] ?? p.forma}: ${formatar(paraCentavos(p.valor))}`);
+    linhas.push(`${rotuloPagamento(p, ROTULO_FORMA)}: ${formatar(paraCentavos(p.valor))}`);
   }
 
   if (venda.pagamentos.some((p) => p.forma === 'FIADO')) {
@@ -82,20 +84,34 @@ export function reciboEmTexto(venda: Venda, loja?: DadosDaLoja): string {
 
   linhas.push('');
   linhas.push(RODAPE_TROCA);
+  // Com NFC-e autorizada (ADR-41), a chave vai no recibo: é com ela que a cliente
+  // consulta a nota na SEFAZ.
+  if (nfce) linhas.push(nfce);
   linhas.push(RODAPE_FISCAL);
   return linhas.join('\n');
 }
 
 export default function Recibo() {
-  const loja = useLoja();
+  // Documento e contato da loja só vêm com sessão — o recibo é sempre de quem está logado.
+  const loja = useDadosDaLoja();
   const { id } = useLocalSearchParams<{ id: string }>();
   const vendaId = Number(id);
+  // "Enviar recibo" encosta na base da tela: no Face ID, acima do indicador de início.
+  const respiroDeBaixo = useRespiroDeBaixo();
 
   const consulta = useQuery({
     queryKey: chaves.venda(vendaId),
     queryFn: () => vendas.detalhe(vendaId),
     enabled: Number.isFinite(vendaId),
   });
+  // A nota nunca segura o recibo: sem ela (ou sem emissor), o papel sai como sempre.
+  const nota = useQuery({
+    queryKey: chaves.nfce(vendaId),
+    queryFn: () => fiscal.nfce(vendaId),
+    enabled: Number.isFinite(vendaId),
+    retry: false,
+  });
+  const linhaNfce = linhaDoRecibo(nota.data);
 
   if (consulta.isPending) return <Carregando />;
   if (consulta.isError) {
@@ -112,7 +128,7 @@ export default function Recibo() {
 
   async function enviar() {
     try {
-      await Share.share({ message: reciboEmTexto(venda, loja) });
+      await Share.share({ message: reciboEmTexto(venda, loja, linhaNfce) });
     } catch (erro) {
       Alert.alert('Não deu para enviar', mensagemDoErro(erro));
     }
@@ -170,7 +186,7 @@ export default function Recibo() {
 
           {venda.pagamentos.map((p, i) => (
             <View key={`${p.forma}-${i}`} style={s.conta}>
-              <Text style={s.contaRotulo}>{ROTULO_FORMA[p.forma] ?? p.forma}</Text>
+              <Text style={s.contaRotulo}>{rotuloPagamento(p, ROTULO_FORMA)}</Text>
               <Text style={s.contaValor}>{formatar(paraCentavos(p.valor))}</Text>
             </View>
           ))}
@@ -183,11 +199,12 @@ export default function Recibo() {
 
           <View style={s.tracejado} />
           <Text style={s.rodape}>{RODAPE_TROCA}</Text>
+          {!!linhaNfce && <Text style={s.rodape}>{linhaNfce}</Text>}
           <Text style={s.rodapeMiudo}>{RODAPE_FISCAL}</Text>
         </View>
       </ScrollView>
 
-      <View style={s.acoes}>
+      <View style={[s.acoes, { paddingBottom: respiroDeBaixo }]}>
         <Botao titulo="Enviar recibo" grande onPress={() => void enviar()} />
       </View>
     </View>

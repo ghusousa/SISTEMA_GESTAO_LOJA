@@ -9,11 +9,9 @@ que já teve peça devolvida, e o vale pagar duas vendas ao mesmo tempo.
 import uuid
 from decimal import Decimal
 
-import pytest
 
 from conftest import criar_produto
 
-pytestmark = pytest.mark.anyio
 
 
 async def _peca(client, auth_admin, nome: str, preco: str, custo: str, estoque: int = 10):
@@ -281,8 +279,231 @@ async def test_devolucao_e_idempotente(client, auth_admin) -> None:
     primeira = await client.post(f"/vendas/{venda['id']}/devolucoes", headers=auth_admin, json=corpo)
     segunda = await client.post(f"/vendas/{venda['id']}/devolucoes", headers=auth_admin, json=corpo)
     assert primeira.status_code == 201
-    assert segunda.status_code in (200, 201)
+    assert segunda.status_code == 200, "ADR-2: o reenvio responde 200 com a que já existia"
     assert segunda.json()["id"] == primeira.json()["id"]
+
+
+async def test_uuid_de_devolucao_reaproveitado_em_outro_pedido_e_recusado(
+    client, auth_admin
+) -> None:
+    """O mesmo `client_uuid` para OUTRA venda (ou outras peças) não é replay.
+
+    Devolver a gravada sem conferir respondia sucesso com a devolução de outra venda: a tela
+    mostrava o comprovante alheio, e a peça que a cliente trouxe não voltava ao estoque nem
+    o dinheiro dela saía. Agora é 409, e nada muda nas duas vendas.
+    """
+    variante = await _peca(client, auth_admin, "Blusa Chave", "60.00", "20.00")
+    venda_a = await _vender(
+        client, auth_admin, variante, 2, [{"forma": "DINHEIRO", "valor": "120.00"}]
+    )
+    venda_b = await _vender(
+        client, auth_admin, variante, 2, [{"forma": "DINHEIRO", "valor": "120.00"}]
+    )
+    chave = str(uuid.uuid4())
+    primeira = await client.post(
+        f"/vendas/{venda_a['id']}/devolucoes",
+        headers=auth_admin,
+        json={
+            "client_uuid": chave,
+            "itens": [{"item_id": venda_a["itens"][0]["id"], "quantidade": 1}],
+        },
+    )
+    assert primeira.status_code == 201, primeira.text
+
+    outra_venda = await client.post(
+        f"/vendas/{venda_b['id']}/devolucoes",
+        headers=auth_admin,
+        json={
+            "client_uuid": chave,
+            "itens": [{"item_id": venda_b["itens"][0]["id"], "quantidade": 1}],
+        },
+    )
+    outra_quantidade = await client.post(
+        f"/vendas/{venda_a['id']}/devolucoes",
+        headers=auth_admin,
+        json={
+            "client_uuid": chave,
+            "itens": [{"item_id": venda_a["itens"][0]["id"], "quantidade": 2}],
+        },
+    )
+    for resposta in (outra_venda, outra_quantidade):
+        assert resposta.status_code == 409, resposta.text
+        assert resposta.json()["code"] == "DUPLICADO"
+        assert resposta.json()["detail"]["devolucao_id"] == primeira.json()["id"]
+
+    item_b = (await client.get(f"/vendas/{venda_b['id']}", headers=auth_admin)).json()["itens"][0]
+    assert item_b["quantidade_devolvida"] == 0
+    item_a = (await client.get(f"/vendas/{venda_a['id']}", headers=auth_admin)).json()["itens"][0]
+    assert item_a["quantidade_devolvida"] == 1
+
+
+# ------------------------------------------------ corridas com ordem forçada pela trava
+
+
+async def _quando_alguem_parar_numa_trava() -> None:
+    """Espera, sem relógio, até outra sessão estar parada numa trava do banco.
+
+    É o que torna a corrida determinística: em vez de dormir "o bastante" e torcer, pergunta
+    ao Postgres. `pg_stat_activity` é uma foto tirada uma vez por transação, por isso cada
+    volta do laço abre a sua — senão a pergunta repetiria a mesma resposta para sempre.
+    """
+    from sqlalchemy import text
+
+    from app.core.db import engine
+
+    async with engine.connect() as conexao:
+        while True:
+            parada = await conexao.scalar(
+                text(
+                    "SELECT EXISTS (SELECT 1 FROM pg_stat_activity"
+                    " WHERE datname = current_database() AND wait_event_type = 'Lock'"
+                    " AND pid <> pg_backend_pid())"
+                )
+            )
+            await conexao.rollback()
+            if parada:
+                return
+
+
+async def _devolucao_segurando_o_commit(
+    venda_id: int, item_id: int, admin_id: int, chave, no_commit, liberar
+):
+    """Faz a devolução inteira e para no commit, com a venda travada, até `liberar`."""
+    from app.core.db import SessionLocal
+    from app.modules.usuarios.models import User
+    from app.modules.vendas.devolucao import DevolucaoService
+    from app.modules.vendas.schemas import DevolucaoIn
+
+    async with SessionLocal() as sessao:
+        commit = sessao.commit
+
+        async def commit_segurado():
+            no_commit.set()
+            await liberar.wait()
+            await commit()
+
+        sessao.commit = commit_segurado  # type: ignore[method-assign]
+        usuario = await sessao.get(User, admin_id)
+        dados = DevolucaoIn(client_uuid=chave, itens=[{"item_id": item_id, "quantidade": 1}])
+        return await DevolucaoService(sessao).devolver(venda_id, dados, usuario)
+
+
+async def _soltar_quando_a_outra_parar(no_commit, liberar) -> None:
+    import asyncio
+
+    await no_commit.wait()
+    try:
+        await asyncio.wait_for(_quando_alguem_parar_numa_trava(), timeout=15)
+    finally:
+        liberar.set()
+
+
+async def _saldo_no_banco(variante_id: int) -> int:
+    from sqlalchemy import text
+
+    from app.core.db import SessionLocal
+
+    async with SessionLocal() as sessao:
+        return await sessao.scalar(
+            text("SELECT quantity FROM stock_balances WHERE variant_id = :v"), {"v": variante_id}
+        )
+
+
+async def test_retry_simultaneo_da_devolucao_devolve_a_existente(
+    client, auth_admin, admin
+) -> None:
+    """O app reenvia a MESMA devolução enquanto a primeira ainda não fez commit.
+
+    O retry passa pela checagem de idempotência sem ver nada e para na trava da venda;
+    quando ela solta, a primeira já gravou, e ele seguia até o INSERT e batia no UNIQUE do
+    `client_uuid` — 500 na tela para uma devolução que aconteceu. A primeira só faz commit
+    depois que o Postgres diz que o retry está parado esperando por ela.
+    """
+    import asyncio
+
+    from app.core.db import SessionLocal
+    from app.modules.usuarios.models import User
+    from app.modules.vendas.devolucao import DevolucaoService
+    from app.modules.vendas.schemas import DevolucaoIn
+
+    variante = await _peca(client, auth_admin, "Blusa Retry Junto", "100.00", "40.00")
+    venda = await _vender(
+        client, auth_admin, variante, 2, [{"forma": "DINHEIRO", "valor": "200.00"}]
+    )
+    item = venda["itens"][0]["id"]
+    chave = uuid.uuid4()
+    no_commit, liberar = asyncio.Event(), asyncio.Event()
+
+    async def retry():
+        await no_commit.wait()
+        async with SessionLocal() as sessao:
+            usuario = await sessao.get(User, admin.id)
+            dados = DevolucaoIn(client_uuid=chave, itens=[{"item_id": item, "quantidade": 1}])
+            return await DevolucaoService(sessao).devolver(venda["id"], dados, usuario)
+
+    primeira, segunda, soltou = await asyncio.gather(
+        _devolucao_segurando_o_commit(venda["id"], item, admin.id, chave, no_commit, liberar),
+        retry(),
+        _soltar_quando_a_outra_parar(no_commit, liberar),
+        return_exceptions=True,
+    )
+    assert soltou is None, f"o retry nunca parou na trava: {soltou!r}"
+    assert not isinstance(primeira, Exception), repr(primeira)
+    assert not isinstance(segunda, Exception), f"retry da mesma devolução falhou: {segunda!r}"
+    assert segunda.id == primeira.id
+    # Uma peça voltou, uma vez: entraram 10, saíram 2, voltou 1.
+    assert await _saldo_no_banco(variante) == 9
+
+
+async def test_cancelamento_no_meio_de_uma_devolucao_e_recusado(
+    client, auth_admin, admin
+) -> None:
+    """A devolução está gravando quando chega o cancelamento da mesma venda.
+
+    O `NOT EXISTS` do cancelamento tirava a foto do banco antes do commit da devolução,
+    esperava a trava e seguia com a foto velha: a venda saía CANCELADA e com devolução, a
+    peça voltava duas vezes (saldo 11, mais do que entrou) e o dinheiro saía duas vezes.
+    Aqui a devolução só faz commit depois que o Postgres diz que o cancelamento está parado
+    esperando por ela — a ordem que produzia o erro, sem depender de relógio.
+    """
+    import asyncio
+
+    from app.core.db import SessionLocal
+    from app.core.exceptions import OperacaoInvalida
+    from app.modules.usuarios.models import User
+    from app.modules.vendas.service import VendaService
+
+    variante = await _peca(client, auth_admin, "Saia Corrida", "100.00", "40.00")
+    venda = await _vender(
+        client, auth_admin, variante, 2, [{"forma": "DINHEIRO", "valor": "200.00"}]
+    )
+    item = venda["itens"][0]["id"]
+    no_commit, liberar = asyncio.Event(), asyncio.Event()
+
+    async def cancelar():
+        await no_commit.wait()
+        async with SessionLocal() as sessao:
+            usuario = await sessao.get(User, admin.id)
+            return await VendaService(sessao).cancelar(venda["id"], "Desistiu", usuario)
+
+    devolucao, cancelamento, soltou = await asyncio.gather(
+        _devolucao_segurando_o_commit(
+            venda["id"], item, admin.id, uuid.uuid4(), no_commit, liberar
+        ),
+        cancelar(),
+        _soltar_quando_a_outra_parar(no_commit, liberar),
+        return_exceptions=True,
+    )
+    assert soltou is None, f"o cancelamento nunca parou na trava: {soltou!r}"
+    assert not isinstance(devolucao, Exception), repr(devolucao)
+    assert isinstance(cancelamento, OperacaoInvalida), (
+        f"o cancelamento passou por cima da devolução: {cancelamento!r}"
+    )
+    assert "devolv" in cancelamento.message.lower()
+
+    detalhe = (await client.get(f"/vendas/{venda['id']}", headers=auth_admin)).json()
+    assert detalhe["status"] == "CONCLUIDA"
+    assert await _saldo_no_banco(variante) == 9
 
 
 async def test_vendedora_nao_devolve(client, auth_vendedor, auth_admin) -> None:

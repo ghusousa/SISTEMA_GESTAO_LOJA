@@ -1,11 +1,22 @@
-"""Leitura e escrita do diário. Só INSERT e SELECT — nunca UPDATE nem DELETE pela aplicação."""
+"""Leitura e escrita do diário.
+
+O dia a dia é só INSERT e SELECT: nenhuma tela edita uma linha. As duas exceções são de
+LGPD, nunca de conteúdo (ADR-23): a faxina que apaga o que passou do prazo de retenção, e
+a máscara do e-mail de quem teve a conta excluída. Nenhuma das duas toca no nome e no
+papel congelados de quem AGIU.
+"""
 
 from datetime import datetime
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.auditoria.models import AuditLog
+
+#: Quantas linhas a faxina apaga por login. A primeira faxina depois de ligar a retenção
+#: pode achar anos de diário; em lotes, nenhum login fica esperando um DELETE gigante, e os
+#: próximos logins terminam o serviço.
+LOTE_DA_FAXINA = 5000
 
 
 class AuditoriaRepository:
@@ -86,3 +97,37 @@ class AuditoriaRepository:
             )
         ).scalars().all()
         return list(linhas), int(total or 0)
+
+    async def apagar_anteriores(self, limite: datetime) -> int:
+        """Apaga um lote do que é mais velho que `limite`. Devolve quantas linhas saíram."""
+        velhas = (
+            select(AuditLog.id).where(AuditLog.created_at < limite).limit(LOTE_DA_FAXINA)
+        )
+        resultado = await self.session.execute(
+            delete(AuditLog)
+            .where(AuditLog.id.in_(velhas))
+            .execution_options(synchronize_session=False)
+        )
+        return int(resultado.rowcount or 0)
+
+    async def linhas_com_email(self, email: str) -> list[AuditLog]:
+        """As linhas em que o e-mail aparece: no lugar do nome ou dentro da frase.
+
+        É o formato antigo do LOGIN_FALHOU (o e-mail digitado ia nas duas colunas). ILIKE
+        porque a pessoa digita com maiúscula; os curingas do LIKE são escapados para um
+        e-mail com `_` não casar com o de outra pessoa.
+        """
+        alvo = email.strip().lower()
+        padrao = alvo.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        return list(
+            (
+                await self.session.execute(
+                    select(AuditLog).where(
+                        or_(
+                            func.lower(AuditLog.user_nome) == alvo,
+                            AuditLog.descricao.ilike(f"%{padrao}%", escape="\\"),
+                        )
+                    )
+                )
+            ).scalars().all()
+        )

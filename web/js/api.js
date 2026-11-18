@@ -10,12 +10,21 @@
  *
  * 2. Um 401 dispara uma renovação e refaz a requisição. Se três telas levarem 401 juntas,
  *    todas esperam a MESMA renovação (`renovacaoEmCurso`): duas rotações simultâneas com o
- *    mesmo refresh derrubariam a família de tokens inteira por suspeita de roubo.
+ *    mesmo refresh derrubariam a família de tokens inteira por suspeita de roubo. E só o
+ *    servidor recusando o refresh derruba a sessão: renovação que cai na rede rejeita a
+ *    requisição com o erro de rede e deixa sessão e carrinho onde estavam.
  */
 
 import { sessao } from './store.js';
 
 const BASE = '/api/v1';
+
+/**
+ * A base da API por inteiro ("https://loja.exemplo/api/v1"): mesma origem da página, que é
+ * servida pela própria API. Vai no convite do celular-leitor, para o app saber de qual
+ * servidor o código é.
+ */
+export const baseDaApi = () => new URL(BASE, location.href).href;
 
 let accessToken = null;
 let renovacaoEmCurso = null;
@@ -96,6 +105,15 @@ async function bruto(metodo, caminho, { corpo, formData, semAuth = false } = {})
   return dados;
 }
 
+/**
+ * Só o SERVIDOR recusando o refresh (401/403: vencido, revogado, conta desativada) encerra a
+ * sessão. Mesma regra de `mobile/src/lib/renovacao.ts`: tratar qualquer falha como recusa
+ * esvaziava o carrinho do PDV a cada oscilação da rede, e a vendedora remontava a venda.
+ */
+function refreshRecusado(erro) {
+  return erro instanceof ErroApi && (erro.status === 401 || erro.status === 403);
+}
+
 async function renovar() {
   // Sem corpo: o refresh viaja no cookie httpOnly.
   renovacaoEmCurso ??= bruto('POST', '/auth/refresh', { semAuth: true })
@@ -120,11 +138,17 @@ async function pedir(metodo, caminho, opcoes = {}) {
       !opcoes.semAuth &&
       !caminho.startsWith('/auth/refresh') &&
       !caminho.startsWith('/auth/login');
-    if (!podeRenovar) throw erro;
+    // `semRenovar`: quem chamou lê o 401 por conta própria (a nova tentativa de "Excluir minha
+    // conta" depois de uma sem resposta, ver `sessaoContinua`).
+    if (!podeRenovar || opcoes.semRenovar) throw erro;
 
     try {
       await renovar();
-    } catch {
+    } catch (erroDoRefresh) {
+      // Queda do Wi-Fi ou 5xx (a API reiniciando no atualizar.sh) não diz nada sobre o
+      // token: a requisição falha como falha de rede e a sessão — com o carrinho do PDV —
+      // fica. A próxima tenta renovar de novo.
+      if (!refreshRecusado(erroDoRefresh)) throw erroDoRefresh;
       accessToken = null;
       sessao.set({ usuario: null, carregando: false });
       aoPerderSessao();
@@ -150,7 +174,8 @@ export const api = {
   post: (caminho, corpo) => pedir('POST', caminho, { corpo }),
   patch: (caminho, corpo) => pedir('PATCH', caminho, { corpo }),
   put: (caminho, corpo) => pedir('PUT', caminho, { corpo }),
-  delete: (caminho) => pedir('DELETE', caminho),
+  // Corpo só quando a rota pede (a senha do "Excluir minha conta"); o resto vai sem.
+  delete: (caminho, corpo, { semRenovar = false } = {}) => pedir('DELETE', caminho, { corpo, semRenovar }),
   upload: (caminho, formData) => pedir('PUT', caminho, { formData }),
 };
 
@@ -170,6 +195,32 @@ export async function sair() {
   } catch {
     // Servidor fora do ar não pode prender ninguém dentro do sistema: cai a sessão local.
   }
+  accessToken = null;
+  sessao.set({ usuario: null, carregando: false });
+}
+
+/**
+ * O servidor ainda reconhece esta sessão? Renova pelo cookie (a mesma fila das outras telas) e
+ * responde `false` só quando o servidor RECUSA o refresh — sem o aviso de "sessão expirada":
+ * quem perguntou decide o que dizer (a conta que já saiu, ADR-45). Rede caída rejeita.
+ */
+export async function sessaoContinua() {
+  try {
+    await renovar();
+    return true;
+  } catch (erro) {
+    if (refreshRecusado(erro)) return false;
+    throw erro;
+  }
+}
+
+/**
+ * Encerra a sessão só deste lado, sem falar com o servidor: a própria conta acabou de ser
+ * excluída e o servidor já derrubou tudo (e apagou o cookie). Chamar `/auth/logout` agora
+ * daria 401, a renovação também, e a pessoa leria "Sua sessão expirou" logo depois de
+ * excluir a conta de propósito.
+ */
+export function encerrarSessaoLocal() {
   accessToken = null;
   sessao.set({ usuario: null, carregando: false });
 }

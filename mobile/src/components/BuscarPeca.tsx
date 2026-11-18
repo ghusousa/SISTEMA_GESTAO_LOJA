@@ -29,6 +29,7 @@ import {
 
 import { catalogo } from '@/api/endpoints';
 import type { Variante } from '@/api/tipos';
+import { useRespiroDeBaixo, useRespiroDeCima } from '@/components/ui';
 import { formatar, paraCentavos } from '@/lib/money';
 import { ALVO_TOQUE, cores, espaco, fonte, raio } from '@/lib/tema';
 
@@ -44,6 +45,10 @@ interface Props {
 export function BuscarPeca({ aoEscolher, mostrarPreco = false, rotulo = 'Buscar pelo nome' }: Props) {
   const [aberto, setAberto] = useState(false);
   const [termo, setTermo] = useState('');
+  // A folha é um Modal de tela cheia: desenha a partir do zero. O campo desce da barra de
+  // status (e da ilha), e o fim da lista sobe do indicador de início.
+  const respiroDeCima = useRespiroDeCima(espaco.md);
+  const respiroDeBaixo = useRespiroDeBaixo();
 
   const busca = useQuery({
     queryKey: ['busca-peca', termo],
@@ -84,7 +89,7 @@ export function BuscarPeca({ aoEscolher, mostrarPreco = false, rotulo = 'Buscar 
           style={s.tela}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
-          <View style={s.topo}>
+          <View style={[s.topo, { paddingTop: respiroDeCima }]}>
             <TextInput
               value={termo}
               onChangeText={setTermo}
@@ -107,7 +112,7 @@ export function BuscarPeca({ aoEscolher, mostrarPreco = false, rotulo = 'Buscar 
             data={itens}
             keyExtractor={(peca) => String(peca.id)}
             keyboardShouldPersistTaps="handled"
-            contentContainerStyle={s.lista}
+            contentContainerStyle={[s.lista, { paddingBottom: respiroDeBaixo }]}
             ListEmptyComponent={
               busca.isFetching ? null : (
                 <Text style={s.vazio}>
@@ -165,7 +170,6 @@ const s = StyleSheet.create({
     alignItems: 'center',
     gap: espaco.sm,
     padding: espaco.lg,
-    paddingTop: espaco.xl,
     backgroundColor: cores.superficie,
     borderBottomWidth: 1,
     borderBottomColor: cores.borda,

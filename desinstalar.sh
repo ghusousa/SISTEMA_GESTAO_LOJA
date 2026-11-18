@@ -72,8 +72,11 @@ if [ "$MANTER_DADOS" -eq 0 ] && [ "$FAZER_BACKUP" -eq 1 ]; then
         # saída padrão. É um formato binário: qualquer shell no meio do caminho (o cmd do
         # Windows, sobretudo) pode traduzir fim de linha e corromper o arquivo — e um backup
         # corrompido só se descobre no dia em que ele é necessário.
+        # `chmod 600`: é o banco inteiro (CPF, telefones, hashes de senha), e o `docker cp`
+        # traz a permissão de dentro do contêiner, legível por qualquer usuário da máquina.
         if dk compose exec -T db pg_dump -U loja -Fc -f /tmp/backup.dump loja 2>/dev/null \
-           && dk compose cp db:/tmp/backup.dump "$ARQUIVO_BACKUP" >/dev/null 2>&1; then
+           && dk compose cp db:/tmp/backup.dump "$ARQUIVO_BACKUP" >/dev/null 2>&1 \
+           && chmod 600 "$ARQUIVO_BACKUP"; then
             dk compose exec -T db rm -f /tmp/backup.dump >/dev/null 2>&1 || true
             certo "salvo em $(pwd)/$ARQUIVO_BACKUP ($(du -h "$ARQUIVO_BACKUP" | cut -f1))"
             echo
@@ -109,7 +112,50 @@ fi
 
 # ------------------------------------------------------------------ remoção
 
+como_root() { if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo "$@"; fi; }
+
+# As rotinas da máquina param junto. Com a loja desligada, cada uma falharia na hora marcada,
+# o vigia mandaria "loja fora do ar" ao celular de quem acabou de desligá-la, e a atualização
+# sozinha faria `up -d` e ligaria de novo a loja que se quis desligar.
+#
+# Com --manter-dados ("só desligar"), quais estavam ligadas fica anotado em
+# docker/estado/rotinas, e o ./instalar.sh religa AS MESMAS: o backup do Drive continua
+# "ligado" na tela e no banco, e sem o timer dele a loja voltaria do desligamento sem cópia
+# de fora nenhuma — calada, porque nada falha quando um timer simplesmente não existe.
+desligar_rotinas() {
+    local dir="${DIR_SYSTEMD:-/etc/systemd/system}" u desligou=0 minutos
+    local plist="${HOME:-/root}/Library/LaunchAgents/br.loja.backup.plist"
+    if [ -f "$plist" ]; then
+        launchctl unload -w "$plist" >/dev/null 2>&1 || true
+        rm -f "$plist"
+        certo "cópia diária desligada (launchd)"
+    fi
+    command -v systemctl >/dev/null 2>&1 || return 0
+    if [ "$MANTER_DADOS" -eq 1 ]; then
+        mkdir -p docker/estado
+        : > docker/estado/rotinas
+        for u in loja-backup-nuvem loja-atualizar; do
+            [ -f "$dir/$u.timer" ] || continue
+            if [ "$u" = "loja-atualizar" ]; then
+                minutos="$(sed -n 's/^OnUnitActiveSec=\([0-9][0-9]*\)min$/\1/p' "$dir/$u.timer" | head -1)"
+                printf '%s %s\n' "$u" "${minutos:-10}" >> docker/estado/rotinas
+            else
+                printf '%s\n' "$u" >> docker/estado/rotinas
+            fi
+        done
+    fi
+    for u in loja-vigia loja-backup loja-backup-nuvem loja-atualizar; do
+        [ -f "$dir/$u.timer" ] || continue
+        como_root systemctl disable --now "$u.timer" >/dev/null 2>&1 || true
+        como_root rm -f "$dir/$u.timer" "$dir/$u.service"
+        desligou=1
+        certo "$u desligado"
+    done
+    if [ "$desligou" -eq 1 ]; then como_root systemctl daemon-reload >/dev/null 2>&1 || true; fi
+}
+
 titulo "Removendo"
+desligar_rotinas
 if [ "$MANTER_DADOS" -eq 1 ]; then
     dk compose down
     certo "containers removidos; volumes preservados"

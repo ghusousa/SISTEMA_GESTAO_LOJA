@@ -1,19 +1,29 @@
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
-from app.core.deps import ExigeDinheiro, SessionDep
+from app.core.deps import CurrentUser, ExigeDinheiro, SessionDep
+from app.core.pagination import Pagina, Paginacao, paginacao
+from app.modules.relatorios.giro import GiroService
 from app.modules.relatorios.schemas import (
+    CurvaAbcOut,
     DespesaCategoriaOut,
     DiaVendaOut,
     EstoqueBaixoOut,
     MaisVendidoOut,
+    RecebivelOut,
+    MeuDiaOut,
+    PaginaEstoqueParado,
+    PaginaVendedoras,
     ResumoOut,
+    ValorEstoqueOut,
 )
 from app.modules.relatorios.service import RelatorioService
+from app.modules.relatorios.vendedoras import VendedorasService
 
-# Resultado do negócio é informação de dono: o módulo inteiro é ADMIN.
+# Resultado do negócio é informação de quem vê dinheiro (VER_DINHEIRO). A única rota aberta
+# a toda a equipe é `/meu-dia`: o placar da própria pessoa, sem custo nem lucro.
 router = APIRouter(prefix="/relatorios", tags=["relatorios"])
 
 Inicio = Annotated[date, Query(description="Primeiro dia do período (inclusive)")]
@@ -66,8 +76,101 @@ async def despesas_por_categoria(
 
 @router.get(
     "/estoque-baixo",
-    response_model=list[EstoqueBaixoOut],
-    summary="Peças no estoque mínimo ou abaixo (sem período: é o agora)",
+    response_model=Pagina[EstoqueBaixoOut],
+    summary="Peças no estoque mínimo ou abaixo, mais urgentes primeiro (sem período: é o agora)",
 )
-async def estoque_baixo(session: SessionDep, _: ExigeDinheiro) -> list[EstoqueBaixoOut]:
-    return await RelatorioService(session).estoque_baixo()
+async def estoque_baixo(
+    session: SessionDep,
+    _: ExigeDinheiro,
+    p: Annotated[Paginacao, Depends(paginacao)],
+) -> Pagina[EstoqueBaixoOut]:
+    # Paginada como toda listagem. Quem só mostra "N peças no mínimo" pede `size=1` e lê
+    # o `total` — não baixa a lista inteira para contar.
+    return await RelatorioService(session).estoque_baixo(p)
+
+
+@router.get(
+    "/recebiveis",
+    response_model=Pagina[RecebivelOut],
+    summary="Agenda do cartão: bruto, taxa e líquido por dia previsto de crédito",
+)
+async def recebiveis(
+    session: SessionDep,
+    _: ExigeDinheiro,
+    inicio: Inicio,
+    fim: Fim,
+    p: Annotated[Paginacao, Depends(paginacao)],
+) -> Pagina[RecebivelOut]:
+    # O período é o da DATA PREVISTA de crédito, não o da venda: "quanto cai na conta em
+    # dezembro" inclui a 3ª parcela de uma venda de outubro.
+    return await RelatorioService(session).recebiveis(inicio, fim, p)
+
+
+# ------------------------------------------------------------------ equipe (ADR-37)
+
+
+@router.get(
+    "/vendedoras",
+    response_model=PaginaVendedoras,
+    summary="Faturamento líquido, peças, ticket médio e comissão de cada pessoa da equipe",
+)
+async def vendedoras(
+    session: SessionDep,
+    _: ExigeDinheiro,
+    inicio: Inicio,
+    fim: Fim,
+    p: Annotated[Paginacao, Depends(paginacao)],
+) -> PaginaVendedoras:
+    return await VendedorasService(session).relatorio(inicio, fim, p)
+
+
+@router.get(
+    "/meu-dia",
+    response_model=MeuDiaOut,
+    summary="Quanto quem está logado vendeu hoje, e quanto falta para a meta",
+)
+async def meu_dia(session: SessionDep, usuario: CurrentUser) -> MeuDiaOut:
+    # Sem crachá de propósito: cada um vê SÓ o próprio número (o id vem do token, não da
+    # URL), e a resposta não tem custo, lucro nem a comissão de ninguém.
+    return await VendedorasService(session).meu_dia(usuario)
+
+
+# ------------------------------------------------------- giro do estoque (ADR-38)
+
+
+@router.get(
+    "/estoque-parado",
+    response_model=PaginaEstoqueParado,
+    summary="Peças com saldo sem vender há mais de N dias, as mais antigas primeiro",
+)
+async def estoque_parado(
+    session: SessionDep,
+    _: ExigeDinheiro,
+    p: Annotated[Paginacao, Depends(paginacao)],
+    dias: Annotated[int, Query(ge=1, le=3650, description="Parada há mais de quantos dias")] = 90,
+) -> PaginaEstoqueParado:
+    return await GiroService(session).estoque_parado(dias, p)
+
+
+@router.get(
+    "/curva-abc",
+    response_model=Pagina[CurvaAbcOut],
+    summary="Produtos por faturamento líquido no período, com % acumulado e classe A/B/C",
+)
+async def curva_abc(
+    session: SessionDep,
+    _: ExigeDinheiro,
+    inicio: Inicio,
+    fim: Fim,
+    p: Annotated[Paginacao, Depends(paginacao)],
+) -> Pagina[CurvaAbcOut]:
+    return await GiroService(session).curva_abc(inicio, fim, p)
+
+
+@router.get(
+    "/valor-do-estoque",
+    response_model=ValorEstoqueOut,
+    summary="Peças, valor em custo e em preço de venda da loja inteira (o agora, sem período)",
+)
+async def valor_do_estoque(session: SessionDep, _: ExigeDinheiro) -> ValorEstoqueOut:
+    return await GiroService(session).valor_do_estoque()

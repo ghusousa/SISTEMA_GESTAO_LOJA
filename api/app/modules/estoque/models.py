@@ -25,6 +25,16 @@ class TipoMovimento(StrEnum):
     VENDA = "VENDA"            # baixa do PDV
     ESTORNO = "ESTORNO"        # devolução por cancelamento de venda INTEIRA
     DEVOLUCAO = "DEVOLUCAO"    # peça devolvida pela cliente, venda continua de pé
+    #: A peça foi para a casa da cliente provar (ADR-39). Sai do disponível — não pode ser
+    #: vendida de novo no balcão — mas continua sendo da loja.
+    CONDICIONAL_SAIDA = "CONDICIONAL_SAIDA"
+    #: A condicional fechou: TUDO volta por aqui, e o que ficou com a cliente sai em seguida
+    #: por uma VENDA comum. Um caminho de venda só, com caixa, comissão e recibo de sempre.
+    CONDICIONAL_RETORNO = "CONDICIONAL_RETORNO"
+
+
+#: O CHECK do banco sai da própria enum: tipo novo sem constraint nova é erro no INSERT.
+_TIPOS = "','".join(TipoMovimento)
 
 
 class StockBalance(Base):
@@ -66,23 +76,24 @@ class StockMovement(Base):
 
     __tablename__ = "stock_movements"
     __table_args__ = (
-        CheckConstraint(
-            "movement_type IN ('ENTRADA','AJUSTE','INVENTARIO','VENDA','ESTORNO','DEVOLUCAO')",
-            name="movement_type",
-        ),
+        CheckConstraint(f"movement_type IN ('{_TIPOS}')", name="movement_type"),
         CheckConstraint("quantity <> 0", name="quantity"),
         Index("ix_stock_movements_variant_id_created_at", "variant_id", "created_at"),
         Index("ix_stock_movements_sale_id", "sale_id"),
         Index("ix_stock_movements_entry_id", "entry_id"),
         Index("ix_stock_movements_return_id", "return_id"),
+        Index("ix_stock_movements_consignment_id", "consignment_id"),
         Index("ix_stock_movements_movement_type_created_at", "movement_type", "created_at"),
+        # O extrato filtra por período (`created_at >= inicio AND < fim`, ADR-27) e conta o
+        # total: sem índice na coluna crua, contar um mês lia o histórico inteiro.
+        Index("ix_stock_movements_created_at", "created_at"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     variant_id: Mapped[int] = mapped_column(
         ForeignKey("product_variants.id", ondelete="RESTRICT"), nullable=False
     )
-    movement_type: Mapped[str] = mapped_column(String(12), nullable=False)
+    movement_type: Mapped[str] = mapped_column(String(20), nullable=False)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)  # com sinal
     balance_after: Mapped[int] = mapped_column(Integer, nullable=False)
     entry_id: Mapped[int | None] = mapped_column(
@@ -93,6 +104,12 @@ class StockMovement(Base):
     #: qual peça devolvida por quem — e conferir uma diferença de estoque vira pesquisa.
     return_id: Mapped[int | None] = mapped_column(
         ForeignKey("sale_returns.id", ondelete="RESTRICT")
+    )
+    #: De qual condicional veio (saída ou retorno). O extrato diz "Condicional #12" e a
+    #: tela abre a ficha dela: o nome da cliente NÃO vai na observação, porque o extrato é
+    #: append-only e a exclusão de cliente apaga o dado pessoal (LGPD).
+    consignment_id: Mapped[int | None] = mapped_column(
+        ForeignKey("consignments.id", ondelete="RESTRICT")
     )
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
     note: Mapped[str | None] = mapped_column(Text)

@@ -39,8 +39,14 @@ engine = create_async_engine(
     settings.database_url,
     echo=settings.db_echo,
     pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20,
+    # 10 + 20 na loja; pequeno na Vercel, onde cada instância da função tem o seu (ADR-42).
+    pool_size=settings.db_pool_size,
+    max_overflow=settings.db_max_overflow,
+    # `statement_timeout` por CONEXÃO (vai no startup do asyncpg, antes do primeiro
+    # comando): consulta que passa do teto é cancelada pelo próprio Postgres e volta como
+    # erro, em vez de seguir ocupando o banco depois que o celular já desistiu dela. Junto
+    # vão o SSL e o modo PgBouncer quando a URL é a do Neon (`core/url_do_banco.py`).
+    connect_args=settings.connect_args(),
 )
 
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)

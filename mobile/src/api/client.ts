@@ -5,10 +5,15 @@
  * vencido, um refresh por requisição rotacionaria o token cinco vezes e a API — que revoga a
  * família inteira ao ver reuso — derrubaria a sessão. Por isso o refresh acontece sob um
  * mutex: o primeiro renova, os outros esperam a mesma promessa e refazem a requisição.
+ *
+ * E só o servidor recusando o token derruba a sessão (`refreshRecusado`). Refresh que cai
+ * na rede rejeita a requisição com o erro de rede e deixa token e carrinho onde estavam.
  */
 
 import axios, { AxiosError, type AxiosInstance, type InternalAxiosRequestConfig } from 'axios';
 
+import { montarUrlDaFoto } from '../lib/enderecoDaFoto';
+import { refreshRecusado } from '../lib/renovacao';
 import { lerAccessToken, lerRefreshToken, limparSessao, salvarTokens } from './sessao';
 import { enderecoSugerido, servidorEmCache } from './servidor';
 import type { ErroApi, Tokens } from './tipos';
@@ -25,6 +30,17 @@ export const api: AxiosInstance = axios.create({
   timeout: 15000,
   headers: { 'Content-Type': 'application/json' },
 });
+
+declare module 'axios' {
+  interface AxiosRequestConfig {
+    /**
+     * O 401 desta requisição volta direto para quem chamou, sem renovar nem deslogar por
+     * "sessão vencida". Só a nova tentativa de "Excluir minha conta" depois de uma sem
+     * resposta usa: ali o 401 pode querer dizer que a conta já saiu (`sessaoContinua`).
+     */
+    semRenovar?: boolean;
+  }
+}
 
 type Pendente = InternalAxiosRequestConfig & { _jaTentouRefresh?: boolean };
 
@@ -46,6 +62,12 @@ api.interceptors.request.use(async (config) => {
   return config;
 });
 
+/**
+ * O token novo, ou `null` quando a sessão acabou de verdade (sem refresh no cofre, ou o
+ * servidor o recusou). Falha de rede, timeout e 5xx REJEITAM: não são resposta sobre o
+ * token, e tratá-las como `null` apagava um refresh válido e esvaziava o carrinho do PDV a
+ * cada oscilação do Wi-Fi da loja.
+ */
 async function renovarSessao(): Promise<string | null> {
   const refresh = await lerRefreshToken();
   if (!refresh) return null;
@@ -58,8 +80,9 @@ async function renovarSessao(): Promise<string | null> {
     );
     await salvarTokens(data.access_token, data.refresh_token);
     return data.access_token;
-  } catch {
-    return null;
+  } catch (erro) {
+    if (axios.isAxiosError(erro) && refreshRecusado(erro.response?.status)) return null;
+    throw erro;
   }
 }
 
@@ -70,14 +93,30 @@ api.interceptors.response.use(
     const ehLoginOuRefresh =
       original?.url?.includes('/auth/login') || original?.url?.includes('/auth/refresh');
 
-    if (erro.response?.status !== 401 || !original || original._jaTentouRefresh || ehLoginOuRefresh) {
+    if (
+      erro.response?.status !== 401 ||
+      !original ||
+      original._jaTentouRefresh ||
+      original.semRenovar ||
+      ehLoginOuRefresh
+    ) {
       return Promise.reject(erro);
     }
 
     original._jaTentouRefresh = true;
-    refreshEmAndamento = refreshEmAndamento ?? renovarSessao();
-    const novoToken = await refreshEmAndamento;
-    refreshEmAndamento = null;
+    // A promessa se solta sozinha ao terminar (bem ou mal): agora ela também pode rejeitar,
+    // e quem esperava não pode deixar o mutex preso numa renovação que já falhou.
+    refreshEmAndamento ??= renovarSessao().finally(() => {
+      refreshEmAndamento = null;
+    });
+    let novoToken: string | null;
+    try {
+      novoToken = await refreshEmAndamento;
+    } catch (erroDoRefresh) {
+      // Rede caiu no meio da renovação: a requisição falha como falha de rede (é isso que
+      // `mensagemDoErro` e o BannerConexao mostram) e a sessão fica. A próxima tenta de novo.
+      return Promise.reject(erroDoRefresh);
+    }
 
     if (!novoToken) {
       await limparSessao();
@@ -90,6 +129,18 @@ api.interceptors.response.use(
   },
 );
 
+/**
+ * O servidor ainda reconhece esta sessão? Renova o crachá pelo mesmo mutex do interceptor e
+ * responde `false` só quando o servidor RECUSA o refresh (401/403) — sem deslogar: quem
+ * perguntou decide o que dizer (a conta que já saiu, ADR-45). Rede caída rejeita.
+ */
+export async function sessaoContinua(): Promise<boolean> {
+  refreshEmAndamento ??= renovarSessao().finally(() => {
+    refreshEmAndamento = null;
+  });
+  return (await refreshEmAndamento) !== null;
+}
+
 /** Extrai a mensagem que o usuário deve ler. A API sempre manda `message` em português. */
 export function mensagemDoErro(erro: unknown, padrao = 'Não foi possível concluir.'): string {
   if (axios.isAxiosError<ErroApi>(erro)) {
@@ -98,6 +149,11 @@ export function mensagemDoErro(erro: unknown, padrao = 'Não foi possível concl
     if (!erro.response) return 'Sem conexão com o servidor da loja.';
   }
   return padrao;
+}
+
+/** O status HTTP da resposta, ou 0 quando o servidor nem respondeu (rede caída, tempo). */
+export function statusDoErro(erro: unknown): number {
+  return axios.isAxiosError(erro) ? (erro.response?.status ?? 0) : 0;
 }
 
 export function codigoDoErro(erro: unknown): string | null {
@@ -109,11 +165,9 @@ export function detalheDoErro(erro: unknown): Record<string, unknown> | null {
 }
 
 /**
- * A API grava a foto como caminho relativo ("/media/produtos/x.jpg") de propósito: montar a
- * URL a partir do header Host deixaria um atacante gravar o próprio domínio no banco.
- * Quem exibe a imagem completa o endereço aqui.
+ * Foto do disco da loja vem relativa ("/media/produtos/x.jpg") e ganha o servidor do aparelho;
+ * foto no Vercel Blob vem com URL absoluta e passa como está (`lib/enderecoDaFoto.ts`, ADR-42).
  */
 export function urlDaFoto(caminho: string | null | undefined): string | null {
-  if (!caminho) return null;
-  return caminho.startsWith("http") ? caminho : `${baseAtual()}${caminho}`;
+  return montarUrlDaFoto(caminho, baseAtual());
 }

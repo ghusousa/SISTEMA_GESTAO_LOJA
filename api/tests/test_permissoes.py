@@ -16,6 +16,8 @@ A leitura é a própria tabela:
     editar catálogo       ✓       ✓          ✓           ✗
     fechar caixa          ✓       ✓          ✓           ✗
     vendas de todos       ✓       ✓          ✓           ✗
+    atender cliente       ✓       ✓          ✓           ✓
+    condicional           ✓       ✓          ✓           ✓
     vender e bipar        ✓       ✓          ✓           ✓
 """
 
@@ -29,7 +31,6 @@ from app.modules.usuarios.models import Papel
 
 from conftest import criar_produto
 
-pytestmark = pytest.mark.anyio
 
 
 # --------------------------------------------------------------- a tabela, sem HTTP
@@ -46,10 +47,17 @@ TODOS = [Papel.ADMIN, Papel.GERENTE, Papel.SUPERVISORA, Papel.VENDEDOR]
         (Pode.GERIR_USUARIOS, {Papel.ADMIN, Papel.GERENTE}),
         # Auditoria é só do dono — nem o gerente lê, porque a auditoria audita o gerente também.
         (Pode.VER_AUDITORIA, {Papel.ADMIN}),
+        # Comissão e meta: só o dono. O gerente recebe comissão também (ADR-37).
+        (Pode.DEFINIR_COMISSAO, {Papel.ADMIN}),
         (Pode.VER_VENDAS_DE_TODOS, {Papel.ADMIN, Papel.GERENTE, Papel.SUPERVISORA}),
         (Pode.CORRIGIR_ESTOQUE, {Papel.ADMIN, Papel.GERENTE, Papel.SUPERVISORA}),
         (Pode.EDITAR_CATALOGO, {Papel.ADMIN, Papel.GERENTE, Papel.SUPERVISORA}),
         (Pode.FECHAR_CAIXA, {Papel.ADMIN, Papel.GERENTE, Papel.SUPERVISORA}),
+        # Buscar e cadastrar cliente no balcão é de todo mundo; o fiado, não (ADR-36).
+        (Pode.ATENDER_CLIENTE, set(TODOS)),
+        (Pode.GERIR_CREDIARIO, {Papel.ADMIN, Papel.GERENTE}),
+        # A condicional é atendimento de balcão: da vendedora em diante (ADR-39).
+        (Pode.FAZER_CONDICIONAL, set(TODOS)),
     ],
 )
 def test_tabela_de_permissoes(capacidade: Pode, quem_pode: set[Papel]) -> None:
@@ -57,9 +65,11 @@ def test_tabela_de_permissoes(capacidade: Pode, quem_pode: set[Papel]) -> None:
         assert pode(papel, capacidade) is (papel in quem_pode), f"{papel} x {capacidade}"
 
 
-def test_vendedora_nao_tem_capacidade_nenhuma() -> None:
-    """O papel mais baixo vende e consulta; qualquer poder além disso é engano."""
-    assert PERMISSOES[Papel.VENDEDOR] == frozenset()
+def test_vendedora_so_atende_cliente_e_faz_condicional() -> None:
+    """O papel mais baixo vende, consulta, atende a cliente e leva peça em condicional;
+    qualquer poder além disso é engano. Atender é buscar e cadastrar no balcão, sem saldo
+    nem limite (ADR-36); a condicional é atendimento de balcão (ADR-39)."""
+    assert PERMISSOES[Papel.VENDEDOR] == frozenset({Pode.ATENDER_CLIENTE, Pode.FAZER_CONDICIONAL})
 
 
 def test_a_hierarquia_nao_tem_buraco() -> None:
@@ -153,6 +163,20 @@ async def test_custo_da_peca_so_chega_a_quem_ve_dinheiro(
         ),
         ("GET", "/caixa/dia", None, Pode.FECHAR_CAIXA),
         ("GET", "/usuarios", None, Pode.GERIR_USUARIOS),
+        (
+            "GET",
+            "/relatorios/vendedoras?inicio=2026-01-01&fim=2026-12-31",
+            None,
+            Pode.VER_DINHEIRO,
+        ),
+        (
+            "GET",
+            "/relatorios/curva-abc?inicio=2026-01-01&fim=2026-12-31",
+            None,
+            Pode.VER_DINHEIRO,
+        ),
+        ("GET", "/relatorios/estoque-parado", None, Pode.VER_DINHEIRO),
+        ("GET", "/relatorios/valor-do-estoque", None, Pode.VER_DINHEIRO),
     ],
 )
 async def test_portas_de_leitura(

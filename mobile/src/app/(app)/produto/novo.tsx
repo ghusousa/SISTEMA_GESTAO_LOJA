@@ -27,12 +27,13 @@ import { mensagemDoErro } from '@/api/client';
 import { catalogo, estoque, type VariantePayload } from '@/api/endpoints';
 import { Scanner } from '@/components/Scanner';
 import { gerarUuid } from '@/lib/uuid';
-import { Botao, Campo, Carregando, Etiqueta } from '@/components/ui';
+import { Botao, Campo, Carregando, Etiqueta, useRespiroDeBaixo } from '@/components/ui';
 import { formatarSemSimbolo, paraCentavos, paraDecimalString } from '@/lib/money';
 import { chaves, invalidarAposMovimentoEstoque, queryClient } from '@/lib/queryClient';
 import { useAuthStore } from '@/stores/authStore';
 import { PODE, pode } from '@/lib/permissoes';
 import { NovaCategoria } from '@/components/NovaCategoria';
+import { CamposFiscais, paraPayload, valoresIniciais } from '@/components/CamposFiscais';
 import { SeletorDeFoto } from '@/components/SeletorDeFoto';
 import type { FotoEscolhida } from '@/lib/foto';
 import { ALVO_TOQUE, cores, espaco, fonte, raio } from '@/lib/tema';
@@ -56,6 +57,7 @@ export default function NovoProduto() {
   // recusaria para sempre e o cadastro não teria saída nenhuma.
   const [eixo1Digitado, setEixo1Digitado] = useState('');
   const router = useRouter();
+  const respiroDeBaixo = useRespiroDeBaixo();
   const params = useLocalSearchParams<{ codigo?: string; retorno?: string }>();
   const veioDoPdv = params.retorno === 'pdv';
   // A SPEC diz que o vendedor não vê preço de custo. Ele cadastra a peça; o custo é
@@ -75,6 +77,7 @@ export default function NovoProduto() {
   const [grade, setGrade] = useState<LinhaGrade[]>([]);
   const [bipandoPara, setBipandoPara] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  const [fiscais, setFiscais] = useState(valoresIniciais);
 
   const categorias = useQuery({
     queryKey: chaves.categorias,
@@ -159,6 +162,7 @@ export default function NovoProduto() {
       const produto = await catalogo.criarProduto({
         categoria_id: categoriaId!,
         nome: nome.trim(),
+        ...paraPayload(fiscais),
         variantes,
       });
 
@@ -246,6 +250,8 @@ export default function NovoProduto() {
         />
 
         <SeletorDeFoto uri={foto?.uri} aoEscolher={setFoto} />
+
+        <CamposFiscais valores={fiscais} aoMudar={setFiscais} />
 
         <Text style={s.rotulo}>Categoria</Text>
         <View style={s.chips}>
@@ -437,7 +443,7 @@ export default function NovoProduto() {
         {!!erro && <Text style={s.erro}>{erro}</Text>}
       </ScrollView>
 
-      <View style={s.rodape}>
+      <View style={[s.rodape, { paddingBottom: respiroDeBaixo }]}>
         <Botao
           titulo="Salvar peça"
           grande
@@ -449,6 +455,7 @@ export default function NovoProduto() {
       <Modal visible={!!bipandoPara} animationType="slide" onRequestClose={() => setBipandoPara(null)}>
         <Scanner
           modo="unico"
+          encosta="em-cima-e-embaixo"
           dica="Bipe a etiqueta desta peça"
           aoLer={(codigo) => {
             setGrade((linhas) =>

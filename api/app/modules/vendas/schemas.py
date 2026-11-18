@@ -5,6 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.modules.taxas.models import MAX_PARCELAS
 from app.modules.vendas.models import FormaPagamento, StatusVenda
 
 
@@ -21,6 +22,16 @@ class PagamentoIn(BaseModel):
     #: Obrigatório quando a forma é VALE. Quem decide quanto o vale cobre é o servidor
     #: (ADR-4) — o app manda o código, não o crédito.
     codigo_vale: str | None = Field(default=None, max_length=16)
+    #: Em quantas vezes no crédito. Toda outra forma é 1 — e o banco também recusa (ADR-35).
+    parcelas: int = Field(default=1, ge=1, le=MAX_PARCELAS)
+    #: Visa, Mastercard, Elo… Opcional, só no cartão. Não muda a taxa: serve para conferir o
+    #: extrato da credenciadora.
+    bandeira: str | None = Field(default=None, max_length=20)
+
+    @field_validator("bandeira")
+    @classmethod
+    def _limpar_bandeira(cls, v: str | None) -> str | None:
+        return (v or "").strip() or None
 
     @model_validator(mode="after")
     def _vale_tem_codigo(self) -> "PagamentoIn":
@@ -28,6 +39,10 @@ class PagamentoIn(BaseModel):
             raise ValueError("Pagamento em vale precisa do código do vale.")
         if self.forma != FormaPagamento.VALE and self.codigo_vale:
             raise ValueError("Código de vale só faz sentido em pagamento com vale.")
+        if self.parcelas > 1 and self.forma != FormaPagamento.CREDITO:
+            raise ValueError("Só o crédito parcela.")
+        if self.bandeira and self.forma not in (FormaPagamento.DEBITO, FormaPagamento.CREDITO):
+            raise ValueError("Bandeira só existe em pagamento no cartão.")
         return self
 
 
@@ -85,6 +100,17 @@ class ItemVendaAdminOut(ItemVendaOut):
 class PagamentoOut(BaseModel):
     forma: FormaPagamento
     valor: Decimal
+    parcelas: int = 1
+    bandeira: str | None = None
+
+
+class PagamentoAdminOut(PagamentoOut):
+    """Quem vê dinheiro vê também quanto a maquininha ficou deste pagamento (ADR-35)."""
+
+    #: A taxa do dia da venda, fotografada — não a da tabela de hoje.
+    taxa_percentual: Decimal = Decimal("0.00")
+    #: `valor × taxa_percentual`, em centavos arredondados.
+    taxa: Decimal = Decimal("0.00")
 
 
 class VendaOut(BaseModel):
@@ -111,8 +137,12 @@ class VendaAdminOut(VendaOut):
     """O admin enxerga o custo congelado e, com ele, o lucro daquela venda."""
 
     itens: list[ItemVendaAdminOut]
+    pagamentos: list[PagamentoAdminOut]
     custo_total: Decimal
     lucro_bruto: Decimal
+    #: Soma das taxas da maquininha dos pagamentos desta venda. O `lucro_bruto` NÃO a
+    #: desconta (é preço menos custo, como no resumo); quem desconta é o Resultado.
+    taxas_cartao: Decimal = Decimal("0.00")
 
 
 class VendaResumoOut(BaseModel):

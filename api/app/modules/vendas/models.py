@@ -12,6 +12,7 @@ from sqlalchemy import (
     Index,
     Integer,
     Numeric,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -66,6 +67,10 @@ class Sale(Base):
         CheckConstraint("discount <= subtotal", name="discount_max"),
         CheckConstraint("total = subtotal - discount", name="total_math"),
         CheckConstraint(
+            "comissao_percentual >= 0 AND comissao_percentual <= 100",
+            name="comissao_percentual",
+        ),
+        CheckConstraint(
             "(status = 'CANCELADA' AND cancelled_at IS NOT NULL AND cancelled_by_id IS NOT NULL)"
             " OR (status = 'CONCLUIDA' AND cancelled_at IS NULL AND cancelled_by_id IS NULL)",
             name="cancel_consistency",
@@ -74,6 +79,15 @@ class Sale(Base):
         Index("ix_sales_sold_at", "sold_at"),
         Index("ix_sales_seller_id", "seller_id"),
         Index("ix_sales_status_sold_at", "status", "sold_at"),
+        # "Quanto a cliente deve" soma as vendas DELA, e a lista de Clientes faz essa conta
+        # para cada cliente. O UNIQUE (id, customer_id) acima não serve: customer_id é a
+        # segunda coluna, então cada cliente varria o índice inteiro — 70 s para abrir a
+        # tela com 20 mil clientes. Parcial porque a maioria das vendas não tem cliente.
+        Index(
+            "ix_sales_customer_id",
+            "customer_id",
+            postgresql_where=text("customer_id IS NOT NULL"),
+        ),
         # "Dia" do comércio no fuso da loja: usado por relatórios e fechamento de caixa.
         Index(
             "ix_sales_business_date",
@@ -89,6 +103,10 @@ class Sale(Base):
     subtotal: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     discount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0)
     total: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    #: A % da comissão de quem vendeu, FOTOGRAFADA na venda (ADR-37) — como o custo em
+    #: `sale_items` e a taxa em `sale_payments`. O dono mudar a % amanhã não reescreve a
+    #: folha de um mês já pago. Sem padrão: venda que esquecesse a % viraria comissão zero.
+    comissao_percentual: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
     sold_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -141,7 +159,14 @@ class SaleItem(Base):
         # OUTRA venda ou variante trocada. Quatro linhas de DDL no lugar de uma classe
         # inteira de bug no service.
         UniqueConstraint("id", "sale_id", "variant_id", name="id_sale_id_variant_id"),
-        Index("ix_sale_items_sale_id", "sale_id"),
+        # INCLUDE: o CMV, as peças por dia e os mais vendidos leem só estas colunas dos
+        # itens de um período. Com elas no índice, a soma do mês sai do índice (Index Only
+        # Scan) em vez de varrer os anos de `sale_items` atrás de dez mil linhas.
+        Index(
+            "ix_sale_items_sale_id",
+            "sale_id",
+            postgresql_include=["variant_id", "quantity", "unit_price", "unit_cost"],
+        ),
         Index("ix_sale_items_variant_id", "variant_id"),
     )
 
@@ -185,7 +210,35 @@ class SalePayment(Base):
             ["sales.id", "sales.customer_id"],
             name="sale_id_customer_id_sales",
         ),
+        # Parcelado só existe no crédito: "débito em 3x" ou "PIX em 2x" é erro de tela, e
+        # viraria três recebíveis que a conta nunca recebe (ADR-35).
+        CheckConstraint(
+            "parcelas >= 1 AND (parcelas = 1 OR method = 'CREDITO')", name="parcelas"
+        ),
+        # Bandeira e prazo são do cartão; taxa só o cartão paga. O prazo é obrigatório no
+        # cartão porque é dele que sai a data da agenda de recebíveis.
+        CheckConstraint(
+            "bandeira IS NULL OR method IN ('DEBITO','CREDITO')", name="bandeira_so_cartao"
+        ),
+        CheckConstraint(
+            "taxa_percentual >= 0 AND taxa_percentual < 100"
+            " AND (taxa_percentual = 0 OR method IN ('DEBITO','CREDITO'))",
+            name="taxa_percentual",
+        ),
+        CheckConstraint(
+            "(method IN ('DEBITO','CREDITO')) = (prazo_dias IS NOT NULL)"
+            " AND (prazo_dias IS NULL OR prazo_dias >= 0)",
+            name="prazo_so_cartao",
+        ),
         Index("ix_sale_payments_sale_id", "sale_id"),
+        # Só o fiado: "vendido a prazo" no resumo do mês e a dívida de cada cliente somam
+        # exatamente isto, e é uma fração pequena dos pagamentos.
+        Index(
+            "ix_sale_payments_fiado",
+            "sale_id",
+            postgresql_include=["amount"],
+            postgresql_where=text("method = 'FIADO'"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -195,6 +248,21 @@ class SalePayment(Base):
     voucher_id: Mapped[int | None] = mapped_column(ForeignKey("vouchers.id", ondelete="RESTRICT"))
     #: Só preenchido em pagamento FIADO — e então igual ao cliente da venda (FK composta).
     customer_id: Mapped[int | None] = mapped_column()
+    #: Em quantas vezes a cliente parcelou no crédito. 1 em toda outra forma.
+    parcelas: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=1, server_default="1"
+    )
+    #: Visa, Mastercard, Elo… Opcional e livre: serve para conferir o extrato da
+    #: credenciadora, não para calcular nada.
+    bandeira: Mapped[str | None] = mapped_column(String(20))
+    #: Taxa da maquininha FOTOGRAFADA na venda (ADR-35). Mudar a tabela de taxas amanhã não
+    #: reescreve o resultado de hoje — mesmo princípio do custo congelado em `sale_items`.
+    taxa_percentual: Mapped[Decimal] = mapped_column(
+        Numeric(5, 2), nullable=False, default=Decimal("0.00"), server_default="0"
+    )
+    #: Dias até cair na conta (no parcelado, a 1ª parcela; as outras de 30 em 30). Também
+    #: fotografado: a agenda de recebíveis não muda porque o contrato mudou depois.
+    prazo_dias: Mapped[int | None] = mapped_column(SmallInteger)
 
     sale: Mapped[Sale] = relationship(
         back_populates="payments", foreign_keys="SalePayment.sale_id"

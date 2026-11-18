@@ -13,10 +13,10 @@ o superior não tenha.
 
 | Cargo | Além do degrau anterior | O que NÃO alcança |
 |---|---|---|
-| **Vendedora** (`VENDEDOR`) | Vende no PDV, bipa e consulta preço, cadastra peça nova, dá entrada de mercadoria | Custo, lucro, despesas, relatórios, estorno, ajuste de estoque, inventário, vendas das colegas |
+| **Vendedora** (`VENDEDOR`) | Vende no PDV, bipa e consulta preço, cadastra peça nova, dá entrada de mercadoria (sem a nota do fornecedor); busca e cadastra cliente no balcão e põe o nome dela em qualquer venda, sem ver saldo nem limite; leva peça em condicional e a fecha; vê no PDV quanto ela mesma vendeu hoje contra a meta do dia | Custo, lucro, despesas, relatórios, estorno, ajuste de estoque, inventário, vendas e números das colegas, fiado, taxa da maquininha |
 | **Supervisora** (`SUPERVISORA`) | Ajusta estoque, faz inventário, edita e exclui produtos e categorias, confere e fecha o caixa do dia, vê as vendas de toda a equipe | Custo, lucro, despesas, relatórios, estorno, devolução, crediário, logins da equipe |
-| **Gerente** (`GERENTE`) | Vê custo, lucro e margem; lança despesas; abre relatórios; cancela venda concluída; recebe peça de volta (devolução) e cuida do crediário; administra os logins da equipe | A conta do dono (não cria, não promove, não edita, não redefine a senha dele), o **diário de auditoria** e o **nome da loja** — a identidade do negócio é do dono |
-| **Dono** (`ADMIN`) | Tudo, inclusive criar e promover outro dono, o **diário de auditoria** (tudo que cada login fez) e o **nome e ramo da loja** | — |
+| **Gerente** (`GERENTE`) | Vê custo, lucro e margem; lança despesas; abre relatórios (inclusive a comissão de cada um, e lê as taxas da maquininha que o resultado desconta); cancela venda concluída; recebe peça de volta (devolução) e cuida do crediário; administra os logins da equipe | A conta do dono (não cria, não promove, não edita, não redefine a senha dele), o **diário de auditoria**, o **nome da loja**, a **tabela de taxas da maquininha** e a **comissão e meta** da equipe — a identidade e os contratos do negócio são do dono, e quem recebe comissão não decide quanto |
+| **Dono** (`ADMIN`) | Tudo, inclusive criar e promover outro dono, o **diário de auditoria** (tudo que cada login fez), o **nome e ramo da loja**, a **tabela de taxas da maquininha** e a **% de comissão e a meta do dia** de cada pessoa | — |
 
 **Quatro decisões que a loja tomou e que o sistema faz valer:**
 
@@ -39,7 +39,9 @@ para não oferecer um botão que não funciona.
 o **app** (Android/iOS) para andar pela loja bipando com a câmera, e o **sistema web** no
 computador do balcão, onde o leitor USB digita o código como teclado e o teclado resolve
 o que é chato no celular — digitar preço, lançar despesa, fechar o caixa, editar a grade.
-A loja consegue operar 100% sem celular.
+A loja consegue operar 100% sem celular. E o contrário também ajuda: sem leitor USB (ou
+com um só para dois caixas), **o celular vira o leitor do computador** — pareado por um QR,
+cada bipe na câmera cai no campo do leitor da tela do computador (ADR-43).
 
 ## Entidades centrais
 
@@ -51,16 +53,31 @@ A loja consegue operar 100% sem celular.
   estorno). O saldo nunca é editado direto: é consequência das movimentações. Isso dá auditoria
   completa ("por que tenho 3 e não 5?").
 - **Venda** — o que saiu no PDV: itens (com preço e custo **congelados** no momento da venda),
-  pagamentos (pode ser misto) e desconto.
+  pagamentos (pode ser misto) e desconto. Pode levar o nome da cliente, em qualquer forma de
+  pagamento. No crédito, guarda em quantas vezes (1 a 12) e a bandeira; no cartão, a taxa da
+  maquininha e o prazo para cair na conta, **congelados** no momento da venda.
+- **Taxa da maquininha** — o contrato do dono com a credenciadora: quanto o débito e cada faixa
+  de parcelas do crédito custam, e em quantos dias o dinheiro cai. O resultado do mês desconta
+  essas taxas, e a agenda de recebíveis mostra quanto cai na conta em cada dia.
 - **Devolução** — a cliente voltou com a peça. Registra o que voltou, quanto saiu e por qual
   forma. Cada peça decide se volta ao estoque (a manchada não volta). Não existe "modo
   troca": troca é devolução + venda nova.
 - **Vale de troca** — papel com código, gerado quando o valor não pode voltar pela forma que
   entrou. Vale como pagamento na próxima compra, inteiro ou em parte.
-- **Cliente do crediário** — quem leva no fiado. Tem nome, telefone e um limite **combinado**
-  que avisa, mas não bloqueia. Quanto deve é sempre calculado, nunca guardado.
+- **Cliente** — quem compra. Tem nome, telefone, aniversário e preferências (tamanho, estilo); o
+  balcão busca e cadastra sem ver dinheiro, e a ficha mostra todas as compras dela. Quem leva no
+  **fiado** tem também um limite **combinado** que avisa, mas não bloqueia, e quanto deve é
+  sempre calculado, nunca guardado. Quitada, pode ter o cadastro excluído a pedido dela: nome,
+  telefone, documento, aniversário, preferências e observação são apagados na hora (o cadastro
+  vira "Cliente removido") e as compras ficam no histórico, sem o nome.
 - **Despesa** — saída de dinheiro que não é compra de mercadoria (aluguel, energia, salário...),
   com categoria e marcação de recorrente.
+- **Condicional** — as peças que a cliente leva para provar em casa, com prazo para voltar.
+  Enquanto estão com ela, saem do saldo: ninguém as vende de novo no balcão. Fechada, o que
+  voltou é estoque de novo e o que ficou vira uma venda comum, ligada à condicional.
+- **Conta a pagar** — uma parcela que a loja deve ao fornecedor (valor, vencimento, número da
+  nota, paga ou aberta). Nasce com a Entrada da mercadoria. **Não é despesa e não entra no
+  Resultado**: o custo da mercadoria já entra pelo CMV quando a peça é vendida.
 - **Fechamento de caixa** — conferência diária: quanto o sistema esperava por forma de pagamento
   versus quanto foi contado.
 - **A loja** — o nome do negócio e o ramo dele. O nome sai na tela de entrada e no recibo do
@@ -70,7 +87,9 @@ A loja consegue operar 100% sem celular.
 - **Registro de auditoria** — uma linha para cada ação que alguém faz logado (vender, cancelar,
   dar entrada, editar cadastro, entrar no sistema, errar a senha). Guarda quem, o quê, quando e
   de onde, com o nome e o cargo **congelados** no momento — renomear a pessoa depois não reescreve
-  o histórico. Só o dono lê.
+  o histórico. Só o dono lê. Não guarda e-mail à toa (erro de login com e-mail sem conta fica
+  mascarado; excluir a conta mascara o e-mail dela) e apaga o que passou do prazo (dois anos por
+  padrão).
 
 ## Casos de uso principais
 
@@ -98,13 +117,55 @@ A loja consegue operar 100% sem celular.
    toque, já com o valor da dívida preenchido.
 7. **Dar o recibo à cliente** — o papel de sempre: o que levou, quanto pagou, quando, com
    quem. No computador sai na impressora de bobina; no celular vai pelo WhatsApp. Não é nota
-   fiscal, e está escrito no rodapé.
+   fiscal, e está escrito no rodapé; com NFC-e autorizada, o recibo traz a chave dela.
 8. **Lançar despesas** — valor, categoria, data, se é recorrente. Despesas recorrentes podem ser
-   replicadas para a competência seguinte sem duplicar.
+   replicadas para a competência seguinte sem duplicar; desmarcar "recorrente" no último mês
+   faz a conta fixa parar ali.
 9. **Ver o resultado** — faturamento, custo das mercadorias vendidas (CMV), lucro bruto, despesas e
    resultado do período; produtos mais vendidos; peças com estoque abaixo do mínimo; curva de vendas
    por dia.
+   - **Vendas e comissão por vendedora**: faturamento líquido (vendido menos devolvido), peças,
+     ticket médio e comissão de cada pessoa no período, com o total a pagar. A vendedora vê no
+     PDV só o próprio dia: "hoje: R$ X de R$ meta".
+   - **Giro do estoque**: estoque parado (peças com saldo sem vender há mais de N dias, com o
+     dinheiro parado nelas), curva ABC dos produtos pelo faturamento do período, e o valor da
+     arara inteira em custo e em preço de venda.
 10. **Fechar o caixa do dia** — conferir o esperado por forma de pagamento contra o contado.
+11. **Levar em condicional** — escolher a cliente, bipar (ou buscar pelo nome) as peças que ela
+    vai provar e combinar o prazo; as peças saem do estoque. Na volta, dizer quantas voltaram de
+    cada peça e cobrar o que ficou, como no PDV — no crédito, em quantas vezes e em que
+    bandeira. A lista de vencidas é a das ligações do dia.
+12. **Pagar o fornecedor** — na Entrada, quem vê dinheiro informa o valor da nota e as parcelas
+    (o sistema sugere 30/60/90); elas aparecem em Contas a pagar, com o aviso do que venceu e do
+    que vence nos próximos 7 dias. Pagou, marca como paga (dia e forma).
+13. **Emitir a NFC-e** — com o emissor ligado (ADR-41), um toque no detalhe da venda (ou
+    sozinha, logo depois da venda, se o dono ligar). O que faltar — NCM da peça, CNPJ, IE,
+    regime — aparece em lista; sem rede, fica pendente e tenta-se de novo. Cancelar a venda
+    cancela a nota antes; se a SEFAZ recusar (passou de 30 minutos), a venda não é cancelada —
+    nem quando não dá para confirmar com o emissor se a nota pendente foi autorizada.
+14. **Usar o celular como leitor do computador** — quem está no computador clica em
+    "📱 Celular como leitor", no rodapé da lateral (em qualquer tela, qualquer papel): aparece um
+    QR e um código de 6 letras e números (vale 5 min; "Gerar outro" troca). Qualquer pessoa da
+    equipe, logada no app, vai em Mais → "Leitor do computador", lê o QR (ou digita o código) e o
+    celular vira o leitor daquele computador: cada bipe na câmera cai no campo do leitor da tela
+    aberta — PDV, Devolução, Entrada, Inventário ou Condicional nova —, como se fosse o leitor
+    USB, e a lateral do computador mostra de quem é o celular ligado. Com uma janela aberta no
+    computador o código não entra (a tela avisa para bipar de novo); numa tela sem leitor, a tela
+    avisa qual abrir. Enquanto a tela grava (Registrar, Fechar contagem) ou a pessoa do computador
+    digita uma quantidade na lista, o código espera a vez e entra depois — nada some no meio. O
+    que chegou tarde demais (mais de 2 min) o computador avisa; o celular lista o que não saiu
+    quando o leitor para, e marca "confira no computador" o que a rede não confirmou. Vale até alguém desligar (de qualquer um dos dois), sair do sistema, ou 12 h
+    depois; o F5 não desliga. Um celular lê para um computador por vez: ler o código de outro
+    computador desliga o primeiro.
+15. **Excluir uma conta** (ADR-45) — qualquer pessoa exclui a PRÓPRIA conta de dentro do app, em
+    Mais → "Minha conta" → "Excluir minha conta" (no computador, "Minha conta"): a tela diz o que
+    some (o login, as sessões em todos os aparelhos, o celular-leitor, o e-mail no diário) e o que
+    fica (as vendas e o diário, com o nome de quem fez), pede a senha e confirma. Senha errada não
+    derruba a sessão: a tela só pede de novo. Deu certo, o app volta à entrada dizendo "Conta
+    excluída". O único dono não se exclui — a tela diz para passar antes o papel de dono a outra
+    pessoa em Usuários (no app, Mais → Usuários → (pessoa) → "Mudar papel"). Quem administra a
+    equipe exclui a conta de outra pessoa em Mais → Usuários → (pessoa) → "Excluir conta", com
+    confirmação; para um afastamento, segue existindo o Desativar, que se desfaz.
 
 ## Regras de negócio que não podem ser violadas
 
@@ -113,19 +174,44 @@ A loja consegue operar 100% sem celular.
 - A soma dos pagamentos é exatamente igual ao total da venda.
 - Preço e custo do item são congelados na venda — mudar o preço amanhã não altera o lucro de ontem.
 - Cancelar uma venda nunca apaga: marca como CANCELADA e devolve o estoque por movimentação.
+- Peça que volta da cliente (cancelamento ou devolução) volta para uma peça que se vê e se
+  vende: se ela foi excluída do catálogo depois da venda, volta ao catálogo — ou entra na peça
+  ativa com a mesma etiqueta, se a dona já a recadastrou.
 - Desconto existe apenas no total da venda (não por item).
+- Celular como leitor (ADR-43): o bipe chega ao computador **no máximo uma vez** — nem o
+  reenvio de uma rede ruim, nem duas abas abertas o repetem; bipe que esperou mais de 2 minutos
+  **não** é entregue (não cai no carrinho de surpresa); só o celular que aceitou o código bipa por ele;
+  um celular lê para um computador por vez; e o código lido nunca passa pelo aviso de tempo
+  real, só pela rota que confere de quem é o pareamento.
 - Vendedor não recebe custo em nenhuma resposta da API.
 - Retry de rede não duplica venda, entrada, devolução nem recebimento de fiado
-  (idempotência por `client_uuid`).
+  (idempotência por `client_uuid`). E a mesma chave com outro pedido (outras peças, outro
+  pagamento, outra venda) é recusada — nunca respondida com o registro antigo como se fosse ela.
+  Na Entrada, a recusa tira da tela o que já entrou — as peças e, se a entrada gravada já levou
+  a mesma nota do fornecedor (mesmo número; sem número, mesmo valor), a nota também, que já
+  está em Contas a pagar —, e o que falta é registrado sem lançar a mesma dívida duas vezes.
+  Nota diferente da gravada fica e entra com o resto; se não sobrou peça para levá-la, a tela
+  avisa para lançá-la em Contas a pagar.
 - Nunca volta mais peça do que saiu na venda, nem em duas devoluções simultâneas.
 - O que a devolução paga respeita o que cada forma recebeu: não sai da gaveta dinheiro que
   nunca entrou nela.
 - Devolução é reconhecida no dia em que acontece — nunca reescreve o caixa de um dia fechado.
+  Pelo mesmo motivo, venda de um dia cujo caixa já foi fechado não se cancela: devolve-se.
 - Fiado e vale nunca contam como dinheiro na conferência do caixa; recebimento de fiado conta,
   separado do faturamento.
 - O saldo devedor de um cliente nunca fica negativo: o abatimento para onde a dívida acaba, e
-  a diferença sai em vale.
+  a diferença sai em vale. Pelo mesmo motivo, venda no fiado cujo cancelamento deixaria o saldo
+  negativo (porque a cliente já pagou) não se cancela — devolve-se.
 - O mesmo vale não paga duas vendas.
+- Peça em condicional não está disponível: sai do saldo na abertura e só volta no fechamento.
+  Fechar duas vezes (toque duplo, dois aparelhos, resposta perdida) não devolve a peça duas
+  vezes nem cobra a cliente duas vezes; o que ficou com ela é sempre uma venda comum, com caixa
+  e recibo, registrada junto com o retorno — ou nada acontece. Do mesmo jeito, abrir de novo
+  depois de uma resposta perdida (mesmo mexendo na sacola) não abre uma segunda condicional: a
+  tela avisa qual já foi aberta e leva a ela.
+- Conta a pagar do fornecedor nunca entra no Resultado nem nas Despesas. A nota só entra junto
+  com a mercadoria da Entrada (ou nenhuma das duas), e as parcelas têm de somar a nota. Só quem
+  vê dinheiro vê, lança e paga; a mesma conta não é paga duas vezes.
 - Toda ação de quem está logado que muda alguma coisa fica registrada na auditoria, com o nome
   e o cargo congelados; o registro não pode derrubar a operação que ele observa.
 - O login trava depois de erros de senha demais (por e-mail e por endereço), e a trava responde
@@ -134,15 +220,64 @@ A loja consegue operar 100% sem celular.
 - Trocar o ramo da loja não altera nenhum produto, preço, estoque ou venda: muda só o rótulo
   que a tela dá às duas variações.
 - Só o dono muda o nome e o ramo da loja; o nome é legível sem login (a tela de entrada precisa
-  dele antes de existir sessão).
+  dele antes de existir sessão), mas documento, telefone e endereço da loja só com login.
+- Cliente que ainda deve não tem o cadastro excluído; quitada, a exclusão apaga os dados
+  pessoais e mantém as vendas.
+- Toda pessoa com conta consegue excluí-la sozinha, de dentro do app, confirmando com a senha
+  (Apple 5.1.1(v)); errar a senha não desloga ninguém. A loja nunca fica sem dono ativo — nem
+  com dois donos saindo ao mesmo tempo. Excluir a conta derruba as sessões em todos os
+  aparelhos, desliga o celular-leitor e tira o e-mail do diário (vira máscara); não apaga venda,
+  devolução, caixa nem linha do diário, que ficam com o nome de quem fez — inclusive de quem já
+  vendeu, cuja conta sai do mesmo jeito. O e-mail de quem saiu volta a poder ser usado numa conta
+  nova.
+- Trocar a conta do Google ou a pasta do backup na nuvem pede a senha de quem está salvando, e
+  a tela do backup diz "Atrasado" quando a cópia passou de duas vezes o intervalo.
+- A instalação termina com a cópia diária do banco ligada (Linux, Mac e Windows). O que sai do
+  servidor (Drive, `BACKUP_REMOTO`) sai cifrado, com uma chave que só existe na máquina e onde o
+  dono a guardou; a restauração abre a cópia cifrada com ela.
+- A atualização sozinha só implanta versão com o CI verde, e não tenta de novo uma versão que já
+  caiu neste servidor — só a próxima.
+- Loja fora do ar, disco quase cheio, backup da nuvem atrasado ou rotina da máquina que falhou
+  avisam o dono (ntfy), sem repetir o mesmo aviso antes de uma hora.
+- Instalar pelo IP público é recusado: HTTP puro só dentro da rede da loja.
+- A taxa da maquininha fica congelada em cada venda: mudar ou apagar a tabela vale só daqui
+  para frente. O resultado do período desconta as taxas das vendas no cartão e devolve a taxa
+  da parte devolvida pelo cartão — somadas, as devoluções nunca devolvem mais taxa do que a
+  venda pagou. Só o crédito parcela (até 12x); débito e PIX, nunca.
+- Só o dono muda as taxas da maquininha; quem vê dinheiro as lê; a vendedora não as vê.
+- O balcão busca e cadastra cliente sem ver saldo, limite ou observação do crediário; vender
+  fiado continua sendo de quem cuida do crediário. Pelo documento, o balcão só acha a cliente
+  com o documento inteiro (CPF, CNPJ ou RG, como foi cadastrado) — nunca por um trecho dele.
+  Cadastro reenviado pela rede não duplica a cliente.
+- A comissão sai do faturamento LÍQUIDO de quem fez a venda: venda cancelada não conta, e a peça
+  devolvida tira a comissão no período em que voltou — sem reescrever a folha de um mês fechado.
+  A soma da equipe fecha com o faturamento líquido do resumo da loja.
+- Vale a % de comissão do dia da VENDA: mudar a % de alguém vale dali em diante, não muda a
+  comissão de um mês já pago, e a peça que volta depois estorna pela % com que foi vendida.
+- Só o dono define a % de comissão (0 a 100) e a meta do dia de cada um; nem o gerente, que também
+  recebe comissão, mexe nisso — nem na própria.
+- Cada pessoa vê o próprio dia no PDV (vendido, peças, meta), sem custo, lucro nem o número das
+  colegas.
+- Uma venda tem no máximo uma NFC-e, e nota autorizada não é emitida de novo — nem com dois
+  cliques, nem com a resposta do emissor perdida no caminho (ADR-41).
+- Falha fiscal nunca impede vender; e venda com NFC-e autorizada só se cancela se a nota for
+  cancelada antes, no emissor.
+- A credencial do emissor fiscal mora no `.env` do servidor: nunca no banco, nunca numa rota.
 
 ## Fora do escopo do v1
 
-Funcionamento offline com sincronização (v2 — já preparado pelo `client_uuid`), emissão fiscal
-(NF-e/NFC-e), fidelidade e pontos, condicional, múltiplas lojas, e-commerce, limite de desconto por
+Funcionamento offline com sincronização (v2 — já preparado pelo `client_uuid`), NF-e (modelo 55,
+inclusive a de devolução), NFC-e nos regimes Normal e Simples com excesso de sublimite, CPF na
+nota, fidelidade e pontos, múltiplas lojas, e-commerce, limite de desconto por
 vendedor, sessões de inventário compartilhadas no servidor, contagem cega, foto por variante,
 notificações push, parcelamento do crediário em datas fixas (hoje é dívida única, recebida em
 qualquer valor), cobrança automática por mensagem.
 
 *Saíram de "fora do escopo" e hoje existem:* impressão de etiquetas, recibo da venda, cadastro de
-clientes, trocas com vale, e o sistema servir a outros ramos além de roupas.
+clientes, trocas com vale, o sistema servir a outros ramos além de roupas, taxa da maquininha com
+crédito parcelado e agenda de recebíveis (sem TEF integrada: a maquininha segue à parte),
+cliente em qualquer venda, com aniversário, preferências e histórico de compras (sem pontos),
+comissão e meta do dia por vendedora, os relatórios de estoque parado, curva ABC e valor do
+estoque, condicional e contas a pagar do fornecedor, e a **NFC-e** no Simples Nacional por
+emissor terceirizado (ADR-41) — o dono contrata o emissor, cadastra nele o certificado A1 e o
+CSC, testa em homologação e liga pelo `.env`.

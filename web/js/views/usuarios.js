@@ -15,9 +15,8 @@ import {
   avisarErro,
   carregando,
   comAtraso,
-  confirmar,
   cru,
-  data as formatarData,
+  diaNaLoja,
   erroBloco,
   etiqueta,
   html,
@@ -26,7 +25,10 @@ import {
   paginacao,
   vazio,
 } from '../ui.js';
-import { PAPEIS, titulo } from '../permissoes.js';
+import { podeExcluirDaEquipe } from '../exclusao-de-conta.js';
+import { PAPEIS, papeisQuePossoDar, titulo } from '../permissoes.js';
+import { excluirConta, redefinirSenha } from './usuarios-acoes.js';
+import { camposComissao, ligarCamposComissao, resumoComissao } from './usuarios-comissao.js';
 
 const TAMANHO = 25;
 
@@ -38,10 +40,9 @@ const DESCRICAO = {
 };
 
 // Um gerente administra a equipe, mas não cria nem promove dono: seria virar dono. O
-// servidor recusa de qualquer jeito; aqui a opção nem aparece, para não oferecer um 403.
-const papeisQuePossoDar = PAPEIS.filter(
-  (p) => p !== 'ADMIN' || sessao.get().usuario?.papel === 'ADMIN',
-);
+// servidor recusa de qualquer jeito; aqui a opção nem aparece, para não oferecer um 403. Lido
+// a cada janela, não na carga do módulo: quem entra depois na mesma aba tem outro papel.
+const possoDar = () => papeisQuePossoDar(sessao.get().usuario?.papel);
 
 export async function render(raiz, _params, consulta) {
   const filtros = {
@@ -112,7 +113,7 @@ export async function render(raiz, _params, consulta) {
       return;
     }
 
-    const eu = sessao.get().usuario?.id;
+    const eu = sessao.get().usuario;
 
     areaLista.innerHTML = html`
       <div class="tabela-rolagem">
@@ -133,15 +134,21 @@ export async function render(raiz, _params, consulta) {
                 <tr>
                   <td>
                     <span class="celula-principal">${u.nome}</span>
-                    ${u.id === eu ? cru(html`<span class="celula-secundaria">é você</span>`) : ''}
+                    ${u.id === eu?.id ? cru(html`<span class="celula-secundaria">é você</span>`) : ''}
                   </td>
                   <td class="texto-suave">${u.email}</td>
-                  <td>${cru(etiqueta(titulo(u.papel), u.papel === 'ADMIN' ? 'info' : 'neutro'))}</td>
+                  <td>
+                    ${cru(etiqueta(titulo(u.papel), u.papel === 'ADMIN' ? 'info' : 'neutro'))}
+                    ${resumoComissao(u) ? cru(html`<span class="celula-secundaria">${resumoComissao(u)}</span>`) : ''}
+                  </td>
                   <td>${u.ativo ? etiqueta('Ativo', 'ok') : etiqueta('Desativado', 'perigo')}</td>
-                  <td class="texto-suave">${formatarData(u.criado_em)}</td>
+                  <td class="texto-suave">${diaNaLoja(u.criado_em)}</td>
                   <td class="direita">
                     <button class="botao-icone" data-editar="${u.id}" title="Editar" aria-label="Editar ${u.nome}">✏️</button>
                     <button class="botao-icone" data-senha="${u.id}" title="Redefinir senha" aria-label="Redefinir senha de ${u.nome}">🔑</button>
+                    ${podeExcluirDaEquipe(eu, u)
+                      ? html`<button class="botao-icone botao-icone--perigo" data-excluir="${u.id}" title="Excluir conta" aria-label="Excluir a conta de ${u.nome}">🗑️</button>`
+                      : ''}
                   </td>
                 </tr>
               `,
@@ -157,6 +164,11 @@ export async function render(raiz, _params, consulta) {
     );
     areaLista.querySelectorAll('[data-senha]').forEach((b) =>
       b.addEventListener('click', () => redefinirSenha(pagina.items.find((u) => u.id === Number(b.dataset.senha)))),
+    );
+    areaLista.querySelectorAll('[data-excluir]').forEach((b) =>
+      b.addEventListener('click', async () => {
+        if (await excluirConta(pagina.items.find((u) => u.id === Number(b.dataset.excluir)))) carregar();
+      }),
     );
     ligarPaginacao(areaLista, (p) => {
       filtros.page = p;
@@ -184,17 +196,19 @@ export async function render(raiz, _params, consulta) {
         <label class="campo">
           <span>Papel</span>
           <select data-papel>
-            ${PAPEIS.filter((p) => papeisQuePossoDar.includes(p)).map(
+            ${PAPEIS.filter((p) => possoDar().includes(p)).map(
               (p) => html`<option value="${p}">${titulo(p)} — ${DESCRICAO[p]}</option>`,
             )}
           </select>
         </label>
+        ${camposComissao()}
         <div class="modal__acoes">
           <button class="botao botao--neutro" data-nao>Cancelar</button>
           <button class="botao" data-ok>Criar</button>
         </div>
       `,
       aoAbrir: (corpo, fechar) => {
+        const lerComissao = ligarCamposComissao(corpo);
         corpo.querySelector('[data-nao]').addEventListener('click', () => fechar(false));
         corpo.querySelector('[data-ok]').addEventListener('click', async (e) => {
           const senha = corpo.querySelector('[data-senha]').value;
@@ -206,6 +220,7 @@ export async function render(raiz, _params, consulta) {
               email: corpo.querySelector('[data-email]').value.trim(),
               senha,
               papel: corpo.querySelector('[data-papel]').value,
+              ...lerComissao(),
             });
             aviso('Usuário criado.');
             fechar(true);
@@ -233,7 +248,7 @@ export async function render(raiz, _params, consulta) {
         <label class="campo">
           <span>Papel ${ajuda('Decide o que a pessoa enxerga: vendedora e supervisora não veem custo, lucro nem despesa. Cancelar venda é do dono e do gerente; auditoria e backup, só do dono.')}</span>
           <select data-papel ${cru(eu ? 'disabled' : '')}>
-            ${PAPEIS.filter((p) => papeisQuePossoDar.includes(p) || p === usuario.papel).map(
+            ${PAPEIS.filter((p) => possoDar().includes(p) || p === usuario.papel).map(
               (p) => html`<option value="${p}" ${cru(usuario.papel === p ? 'selected' : '')}>${titulo(p)}</option>`,
             )}
           </select>
@@ -244,16 +259,18 @@ export async function render(raiz, _params, consulta) {
           <span>Pode entrar no sistema ${ajuda('Desmarcado, o acesso dela para na hora, inclusive no celular. As vendas que ela fez continuam no histórico e na auditoria.')}</span>
         </label>
         ${eu ? cru('<p class="campo__dica">você não pode desativar a própria conta</p>') : ''}
+        ${camposComissao(usuario)}
         <div class="modal__acoes">
           <button class="botao botao--neutro" data-nao>Cancelar</button>
           <button class="botao" data-ok>Salvar</button>
         </div>
       `,
       aoAbrir: (corpo, fechar) => {
+        const lerComissao = ligarCamposComissao(corpo, usuario);
         corpo.querySelector('[data-nao]').addEventListener('click', () => fechar(false));
         corpo.querySelector('[data-ok]').addEventListener('click', async (e) => {
           e.currentTarget.disabled = true;
-          const dados = { nome: corpo.querySelector('[data-nome]').value.trim() };
+          const dados = { nome: corpo.querySelector('[data-nome]').value.trim(), ...lerComissao() };
           if (!eu) {
             dados.papel = corpo.querySelector('[data-papel]').value;
             dados.ativo = corpo.querySelector('[data-ativo]').checked;
@@ -270,46 +287,6 @@ export async function render(raiz, _params, consulta) {
       },
     });
     if (salvou) carregar();
-  }
-
-  async function redefinirSenha(usuario) {
-    const nova = await modal({
-      titulo: `Nova senha para ${usuario.nome}`,
-      largura: '430px',
-      render: () => html`
-        <p class="texto-suave">
-          A pessoa entra com a nova senha na próxima vez. As sessões abertas dela caem.
-        </p>
-        <label class="campo">
-          <span>Nova senha <span class="campo__dica">mínimo de 8 caracteres</span></span>
-          <input data-senha type="password" autocomplete="new-password" />
-        </label>
-        <div class="modal__acoes">
-          <button class="botao botao--neutro" data-nao>Cancelar</button>
-          <button class="botao" data-ok>Redefinir</button>
-        </div>
-      `,
-      aoAbrir: (corpo, fechar) => {
-        corpo.querySelector('[data-nao]').addEventListener('click', () => fechar(undefined));
-        corpo.querySelector('[data-ok]').addEventListener('click', () => fechar(corpo.querySelector('[data-senha]').value));
-      },
-    });
-    if (!nova) return;
-    if (nova.length < 8) return aviso('A senha precisa de pelo menos 8 caracteres.', 'alerta');
-
-    const certeza = await confirmar({
-      titulo: 'Confirmar troca de senha',
-      mensagem: `${usuario.nome} vai precisar entrar de novo com a senha nova.`,
-      confirmarTexto: 'Redefinir',
-    });
-    if (!certeza) return;
-
-    try {
-      await api.patch(`/usuarios/${usuario.id}/senha`, { nova_senha: nova });
-      aviso('Senha redefinida.');
-    } catch (erro) {
-      avisarErro(erro);
-    }
   }
 
   raiz.querySelector('[data-novo]').addEventListener('click', novo);

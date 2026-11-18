@@ -1,6 +1,7 @@
 """Dependências compartilhadas: usuário autenticado e exigência de permissão."""
 
-from typing import Annotated, Callable
+from typing import Annotated
+from collections.abc import Callable
 
 from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -33,6 +34,29 @@ async def get_current_user(
 CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
+async def get_usuario_opcional(
+    session: SessionDep,
+    credencial: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)] = None,
+) -> User | None:
+    """Quem chama, se trouxe sessão válida; senão `None` — nunca erro.
+
+    Para rota aberta que mostra mais a quem está logado (`GET /configuracao`): token vencido
+    ou inválido cai no modo aberto em vez de 401, porque a tela de entrada chama a rota
+    justamente quando a sessão pode ter acabado.
+    """
+    if credencial is None:
+        return None
+    try:
+        payload = decodificar_token(credencial.credentials, "access")
+    except TokenInvalido:
+        return None
+    user = await session.get(User, int(payload["sub"]))
+    return user if user is not None and user.is_active else None
+
+
+UsuarioOpcional = Annotated[User | None, Depends(get_usuario_opcional)]
+
+
 def exige(capacidade: Pode) -> Callable[[User], User]:
     """Dependência que barra quem não tem a capacidade pedida.
 
@@ -54,7 +78,9 @@ ExigeDespesa = Annotated[User, Depends(exige(Pode.LANCAR_DESPESA))]
 ExigeCancelarVenda = Annotated[User, Depends(exige(Pode.CANCELAR_VENDA))]
 ExigeDevolucao = Annotated[User, Depends(exige(Pode.DEVOLVER_VENDA))]
 ExigeCrediario = Annotated[User, Depends(exige(Pode.GERIR_CREDIARIO))]
+ExigeAtenderCliente = Annotated[User, Depends(exige(Pode.ATENDER_CLIENTE))]
 ExigeCorrigirEstoque = Annotated[User, Depends(exige(Pode.CORRIGIR_ESTOQUE))]
+ExigeCondicional = Annotated[User, Depends(exige(Pode.FAZER_CONDICIONAL))]
 ExigeEditarCatalogo = Annotated[User, Depends(exige(Pode.EDITAR_CATALOGO))]
 ExigeCaixa = Annotated[User, Depends(exige(Pode.FECHAR_CAIXA))]
 ExigeUsuarios = Annotated[User, Depends(exige(Pode.GERIR_USUARIOS))]

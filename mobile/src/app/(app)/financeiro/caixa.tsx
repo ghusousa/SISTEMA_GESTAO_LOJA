@@ -6,16 +6,19 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { useEffect, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { mensagemDoErro } from '@/api/client';
 import { caixa } from '@/api/endpoints';
 import type { FormaPagamento } from '@/api/tipos';
 import { Botao, Campo, Carregando, Cartao, ErroEstado } from '@/components/ui';
+import { camposDoContado } from '@/lib/caixa';
 import { formatar, paraCentavos, paraDecimalString } from '@/lib/money';
 import { chaves, queryClient } from '@/lib/queryClient';
 import { cores, espaco, fonte } from '@/lib/tema';
+import { plural, primeiraMaiuscula } from '@/lib/texto';
 
 const ROTULOS: Record<FormaPagamento, string> = {
   DINHEIRO: 'Dinheiro na gaveta',
@@ -31,35 +34,50 @@ const ROTULOS: Record<FormaPagamento, string> = {
 export default function Caixa() {
   const hoje = format(new Date(), 'yyyy-MM-dd');
   const [contado, setContado] = useState<Record<string, string>>({});
+  // As formas em que a pessoa digitou. Ref, e não estado: digitar não precisa refazer o
+  // preenchimento, só impedir que o próximo passe por cima.
+  const editados = useRef(new Set<string>());
 
   const dia = useQuery({
     queryKey: chaves.caixaDia(hoje),
     queryFn: () => caixa.dia(hoje),
   });
+  const { refetch } = dia;
 
-  // Pré-preenche com o esperado: na maioria dos dias o caixa bate e o admin só confirma.
+  // Voltar para a tela traz o esperado de agora. O aviso de tempo real (vendas, caixa) já
+  // invalida a consulta, mas aviso se perde — canal caído, aparelho dormindo — e a
+  // conferência é o último lugar para confiar num número velho. Sem cancelar a busca que a
+  // abertura da tela já disparou.
+  useFocusEffect(
+    useCallback(() => {
+      void refetch({ cancelRefetch: false });
+    }, [refetch]),
+  );
+
+  // Pré-preenche com o esperado (na maioria dos dias o caixa bate e o admin só confirma) e
+  // acompanha o esperado a cada consulta nova nos campos que ninguém mexeu.
   useEffect(() => {
     if (!dia.data) return;
-    setContado((atual) => {
-      if (Object.keys(atual).length > 0) return atual;
-      const inicial: Record<string, string> = {};
-      for (const linha of dia.data.linhas) {
-        const valor = linha.contado ?? linha.esperado;
-        inicial[linha.forma] = formatar(paraCentavos(valor)).replace(/[^\d,]/g, '');
-      }
-      return inicial;
-    });
+    const linhas = dia.data.linhas;
+    setContado((atual) => camposDoContado(linhas, atual, editados.current));
   }, [dia.data]);
 
   const fechar = useMutation({
-    mutationFn: () =>
-      caixa.fechar({
+    mutationFn: async () => {
+      // O esperado de AGORA, e não o da última consulta: uma venda que entrou no último
+      // segundo, antes do aviso chegar, virava falta na conferência de quem confirmou direto.
+      const { data: agora } = await refetch({ throwOnError: true });
+      const linhas = agora?.linhas ?? [];
+      const campos = camposDoContado(linhas, contado, editados.current);
+      setContado(campos);
+      return caixa.fechar({
         data: hoje,
-        contagens: (dia.data?.linhas ?? []).map((linha) => ({
+        contagens: linhas.map((linha) => ({
           forma: linha.forma,
-          valor_contado: paraDecimalString(paraCentavos(contado[linha.forma] ?? '0')),
+          valor_contado: paraDecimalString(paraCentavos(campos[linha.forma] ?? '0')),
         })),
-      }),
+      });
+    },
     onSuccess: (fechamento) => {
       void queryClient.invalidateQueries({ queryKey: ['caixa-dia'] });
       const diferenca = paraCentavos(fechamento.diferenca);
@@ -96,13 +114,15 @@ export default function Caixa() {
     <ScrollView contentContainerStyle={s.conteudo} keyboardShouldPersistTaps="handled">
       <Cartao>
         <Text style={s.data}>
-          {format(new Date(`${hoje}T12:00:00`), "EEEE, dd 'de' MMMM", { locale: ptBR })}
+          {primeiraMaiuscula(
+            format(new Date(`${hoje}T12:00:00`), "EEEE, dd 'de' MMMM", { locale: ptBR }),
+          )}
         </Text>
         <Text style={s.esperado}>{formatar(totalEsperado)}</Text>
         <Text style={s.ajuda}>
-          {dia.data.quantidade_vendas} venda(s) concluída(s)
+          {plural(dia.data.quantidade_vendas, 'venda concluída', 'vendas concluídas')}
           {dia.data.quantidade_canceladas > 0
-            ? ` · ${dia.data.quantidade_canceladas} cancelada(s)`
+            ? ` · ${plural(dia.data.quantidade_canceladas, 'cancelada', 'canceladas')}`
             : ''}
         </Text>
         {dia.data.fechado && (
@@ -125,9 +145,10 @@ export default function Caixa() {
             <Campo
               rotulo="Contado (R$)"
               value={contado[linha.forma] ?? ''}
-              onChangeText={(valor) =>
-                setContado((atual) => ({ ...atual, [linha.forma]: valor }))
-              }
+              onChangeText={(valor) => {
+                editados.current.add(linha.forma);
+                setContado((atual) => ({ ...atual, [linha.forma]: valor }));
+              }}
               keyboardType="decimal-pad"
               placeholder="0,00"
             />
@@ -175,7 +196,6 @@ const s = StyleSheet.create({
     fontSize: fonte.pequena,
     color: cores.textoSuave,
     fontWeight: '700',
-    textTransform: 'capitalize',
   },
   esperado: { fontSize: fonte.destaque, fontWeight: '800', color: cores.texto, marginTop: 2 },
   ajuda: { fontSize: fonte.pequena, color: cores.textoSuave, marginTop: espaco.xs },

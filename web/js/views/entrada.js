@@ -14,16 +14,21 @@
  *
  * Peça que nunca existiu não entra por aqui: ela nasce em Produtos → Cadastrar, que já
  * tem coluna de estoque inicial. Esta tela é da segunda vez em diante.
+ *
+ * Quem vê dinheiro pode lançar junto a nota do fornecedor (`nota-fornecedor.js`): valor e
+ * vencimentos viram Contas a pagar na MESMA transação da entrada (ADR-40).
  */
 
 import { api, ErroApi } from '../api.js';
 import { ligarBuscaDePeca } from '../busca-peca.js';
 import { formatar, paraDecimalString, somar } from '../dinheiro.js';
-import { criarLeitor, manterFoco } from '../leitor.js';
+import { notaDepoisDoDuplicado, tirarOQueJaEntrou } from '../entrada-gravada.js';
+import { criarLeitor, digitandoEm, manterFoco } from '../leitor.js';
 import { ir } from '../router.js';
 import { conferencia, limparConferencia, novoClientUuid } from '../store.js';
 import { PODE, pode } from '../permissoes.js';
-import { MAX_POR_PECA, pintarConferencia } from '../tabela-conferencia.js';
+import { MAX_POR_PECA, oQueSobrou, pintarConferencia } from '../tabela-conferencia.js';
+import { ligarNotaFornecedor } from '../nota-fornecedor.js';
 import { ajuda, aviso, avisarErro, confirmar, cru, html, ligarCampoDinheiro, plural } from '../ui.js';
 
 export function render(raiz) {
@@ -63,6 +68,7 @@ export function render(raiz) {
           <span>Observação <span class="campo__dica">nota fiscal, pedido…</span></span>
           <input data-observacao maxlength="500" />
         </label>
+        ${veDinheiro ? html`<div data-nota></div>` : ''}
 
         <div class="pdv__linha">
           <span class="texto-suave">Peças</span>
@@ -105,6 +111,12 @@ export function render(raiz) {
   campoObservacao.addEventListener('input', () =>
     conferencia.set({ observacao: campoObservacao.value }),
   );
+  const nota = veDinheiro
+    ? ligarNotaFornecedor(raiz.querySelector('[data-nota]'), {
+        inicial: conferencia.get().nota,
+        aoMudar: (estado) => conferencia.set({ nota: estado }),
+      })
+    : null;
 
   /* ------------------------------------------------------------- somar peça */
 
@@ -189,6 +201,13 @@ export function render(raiz) {
 
   async function salvar() {
     if (enviando || !itens().length) return;
+    let notaApi = null;
+    try {
+      notaApi = nota?.paraApi() ?? null;
+    } catch (erro) {
+      avisarErro(erro);
+      return;
+    }
     enviando = true;
     botaoSalvar.disabled = true;
     botaoSalvar.innerHTML = cru('<span class="giro" aria-hidden="true"></span> Registrando…');
@@ -207,8 +226,14 @@ export function render(raiz) {
           quantidade: i.quantidade,
           custo_unitario: i.custo > 0 ? paraDecimalString(i.custo) : null,
         })),
+        ...(notaApi ? { nota: notaApi } : {}),
       });
+      // A peça que entrou na lista DURANTE a gravação (a leitura que já vinha a caminho)
+      // fica para a próxima entrada; limpar tudo a apagaria sem ninguém ver.
+      const sobra = oQueSobrou(itens(), registrados);
       limparConferencia();
+      if (sobra.length) definir(sobra);
+      nota?.limpar();
       campoFornecedor.value = '';
       campoObservacao.value = '';
       leitor.esquecerUltimo();
@@ -216,6 +241,10 @@ export function render(raiz) {
       await ofereceEtiquetas(entrada, registrados);
       campo.focus();
     } catch (erro) {
+      if (erro instanceof ErroApi && erro.status === 409 && erro.detail?.entrada_id) {
+        await avisarEntradaJaGravada(erro, notaApi);
+        return;
+      }
       avisarErro(erro);
     } finally {
       enviando = false;
@@ -225,14 +254,44 @@ export function render(raiz) {
   }
 
   /**
+   * A chave desta conferência já gravou OUTRA entrada (resposta perdida, lista mudada
+   * depois): o servidor recusa (ADR-2) e devolve os itens dela. O que ela gravou sai da
+   * lista ANTES de a chave sair — só trocar a chave e reenviar tudo somaria de novo as
+   * peças que já entraram (10 P + 7 M viravam +20 P). Fica o que falta registrar. A nota
+   * idem: se a gravada já levou ESTA nota, reenviá-la dobraria Contas a pagar; se levou
+   * outra (ou nenhuma), esta ainda não entrou e fica.
+   */
+  async function avisarEntradaJaGravada(erro, notaApi) {
+    const resto = tirarOQueJaEntrou(itens(), erro.detail.itens || []);
+    const { tirarNota, frase } = notaDepoisDoDuplicado(erro.detail, notaApi, resto.length > 0);
+    definir(resto);
+    if (tirarNota) nota?.limpar();
+    conferencia.set({ clientUuid: null });
+    pintar();
+    const lista = resto.length
+      ? 'Tirei da lista o que ela já gravou; confira e registre o que falta.'
+      : 'Tudo o que estava na lista ela já tinha gravado.';
+    const verExtrato = await confirmar({
+      titulo: 'Esta entrada já foi gravada',
+      mensagem: `${erro.message} ${lista}${frase ? ` ${frase}` : ''}`,
+      confirmarTexto: 'Ver extrato',
+    });
+    if (verExtrato) ir('/estoque/extrato?tipo=ENTRADA');
+    else campo.focus();
+  }
+
+  /**
    * Mercadoria que entra é mercadoria que precisa de etiqueta — e a quantidade certa é a
    * que ACABOU de chegar, não o saldo (que já inclui o que estava na arara).
    */
   async function ofereceEtiquetas(entrada, registrados) {
     const total = plural(entrada.total_pecas, 'peça entrou', 'peças entraram');
+    const contas = entrada.contas_a_pagar
+      ? ` ${plural(entrada.contas_a_pagar, 'parcela foi', 'parcelas foram')} para Contas a pagar.`
+      : '';
     const imprimir = await confirmar({
       titulo: 'Entrada registrada',
-      mensagem: `${total} no estoque. Imprimir as etiquetas destas peças agora?`,
+      mensagem: `${total} no estoque.${contas} Imprimir as etiquetas destas peças agora?`,
       confirmarTexto: 'Imprimir etiquetas',
     });
     if (!imprimir) {
@@ -254,6 +313,7 @@ export function render(raiz) {
     });
     if (!certeza) return;
     limparConferencia();
+    nota?.limpar();
     campoFornecedor.value = '';
     campoObservacao.value = '';
     leitor.esquecerUltimo();
@@ -275,6 +335,9 @@ export function render(raiz) {
     aoLer: lerCodigo,
     repeticaoMs: 250,
     ignorarQuando: busca.aberta,
+    // O código do celular espera: gravando, a lista já foi para o POST e vai ser limpa; e
+    // digitando uma quantidade, o redesenho levaria o que a pessoa digitou.
+    ocupadoQuando: () => enviando || digitandoEm(areaItens),
   });
   leitor.ligar();
   const pararFoco = manterFoco(campo);

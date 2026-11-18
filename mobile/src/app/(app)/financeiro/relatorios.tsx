@@ -1,10 +1,14 @@
 /**
- * Relatórios do período: curva de vendas, campeões de venda, para onde o dinheiro foi
- * e o que precisa repor. Gráfico é barra desenhada com View — evita uma biblioteca
- * inteira de charts para mostrar sete a trinta e um números.
+ * Relatórios do período: curva de vendas, campeões de venda, a equipe e a comissão, a
+ * curva ABC, para onde o dinheiro foi, o que a maquininha ainda deposita, e o estoque (o
+ * que repor, quanto vale e o que está parado). Gráfico é barra desenhada com View — evita
+ * uma biblioteca inteira de charts para mostrar sete a trinta e um números.
+ *
+ * As seções novas moram em `components/relatorios/`, uma por assunto, para esta tela não
+ * virar um arquivo de mil linhas.
  */
 
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { endOfMonth, format, startOfMonth, subDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useState } from 'react';
@@ -12,10 +16,18 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { mensagemDoErro } from '@/api/client';
 import { relatorios } from '@/api/endpoints';
-import { Carregando, Cartao, ErroEstado, Etiqueta } from '@/components/ui';
+import { SecaoRecebiveis } from '@/components/relatorios/SecaoRecebiveis';
+import { SecaoVendedoras } from '@/components/relatorios/SecaoVendedoras';
+import {
+  SecaoCurvaAbc,
+  SecaoEstoqueParado,
+  SecaoValorEstoque,
+} from '@/components/relatorios/SecoesDoEstoque';
+import { Botao, Carregando, Cartao, ErroEstado, Etiqueta } from '@/components/ui';
 import { formatar, formatarPercentual, paraCentavos } from '@/lib/money';
 import { chaves } from '@/lib/queryClient';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
+import { plural, primeiraMaiuscula } from '@/lib/texto';
 
 type Periodo = '7d' | '30d' | 'mes';
 
@@ -25,7 +37,7 @@ function intervalo(periodo: Periodo): { inicio: string; fim: string; rotulo: str
     return {
       inicio: format(startOfMonth(hoje), 'yyyy-MM-dd'),
       fim: format(endOfMonth(hoje), 'yyyy-MM-dd'),
-      rotulo: format(hoje, "MMMM 'de' yyyy", { locale: ptBR }),
+      rotulo: primeiraMaiuscula(format(hoje, "MMMM 'de' yyyy", { locale: ptBR })),
     };
   }
   const dias = periodo === '7d' ? 6 : 29;
@@ -52,10 +64,18 @@ export default function Relatorios() {
     queryKey: chaves.relatorioDespesas(inicio, fim),
     queryFn: () => relatorios.despesasPorCategoria(inicio, fim),
   });
-  const estoqueBaixo = useQuery({
-    queryKey: chaves.estoqueBaixo,
-    queryFn: () => relatorios.estoqueBaixo(),
+  // Paginado no servidor, as mais urgentes primeiro: a lista inteira de uma loja grande
+  // passava de sete mil peças, desenhadas de uma vez dentro do ScrollView. Aqui vêm vinte
+  // e o resto sob demanda ("Ver mais").
+  const estoqueBaixo = useInfiniteQuery({
+    queryKey: [...chaves.estoqueBaixo, 'lista'],
+    initialPageParam: 1,
+    queryFn: ({ pageParam }) => relatorios.estoqueBaixo({ page: pageParam, size: 20 }),
+    getNextPageParam: (ultima) =>
+      ultima.page * ultima.size < ultima.total ? ultima.page + 1 : undefined,
   });
+  const pecasParaRepor = estoqueBaixo.data?.pages.flatMap((p) => p.items) ?? [];
+  const totalParaRepor = estoqueBaixo.data?.pages[0]?.total ?? 0;
 
   if (porDia.isPending) return <Carregando />;
   if (porDia.isError) {
@@ -144,6 +164,9 @@ export default function Relatorios() {
         )}
       </Cartao>
 
+      <SecaoVendedoras inicio={inicio} fim={fim} />
+      <SecaoCurvaAbc inicio={inicio} fim={fim} />
+
       <Cartao>
         <Text style={s.titulo}>Para onde o dinheiro foi</Text>
         {(porCategoria.data?.length ?? 0) === 0 ? (
@@ -164,12 +187,19 @@ export default function Relatorios() {
         )}
       </Cartao>
 
+      <SecaoRecebiveis inicio={inicio} fim={fim} />
+
       <Cartao>
         <Text style={s.titulo}>Hora de repor</Text>
-        {(estoqueBaixo.data?.length ?? 0) === 0 ? (
+        {totalParaRepor > 0 && (
+          <Text style={s.legenda}>
+            {plural(totalParaRepor, 'peça', 'peças')} no mínimo · mostrando {pecasParaRepor.length}
+          </Text>
+        )}
+        {pecasParaRepor.length === 0 ? (
           <Text style={s.vazio}>Todo o estoque está acima do mínimo.</Text>
         ) : (
-          estoqueBaixo.data!.map((peca) => (
+          pecasParaRepor.map((peca) => (
             <View key={peca.variante_id} style={s.linha}>
               <View style={s.linhaInfo}>
                 <Text style={s.linhaNome} numberOfLines={1}>
@@ -187,7 +217,19 @@ export default function Relatorios() {
             </View>
           ))
         )}
+        {estoqueBaixo.hasNextPage && (
+          <Botao
+            titulo="Ver mais"
+            variante="secundario"
+            carregando={estoqueBaixo.isFetchingNextPage}
+            onPress={() => void estoqueBaixo.fetchNextPage()}
+            estilo={{ marginTop: espaco.sm }}
+          />
+        )}
       </Cartao>
+
+      <SecaoValorEstoque />
+      <SecaoEstoqueParado />
     </ScrollView>
   );
 }
@@ -213,7 +255,6 @@ const s = StyleSheet.create({
   subtitulo: {
     fontSize: fonte.pequena,
     color: cores.textoSuave,
-    textTransform: 'capitalize',
     marginBottom: espaco.md,
   },
   vazio: { fontSize: fonte.base, color: cores.textoFraco, marginTop: espaco.sm },

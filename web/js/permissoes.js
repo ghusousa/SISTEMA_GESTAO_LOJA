@@ -17,6 +17,8 @@ export const PODE = {
   CANCELAR_VENDA: 'CANCELAR_VENDA',
   DEVOLVER_VENDA: 'DEVOLVER_VENDA',
   GERIR_CREDIARIO: 'GERIR_CREDIARIO',
+  ATENDER_CLIENTE: 'ATENDER_CLIENTE',
+  FAZER_CONDICIONAL: 'FAZER_CONDICIONAL',
   VER_VENDAS_DE_TODOS: 'VER_VENDAS_DE_TODOS',
   CORRIGIR_ESTOQUE: 'CORRIGIR_ESTOQUE',
   EDITAR_CATALOGO: 'EDITAR_CATALOGO',
@@ -25,9 +27,10 @@ export const PODE = {
   VER_AUDITORIA: 'VER_AUDITORIA',
   CONFIGURAR_LOJA: 'CONFIGURAR_LOJA',
   GERIR_BACKUP: 'GERIR_BACKUP',
+  DEFINIR_COMISSAO: 'DEFINIR_COMISSAO',
 };
 
-const VENDEDORA = [];
+const VENDEDORA = [PODE.ATENDER_CLIENTE, PODE.FAZER_CONDICIONAL];
 const SUPERVISORA = [
   ...VENDEDORA,
   PODE.VER_VENDAS_DE_TODOS,
@@ -75,19 +78,40 @@ export function pode(capacidade) {
 
 export const titulo = (papel) => TITULO[papel] ?? papel;
 
+/**
+ * Os papéis que `meuPapel` pode dar a alguém — a régua de `_barrar_escalada` no servidor: só o
+ * dono cria ou promove outro dono. Espelho de `mobile/src/lib/permissoes.ts`.
+ */
+export function papeisQuePossoDar(meuPapel) {
+  return ['VENDEDOR', 'SUPERVISORA', 'GERENTE', 'ADMIN'].filter((p) => p !== 'ADMIN' || meuPapel === 'ADMIN');
+}
+
+/**
+ * Quem pode ter o papel trocado por `eu`: quem administra a equipe, nunca no próprio papel, e
+ * conta de dono só o dono mexe. Espelho de `mobile/src/lib/permissoes.ts` (ADR-45: é o caminho
+ * do dono único que quer excluir a conta).
+ */
+export function possoMudarPapel(eu, alvo) {
+  if (!eu || !alvo || eu.id === alvo.id || !papelPode(eu.papel, PODE.GERIR_USUARIOS)) return false;
+  return alvo.papel !== 'ADMIN' || eu.papel === 'ADMIN';
+}
+
 /** O que cada capacidade significa para quem está lendo a tela. */
 const EM_PORTUGUES = {
   [PODE.VER_DINHEIRO]: 'ver custo, lucro e margem',
   [PODE.LANCAR_DESPESA]: 'lançar despesas',
   [PODE.CANCELAR_VENDA]: 'cancelar venda concluída',
+  [PODE.ATENDER_CLIENTE]: 'buscar e cadastrar cliente no balcão',
+  [PODE.FAZER_CONDICIONAL]: 'levar peça em condicional para a cliente provar',
   [PODE.VER_VENDAS_DE_TODOS]: 'ver as vendas de toda a equipe',
   [PODE.CORRIGIR_ESTOQUE]: 'ajustar estoque e fazer inventário',
   [PODE.EDITAR_CATALOGO]: 'editar e excluir produtos e categorias',
   [PODE.FECHAR_CAIXA]: 'conferir e fechar o caixa do dia',
   [PODE.GERIR_USUARIOS]: 'administrar os logins da equipe',
   [PODE.VER_AUDITORIA]: 'ver o diário de auditoria',
-  [PODE.CONFIGURAR_LOJA]: 'mudar o nome e o ramo da loja',
+  [PODE.CONFIGURAR_LOJA]: 'mudar os dados da loja (nome, ramo e fiscais)',
   [PODE.GERIR_BACKUP]: 'ligar e configurar o backup na nuvem',
+  [PODE.DEFINIR_COMISSAO]: 'definir a comissão e a meta do dia da equipe',
 };
 
 /** Sempre aberto a quem entrou: é disto que o balcão vive. */

@@ -1,29 +1,17 @@
 import { useMutation } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import {
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text } from 'react-native';
 
 import { mensagemDoErro } from '@/api/client';
 import { usuarios } from '@/api/endpoints';
 import type { Papel } from '@/api/tipos';
+import { EscolhaDoPapel } from '@/components/EscolhaDoPapel';
 import { Botao, Campo } from '@/components/ui';
 import { chaves, queryClient } from '@/lib/queryClient';
-import { DESCRICAO, titulo } from '@/lib/permissoes';
+import { papeisQuePossoDar } from '@/lib/permissoes';
 import { useAuthStore } from '@/stores/authStore';
-import { cores, espaco, fonte, raio } from '@/lib/tema';
-
-// Do mais baixo para o mais alto: a lista lida de cima para baixo é a escada da loja, e a
-// escolha mais comum (vendedora) fica no primeiro toque.
-const ESCADA: Papel[] = ['VENDEDOR', 'SUPERVISORA', 'GERENTE', 'ADMIN'];
+import { cores, espaco, fonte } from '@/lib/tema';
 
 export default function NovoUsuario() {
   const router = useRouter();
@@ -31,10 +19,10 @@ export default function NovoUsuario() {
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
   const [papel, setPapel] = useState<Papel>('VENDEDOR');
-  const souDono = useAuthStore((e) => e.usuario?.papel === 'ADMIN');
-  // Um gerente administra a equipe, mas não cria dono: seria virar dono. O servidor
-  // recusa com 403 de qualquer jeito; aqui a opção nem aparece.
-  const opcoes = ESCADA.filter((p) => p !== 'ADMIN' || souDono);
+  // Do mais baixo para o mais alto: a escolha mais comum (vendedora) fica no primeiro toque.
+  // Um gerente administra a equipe, mas não cria dono: seria virar dono. O servidor recusa
+  // com 403 de qualquer jeito; aqui a opção nem aparece.
+  const opcoes = papeisQuePossoDar(useAuthStore((e) => e.usuario?.papel));
   const [erro, setErro] = useState<string | null>(null);
 
   const criar = useMutation({
@@ -80,21 +68,7 @@ export default function NovoUsuario() {
         />
 
         <Text style={s.rotulo}>Papel</Text>
-        {opcoes.map((opcao) => (
-          <Pressable
-            key={opcao}
-            style={[s.papel, papel === opcao && s.papelAtivo]}
-            onPress={() => setPapel(opcao)}
-          >
-            <View style={s.radio}>
-              {papel === opcao && <View style={s.radioMarcado} />}
-            </View>
-            <View style={s.papelTexto}>
-              <Text style={s.papelRotulo}>{titulo(opcao)}</Text>
-              <Text style={s.papelDescricao}>{DESCRICAO[opcao]}</Text>
-            </View>
-          </Pressable>
-        ))}
+        <EscolhaDoPapel opcoes={opcoes} valor={papel} aoEscolher={setPapel} />
 
         {!!erro && <Text style={s.erro}>{erro}</Text>}
 
@@ -113,36 +87,5 @@ const s = StyleSheet.create({
     color: cores.textoSuave,
     marginBottom: espaco.sm,
   },
-  papel: {
-    flexDirection: 'row',
-    gap: espaco.md,
-    backgroundColor: cores.superficie,
-    borderRadius: raio.md,
-    padding: espaco.lg,
-    marginBottom: espaco.sm,
-    borderWidth: 1,
-    borderColor: cores.borda,
-  },
-  papelAtivo: { borderColor: cores.primaria, backgroundColor: cores.primariaFraca },
-  radio: {
-    width: 22,
-    height: 22,
-    borderRadius: raio.redondo,
-    borderWidth: 2,
-    borderColor: cores.primaria,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 2,
-  },
-  radioMarcado: {
-    width: 12,
-    height: 12,
-    borderRadius: raio.redondo,
-    backgroundColor: cores.primaria,
-  },
-  papelTexto: { flex: 1 },
-  papelRotulo: { fontSize: fonte.base, fontWeight: '700', color: cores.texto },
-  papelDescricao: { fontSize: fonte.pequena, color: cores.textoSuave, marginTop: 2 },
-
   erro: { color: cores.perigo, fontWeight: '600', marginBottom: espaco.md },
 });

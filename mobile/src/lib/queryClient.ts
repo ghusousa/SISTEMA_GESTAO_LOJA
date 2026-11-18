@@ -27,6 +27,8 @@ export const chaves = {
   variantePorCodigo: (codigo: string) => ['variante-codigo', codigo] as const,
   vendas: ['vendas'] as const,
   venda: (id: number) => ['vendas', id] as const,
+  /** Debaixo da venda: invalidar a venda (ou todas) leva a nota junto. */
+  nfce: (vendaId: number) => ['vendas', vendaId, 'nfce'] as const,
   movimentacoes: ['movimentacoes'] as const,
   categorias: ['categorias'] as const,
   despesas: ['despesas'] as const,
@@ -41,6 +43,16 @@ export const chaves = {
   relatorioDespesas: (inicio: string, fim: string) =>
     ['relatorio-despesas', inicio, fim] as const,
   estoqueBaixo: ['estoque-baixo'] as const,
+  relatorioVendedoras: (inicio: string, fim: string) =>
+    ['relatorio-vendedoras', inicio, fim] as const,
+  relatorioCurvaAbc: (inicio: string, fim: string) => ['relatorio-curva-abc', inicio, fim] as const,
+  relatorioRecebiveis: (inicio: string, fim: string) =>
+    ['relatorio-recebiveis', inicio, fim] as const,
+  /** O placar do PDV. Cai com venda (relatório) e com usuário (o dono mudou a meta). */
+  meuDia: ['relatorio-meu-dia'] as const,
+  /** Fotografias do agora, sem período: caem com qualquer mexida no estoque. */
+  estoqueParado: (dias: number) => ['estoque-parado', dias] as const,
+  valorDoEstoque: ['valor-do-estoque'] as const,
   usuarios: ['usuarios'] as const,
   auditoria: ['auditoria'] as const,
   configuracao: ['configuracao'] as const,
@@ -48,15 +60,44 @@ export const chaves = {
   cliente: (id: number) => ['clientes', id] as const,
   extratoCliente: (id: number) => ['clientes', id, 'extrato'] as const,
   devolucoesDaVenda: (vendaId: number) => ['devolucoes', vendaId] as const,
+  /** Mudar a taxa NÃO invalida relatório: a venda guarda a taxa do dia dela (ADR-35). */
+  taxasCartao: ['taxas-cartao'] as const,
+  aniversariantes: (mes: number) => ['clientes', 'aniversariantes', mes] as const,
+  comprasDaCliente: (id: number) => ['vendas', 'cliente', id] as const,
+  condicionais: ['condicionais'] as const,
+  condicional: (id: number) => ['condicionais', id] as const,
+  /** NÃO é relatório: conta a pagar fica fora do Resultado (ADR-40). */
+  contasPagar: ['contas-pagar'] as const,
+  /** O pareamento do celular-leitor (ADR-43); a tela consulta de 15 em 15 s. */
+  leitor: (id: number) => ['leitor', id] as const,
 };
 
-/** Tudo que depende de faturamento, custo ou resultado. */
-const CHAVES_RELATORIO = [
+/**
+ * Tudo que depende de faturamento, custo ou resultado. Exportado porque o tempo real
+ * (`lib/avisos.ts`) derruba a mesma lista: duas cópias divergem no primeiro relatório novo.
+ */
+export const CHAVES_RELATORIO = [
   ['relatorio-resumo'],
   ['relatorio-vendas-dia'],
   ['relatorio-mais-vendidos'],
   ['relatorio-despesas'],
+  ['relatorio-vendedoras'],
+  ['relatorio-curva-abc'],
+  ['relatorio-recebiveis'],
+  ['relatorio-meu-dia'],
 ] as const;
+
+/**
+ * O que é fotografia do estoque de agora (não do período): saldo mudou, elas caem. Mesma
+ * lista no tempo real (`lib/avisos.ts`) e nas mutações daqui.
+ */
+export const CHAVES_GIRO = [['estoque-parado'], ['valor-do-estoque']] as const;
+
+function invalidarGiro(): void {
+  for (const chave of CHAVES_GIRO) {
+    queryClient.invalidateQueries({ queryKey: chave });
+  }
+}
 
 function invalidarRelatorios(): void {
   for (const chave of CHAVES_RELATORIO) {
@@ -80,6 +121,16 @@ export function invalidarAposVenda(): void {
   // mostraria o saldo antigo no seletor — e poderia não disparar o aviso de limite.
   queryClient.invalidateQueries({ queryKey: chaves.clientes });
   invalidarRelatorios();
+  invalidarGiro();
+}
+
+/**
+ * Abrir ou fechar condicional mexe no saldo; fechar com venda mexe também em vendas, caixa,
+ * fiado e relatórios — é uma venda comum (ADR-39).
+ */
+export function invalidarAposCondicional(): void {
+  queryClient.invalidateQueries({ queryKey: chaves.condicionais });
+  invalidarAposVenda();
 }
 
 export function invalidarAposMovimentoEstoque(): void {
@@ -87,6 +138,7 @@ export function invalidarAposMovimentoEstoque(): void {
   queryClient.invalidateQueries({ queryKey: chaves.produtos });
   queryClient.invalidateQueries({ queryKey: chaves.movimentacoes });
   queryClient.invalidateQueries({ queryKey: chaves.estoqueBaixo });
+  invalidarGiro();
 }
 
 /** Despesa entra no resultado do mês: a lista sozinha não basta. */
@@ -112,6 +164,7 @@ export function invalidarAposDevolucao(vendaId: number): void {
   // A devolução pode ter abatido fiado: o saldo da cliente mudou junto.
   queryClient.invalidateQueries({ queryKey: chaves.clientes });
   invalidarRelatorios();
+  invalidarGiro();
 }
 
 /**

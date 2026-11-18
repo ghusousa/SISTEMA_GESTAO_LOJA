@@ -3,11 +3,27 @@
  * contrato muda, muda aqui, e o TypeScript aponta quem precisa acompanhar.
  */
 
+import axios from 'axios';
+
 import { api } from './client';
 import type {
+  Backup,
+  BipeEnviado,
+  BipesRetirados,
+  Pareamento,
   ConfiguracaoLoja,
+  ConfiguracaoPublica,
+  CurvaAbc,
   Categoria,
   CategoriaDespesa,
+  ClienteDoBalcao,
+  Condicional,
+  ContaPagar,
+  FiltroCondicionais,
+  FiltroContas,
+  FormaPagamentoConta,
+  NotaFornecedor,
+  ResumoContas,
   Despesa,
   DespesaPorCategoria,
   DiaCaixa,
@@ -18,22 +34,31 @@ import type {
   FormaPagamento,
   InventarioResultado,
   MaisVendido,
+  MeuDia,
   Movimento,
   Pagina,
+  PaginaEstoqueParado,
+  PaginaVendedoras,
   Produto,
+  Recebivel,
   Replicacao,
   ResumoFinanceiro,
   Saldo,
+  TaxaCartao,
   TipoMovimento,
   Tokens,
   Usuario,
   Auditoria,
   Cliente,
+  ClienteBalcao,
   Devolucao,
+  EmissorFiscal,
   ExtratoCliente,
+  Nfce,
   PagamentoCliente,
   Vale,
   Variante,
+  ValorEstoque,
   VarianteLookup,
   Versao,
   Venda,
@@ -43,6 +68,14 @@ import type {
 interface Paginado {
   page?: number;
   size?: number;
+}
+
+/** Campos fiscais do produto como o servidor recebe: `null` em NCM/CEST apaga. */
+export interface DadosFiscais {
+  ncm: string | null;
+  cest: string | null;
+  origem: number;
+  cfop: string;
 }
 
 // ------------------------------------------------------------------ auth
@@ -66,11 +99,28 @@ export const usuarios = {
     const { data } = await api.get<Pagina<Usuario>>('/usuarios', { params });
     return data;
   },
+  async obter(id: number) {
+    const { data } = await api.get<Usuario>(`/usuarios/${id}`);
+    return data;
+  },
   async criar(dados: { nome: string; email: string; senha: string; papel: string }) {
     const { data } = await api.post<Usuario>('/usuarios', dados);
     return data;
   },
-  async atualizar(id: number, dados: { nome?: string; papel?: string; ativo?: boolean }) {
+  /**
+   * Comissão (% em string decimal) e meta (`null` tira) só vão quando o dono mexe nelas:
+   * mandar os campos sem `DEFINIR_COMISSAO` é 403, mesmo com o valor de hoje (ADR-37).
+   */
+  async atualizar(
+    id: number,
+    dados: {
+      nome?: string;
+      papel?: string;
+      ativo?: boolean;
+      comissao_percentual?: string;
+      meta_diaria?: string | null;
+    },
+  ) {
     const { data } = await api.patch<Usuario>(`/usuarios/${id}`, dados);
     return data;
   },
@@ -79,6 +129,20 @@ export const usuarios = {
   },
   async trocarMinhaSenha(senha_atual: string, nova_senha: string) {
     await api.patch('/usuarios/me/senha', { senha_atual, nova_senha });
+  },
+  /**
+   * Quem administra a equipe exclui a conta de outra pessoa (204). A própria conta não se
+   * exclui por aqui (409): é `excluirMinhaConta`, com a senha (ADR-45).
+   */
+  async excluir(id: number) {
+    await api.delete(`/usuarios/${id}`);
+  },
+  /**
+   * Exclui a própria conta (204). A senha vai no corpo do DELETE; errada, é 422
+   * `SENHA_INCORRETA` — nunca 401, que faria o interceptor tentar renovar e deslogar.
+   */
+  async excluirMinhaConta(senha: string, { semRenovar = false }: { semRenovar?: boolean } = {}) {
+    await api.delete('/usuarios/me', { data: { senha }, semRenovar });
   },
 };
 
@@ -95,7 +159,15 @@ export const sistema = {
    * falando com o servidor da loja certa.
    */
   async configuracao() {
-    const { data } = await api.get<ConfiguracaoLoja>('/configuracao');
+    const { data } = await api.get<ConfiguracaoPublica>('/configuracao');
+    return data;
+  },
+  /**
+   * Documento, telefone e endereço da loja, que o recibo imprime. Exige sessão (qualquer
+   * papel): abertos, entregavam o CPF e o endereço de casa do dono MEI a qualquer um.
+   */
+  async configuracaoCompleta() {
+    const { data } = await api.get<ConfiguracaoLoja>('/configuracao/completa');
     return data;
   },
   /** Os ramos que o sistema conhece, para a tela montar o seletor sem lista própria. */
@@ -107,9 +179,41 @@ export const sistema = {
   },
   /** Só o dono (`CONFIGURAR_LOJA`). */
   async salvarConfiguracao(dados: Partial<
-    Pick<ConfiguracaoLoja, 'nome' | 'segmento' | 'documento' | 'telefone' | 'endereco'>
+    Pick<
+      ConfiguracaoLoja,
+      | 'nome'
+      | 'segmento'
+      | 'documento'
+      | 'telefone'
+      | 'endereco'
+      | 'regime_tributario'
+      | 'inscricao_estadual'
+      | 'serie_nfce'
+    >
   >) {
     const { data } = await api.patch<ConfiguracaoLoja>('/configuracao', dados);
+    return data;
+  },
+};
+
+// -------------------------------------------------------------------- backup
+/** Só o dono (`GERIR_BACKUP`). O token entra e nunca sai — nem para o dono. */
+export const backup = {
+  async obter() {
+    const { data } = await api.get<Backup>('/backup');
+    return data;
+  },
+  /**
+   * Trocar o token ou a pasta de um backup já conectado exige `senha_atual` (422 com
+   * `detail.campo = 'senha_atual'` sem ela). Ligar, desligar e intervalo não exigem.
+   */
+  async salvar(
+    dados: Partial<Pick<Backup, 'ativo' | 'pasta' | 'manter' | 'intervalo_min'>> & {
+      rclone_token?: string;
+      senha_atual?: string;
+    },
+  ) {
+    const { data } = await api.put<Backup>('/backup', dados);
     return data;
   },
 };
@@ -144,13 +248,13 @@ export const catalogo = {
     nome: string;
     descricao?: string | null;
     variantes: VariantePayload[];
-  }) {
+  } & Partial<DadosFiscais>) {
     const { data } = await api.post<Produto>('/produtos', dados);
     return data;
   },
   async atualizarProduto(
     id: number,
-    dados: { categoria_id?: number; nome?: string; descricao?: string | null },
+    dados: { categoria_id?: number; nome?: string; descricao?: string | null } & Partial<DadosFiscais>,
   ) {
     const { data } = await api.patch<Produto>(`/produtos/${id}`, dados);
     return data;
@@ -242,6 +346,8 @@ export const estoque = {
     fornecedor?: string | null;
     observacao?: string | null;
     itens: { variante_id: number; quantidade: number; custo_unitario?: string }[];
+    /** Só quem vê dinheiro: o servidor recusa com 403 a nota vinda de outro papel. */
+    nota?: NotaFornecedor;
   }) {
     const { data } = await api.post<Entrada>('/estoque/entradas', dados);
     return data;
@@ -267,7 +373,14 @@ export const vendas = {
     observacao?: string | null;
     cliente_id?: number | null;
     itens: { variante_id: number; quantidade: number }[];
-    pagamentos: { forma: FormaPagamento; valor: string; codigo_vale?: string }[];
+    pagamentos: {
+      forma: FormaPagamento;
+      valor: string;
+      codigo_vale?: string;
+      /** Só no crédito, de 1 a 12 (ADR-35). */
+      parcelas?: number;
+      bandeira?: string | null;
+    }[];
   }) {
     const { data } = await api.post<Venda>('/vendas', dados);
     return data;
@@ -314,6 +427,24 @@ export const vendas = {
   },
 };
 
+// ------------------------------------------------------------------ NFC-e (ADR-41)
+export const fiscal = {
+  /** A nota da venda (ou `null`) e se há emissor ligado. Quem vê a venda vê a nota. */
+  async nfce(vendaId: number) {
+    const { data } = await api.get<Nfce>(`/vendas/${vendaId}/nfce`);
+    return data;
+  },
+  /** Idempotente: venda com nota autorizada devolve a mesma nota, sem emitir outra. */
+  async emitir(vendaId: number) {
+    const { data } = await api.post<Nfce>(`/vendas/${vendaId}/nfce`);
+    return data;
+  },
+  async emissor() {
+    const { data } = await api.get<EmissorFiscal>('/fiscal/emissor');
+    return data;
+  },
+};
+
 export const auditoria = {
   async listar(
     params: Paginado & {
@@ -339,16 +470,40 @@ export const clientes = {
     documento?: string | null;
     /** Limite combinado, string decimal. Avisa na venda, nunca bloqueia (ADR-20). */
     limite?: string | null;
+    nascimento?: string | null;
+    preferencias?: string | null;
   }) {
     const { data } = await api.post<Cliente>('/clientes', dados);
+    return data;
+  },
+  /** A porta do balcão (ATENDER_CLIENTE): busca sem saldo nem limite (ADR-36). */
+  async buscarNoBalcao(params: Paginado & { q?: string } = {}) {
+    const { data } = await api.get<Pagina<ClienteBalcao>>('/clientes/balcao', { params });
+    return data;
+  },
+  /** Idempotente por `client_uuid`: a rede caindo não faz a cliente nascer duas vezes. */
+  async cadastrarNoBalcao(dados: {
+    client_uuid: string;
+    nome: string;
+    telefone?: string | null;
+    nascimento?: string | null;
+    preferencias?: string | null;
+  }) {
+    const { data } = await api.post<ClienteBalcao>('/clientes/balcao', dados);
+    return data;
+  },
+  async aniversariantes(params: Paginado & { mes?: number } = {}) {
+    const { data } = await api.get<Pagina<ClienteBalcao>>('/clientes/aniversariantes', {
+      params,
+    });
     return data;
   },
   async detalhe(id: number) {
     const { data } = await api.get<Cliente>(`/clientes/${id}`);
     return data;
   },
-  async extrato(id: number) {
-    const { data } = await api.get<ExtratoCliente>(`/clientes/${id}/extrato`);
+  async extrato(id: number, params: Paginado = {}) {
+    const { data } = await api.get<ExtratoCliente>(`/clientes/${id}/extrato`, { params });
     return data;
   },
   async receber(
@@ -357,6 +512,13 @@ export const clientes = {
   ) {
     const { data } = await api.post<PagamentoCliente>(`/clientes/${id}/pagamentos`, dados);
     return data;
+  },
+  /**
+   * Exclui a pedido da cliente (LGPD), só quitada. O servidor ANONIMIZA: nome, telefone,
+   * documento e observação somem; as vendas ficam, sem o nome.
+   */
+  async excluir(id: number) {
+    await api.delete(`/clientes/${id}`);
   },
 };
 
@@ -455,8 +617,185 @@ export const relatorios = {
     );
     return data;
   },
-  async estoqueBaixo() {
-    const { data } = await api.get<EstoqueBaixo[]>('/relatorios/estoque-baixo');
+  /**
+   * Paginado como toda listagem. Para só saber QUANTAS peças estão no mínimo, peça
+   * `size: 1` e leia `total` — a lista inteira passava de 1 MB numa loja grande.
+   */
+  async estoqueBaixo(params: Paginado = {}) {
+    const { data } = await api.get<Pagina<EstoqueBaixo>>('/relatorios/estoque-baixo', {
+      params,
+    });
+    return data;
+  },
+  /** Faturamento líquido e comissão de cada pessoa da equipe, com os totais do período. */
+  async vendedoras(inicio: string, fim: string, params: Paginado = {}) {
+    const { data } = await api.get<PaginaVendedoras>('/relatorios/vendedoras', {
+      params: { inicio, fim, ...params },
+    });
+    return data;
+  },
+  /** O placar de hoje de quem está logado (aberto a toda a equipe). */
+  async meuDia() {
+    const { data } = await api.get<MeuDia>('/relatorios/meu-dia');
+    return data;
+  },
+  async estoqueParado(dias: number, params: Paginado = {}) {
+    const { data } = await api.get<PaginaEstoqueParado>('/relatorios/estoque-parado', {
+      params: { dias, ...params },
+    });
+    return data;
+  },
+  async curvaAbc(inicio: string, fim: string, params: Paginado = {}) {
+    const { data } = await api.get<Pagina<CurvaAbc>>('/relatorios/curva-abc', {
+      params: { inicio, fim, ...params },
+    });
+    return data;
+  },
+  async valorDoEstoque() {
+    const { data } = await api.get<ValorEstoque>('/relatorios/valor-do-estoque');
+    return data;
+  },
+  /**
+   * Agenda do que a maquininha ainda vai depositar. Servidor sem o módulo de taxas
+   * responde 404: aqui isso vira `null`, e a seção some da tela em vez de pintar erro.
+   */
+  async recebiveis(inicio: string, fim: string, params: Paginado = {}) {
+    try {
+      const { data } = await api.get<Pagina<Recebivel>>('/relatorios/recebiveis', {
+        params: { inicio, fim, ...params },
+      });
+      return data;
+    } catch (erro) {
+      if (axios.isAxiosError(erro) && erro.response?.status === 404) return null;
+      throw erro;
+    }
+  },
+};
+
+// ------------------------------------------------------------------ taxas da maquininha
+/** Ler é de quem vê dinheiro; mudar, só do dono (ADR-35). */
+export const taxasCartao = {
+  async listar(params: Paginado = {}) {
+    const { data } = await api.get<Pagina<TaxaCartao>>('/taxas-cartao', { params });
+    return data;
+  },
+  async criar(dados: Omit<TaxaCartao, 'id'>) {
+    const { data } = await api.post<TaxaCartao>('/taxas-cartao', dados);
+    return data;
+  },
+  async atualizar(id: number, dados: Partial<Omit<TaxaCartao, 'id' | 'forma'>>) {
+    const { data } = await api.patch<TaxaCartao>(`/taxas-cartao/${id}`, dados);
+    return data;
+  },
+  async excluir(id: number) {
+    await api.delete(`/taxas-cartao/${id}`);
+  },
+};
+
+// ------------------------------------------------------------------ condicional (ADR-39)
+export const condicionais = {
+  async listar(params: Paginado & { situacao?: FiltroCondicionais; cliente_id?: number } = {}) {
+    const { data } = await api.get<Pagina<Condicional>>('/condicionais', { params });
+    return data;
+  },
+  async obter(id: number) {
+    const { data } = await api.get<Condicional>(`/condicionais/${id}`);
+    return data;
+  },
+  async abrir(dados: {
+    client_uuid: string;
+    cliente_id: number;
+    prazo: string;
+    observacao?: string | null;
+    itens: { variante_id: number; quantidade: number }[];
+  }) {
+    const { data } = await api.post<Condicional>('/condicionais', dados);
+    return data;
+  },
+  async fechar(
+    id: number,
+    dados: {
+      client_uuid: string;
+      itens: { variante_id: number; devolvida: number }[];
+      desconto?: string;
+      pagamentos: {
+        forma: FormaPagamento;
+        valor: string;
+        codigo_vale?: string;
+        /** Só no crédito, de 1 a 12 — como no PDV (ADR-35). */
+        parcelas?: number;
+        bandeira?: string | null;
+      }[];
+    },
+  ) {
+    const { data } = await api.post<Condicional>(`/condicionais/${id}/fechamento`, dados);
+    return data;
+  },
+  /** A busca de balcão (frente B1, `ATENDER_CLIENTE`): sem saldo nem limite. */
+  async buscarCliente(q: string) {
+    const { data } = await api.get<Pagina<ClienteDoBalcao>>('/clientes/balcao', {
+      params: { q, size: 10 },
+    });
+    return data;
+  },
+};
+
+// ------------------------------------------------------------------ contas a pagar (ADR-40)
+export const contasPagar = {
+  async listar(params: Paginado & { situacao?: FiltroContas; fornecedor?: string } = {}) {
+    const { data } = await api.get<Pagina<ContaPagar>>('/contas-pagar', { params });
+    return data;
+  },
+  async resumo() {
+    const { data } = await api.get<ResumoContas>('/contas-pagar/resumo');
+    return data;
+  },
+  async pagar(id: number, dados: { forma: FormaPagamentoConta; pago_em?: string | null }) {
+    const { data } = await api.post<ContaPagar>(`/contas-pagar/${id}/pagamento`, dados);
+    return data;
+  },
+  async desfazerPagamento(id: number) {
+    const { data } = await api.delete<ContaPagar>(`/contas-pagar/${id}/pagamento`);
+    return data;
+  },
+};
+
+// ------------------------------------------------------------------ leitor pelo celular (ADR-43)
+/**
+ * O celular como leitor de código de barras do computador. Qualquer pessoa logada usa
+ * (sem capacidade própria). O app aceita, consulta, desliga e manda bipe; criar e
+ * retirar são do computador (web), e ficam aqui para o contrato morar num lugar só.
+ */
+export const leitor = {
+  /** Computador: gera o código (AGUARDANDO). `substitui_id` encerra o anterior. */
+  async criar(substitui_id: number | null = null) {
+    const { data } = await api.post<Pareamento>('/leitor/pareamentos', { substitui_id });
+    return data;
+  },
+  /** Celular: aceita o código lido ou digitado. 404 `LEITOR_CODIGO_INVALIDO` para tudo. */
+  async aceitar(codigo: string) {
+    const { data } = await api.post<Pareamento>('/leitor/pareamentos/aceitar', { codigo });
+    return data;
+  },
+  async consultar(id: number) {
+    const { data } = await api.get<Pareamento>(`/leitor/pareamentos/${id}`);
+    return data;
+  },
+  /**
+   * Desliga (204). O `timeout` curto serve ao logout: sair do app não pode esperar 15 s
+   * por um servidor que não responde.
+   */
+  async desligar(id: number, opcoes: { timeout?: number } = {}) {
+    await api.delete(`/leitor/pareamentos/${id}`, opcoes);
+  },
+  /** Idempotente por `client_uuid`: o reenvio idêntico volta 200 com o mesmo bipe. */
+  async enviarBipe(dados: { client_uuid: string; pareamento_id: number; codigo: string }) {
+    const { data } = await api.post<BipeEnviado>('/leitor/bipes', dados);
+    return data;
+  },
+  /** Computador: retira até 50 bipes, cada um entregue uma vez só. */
+  async retirar(id: number) {
+    const { data } = await api.post<BipesRetirados>(`/leitor/pareamentos/${id}/retirar`);
     return data;
   },
 };

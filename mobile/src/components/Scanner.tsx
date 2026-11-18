@@ -8,15 +8,24 @@
 
 import { CameraView, useCameraPermissions, type BarcodeType } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
-import { useCallback, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Botao } from '@/components/ui';
+import { respiroDeBaixo, respiroDeCima } from '@/lib/areaSegura';
 import { decidirLeitura } from '@/lib/leitura';
+import { avisoDaCamera, situacaoDaCamera } from '@/lib/permissaoDaCamera';
 import { ALVO_TOQUE, cores, espaco, fonte, raio } from '@/lib/tema';
 
 /** EAN-13/EAN-8 cobrem etiqueta de fornecedor; Code 128 e UPC aparecem em peças importadas. */
 const TIPOS: BarcodeType[] = ['ean13', 'ean8', 'code128', 'upc_a', 'upc_e'];
+
+/**
+ * Só QR: o convite do celular-leitor (ADR-43). Fora das etiquetas de propósito — com QR
+ * ligado no PDV, um Pix na bancada viraria "código não cadastrado".
+ */
+export const SO_QR: BarcodeType[] = ['qr'];
 
 export interface ScannerRef {
   /** Libera uma nova leitura no modo 'unico' (ex.: o código bipado não existia). */
@@ -34,7 +43,11 @@ export interface ScannerRef {
 }
 
 interface Props {
-  aoLer: (codigo: string) => void;
+  /**
+   * Recebe o código lido. Devolver `false` é a tela recusando a leitura (o QR que não é o
+   * convite do leitor): vibra o aviso em vez do "deu certo" e não vira o "Último".
+   */
+  aoLer: (codigo: string) => void | boolean;
   /** 'continuo' mantém a leitura ativa (bipar vários); 'unico' para após o primeiro código. */
   modo?: 'unico' | 'continuo';
   ativo?: boolean;
@@ -48,6 +61,18 @@ interface Props {
   dica?: string;
   /** Recebe o controle para reativar a leitura depois de um erro. */
   controle?: React.MutableRefObject<ScannerRef | null>;
+  /**
+   * Que códigos a câmera procura. Padrão: as etiquetas de peça. Passe uma constante de
+   * módulo (como `SO_QR`): array novo a cada render reconfiguraria a câmera.
+   */
+  tipos?: BarcodeType[];
+  /**
+   * Bordas da TELA em que o leitor encosta. Num Modal de tela cheia são as duas: a lanterna
+   * desce da barra de status e os botões do rodapé sobem do indicador de início. Abaixo de um
+   * cabeçalho, até o fim da tela, só a de baixo. Sem nada, o leitor vive no meio da tela (o
+   * PDV, a entrada, o inventário) e quem cuida da área segura é a tela em volta.
+   */
+  encosta?: 'embaixo' | 'em-cima-e-embaixo';
 }
 
 export function Scanner({
@@ -58,8 +83,23 @@ export function Scanner({
   rodape,
   dica = 'Aponte para o código de barras da peça',
   controle,
+  tipos = TIPOS,
+  encosta,
 }: Props) {
+  const insets = useSafeAreaInsets();
+  const emCima = encosta === 'em-cima-e-embaixo' ? respiroDeCima(insets.top, 0) : 0;
+  const embaixo = encosta ? respiroDeBaixo(insets.bottom, 0) : 0;
   const [permissao, pedirPermissao] = useCameraPermissions();
+  // Na primeira abertura quem pergunta é o alerta do sistema, pedido aqui mesmo — sem tela do
+  // app antes dele (ver `lib/permissaoDaCamera.ts`). Uma vez por montagem: dispensado, não volta
+  // sozinho em laço; a tela do app oferece "Continuar".
+  const jaPediu = useRef(false);
+  const situacao = situacaoDaCamera(permissao, jaPediu.current);
+  useEffect(() => {
+    if (situacao !== 'pedir-ao-sistema' || jaPediu.current) return;
+    jaPediu.current = true;
+    void pedirPermissao();
+  }, [situacao, pedirPermissao]);
   const [lanterna, setLanterna] = useState(false);
   const [ultimoLido, setUltimoLido] = useState<string | null>(null);
 
@@ -127,32 +167,48 @@ export function Scanner({
 
       if (modo === 'unico') pausado.current = true;
 
+      if (aoLer(data) === false) {
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+        return;
+      }
       setUltimoLido(data);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      aoLer(data);
     },
     [ativo, aoLer, modo],
   );
 
-  if (!permissao) {
+  if (situacao === 'lendo' || situacao === 'pedir-ao-sistema') {
+    // Por baixo do alerta do sistema: o fundo do próprio leitor.
     return <View style={s.preto} />;
   }
 
-  if (!permissao.granted) {
+  if (situacao !== 'liberada') {
+    const aviso = avisoDaCamera(situacao);
     return (
-      <View style={s.aviso}>
-        <Text style={s.avisoTitulo}>A câmera precisa de permissão</Text>
-        <Text style={s.avisoTexto}>
-          É com ela que o app lê o código de barras das peças. Sem a câmera, use
-          "Digitar código" para buscar a peça pelo número da etiqueta.
-        </Text>
-        <Botao titulo="Permitir câmera" onPress={() => void pedirPermissao()} />
+      // Centraliza quando cabe e rola quando não cabe. O botão vem logo depois do título: na
+      // faixa de câmera do SE (28% da tela na Nova condicional, 163 pt) o aviso inteiro não
+      // cabe, e o botão embaixo do texto ficava com 19 de 48 pt à vista, sem o rótulo.
+      <ScrollView
+        style={s.avisoRolagem}
+        contentContainerStyle={[
+          s.aviso,
+          { paddingTop: espaco.lg + emCima, paddingBottom: espaco.lg + embaixo },
+        ]}
+      >
+        <Text style={s.avisoTitulo}>{aviso.titulo}</Text>
+        <Botao
+          titulo={aviso.botao}
+          onPress={() =>
+            situacao === 'abrir-ajustes' ? void Linking.openSettings() : void pedirPermissao()
+          }
+        />
+        <Text style={s.avisoTexto}>{aviso.texto}</Text>
         {/* O rodapé vem junto — é ele que traz o "Digitar código" que o texto acima
             promete, e o "Voltar". Sem isto, a tela de ajuste (que É o scanner, dentro de
             um Modal sem cabeçalho) virava beco sem saída para quem negasse a câmera: nem
             digitava o código, nem saía. */}
         <View style={s.avisoRodape}>{rodape}</View>
-      </View>
+      </ScrollView>
     );
   }
 
@@ -162,12 +218,12 @@ export function Scanner({
         style={StyleSheet.absoluteFill}
         facing="back"
         enableTorch={lanterna}
-        barcodeScannerSettings={{ barcodeTypes: TIPOS }}
+        barcodeScannerSettings={{ barcodeTypes: tipos }}
         onBarcodeScanned={ativo ? tratarLeitura : undefined}
       />
 
       <View style={s.sobreposicao} pointerEvents="box-none">
-        <View style={s.topo} pointerEvents="box-none">
+        <View style={[s.topo, { paddingTop: espaco.md + emCima }]} pointerEvents="box-none">
           <Pressable
             onPress={() => setLanterna((l) => !l)}
             style={[s.lanterna, lanterna && s.lanternaAtiva]}
@@ -182,7 +238,10 @@ export function Scanner({
           <View style={s.miraLinha} />
         </View>
 
-        <View style={s.base} pointerEvents="box-none">
+        <View
+          style={[s.base, encosta && { paddingBottom: respiroDeBaixo(insets.bottom, espaco.lg) }]}
+          pointerEvents="box-none"
+        >
           <Text style={s.dica}>{dica}</Text>
           {!!ultimoLido && <Text style={s.ultimo}>Último: {ultimoLido}</Text>}
           {rodape}
@@ -228,15 +287,16 @@ const s = StyleSheet.create({
   dica: { color: '#FFF', fontSize: fonte.base, textAlign: 'center', fontWeight: '600' },
   ultimo: { color: '#C9D3DE', fontSize: fonte.pequena, textAlign: 'center' },
 
+  avisoRolagem: { flex: 1, backgroundColor: cores.fundo },
+  // `flexGrow` no conteúdo da rolagem: centraliza quando cabe, rola quando não cabe.
   aviso: {
-    flex: 1,
+    flexGrow: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: espaco.xl,
+    paddingHorizontal: espaco.xl,
     gap: espaco.md,
-    backgroundColor: cores.fundo,
   },
   avisoRodape: { alignSelf: 'stretch', gap: espaco.sm, marginTop: espaco.sm },
-  avisoTitulo: { fontSize: fonte.media, fontWeight: '700', color: cores.texto },
+  avisoTitulo: { fontSize: fonte.media, fontWeight: '700', color: cores.texto, textAlign: 'center' },
   avisoTexto: { fontSize: fonte.base, color: cores.textoSuave, textAlign: 'center' },
 });

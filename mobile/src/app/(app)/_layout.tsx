@@ -37,13 +37,25 @@ export default function AppLayout() {
       <Stack.Screen name="financeiro/despesa-nova" options={{ title: 'Nova despesa' }} />
       <Stack.Screen name="financeiro/relatorios" options={{ title: 'Relatórios' }} />
       <Stack.Screen name="financeiro/caixa" options={{ title: 'Fechamento de caixa' }} />
+      <Stack.Screen name="financeiro/contas-pagar" options={{ title: 'Contas a pagar' }} />
+      <Stack.Screen name="condicional/index" options={{ title: 'Condicional' }} />
+      <Stack.Screen name="condicional/nova" options={{ title: 'Nova condicional' }} />
+      <Stack.Screen name="condicional/[id]" options={{ title: 'Condicional' }} />
       <Stack.Screen name="mais/vendas" options={{ title: 'Vendas' }} />
       <Stack.Screen name="mais/usuarios" options={{ title: 'Usuários' }} />
       <Stack.Screen name="mais/auditoria" options={{ title: 'Auditoria' }} />
       <Stack.Screen name="mais/loja" options={{ title: 'A loja' }} />
       <Stack.Screen name="mais/usuario-novo" options={{ title: 'Novo usuário' }} />
+      <Stack.Screen name="mais/usuario-comissao" options={{ title: 'Comissão e meta' }} />
+      <Stack.Screen name="mais/usuario-papel" options={{ title: 'Mudar papel' }} />
       <Stack.Screen name="mais/senha" options={{ title: 'Trocar senha' }} />
+      <Stack.Screen name="mais/conta" options={{ title: 'Minha conta' }} />
       <Stack.Screen name="mais/categorias" options={{ title: 'Categorias' }} />
+      <Stack.Screen name="mais/taxas" options={{ title: 'Taxas do cartão' }} />
+      <Stack.Screen name="mais/aniversariantes" options={{ title: 'Aniversariantes' }} />
+      <Stack.Screen name="mais/leitor" options={{ title: 'Leitor do computador' }} />
+      {/* Atalho do link gestaoloja://leitor?c=…: só repassa para mais/leitor. */}
+      <Stack.Screen name="leitor" options={{ headerShown: false }} />
     </Stack>
   );
 }

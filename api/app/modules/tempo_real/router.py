@@ -10,6 +10,13 @@ desligado. Token não trafega em URL nenhuma.
 O que sai daqui é sempre um AVISO ("estoque mudou"), nunca o dado. Ver
 `app/core/eventos.py` para o porquê — em resumo: o filtro por papel continua inteiro na
 rota REST, e assim nenhuma vendedora recebe custo por este caminho.
+
+**"conectado" é uma promessa.** Só sai depois de a escuta do banco desta instância estar
+de pé (`app/core/escuta.py`): daí em diante nada que outra instância grave escapa desta
+tela, e o cliente refaz o que tem aberto ao receber "conectado" — o que mudou antes está
+na consulta. Na Vercel o socket cai no `maxDuration` da função; o cliente religa e o
+mesmo "conectado" fecha o buraco. Escuta que não sobe a tempo (`ESPERA_ESCUTA`) não
+segura a tela: o "conectado" sai, e a escuta, quando subir, manda refazer tudo.
 """
 
 from __future__ import annotations
@@ -22,6 +29,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
 from app.core.db import SessionLocal
+from app.core.escuta import escuta
 from app.core.eventos import Evento, central
 from app.core.exceptions import AppError
 from app.core.security import decodificar_token
@@ -38,6 +46,12 @@ ESPERA_ENTRAR = 10.0
 #: De quanto em quanto tempo o servidor manda um "ping" de aplicação. Celular em 4G passa
 #: por NAT que derruba conexão parada em silêncio, e o app só descobriria na hora de usar.
 INTERVALO_PING = 25.0
+
+#: Quanto a tela espera a escuta do banco antes de receber "conectado" mesmo assim. Banco
+#: local responde em milissegundos; o Neon acordando leva alguns segundos. Passou disso,
+#: a tela segue com os avisos desta instância e fica marcada no turno da escuta: quando o
+#: LISTEN subir (ou voltar de uma queda), a escuta manda refazer tudo.
+ESPERA_ESCUTA = 5.0
 
 CODIGO_NAO_AUTENTICADO = 4401
 
@@ -101,34 +115,50 @@ async def tempo_real(websocket: WebSocket) -> None:
     if usuario is None:
         return
 
-    await websocket.send_json({"assunto": "conectado", "dados": {"usuario_id": usuario.id}})
     logger.info("tempo-real: %s entrou (%d ouvintes)", usuario.email, central.ouvintes + 1)
 
-    async with central.inscrever() as fila:
-        vigia = asyncio.create_task(_escutar_ate_cair(websocket))
+    # Inscrita ANTES de esperar a escuta: o que esta instância gravar nesse meio-tempo fica
+    # na fila e sai logo depois do "conectado".
+    async with central.inscrever() as fila, escuta.tela():
+        vigia: asyncio.Task[None] | None = None
+        proximo: asyncio.Task[Evento] | None = None
         try:
+            await escuta.aguardar_pronta(ESPERA_ESCUTA)
+            await websocket.send_json({"assunto": "conectado", "dados": {"usuario_id": usuario.id}})
+            vigia = asyncio.create_task(_escutar_ate_cair(websocket))
             while True:
-                if vigia.done():
+                if proximo is None:
+                    proximo = asyncio.create_task(fila.get())
+                # Espera o aviso OU a queda do cliente. Esperar só o aviso deixava a tela
+                # que saiu pendurada até o próximo ping (25 s), segurando a escuta do
+                # banco e, na Vercel, a instância da função.
+                prontas, _ = await asyncio.wait(
+                    {proximo, vigia}, timeout=INTERVALO_PING, return_when=asyncio.FIRST_COMPLETED
+                )
+                if vigia in prontas:
                     break  # o cliente sumiu
-                try:
-                    evento: Evento = await asyncio.wait_for(fila.get(), timeout=INTERVALO_PING)
-                except TimeoutError:
-                    # Nada aconteceu na loja: manda o ping para a conexão não morrer
-                    # calada num NAT de operadora.
-                    await websocket.send_json({"assunto": "ping", "dados": {}})
+                if proximo in prontas:
+                    evento: Evento = proximo.result()
+                    proximo = None
+                    await websocket.send_json(evento.como_json())
                     continue
-                await websocket.send_json(evento.como_json())
+                # Nada aconteceu na loja: manda o ping para a conexão não morrer calada
+                # num NAT de operadora.
+                await websocket.send_json({"assunto": "ping", "dados": {}})
         except (WebSocketDisconnect, RuntimeError):
             pass  # desligar no meio de um envio é rotina, não erro
         finally:
-            vigia.cancel()
-            # `await` numa task que MORREU relança a exceção dela — e a queda do cliente
-            # chega aqui justamente como WebSocketDisconnect. Escapando daqui, ela sobe
-            # até o uvicorn, que escreve um traceback inteiro (~2 KB) no log A CADA
-            # celular que fecha o app. O log do Docker não tem limite de tamanho por
-            # padrão: numa loja com meia dúzia de aparelhos isso enche o disco sozinho,
-            # e disco cheio derruba o Postgres. Cair é rotina; não é erro.
-            with contextlib.suppress(asyncio.CancelledError, WebSocketDisconnect, RuntimeError):
-                await vigia
+            if proximo is not None:
+                proximo.cancel()
+            if vigia is not None:
+                vigia.cancel()
+                # `await` numa task que MORREU relança a exceção dela — e a queda do
+                # cliente chega aqui justamente como WebSocketDisconnect. Escapando daqui,
+                # ela sobe até o uvicorn, que escreve um traceback inteiro (~2 KB) no log
+                # A CADA celular que fecha o app. O log do Docker não tem limite de tamanho
+                # por padrão: numa loja com meia dúzia de aparelhos isso enche o disco
+                # sozinho, e disco cheio derruba o Postgres. Cair é rotina; não é erro.
+                with contextlib.suppress(asyncio.CancelledError, WebSocketDisconnect, RuntimeError):
+                    await vigia
             await _fechar(websocket, 1000, "Até logo.")
             logger.info("tempo-real: %s saiu", usuario.email)

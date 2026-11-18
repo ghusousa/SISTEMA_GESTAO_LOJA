@@ -16,6 +16,8 @@ export const PODE = {
   CANCELAR_VENDA: 'CANCELAR_VENDA',
   DEVOLVER_VENDA: 'DEVOLVER_VENDA',
   GERIR_CREDIARIO: 'GERIR_CREDIARIO',
+  ATENDER_CLIENTE: 'ATENDER_CLIENTE',
+  FAZER_CONDICIONAL: 'FAZER_CONDICIONAL',
   VER_VENDAS_DE_TODOS: 'VER_VENDAS_DE_TODOS',
   CORRIGIR_ESTOQUE: 'CORRIGIR_ESTOQUE',
   EDITAR_CATALOGO: 'EDITAR_CATALOGO',
@@ -24,11 +26,13 @@ export const PODE = {
   VER_AUDITORIA: 'VER_AUDITORIA',
   CONFIGURAR_LOJA: 'CONFIGURAR_LOJA',
   GERIR_BACKUP: 'GERIR_BACKUP',
+  /** Comissão e meta do dia da equipe. Só o dono: quem recebe não decide quanto (ADR-37). */
+  DEFINIR_COMISSAO: 'DEFINIR_COMISSAO',
 } as const;
 
 export type Capacidade = (typeof PODE)[keyof typeof PODE];
 
-const VENDEDORA: Capacidade[] = [];
+const VENDEDORA: Capacidade[] = [PODE.ATENDER_CLIENTE, PODE.FAZER_CONDICIONAL];
 
 const SUPERVISORA: Capacidade[] = [
   ...VENDEDORA,
@@ -74,7 +78,8 @@ export const DESCRICAO: Record<Papel, string> = {
     'Tudo do chão de loja, mais custo, lucro, despesas, estorno e os logins da equipe.',
   SUPERVISORA:
     'Estoque, catálogo, caixa e as vendas da equipe. Não vê custo nem despesa, e não estorna.',
-  VENDEDOR: 'Vende, consulta preço, cadastra peça e dá entrada de mercadoria.',
+  VENDEDOR:
+    'Vende, consulta preço, cadastra peça e cliente, dá entrada de mercadoria e leva peça em condicional.',
 };
 
 /** Papel desconhecido não recebe nada — falha fechada, igual ao servidor. */
@@ -85,3 +90,25 @@ export function pode(papel: Papel | undefined, capacidade: Capacidade): boolean 
 
 export const titulo = (papel: Papel | undefined): string =>
   papel ? (TITULO[papel] ?? papel) : '';
+
+/**
+ * Os papéis que `meuPapel` pode dar a alguém — a régua de `_barrar_escalada` no servidor:
+ * só o dono cria ou promove outro dono. Do mais baixo ao mais alto, a escada da loja.
+ */
+export function papeisQuePossoDar(meuPapel: Papel | undefined): Papel[] {
+  const escada: Papel[] = ['VENDEDOR', 'SUPERVISORA', 'GERENTE', 'ADMIN'];
+  return escada.filter((p) => p !== 'ADMIN' || meuPapel === 'ADMIN');
+}
+
+/**
+ * Em quem a lista da equipe oferece "Mudar papel": quem administra a equipe, nunca no próprio
+ * papel (a loja não fica sem dono por um toque), e conta de dono só o dono mexe. É o caminho do
+ * dono único que quer sair: passa o papel de dono a outra pessoa antes (ADR-45).
+ */
+export function possoMudarPapel(
+  eu: { id: number; papel: Papel } | null | undefined,
+  alvo: { id: number; papel: Papel } | null | undefined,
+): boolean {
+  if (!eu || !alvo || eu.id === alvo.id || !pode(eu.papel, PODE.GERIR_USUARIOS)) return false;
+  return alvo.papel !== 'ADMIN' || eu.papel === 'ADMIN';
+}

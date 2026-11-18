@@ -1,3 +1,4 @@
+import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -6,12 +7,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import Duplicado, NaoEncontrado, OperacaoInvalida, Validacao
 from app.core.pagination import Pagina, Paginacao
+from app.modules.catalogo import fotos
 from app.modules.catalogo.barcode import eh_codigo_interno, montar_codigo_interno
 from app.modules.catalogo.models import Category, Product, ProductVariant, TipoCodigo
 from app.modules.catalogo.repository import CatalogoRepository
 from app.modules.catalogo.schemas import (
+    CFOP_PADRAO,
     CategoriaIn,
     CategoriaOut,
+    DadosFiscaisPecaOut,
     ProdutoAdminOut,
     ProdutoIn,
     ProdutoOut,
@@ -23,7 +27,6 @@ from app.modules.catalogo.schemas import (
     VarianteUpdate,
 )
 from app.modules.estoque import movimentos
-from app.modules.estoque.models import TipoMovimento
 from app.core.permissoes import Pode, pode
 from app.modules.usuarios.models import User
 
@@ -123,6 +126,10 @@ class CatalogoService:
             foto_url=produto.photo_url,
             categoria_id=produto.category_id,
             categoria=produto.category.name,
+            ncm=produto.ncm,
+            cest=produto.cest,
+            origem=produto.origem,
+            cfop=produto.cfop,
             variantes=variantes,
             saldo_total=sum(saldos.get(v.id, 0) for v in produto.variants),
         )
@@ -167,7 +174,13 @@ class CatalogoService:
         codigos = await self._resolver_codigos(dados.variantes)
 
         produto = Product(
-            category_id=dados.categoria_id, name=dados.nome, description=dados.descricao
+            category_id=dados.categoria_id,
+            name=dados.nome,
+            description=dados.descricao,
+            ncm=dados.ncm,
+            cest=dados.cest,
+            origem=dados.origem if dados.origem is not None else 0,
+            cfop=dados.cfop or CFOP_PADRAO,
         )
         self.session.add(produto)
         await self.session.flush()
@@ -217,15 +230,32 @@ class CatalogoService:
             produto.name = dados.nome.strip()
         if dados.descricao is not None:
             produto.description = dados.descricao
+        # Fiscais pelo `exclude_unset`: `null` em NCM/CEST apaga (código errado tem de poder
+        # sair); origem e CFOP nunca ficam vazios — `null` neles volta ao padrão.
+        fiscais = dados.model_dump(include={"ncm", "cest", "origem", "cfop"}, exclude_unset=True)
+        if "ncm" in fiscais:
+            produto.ncm = fiscais["ncm"]
+        if "cest" in fiscais:
+            produto.cest = fiscais["cest"]
+        if "origem" in fiscais:
+            produto.origem = fiscais["origem"] if fiscais["origem"] is not None else 0
+        if "cfop" in fiscais:
+            produto.cfop = fiscais["cfop"] or CFOP_PADRAO
         await self.session.commit()
         return await self.obter_produto(produto_id, usuario)
 
     async def excluir_produto(self, produto_id: int) -> None:
         """Soft delete: o produto some do catálogo mas continua explicando vendas antigas."""
+        # Trava a grade e os saldos ANTES de conferir (ADR-30). Conferir solto deixava uma
+        # Entrada do mesmo instante somar estoque numa peça que estava saindo do catálogo
+        # — peças que nenhuma tela alcança mais. Com a trava, quem chega depois espera e
+        # enxerga o que o outro gravou: a exclusão vê o saldo novo e recusa, ou a Entrada
+        # vê a peça excluída e recusa.
+        await self.repo.travar_grade(produto_id)
         produto = await self.repo.produto_por_id(produto_id)
         if produto is None:
             raise NaoEncontrado("Produto não encontrado.")
-        saldos = await movimentos.saldos_de(self.session, [v.id for v in produto.variants])
+        saldos = await movimentos.travar_saldos(self.session, [v.id for v in produto.variants])
         if any(qtd > 0 for qtd in saldos.values()):
             raise OperacaoInvalida(
                 "Este produto ainda tem peças em estoque. Zere o estoque antes de excluir."
@@ -236,13 +266,52 @@ class CatalogoService:
             variante.deleted_at = agora
         await self.session.commit()
 
-    async def definir_foto(self, produto_id: int, url: str) -> ProdutoOut | None:
-        produto = await self.repo.produto_por_id(produto_id)
-        if produto is None:
-            raise NaoEncontrado("Produto não encontrado.")
+    async def trocar_foto(
+        self, produto_id: int, conteudo: bytes, extensao: str, tipo: str
+    ) -> None:
+        """Guarda a foto nova, aponta o produto para ela e só então tira a antiga.
+
+        Nessa ordem: a rede do Blob fica FORA da trava do produto, e se a troca falhar a
+        foto que está na tela continua existindo. Onde a foto mora (disco ou Vercel Blob) é
+        decisão do ambiente, em `fotos.armazenamento()` (ADR-42).
+        """
+        casa = fotos.armazenamento()
+        # Nome gerado pelo servidor: o nome do arquivo do celular não entra no caminho.
+        url = await casa.gravar(f"{produto_id}-{uuid.uuid4().hex}{extensao}", conteudo, tipo)
+        try:
+            produto = await self.repo.travar_produto(produto_id)
+            if produto is None:  # excluído enquanto a foto subia
+                raise NaoEncontrado("Produto não encontrado.")
+        except Exception:
+            await casa.apagar(url)
+            raise
+        antiga = produto.photo_url
         produto.photo_url = url
         await self.session.commit()
-        return None
+        if antiga and antiga != url:
+            await casa.apagar(antiga)
+
+    async def dados_fiscais_das_pecas(
+        self, variante_ids: list[int]
+    ) -> dict[int, DadosFiscaisPecaOut]:
+        """NCM, CFOP e origem de cada peça, para a NFC-e (ADR-41). Porta pública do
+        catálogo para o módulo fiscal, que não lê o repositório daqui (CLAUDE.md)."""
+        linhas = await self.repo.dados_fiscais_das_pecas(variante_ids)
+        return {
+            variante.id: DadosFiscaisPecaOut(
+                variante_id=variante.id,
+                produto_id=produto.id,
+                produto=produto.name,
+                tamanho=variante.size,
+                cor=variante.color,
+                codigo_barras=variante.barcode,
+                ncm=produto.ncm,
+                cest=produto.cest,
+                origem=produto.origem,
+                cfop=produto.cfop,
+            )
+            for variante, produto in linhas
+        }
 
     # ------------------------------------------------------------ variantes
     async def obter_variante(self, variante_id: int) -> ProductVariant:
@@ -310,8 +379,11 @@ class CatalogoService:
         return variante
 
     async def excluir_variante(self, variante_id: int) -> None:
+        # Peça e saldo travados antes de conferir, como em `excluir_produto` (ADR-30).
+        await self.repo.travar_peca(variante_id)
         variante = await self.obter_variante(variante_id)
-        if await movimentos.saldo_atual(self.session, variante_id) > 0:
+        saldos = await movimentos.travar_saldos(self.session, [variante_id])
+        if saldos.get(variante_id, 0) > 0:
             raise OperacaoInvalida("Esta peça ainda tem estoque. Zere antes de excluir.")
         variante.deleted_at = datetime.now(UTC)
         await self.session.commit()
@@ -355,3 +427,93 @@ class CatalogoService:
             saldo=await movimentos.saldo_atual(self.session, variante.id),
             foto_url=produto.photo_url,
         )
+
+
+# ------------------------------------------------------------ peça que volta (ADR-30)
+async def peca_que_recebe(
+    session: AsyncSession, variante_id: int, *, devolucao: bool
+) -> tuple[int, str | None]:
+    """Em qual peça ATIVA mora a mercadoria que está entrando — e trava essa peça.
+
+    `movimentos.aplicar_movimento` pergunta isto antes de todo movimento POSITIVO.
+    Devolve `(variante_id, nota)`: a peça que recebe e, quando não é a pedida, o porquê,
+    que vai para a observação do extrato.
+
+    Peça excluída do catálogo é invisível e invendável: saldo dela é mercadoria presa no
+    banco que nenhuma tela alcança. A exclusão só vale com saldo zero, mas uma venda feita
+    ANTES dela pode ser cancelada ou devolvida DEPOIS — a peça esgota, a dona tira do
+    catálogo, a cliente traz de volta. Essa peça está de volta na arara, então:
+
+    - outra peça ATIVA com a mesma etiqueta (a dona recadastrou) recebe: mesma etiqueta é
+      a mesma peça, e é ela que o bipe acha;
+    - senão, outra ativa no mesmo produto, tamanho e cor — o UNIQUE da grade diz que é a
+      mesma peça, e reativar a antiga estouraria esse UNIQUE;
+    - senão, a peça (e o produto, se saiu junto) volta ao catálogo.
+
+    Entrada, ajuste e inventário recusam peça excluída na própria tela; se chegam aqui com
+    uma, ela foi excluída enquanto a mercadoria era conferida, e o certo é recusar também.
+    """
+    repo = CatalogoRepository(session)
+    peca = await repo.travar_peca(variante_id)
+    if peca is None:
+        raise NaoEncontrado("Peça não encontrada.", {"variante_id": variante_id})
+    if peca.deleted_at is None:
+        return variante_id, None
+    if not devolucao:
+        raise NaoEncontrado(
+            "Esta peça acabou de ser excluída do catálogo.", {"variante_id": variante_id}
+        )
+
+    substituta = await _ativa_no_lugar_da_excluida(repo, peca, travar=True)
+    if substituta is not None:
+        return substituta
+    await repo.reativar_peca(variante_id, peca.product_id)
+    return variante_id, (
+        "A peça estava excluída do catálogo e voltou para ele: está de volta na arara."
+    )
+
+
+async def _ativa_no_lugar_da_excluida(
+    repo: CatalogoRepository, peca, *, travar: bool
+) -> tuple[int, str] | None:
+    """A peça ATIVA que recebe no lugar de uma excluída: a mesma etiqueta, senão a mesma
+    grade. None: nenhuma — a excluída é que volta ao catálogo."""
+    mesma_etiqueta = await repo.travar_ativa_por_codigo(peca.barcode, travar=travar)
+    if mesma_etiqueta is not None:
+        return mesma_etiqueta, (
+            f"A peça vendida (#{peca.id}) foi excluída do catálogo; voltou para esta, "
+            f"que tem a mesma etiqueta {peca.barcode}."
+        )
+    mesma_grade = await repo.travar_ativa_da_grade(
+        peca.product_id, peca.size, peca.color, travar=travar
+    )
+    if mesma_grade is not None:
+        return mesma_grade, (
+            f"A peça vendida (#{peca.id}) foi excluída do catálogo; voltou para esta, "
+            "do mesmo produto, tamanho e cor."
+        )
+    return None
+
+
+async def pecas_que_receberiam(session: AsyncSession, variante_ids: list[int]) -> dict[int, int]:
+    """Para MOSTRAR: a peça que `peca_que_recebe` escolheria HOJE para cada uma destas —
+    sem travar nem reativar nada.
+
+    A condicional aberta mostra o preço da peça que o fechamento vai VENDER, e o fechamento
+    vende da peça que recebe o retorno. Se a dona excluiu a peça e a recadastrou (com outro
+    preço, ou a etiqueta noutro produto) enquanto ela estava na casa da cliente, mostrar o
+    preço da excluída faria a tela cobrar um valor e a venda pedir outro (422) — e a
+    condicional não fecharia. Peça ativa, ou excluída sem substituta (seria ela a voltar
+    ao catálogo), é ela mesma.
+    """
+    repo = CatalogoRepository(session)
+    destino: dict[int, int] = {}
+    for variante_id in sorted(set(variante_ids)):
+        destino[variante_id] = variante_id
+        peca = await repo.travar_peca(variante_id, travar=False)
+        if peca is None or peca.deleted_at is None:
+            continue
+        substituta = await _ativa_no_lugar_da_excluida(repo, peca, travar=False)
+        if substituta is not None:
+            destino[variante_id] = substituta[0]
+    return destino

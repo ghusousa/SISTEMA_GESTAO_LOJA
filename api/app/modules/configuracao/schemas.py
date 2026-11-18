@@ -1,9 +1,14 @@
 """Contratos da configuração da loja.
 
-`ConfiguracaoOut` é lida SEM login (a tela de login precisa do nome antes de existir
-sessão), então ela carrega só o que pode ficar na porta da loja: nome, ramo e as palavras
-da tela. Contato e documento saem junto porque vão impressos no recibo, que é papel
-público de qualquer forma.
+São DOIS retratos da mesma linha, e a diferença entre eles é o login:
+
+- `ConfiguracaoPublicaOut` é lida SEM login (a tela de entrada precisa do nome antes de
+  existir sessão). Leva só o que a porta da loja já mostra: nome, ramo, fuso e as palavras
+  da tela.
+- `ConfiguracaoOut` acrescenta documento, telefone e endereço, e exige sessão. Para MEI ou
+  para quem vende em casa, o "CNPJ ou CPF" é o CPF do dono e o endereço é o de casa dele:
+  deixar isso aberto a quem digitar a URL era entregar os dois a qualquer um. O recibo
+  continua imprimindo — quem imprime está logado.
 """
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -36,7 +41,25 @@ class SegmentoOut(BaseModel):
     eixo2: str
 
 
-class ConfiguracaoOut(BaseModel):
+def _vocabulario_out(segmento: str) -> VocabularioOut:
+    v = vocabulario(segmento)
+    return VocabularioOut(
+        icone=v.icone,
+        exemplo_produto=v.exemplo_produto,
+        item=v.item,
+        itens=v.itens,
+        artigo=v.artigo,
+        eixo1=v.eixo1,
+        eixo1_exemplos=v.eixo1_exemplos,
+        eixo1_rapidos=list(v.eixo1_rapidos),
+        eixo2=v.eixo2,
+        eixo2_exemplos=v.eixo2_exemplos,
+    )
+
+
+class ConfiguracaoPublicaOut(BaseModel):
+    """O que a porta da loja mostra a quem ainda não entrou. Nada de contato nem documento."""
+
     model_config = ConfigDict(from_attributes=True)
 
     nome: str
@@ -45,15 +68,33 @@ class ConfiguracaoOut(BaseModel):
     #: Sem isto, o navegador formata no fuso de quem OLHA — e a venda das 22h43 de 23/08
     #: era impressa como "24/08 22:43", um instante que nunca existiu.
     timezone: str
-    documento: str | None = None
-    telefone: str | None = None
-    endereco: str | None = None
     #: Derivado do segmento — a tela nunca precisa saber traduzir sozinha.
     vocabulario: VocabularioOut
 
     @classmethod
+    def de_modelo(cls, config) -> "ConfiguracaoPublicaOut":  # noqa: ANN001
+        return cls(
+            nome=config.nome,
+            segmento=config.segmento,
+            timezone=settings.timezone_loja,
+            vocabulario=_vocabulario_out(config.segmento),
+        )
+
+
+class ConfiguracaoOut(ConfiguracaoPublicaOut):
+    """A configuração inteira, para quem está logado: o recibo imprime estes três campos."""
+
+    documento: str | None = None
+    telefone: str | None = None
+    endereco: str | None = None
+    #: Dados fiscais da NFC-e (ADR-41). Saem para qualquer logado: estão impressos em toda
+    #: nota que a loja emite. A credencial do emissor NUNCA passa por aqui — mora no .env.
+    regime_tributario: int | None = None
+    inscricao_estadual: str | None = None
+    serie_nfce: int = 1
+
+    @classmethod
     def de_modelo(cls, config) -> "ConfiguracaoOut":  # noqa: ANN001
-        v = vocabulario(config.segmento)
         return cls(
             nome=config.nome,
             segmento=config.segmento,
@@ -61,18 +102,10 @@ class ConfiguracaoOut(BaseModel):
             documento=config.documento,
             telefone=config.telefone,
             endereco=config.endereco,
-            vocabulario=VocabularioOut(
-                icone=v.icone,
-                exemplo_produto=v.exemplo_produto,
-                item=v.item,
-                itens=v.itens,
-                artigo=v.artigo,
-                eixo1=v.eixo1,
-                eixo1_exemplos=v.eixo1_exemplos,
-                eixo1_rapidos=list(v.eixo1_rapidos),
-                eixo2=v.eixo2,
-                eixo2_exemplos=v.eixo2_exemplos,
-            ),
+            regime_tributario=config.regime_tributario,
+            inscricao_estadual=config.inscricao_estadual,
+            serie_nfce=config.serie_nfce,
+            vocabulario=_vocabulario_out(config.segmento),
         )
 
 
@@ -84,6 +117,23 @@ class ConfiguracaoUpdate(BaseModel):
     documento: str | None = Field(default=None, max_length=24)
     telefone: str | None = Field(default=None, max_length=32)
     endereco: str | None = Field(default=None, max_length=200)
+    #: 1 = Simples Nacional · 2 = Simples, excesso de sublimite · 3 = Regime Normal.
+    regime_tributario: int | None = Field(default=None, ge=1, le=3)
+    inscricao_estadual: str | None = Field(default=None, max_length=30)
+    serie_nfce: int | None = Field(default=None, ge=0, le=889)
+
+    @field_validator("inscricao_estadual")
+    @classmethod
+    def _ie_so_digitos(cls, v: str | None) -> str | None:
+        # Vem como está no cartão do CNPJ ("110.042.490.114"); guardamos os dígitos.
+        if v is None:
+            return None
+        limpo = "".join(c for c in v if not c.isspace() and c not in ".-/")
+        if not limpo:
+            return None
+        if not limpo.isdigit() or not 2 <= len(limpo) <= 14:
+            raise ValueError("A inscrição estadual tem só números (até 14 dígitos).")
+        return limpo
 
     @field_validator("nome")
     @classmethod

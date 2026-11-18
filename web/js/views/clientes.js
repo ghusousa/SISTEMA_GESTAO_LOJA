@@ -11,6 +11,7 @@
  */
 
 import { api } from '../api.js';
+import { mostrarCompras } from '../compras-da-cliente.js';
 import { formatar, paraCentavos, paraDecimalString } from '../dinheiro.js';
 import { novoClientUuid } from '../store.js';
 import { trocarConsulta } from '../router.js';
@@ -21,6 +22,7 @@ import {
   confirmar,
   cru,
   data as formatarData,
+  diaNaLoja,
   html,
   ligarCampoDinheiro,
   modal,
@@ -151,6 +153,10 @@ export async function render(raiz, _params, consulta) {
           <label class="campo"><span>Nome</span><input data-nome maxlength="120" placeholder="Maria da Silva" /></label>
           <label class="campo"><span>Telefone</span><input data-telefone maxlength="20" placeholder="(11) 99999-8888" /></label>
           <label class="campo"><span>Documento <span class="campo__dica">opcional</span></span><input data-documento maxlength="20" /></label>
+          <div class="linha-campos">
+            <label class="campo"><span>Aniversário <span class="campo__dica">opcional</span></span><input data-nascimento type="date" /></label>
+            <label class="campo"><span>Preferências <span class="campo__dica">tamanho, estilo</span></span><input data-preferencias maxlength="200" /></label>
+          </div>
           <label class="campo">
             <span>Limite combinado <span class="campo__dica">só avisa, não bloqueia</span> ${ajuda('Quanto você aceita deixar essa cliente dever. Passando disso a tela avisa e a venda continua: quem decide na hora é você.')}</span>
             <input data-limite inputmode="numeric" />
@@ -174,6 +180,8 @@ export async function render(raiz, _params, consulta) {
               telefone: corpo.querySelector('[data-telefone]').value.trim() || null,
               documento: corpo.querySelector('[data-documento]').value.trim() || null,
               limite: limite > 0 ? paraDecimalString(limite) : null,
+              nascimento: corpo.querySelector('[data-nascimento]').value || null,
+              preferencias: corpo.querySelector('[data-preferencias]').value.trim() || null,
             });
             fechar();
             aviso(`${nome} cadastrada.`);
@@ -188,56 +196,98 @@ export async function render(raiz, _params, consulta) {
 
   /* -------------------------------------------------------------- extrato */
 
+  // Compras e pagamentos vêm paginados juntos (o mesmo ?page=&size=): "Carregar mais" traz a
+  // próxima leva das duas listas. Os totais do topo são da conta inteira, nunca da página —
+  // a caderneta de anos não desce numa resposta só, e a conta continua fechando.
+  const linhaVenda = (v) => html`
+    <tr>
+      <td><a href="#/vendas/${v.venda_id}">Venda #${v.venda_id}</a></td>
+      <td>${diaNaLoja(v.vendida_em)}</td>
+      <td class="direita dinheiro">${formatar(paraCentavos(v.no_fiado))}</td>
+    </tr>`;
+  const linhaPagamento = (p) => html`
+    <tr>
+      <td>${diaNaLoja(p.pago_em)}</td>
+      <td>${p.forma.toLowerCase()}</td>
+      <td class="direita dinheiro">${formatar(paraCentavos(p.valor))}</td>
+    </tr>`;
+  const temMais = ({ vendas, pagamentos }) =>
+    vendas.page * vendas.size < Math.max(vendas.total, pagamentos.total);
+
   async function abrirExtrato(clienteId) {
+    const buscar = (page) => api.get(`/clientes/${clienteId}/extrato`, { page, size: 20 });
     try {
-      const extrato = await api.get(`/clientes/${clienteId}/extrato`);
+      const extrato = await buscar(1);
       modal({
         titulo: extrato.cliente.nome,
         largura: '620px',
         render: () => html`
+            ${extrato.cliente.nascimento || extrato.cliente.preferencias
+              ? cru(html`<p class="texto-suave">${[extrato.cliente.nascimento && `Aniversário ${formatarData(extrato.cliente.nascimento)}`, extrato.cliente.preferencias].filter(Boolean).join(' · ')}</p>`)
+              : ''}
             <div class="pdv__linha"><span class="texto-suave">Levou no fiado</span><span class="dinheiro">${formatar(paraCentavos(extrato.total_fiado))}</span></div>
             <div class="pdv__linha"><span class="texto-suave">Já pagou</span><span class="dinheiro">${formatar(paraCentavos(extrato.total_pago))}</span></div>
             <div class="pdv__linha"><span class="texto-suave">Devolveu</span><span class="dinheiro">${formatar(paraCentavos(extrato.total_devolvido))}</span></div>
             <div class="pdv__total"><span>Deve</span><strong class="dinheiro">${formatar(paraCentavos(extrato.deve))}</strong></div>
 
             <h3 style="margin-top:16px">Compras no fiado</h3>
-            ${extrato.vendas.length
-              ? cru(html`
-                  <table>
-                    <tbody>
-                      ${extrato.vendas.map(
-                        (v) => html`
-                          <tr>
-                            <td><a href="#/vendas/${v.venda_id}">Venda #${v.venda_id}</a></td>
-                            <td>${formatarData(v.vendida_em)}</td>
-                            <td class="direita dinheiro">${formatar(paraCentavos(v.no_fiado))}</td>
-                          </tr>
-                        `,
-                      )}
-                    </tbody>
-                  </table>
-                `)
+            ${extrato.vendas.total
+              ? cru(html`<table><tbody data-vendas>${extrato.vendas.items.map(linhaVenda)}</tbody></table>`)
               : cru('<p class="texto-suave">Nenhuma.</p>')}
 
             <h3 style="margin-top:16px">Pagamentos</h3>
-            ${extrato.pagamentos.length
-              ? cru(html`
-                  <table>
-                    <tbody>
-                      ${extrato.pagamentos.map(
-                        (p) => html`
-                          <tr>
-                            <td>${formatarData(p.pago_em)}</td>
-                            <td>${p.forma.toLowerCase()}</td>
-                            <td class="direita dinheiro">${formatar(paraCentavos(p.valor))}</td>
-                          </tr>
-                        `,
-                      )}
-                    </tbody>
-                  </table>
-                `)
+            ${extrato.pagamentos.total
+              ? cru(html`<table><tbody data-pagamentos>${extrato.pagamentos.items.map(linhaPagamento)}</tbody></table>`)
               : cru('<p class="texto-suave">Ainda não pagou nada.</p>')}
+            ${temMais(extrato)
+              ? cru('<button class="botao botao--neutro botao--largo" style="margin-top:12px" data-mais>Carregar mais</button>')
+              : ''}
+
+            <h3 style="margin-top:16px">Todas as compras</h3>
+            <div data-historico></div>
+            ${Number(extrato.deve) > 0
+              ? ''
+              : cru('<button class="botao botao--fantasma botao--pequeno" style="margin-top:16px" data-excluir>Excluir cadastro (pedido da cliente)</button>')}
         `,
+        aoAbrir: (corpo, fechar) => {
+          void mostrarCompras(corpo.querySelector('[data-historico]'), clienteId);
+          // LGPD: só quitada. A API anonimiza (nome, telefone, CPF e observação somem) e as
+          // vendas ficam — a mensagem diz exatamente isso, que é o que a página pública promete.
+          corpo.querySelector('[data-excluir]')?.addEventListener('click', async () => {
+            fechar();
+            const ok = await confirmar({
+              titulo: 'Excluir o cadastro',
+              mensagem: `Nome, telefone, CPF, aniversário, preferências e observação de ${extrato.cliente.nome} serão apagados de vez. As compras continuam no histórico, sem o nome. Não tem volta.`,
+              confirmarTexto: 'Excluir',
+              perigo: true,
+            });
+            if (!ok) return;
+            try {
+              await api.delete(`/clientes/${clienteId}`);
+              aviso('Cadastro excluído. As vendas ficaram, sem os dados dela.');
+              carregar();
+            } catch (erro) {
+              avisarErro(erro);
+            }
+          });
+          const mais = corpo.querySelector('[data-mais]');
+          let ultima = extrato;
+          mais?.addEventListener('click', async () => {
+            mais.disabled = true;
+            try {
+              ultima = await buscar(ultima.vendas.page + 1);
+              corpo.querySelector('[data-vendas]')
+                ?.insertAdjacentHTML('beforeend', ultima.vendas.items.map(linhaVenda).join(''));
+              corpo.querySelector('[data-pagamentos]')
+                ?.insertAdjacentHTML('beforeend', ultima.pagamentos.items.map(linhaPagamento).join(''));
+              if (!temMais(ultima)) mais.remove();
+            } catch (erro) {
+              avisarErro(erro);
+            } finally {
+              mais.disabled = false;
+            }
+          });
+        },
       });
     } catch (erro) {
       avisarErro(erro);

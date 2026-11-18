@@ -2,8 +2,9 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.modules.contas_pagar.schemas import NotaFornecedorIn
 from app.modules.estoque.models import TipoMovimento
 
 
@@ -22,6 +23,9 @@ class EntradaIn(BaseModel):
     fornecedor: str | None = Field(default=None, max_length=120)
     observacao: str | None = Field(default=None, max_length=2000)
     itens: list[ItemEntradaIn] = Field(min_length=1)
+    #: Opcional, e só de quem vê dinheiro: o valor da nota e os vencimentos viram contas a
+    #: pagar ligadas a esta entrada, no mesmo commit (ADR-40). A vendedora dá entrada sem.
+    nota: NotaFornecedorIn | None = None
 
     @field_validator("itens")
     @classmethod
@@ -31,6 +35,12 @@ class EntradaIn(BaseModel):
             raise ValueError("A mesma peça aparece duas vezes: some as quantidades.")
         return v
 
+    @model_validator(mode="after")
+    def _nota_tem_fornecedor(self) -> "EntradaIn":
+        if self.nota is not None and not (self.fornecedor or "").strip():
+            raise ValueError("Diga de qual fornecedor é a nota: a conta a pagar precisa do nome.")
+        return self
+
 
 class EntradaOut(BaseModel):
     id: int
@@ -39,6 +49,9 @@ class EntradaOut(BaseModel):
     criada_em: datetime
     itens: list["MovimentoOut"]
     total_pecas: int
+    #: Quantas parcelas da nota viraram contas a pagar. Só o número: valor e vencimento
+    #: são da tela de Contas a pagar, que é de quem vê dinheiro.
+    contas_a_pagar: int = 0
 
 
 # ---------------------------------------------------------------- ajuste
@@ -103,6 +116,7 @@ class MovimentoOut(BaseModel):
     saldo_apos: int = Field(validation_alias="balance_after")
     venda_id: int | None = Field(default=None, validation_alias="sale_id")
     entrada_id: int | None = Field(default=None, validation_alias="entry_id")
+    condicional_id: int | None = Field(default=None, validation_alias="consignment_id")
     usuario_id: int = Field(validation_alias="user_id")
     observacao: str | None = Field(default=None, validation_alias="note")
     criado_em: datetime = Field(validation_alias="created_at")

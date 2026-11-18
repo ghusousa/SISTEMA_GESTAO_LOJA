@@ -8,7 +8,14 @@ from sqlalchemy.orm import selectinload
 from app.core.pagination import Paginacao
 from app.modules.catalogo.models import Product, ProductVariant
 from app.modules.usuarios.models import User
-from app.modules.vendas.models import Sale, SaleItem, SalePayment, SaleReturn, StatusVenda
+from app.modules.vendas.models import (
+    Sale,
+    SaleItem,
+    SalePayment,
+    SaleReturn,
+    StatusVenda,
+    Voucher,
+)
 
 
 class VendaRepository:
@@ -37,7 +44,19 @@ class VendaRepository:
         que já voltou — e o dinheiro ficaria sem caminho, porque a devolução já pagou parte
         e o cancelamento não sabe quanto nem por qual forma. Quem quer desfazer o resto
         devolve o resto.
+
+        A trava vem ANTES, numa instrução separada, e é ela que faz o `NOT EXISTS` valer
+        contra uma devolução em andamento. Sem ela, o `UPDATE` tira a foto do banco ao
+        começar — quando a devolução ainda não tinha feito commit —, para na trava que a
+        devolução segura (`_venda_travada`) e, quando ela solta, segue com a foto velha: a
+        devolução só TRAVOU a linha, não a alterou, então o Postgres não reavalia o WHERE.
+        A venda saía CANCELADA e com devolução, a peça voltava duas vezes à arara e o
+        dinheiro dela saía duas vezes. Travando primeiro, o `UPDATE` só começa depois do
+        commit da devolução, com foto nova, e enxerga a linha em `sale_returns`.
         """
+        await self.session.execute(
+            select(Sale.id).where(Sale.id == venda_id).with_for_update()
+        )
         resultado = await self.session.execute(
             update(Sale)
             .where(
@@ -70,6 +89,13 @@ class VendaRepository:
             .where(Sale.client_uuid == client_uuid)
         )
         return (await self.session.execute(stmt)).unique().scalar_one_or_none()
+
+    async def codigos_dos_vales(self, ids: list[int]) -> dict[int, str]:
+        """O código impresso de cada vale, para comparar com o que a tela mandou."""
+        if not ids:
+            return {}
+        stmt = select(Voucher.id, Voucher.code).where(Voucher.id.in_(ids))
+        return {vid: codigo for vid, codigo in (await self.session.execute(stmt)).all()}
 
     async def variantes_para_venda(self, ids: list[int]) -> dict[int, tuple]:
         """Peça + produto ATIVOS, com preço e custo atuais — o que será congelado na venda."""
@@ -111,31 +137,48 @@ class VendaRepository:
         variante_id: int | None = None,
         cliente_id: int | None = None,
     ) -> tuple[list[tuple], int]:
-        stmt = select(Sale, User).join(User, User.id == Sale.seller_id)
+        filtros = []
         if variante_id:
             # É este filtro que torna a devolução possível no balcão: a cliente chega com
             # a blusa na mão e sem nota, e sem ele a vendedora teria que abrir venda por
             # venda de um sábado de quarenta. Sem isso, a devolução não acontece pelo
             # sistema — acontece um AJUSTE de estoque e dinheiro saindo da gaveta.
-            stmt = stmt.where(
+            filtros.append(
                 exists().where(
                     SaleItem.sale_id == Sale.id, SaleItem.variant_id == variante_id
                 )
             )
         if cliente_id:
-            stmt = stmt.where(Sale.customer_id == cliente_id)
+            filtros.append(Sale.customer_id == cliente_id)
         if inicio is not None:
-            stmt = stmt.where(Sale.sold_at >= inicio)
+            filtros.append(Sale.sold_at >= inicio)
         if fim is not None:
             # `<` porque `fim` é 00:00 do dia SEGUINTE (app/core/datas.py). Intervalo
             # meio-aberto: o último instante do dia entra, o primeiro de amanhã não.
-            stmt = stmt.where(Sale.sold_at < fim)
+            filtros.append(Sale.sold_at < fim)
         if status:
-            stmt = stmt.where(Sale.status == status)
+            filtros.append(Sale.status == status)
         if vendedor_id:
-            stmt = stmt.where(Sale.seller_id == vendedor_id)
-        total = await self.session.scalar(select(func.count()).select_from(stmt.subquery()))
-        stmt = stmt.order_by(Sale.id.desc()).offset(p.offset).limit(p.limit)
+            filtros.append(Sale.seller_id == vendedor_id)
+        # A contagem só olha `sales`: o JOIN com o vendedor é 1:1 por FK obrigatória e não
+        # muda o total — contar o JOIN fazia o banco montá-lo para o histórico inteiro a
+        # cada página.
+        total = await self.session.scalar(
+            select(func.count()).select_from(Sale).where(*filtros)
+        )
+        # Mais recente primeiro pelo INSTANTE da venda, e o id só desempata. Ordenar por id
+        # com o filtro em `sold_at` fazia o banco descer o índice da chave desde a venda
+        # mais nova e descartar tudo até chegar ao período: "março do ano passado"
+        # descartava 170 mil vendas para mostrar 20. Assim desce `ix_sales_sold_at` direto
+        # do fim do período — e a ordem é a do relógio, que é a que a tela promete.
+        stmt = (
+            select(Sale, User)
+            .join(User, User.id == Sale.seller_id)
+            .where(*filtros)
+            .order_by(Sale.sold_at.desc(), Sale.id.desc())
+            .offset(p.offset)
+            .limit(p.limit)
+        )
         return list((await self.session.execute(stmt)).all()), int(total or 0)
 
     async def resumo_de_vendas(self, venda_ids: list[int]) -> dict[int, tuple[int, list[str]]]:

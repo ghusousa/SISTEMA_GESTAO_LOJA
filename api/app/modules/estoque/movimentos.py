@@ -1,15 +1,18 @@
 """Núcleo do estoque: a única forma de mudar um saldo.
 
-Fica numa camada baixa (sem depender de catálogo ou vendas) porque quatro módulos precisam
-dela — catálogo (estoque inicial), estoque (entrada/ajuste/inventário) e vendas (baixa e
-estorno). Assim ninguém precisa importar o repository do outro.
+Fica numa camada baixa (sem depender de catálogo ou vendas) porque vários módulos precisam
+dela — catálogo (estoque inicial), estoque (entrada/ajuste/inventário), vendas (baixa e
+estorno) e condicionais (saída e retorno). Assim ninguém importa o repository do outro.
 
 Invariantes garantidas aqui:
 - saldo só muda junto com uma linha em `stock_movements`, na mesma transação;
 - o UPDATE é atômico por linha (`quantity + delta` no próprio banco), então duas vendas
   simultâneas da última peça serializam sozinhas;
 - o CHECK `quantity >= 0` é a rede de segurança: quem perder a corrida recebe erro,
-  nunca estoque negativo.
+  nunca estoque negativo;
+- mercadoria que ENTRA (delta positivo) só entra em peça ativa: antes do saldo, o catálogo
+  trava a peça e diz qual a recebe (`catalogo.service.peca_que_recebe`, ADR-30). É a única
+  pergunta que este módulo faz ao catálogo, e por isso a import é tardia.
 """
 
 from sqlalchemy import select, update
@@ -39,6 +42,39 @@ async def saldos_de(session: AsyncSession, variante_ids: list[int]) -> dict[int,
     return {vid: qtd for vid, qtd in linhas.all()}
 
 
+async def travar_saldos(session: AsyncSession, variante_ids: list[int]) -> dict[int, int]:
+    """Os saldos lidos COM trava (`FOR UPDATE`), em ordem de variant_id.
+
+    Para quem decide pelo número antes de escrever: o inventário, que SUBSTITUI o saldo
+    pelo contado, e a exclusão, que só vale com saldo zero. Ler solto e escrever depois
+    deixava outra transação passar no meio: duas contagens de 8 sobre um saldo de 10 liam
+    10 as duas, aplicavam -2 cada uma, e o saldo ia a 6.
+
+    Peça que nunca movimentou não tem linha de saldo, e `FOR UPDATE` sem linha não trava
+    nada: por isso quem chama trava a PEÇA antes (ADR-30), e é essa trava que segura a
+    primeira entrada de uma peça sem saldo.
+    """
+    ids = ordenar_para_evitar_deadlock(variante_ids)
+    if not ids:
+        return {}
+    linhas = await session.execute(
+        select(StockBalance.variant_id, StockBalance.quantity)
+        .where(StockBalance.variant_id.in_(ids))
+        .order_by(StockBalance.variant_id)
+        .with_for_update()
+    )
+    return {vid: qtd for vid, qtd in linhas.all()}
+
+
+#: A mercadoria que volta da cliente. Se a peça saiu do catálogo depois da venda, ela não
+#: pode ser recusada — está fisicamente de volta na loja (ADR-30). A condicional entra aqui
+#: pelo mesmo motivo: a última peça vai para a casa da cliente, o saldo fica zero, alguém
+#: tira a peça do catálogo achando que esgotou — e a peça volta na sacola (ADR-39).
+_VOLTA_DA_CLIENTE = frozenset(
+    {TipoMovimento.ESTORNO, TipoMovimento.DEVOLUCAO, TipoMovimento.CONDICIONAL_RETORNO}
+)
+
+
 async def aplicar_movimento(
     session: AsyncSession,
     *,
@@ -49,6 +85,7 @@ async def aplicar_movimento(
     entry_id: int | None = None,
     sale_id: int | None = None,
     return_id: int | None = None,
+    consignment_id: int | None = None,
     observacao: str | None = None,
 ) -> StockMovement:
     """Aplica `delta` ao saldo e registra a movimentação. Devolve a movimentação criada.
@@ -58,6 +95,18 @@ async def aplicar_movimento(
     """
     if delta == 0:
         raise ValueError("Movimentação com quantidade zero não faz sentido.")
+
+    if delta > 0:
+        # Antes do saldo, a peça: travada, e ativa (ADR-30). Sem isto, a devolução de uma
+        # venda de produto já excluído punha as peças numa peça invisível e invendável.
+        # Import tardia: o catálogo importa este módulo.
+        from app.modules.catalogo.service import peca_que_recebe
+
+        variante_id, nota = await peca_que_recebe(
+            session, variante_id, devolucao=tipo in _VOLTA_DA_CLIENTE
+        )
+        if nota:
+            observacao = f"{observacao} — {nota}" if observacao else nota
 
     # UPDATE primeiro, INSERT só se a peça ainda não tem linha de saldo. Um
     # `INSERT ... ON CONFLICT DO UPDATE` não serve aqui: o Postgres avalia o CHECK do
@@ -107,6 +156,7 @@ async def aplicar_movimento(
         entry_id=entry_id,
         sale_id=sale_id,
         return_id=return_id,
+        consignment_id=consignment_id,
         user_id=user_id,
         note=observacao,
     )

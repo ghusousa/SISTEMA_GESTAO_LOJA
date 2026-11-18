@@ -63,6 +63,24 @@ export const definirFusoDaLoja = (tz) => {
   if (tz) fusoDaLoja = tz;
 };
 
+const DIA = { day: '2-digit', month: '2-digit', year: 'numeric' };
+const DIA_E_HORA = { ...DIA, hour: '2-digit', minute: '2-digit' };
+
+/** Um INSTANTE (ISO com hora) formatado no fuso da loja, com os campos pedidos. */
+function noFusoDaLoja(valor, campos) {
+  if (!valor) return '—';
+  const d = new Date(valor);
+  if (Number.isNaN(d.getTime())) return String(valor);
+  try {
+    return new Intl.DateTimeFormat('pt-BR', { timeZone: fusoDaLoja, ...campos })
+      .format(d)
+      .replace(',', '');
+  } catch {
+    // Fuso desconhecido (linha estranha na configuração) não pode apagar a data da tela.
+    return new Intl.DateTimeFormat('pt-BR', campos).format(d).replace(',', '');
+  }
+}
+
 /**
  * ISO com hora -> "22/08/2026 14:35", no fuso da loja.
  *
@@ -75,26 +93,17 @@ export const definirFusoDaLoja = (tz) => {
  * Agora as duas metades saem da MESMA formatação, no MESMO fuso.
  */
 export function dataHora(valor) {
-  if (!valor) return '—';
-  const d = new Date(valor);
-  if (Number.isNaN(d.getTime())) return String(valor);
-  try {
-    return new Intl.DateTimeFormat('pt-BR', {
-      timeZone: fusoDaLoja,
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-      .format(d)
-      .replace(',', '');
-  } catch {
-    // Fuso desconhecido (linha estranha na configuração) não pode apagar a data da tela.
-    return new Intl.DateTimeFormat('pt-BR', {
-      day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
-    }).format(d).replace(',', '');
-  }
+  return noFusoDaLoja(valor, DIA_E_HORA);
+}
+
+/**
+ * ISO com hora -> "22/08/2026": o DIA em que o instante caiu na loja.
+ *
+ * Para um instante (`TIMESTAMPTZ`), não para data pura — essa é a `data()`. Fatiar o ISO
+ * daria o dia em UTC: a venda das 23h30 de 25/07 em São Paulo chega como 26/07 02h30Z.
+ */
+export function diaNaLoja(valor) {
+  return noFusoDaLoja(valor, DIA);
 }
 
 /** "2026-08" -> "agosto de 2026". */
@@ -218,6 +227,12 @@ function esconderAjuda() {
 // A guarda de `document` existe para o arquivo continuar importável fora do navegador —
 // é assim que dá para conferir o módulo por linha de comando sem subir uma página.
 if (typeof document !== 'undefined') {
+  // O "Tentar de novo" do `erroBloco`. Era `onclick="location.reload()"`, e atributo de
+  // evento é script inline: a Content-Security-Policy do Caddy (`script-src 'self'`) o
+  // bloqueia, e o botão morreria calado justamente na tela de erro.
+  document.addEventListener('click', (e) => {
+    if (e.target.closest?.('[data-recarregar]')) location.reload();
+  });
   document.addEventListener('mouseover', (e) => {
     const g = e.target.closest?.('[data-ajuda]');
     if (g) mostrarAjuda(g);
@@ -277,11 +292,16 @@ export const avisarErro = (erro) =>
   aviso(erro?.textoAmigavel || erro?.message || 'Não foi possível concluir.', 'erro');
 
 /**
- * Modal. `render(fechar)` devolve o HTML do corpo; `aoAbrir(elemento, fechar)` recebe o nó
- * já na tela para ligar os eventos. Resolve com o valor passado a `fechar(valor)`.
+ * Modal. `render(fechar)` devolve o HTML do corpo; `aoAbrir(elemento, fechar, travar)` recebe
+ * o nó já na tela para ligar os eventos. Resolve com o valor passado a `fechar(valor)`.
+ * `travar(true)` segura o modal aberto (Esc, ✕ e clique fora não fecham) enquanto um pedido
+ * roda; `fechar` continua valendo para quem chamou.
  */
 export function modal({ titulo, render, aoAbrir, largura = '520px' }) {
   return new Promise((resolve) => {
+    // Preso: Esc, ✕ e clique fora não fecham. É para o pedido que está no ar (excluir conta):
+    // fechado no meio, a resposta que chegasse depois não teria mais a quem avisar.
+    let preso = false;
     const fundo = document.createElement('div');
     fundo.className = 'modal-fundo';
     fundo.innerHTML = html`
@@ -297,26 +317,36 @@ export function modal({ titulo, render, aoAbrir, largura = '520px' }) {
 
     const fechar = (valor) => {
       document.removeEventListener('keydown', aoTeclar);
+      // Fora do documento, quem tirou foi a troca de rota (`router.js`): o foco é da tela nova.
+      const naTela = fundo.isConnected;
       fundo.remove();
-      focoAnterior?.focus?.();
+      if (naTela) focoAnterior?.focus?.();
       resolve(valor);
     };
     const aoTeclar = (e) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
-        fechar(undefined);
+        if (!preso) fechar(undefined);
       }
+    };
+    const botaoFechar = fundo.querySelector('[data-fechar]');
+    /** `travar(true)` enquanto um pedido roda; `travar(false)` quando ele volta. */
+    const travar = (sim) => {
+      preso = Boolean(sim);
+      botaoFechar.disabled = preso;
     };
 
     fundo.querySelector('.modal__corpo').innerHTML = render ? render(fechar) : '';
-    fundo.querySelector('[data-fechar]').addEventListener('click', () => fechar(undefined));
+    botaoFechar.addEventListener('click', () => {
+      if (!preso) fechar(undefined);
+    });
     fundo.addEventListener('mousedown', (e) => {
-      if (e.target === fundo) fechar(undefined);
+      if (e.target === fundo && !preso) fechar(undefined);
     });
     document.addEventListener('keydown', aoTeclar);
     document.body.append(fundo);
 
-    aoAbrir?.(fundo.querySelector('.modal__corpo'), fechar);
+    aoAbrir?.(fundo.querySelector('.modal__corpo'), fechar, travar);
     const primeiro = fundo.querySelector(
       'input:not([type=hidden]), select, textarea, button:not([data-fechar])',
     );
@@ -392,7 +422,7 @@ export const erroBloco = (mensagem) => html`
   <div class="vazio vazio--erro">
     <p class="vazio__titulo">Não deu para carregar</p>
     <p class="texto-suave">${mensagem}</p>
-    <button class="botao botao--neutro" onclick="location.reload()">Tentar de novo</button>
+    <button class="botao botao--neutro" data-recarregar>Tentar de novo</button>
   </div>
 `;
 
@@ -510,6 +540,15 @@ export const FORMAS = {
   FIADO: 'Fiado',
 };
 
+/**
+ * "Crédito 3x · Visa": a forma com o que a cliente combinou no cartão (ADR-35).
+ * `formas` deixa o recibo usar os nomes longos ("Cartão de crédito").
+ */
+export function rotuloPagamento(p, formas = FORMAS) {
+  const forma = `${formas[p.forma] || p.forma}${p.parcelas > 1 ? ` ${p.parcelas}x` : ''}`;
+  return p.bandeira ? `${forma} · ${p.bandeira}` : forma;
+}
+
 export const TIPOS_MOVIMENTO = {
   ENTRADA: 'Entrada',
   AJUSTE: 'Ajuste',
@@ -519,4 +558,8 @@ export const TIPOS_MOVIMENTO = {
   //: Peça que a cliente trouxe de volta, com a venda continuando de pé — diferente do
   //: ESTORNO, que é a venda inteira desfeita.
   DEVOLUCAO: 'Devolução',
+  //: A peça foi para a casa da cliente provar (ADR-39): saiu do disponível, não foi vendida.
+  CONDICIONAL_SAIDA: 'Saiu em condicional',
+  //: A condicional fechou e a peça voltou; o que ficou com a cliente sai em seguida por Venda.
+  CONDICIONAL_RETORNO: 'Voltou da condicional',
 };

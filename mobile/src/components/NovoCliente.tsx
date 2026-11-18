@@ -23,6 +23,7 @@ import { mensagemDoErro } from '@/api/client';
 import { clientes } from '@/api/endpoints';
 import type { Cliente } from '@/api/tipos';
 import { Botao } from '@/components/ui';
+import { mascararData, paraDataISO } from '@/lib/aniversario';
 import { paraCentavos, paraDecimalString } from '@/lib/money';
 import { chaves, queryClient } from '@/lib/queryClient';
 import { ALVO_TOQUE, cores, espaco, fonte, raio } from '@/lib/tema';
@@ -33,6 +34,8 @@ export function NovoCliente({ aoCriar }: { aoCriar: (cliente: Cliente) => void }
   const [telefone, setTelefone] = useState('');
   const [documento, setDocumento] = useState('');
   const [limite, setLimite] = useState('');
+  const [nascimento, setNascimento] = useState('');
+  const [preferencias, setPreferencias] = useState('');
   const [erro, setErro] = useState<string | null>(null);
 
   const criar = useMutation({
@@ -42,6 +45,8 @@ export function NovoCliente({ aoCriar }: { aoCriar: (cliente: Cliente) => void }
         telefone: telefone.trim() || null,
         documento: documento.trim() || null,
         limite: paraCentavos(limite) > 0 ? paraDecimalString(paraCentavos(limite)) : null,
+        nascimento: nascimento.trim() ? paraDataISO(nascimento) : null,
+        preferencias: preferencias.trim() || null,
       }),
     onSuccess: (cliente) => {
       void queryClient.invalidateQueries({ queryKey: chaves.clientes });
@@ -57,12 +62,18 @@ export function NovoCliente({ aoCriar }: { aoCriar: (cliente: Cliente) => void }
     setTelefone('');
     setDocumento('');
     setLimite('');
+    setNascimento('');
+    setPreferencias('');
     setErro(null);
   }
 
   function confirmar() {
     if (nome.trim().length < 2) {
       setErro('Escreva o nome da cliente.');
+      return;
+    }
+    if (nascimento.trim() && !paraDataISO(nascimento)) {
+      setErro('Aniversário no formato dia/mês/ano, por exemplo 14/03/1990.');
       return;
     }
     setErro(null);
@@ -129,6 +140,23 @@ export function NovoCliente({ aoCriar }: { aoCriar: (cliente: Cliente) => void }
               maxLength={12}
             />
             <Text style={s.ajuda}>O limite só avisa na hora da venda; não bloqueia.</Text>
+            <TextInput
+              value={nascimento}
+              onChangeText={(t) => setNascimento(mascararData(t))}
+              style={s.campo}
+              placeholder="Aniversário (dd/mm/aaaa), opcional"
+              placeholderTextColor={cores.textoFraco}
+              keyboardType="number-pad"
+              maxLength={10}
+            />
+            <TextInput
+              value={preferencias}
+              onChangeText={setPreferencias}
+              style={s.campo}
+              placeholder="Preferências: tamanho, estilo"
+              placeholderTextColor={cores.textoFraco}
+              maxLength={200}
+            />
             {!!erro && <Text style={s.erro}>{erro}</Text>}
 
             <View style={s.botoes}>

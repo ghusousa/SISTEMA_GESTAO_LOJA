@@ -7,16 +7,19 @@ import { catalogo } from '@/api/endpoints';
 import { Carregando, Cartao, ErroEstado, Etiqueta } from '@/components/ui';
 import { formatar, paraCentavos } from '@/lib/money';
 import { SeletorDeFoto } from '@/components/SeletorDeFoto';
+import { CartaoFiscalDoProduto } from '@/components/CamposFiscais';
 import type { FotoEscolhida } from '@/lib/foto';
 import { chaves, queryClient } from '@/lib/queryClient';
 import { PODE, pode } from '@/lib/permissoes';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
+import { plural } from '@/lib/texto';
 import { useAuthStore } from '@/stores/authStore';
 
 export default function DetalheProduto() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const veDinheiro = useAuthStore((e) => pode(e.usuario?.papel, PODE.VER_DINHEIRO));
+  const editaCatalogo = useAuthStore((e) => pode(e.usuario?.papel, PODE.EDITAR_CATALOGO));
   const produtoId = Number(id);
 
   const consulta = useQuery({
@@ -65,12 +68,18 @@ export default function DetalheProduto() {
         {!!produto.descricao && <Text style={s.descricao}>{produto.descricao}</Text>}
         <View style={s.resumo}>
           <Etiqueta
-            texto={`${produto.saldo_total} peça(s) em estoque`}
+            texto={`${plural(produto.saldo_total, 'peça', 'peças')} em estoque`}
             cor={produto.saldo_total === 0 ? cores.perigoFraco : cores.sucessoFraco}
             corTexto={produto.saldo_total === 0 ? cores.perigo : cores.acaoEscura}
           />
         </View>
       </Cartao>
+
+      <CartaoFiscalDoProduto
+        key={`${produto.id}-${produto.ncm}-${produto.cfop}`}
+        produto={produto}
+        podeEditar={editaCatalogo}
+      />
 
       <Text style={s.secao}>Grade</Text>
       {produto.variantes.map((v) => {
