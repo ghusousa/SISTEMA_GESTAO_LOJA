@@ -60,7 +60,10 @@ const PADRAO = {
   // 'READY_FOR_SALE'): não aceita build nem ficha. null = não existe.
   versaoTravada: null,
   versaoDoAppJson: '1.0.0',
-  disponibilidade: false, // a conta já tem disponibilidade definida
+  // A conta já tem disponibilidade definida: false, true (só Brasil) ou a lista dos territórios
+  // à venda (ex.: ['BRA', 'USA', 'PRT'], feita no site com "todos os países").
+  disponibilidade: false,
+  disponibilidadeEmNovos: false, // availableInNewTerritories da que já existe
   semDisponibilidade: 404, // quando não tem: 404 ou 'nulo' (200 com data: null)
   idadeDesconhece: [], // atributos que esta Apple recusa como desconhecidos
   descritoresNovos: [], // perguntas novas (fora da 4.6) que ela cobra no envio
@@ -244,7 +247,13 @@ export function subirMock(opcoesDoTeste = {}) {
     categorias: {}, // infoId -> {principal, secundaria}
     idade: {}, // infoId -> atributos da declaração
     idadeRecebida: [], // cada PATCH, como chegou
-    disponibilidade: o.disponibilidade ? { availableInNewTerritories: true, territorios: ['BRA', 'USA', 'PRT'], criadaPeloTeste: true } : null,
+    disponibilidade: o.disponibilidade
+      ? {
+          availableInNewTerritories: o.disponibilidadeEmNovos,
+          territorios: Array.isArray(o.disponibilidade) ? [...o.disponibilidade] : ['BRA'],
+          criadaPeloTeste: true,
+        }
+      : null,
     disponibilidadeCriada: null,
     versoes: o.jaLancado
       ? [{ id: 'VER0', platform: 'IOS', versionString: '0.9.0', appStoreState: 'READY_FOR_SALE', appVersionState: 'READY_FOR_DISTRIBUTION' }]
@@ -453,6 +462,20 @@ export function subirMock(opcoesDoTeste = {}) {
         return [200, { data: { type: 'appAvailabilities', id: 'AV1', attributes: { availableInNewTerritories: estado.disponibilidade.availableInNewTerritories } } }];
       }
       return o.semDisponibilidade === 'nulo' ? [200, { data: null }] : erro(404, 'NOT_FOUND', 'a disponibilidade deste app ainda não existe');
+    },
+    'GET /v2/appAvailabilities/{id}/territoryAvailabilities': ({ ids }) => {
+      if (!estado.disponibilidade || ids[0] !== 'AV1') return erro(404, 'NOT_FOUND', 'disponibilidade inexistente');
+      return [
+        200,
+        {
+          data: [...TERRITORIOS].map((t) => ({
+            type: 'territoryAvailabilities',
+            id: `TA-${t}`,
+            attributes: { available: estado.disponibilidade.territorios.includes(t) },
+            relationships: { territory: { data: { type: 'territories', id: t } } },
+          })),
+        },
+      ];
     },
     'POST /v2/appAvailabilities': ({ corpo }) => {
       if (estado.disponibilidade) return erro(409, 'ENTITY_ERROR', 'a disponibilidade já existe');
@@ -698,6 +721,10 @@ export function subirMock(opcoesDoTeste = {}) {
         .filter((b) => !numeroPedido || numeroPedido.split(',').includes(b.attributes.version))
         .sort((a, b) => b.attributes.uploadedDate.localeCompare(a.attributes.uploadedDate));
       return [200, { data: lista.map(({ id, attributes }) => ({ type: 'builds', id, attributes })) }];
+    },
+    'GET /v1/appStoreVersions/{id}/build': ({ ids }) => {
+      const b = builds().find((x) => x.id === estado.buildPreso[ids[0]]);
+      return [200, { data: b ? { type: 'builds', id: b.id, attributes: b.attributes } : null }];
     },
     'PATCH /v1/appStoreVersions/{id}/relationships/build': ({ ids, corpo }) => {
       const b = builds().find((x) => x.id === corpo.data.id);

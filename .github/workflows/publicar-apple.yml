@@ -34,7 +34,11 @@
 #   revisao   → depois de a Apple processar o build (~10 a 30 min após o envio; chega e-mail),
 #               prende o build à versão e ENVIA PARA A REVISÃO — ou REENVIA, se a Apple devolveu
 #               (recusa ou pedido de informação): o mesmo envio, com as notas e os anexos novos.
-#               Recusado sem a lista de aparelhos testados e sem a gravação de tela.
+#               Recusado sem a lista de aparelhos testados e sem a gravação de tela. Fora do
+#               completo, NÃO vai junto com "compilar" nem "enviar" (o build novo ainda não chegou
+#               à Apple quando a revisão sai) — e, num envio devolvido, recusa reenviar o MESMO
+#               build que voltou: compile antes, ou marque "mesmo_build" se a resposta à Apple
+#               não pede app novo.
 #   aparelhos → (experimental até a 1ª rodada real) compila SÓ o .ipa de teste (perfil
 #               "teste-aparelhos" do eas.json, ad hoc) para iPhones reais da nuvem (BrowserStack),
 #               esperando terminar, e põe o link do .ipa no resumo. Antes, pergunta à Apple se há
@@ -42,9 +46,9 @@
 #               Não mexe na ficha nem na revisão; marcada, as outras caixas ficam de fora.
 # ENTRADAS DE TEXTO:
 #   video_revisao_url → link https direto do vídeo (MP4/MOV) da gravação de tela que a Apple pediu;
-#               o runner baixa para a pasta temporária, confere tipo e tamanho e anexa à revisão
-#               (o anexo de mesmo nome é substituído, nunca duplicado). Fica anexado para as
-#               próximas rodadas desta versão.
+#               o runner baixa UMA vez, no começo da rodada (link pré-assinado vence), para a pasta
+#               temporária, confere tipo e tamanho e anexa à revisão (o anexo de mesmo nome é
+#               substituído, nunca duplicado). Fica anexado para as próximas rodadas desta versão.
 #   udid_aparelho → o UDID de um iPhone para registrar na conta da Apple (caixa "aparelhos").
 # O resumo de cada rodada (feito, avisos, pendências) aparece na página da execução.
 #
@@ -87,6 +91,10 @@ on:
         default: true
       revisao:
         description: "Enviar (ou REENVIAR) para a REVISÃO da Apple (só depois de o build aparecer processado)"
+        type: boolean
+        default: false
+      mesmo_build:
+        description: "Revisão: reenviar com o MESMO build que a Apple devolveu (só quando a resposta não pede app novo)"
         type: boolean
         default: false
       video_revisao_url:
@@ -185,6 +193,12 @@ jobs:
             COMPILAR=true ENVIAR=false FICHA=true REVISAO=true APARELHOS=false
           else
             COMPLETO=false
+            # Fora do completo o build sai com --no-wait: quando a revisão rodasse, logo depois,
+            # o build novo nem estaria na Apple — e a revisão levaria o build ANTIGO da versão.
+            if [ "$REVISAO" = "true" ] && { [ "$COMPILAR" = "true" ] || [ "$ENVIAR" = "true" ]; } && [ "$APARELHOS" != "true" ]; then
+              echo "::error::\"revisao\" com \"compilar\" ou \"enviar\" na mesma rodada só no modo \"completo\" (que espera o build desta rodada chegar à Apple). Senão: rode \"compilar\" agora e, quando o e-mail de build processado da Apple chegar, \"revisao\" sozinha (desmarque \"compilar\")."
+              exit 1
+            fi
           fi
           if [ "$APARELHOS" = "true" ]; then
             # Só o .ipa de teste: nada de build da loja, ficha ou revisão nesta rodada.
@@ -220,6 +234,16 @@ jobs:
             echo "revisao=$REVISAO"
             echo "aparelhos=$APARELHOS"
           } >> "$GITHUB_OUTPUT"
+
+      # O vídeo do link é baixado UMA vez, aqui no começo: no completo, a ficha só roda depois
+      # de 20 a 120 min de compilação, e um link pré-assinado (S3, sessão do BrowserStack) já
+      # teria vencido. Os passos seguintes recebem o CAMINHO do arquivo, não o link.
+      - name: Baixar a gravação de tela (uma vez)
+        id: video
+        if: ${{ inputs.video_revisao_url != '' && (steps.modo.outputs.ficha == 'true' || steps.modo.outputs.revisao == 'true') }}
+        env:
+          VIDEO_REVISAO_URL: ${{ inputs.video_revisao_url }}
+        run: node publicar/baixar-video.mjs "$VIDEO_REVISAO_URL" "$RUNNER_TEMP/video-revisao"
 
       # Monta chave e ficha numa pasta do runner FORA do repositório (permissão 600), acha o
       # app no App Store Connect pelo bundle e liga o envio automático. Nunca imprime segredo.
@@ -261,7 +285,7 @@ jobs:
       # No modo completo, falta de peça para AGORA — antes de gastar 20+ min compilando um build
       # que não teria para onde ir: a ficha, o app na Apple e tudo o que a revisão vai cobrar
       # (aparelhos testados, gravação de tela, guia em dia, servidor de demonstração). O
-      # publicador só LÊ a Apple aqui (--conferir-envio); o vídeo do link é baixado e conferido.
+      # publicador só LÊ a Apple aqui (--conferir-envio); o vídeo já foi baixado e conferido.
       - name: Conferir o que o modo completo precisa
         if: ${{ steps.modo.outputs.completo == 'true' }}
         env:
@@ -269,7 +293,7 @@ jobs:
           FALTANDO: ${{ steps.apple.outputs.faltando_ficha }}
           APP_ID: ${{ steps.apple.outputs.app_id }}
           PUBLICAR_CONFIG: ${{ steps.apple.outputs.config }}
-          VIDEO_REVISAO_URL: ${{ inputs.video_revisao_url }}
+          VIDEO: ${{ steps.video.outputs.caminho }}
         run: |
           if [ "$TEM_FICHA" != "sim" ]; then
             echo "::error::Modo completo sem a ficha: faltam $FALTANDO (Secrets/Variables do repositório; guia em mobile/publicar/README.md)."
@@ -280,7 +304,7 @@ jobs:
             exit 1
           fi
           ARGS=(--conferir-envio)
-          if [ -n "$VIDEO_REVISAO_URL" ]; then ARGS+=(--video-revisao "$VIDEO_REVISAO_URL"); fi
+          if [ -n "$VIDEO" ]; then ARGS+=(--video-revisao "$VIDEO"); fi
           node publicar/publicar.mjs "${ARGS[@]}"
 
       - name: Instalar dependências
@@ -374,7 +398,8 @@ jobs:
       # Experimental até a 1ª rodada real: o .ipa ad hoc que o BrowserStack instala (o da App
       # Store não instala fora dela). O perfil ad hoc só é assinado com um iPhone registrado na
       # conta da Apple: o ci.mjs confere (e registra o da entrada "udid_aparelho") antes de
-      # gastar a compilação.
+      # gastar a compilação. A EXPO monta o perfil com os iPhones que ELA conhece: na 1ª vez,
+      # "npx eas-cli device:create" uma vez num computador (README do publicador).
       - name: Conferir os iPhones registrados na Apple (perfil de teste)
         if: ${{ steps.modo.outputs.aparelhos == 'true' }}
         env:
@@ -394,15 +419,18 @@ jobs:
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
           APPLE_TEAM_TYPE: ${{ vars.APPLE_TEAM_TYPE }}
         run: |
-          # Com a chave e o time, a Expo cria o perfil ad hoc (com os iPhones registrados) sozinha.
-          if [ -n "$CHAVE" ] && [ -n "$APPLE_TEAM_ID" ]; then
-            export EXPO_ASC_API_KEY_PATH="$CHAVE" EXPO_ASC_KEY_ID="$ASC_KEY_ID" EXPO_ASC_ISSUER_ID="$ASC_ISSUER_ID"
-            export EXPO_APPLE_TEAM_ID="$APPLE_TEAM_ID" EXPO_APPLE_TEAM_TYPE="${APPLE_TEAM_TYPE:-INDIVIDUAL}"
-          else
-            echo "::warning::Sem APPLE_TEAM_ID (Variables) ou sem a chave: a Expo só consegue usar um perfil ad hoc já guardado nela."
+          # Sem modo interativo, a Expo só monta o perfil ad hoc com a chave da Apple: o perfil
+          # "teste-aparelhos" é ad hoc de propósito (enterpriseProvisioning no eas.json), e o
+          # --refresh-ad-hoc-provisioning-profile cria ou refaz o perfil com os iPhones que a
+          # Expo conhece. Sem a chave e o time, para aqui com o que falta.
+          if [ -z "$CHAVE" ] || [ -z "$APPLE_TEAM_ID" ]; then
+            echo "::error::A caixa aparelhos precisa da chave da Apple (Secrets ASC_*) e de APPLE_TEAM_ID (Variables): sem elas a Expo não monta o perfil ad hoc fora do modo interativo."
+            exit 1
           fi
+          export EXPO_ASC_API_KEY_PATH="$CHAVE" EXPO_ASC_KEY_ID="$ASC_KEY_ID" EXPO_ASC_ISSUER_ID="$ASC_ISSUER_ID"
+          export EXPO_APPLE_TEAM_ID="$APPLE_TEAM_ID" EXPO_APPLE_TEAM_TYPE="${APPLE_TEAM_TYPE:-INDIVIDUAL}"
           npx --yes eas-cli build --platform ios --profile teste-aparelhos \
-            --non-interactive --wait --json > "$RUNNER_TEMP/build-teste.json"
+            --non-interactive --refresh-ad-hoc-provisioning-profile --wait --json > "$RUNNER_TEMP/build-teste.json"
           node -e '
             const fs = require("fs");
             const b = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
@@ -437,7 +465,8 @@ jobs:
           REVISAO: ${{ steps.modo.outputs.revisao }}
           COMPLETO: ${{ steps.modo.outputs.completo }}
           BUILD: ${{ steps.compilar.outputs.build_numero }}
-          VIDEO_REVISAO_URL: ${{ inputs.video_revisao_url }}
+          MESMO_BUILD: ${{ inputs.mesmo_build }}
+          VIDEO: ${{ steps.video.outputs.caminho }}
         run: |
           if [ "$TEM_FICHA" != "sim" ]; then
             echo "::error::A ficha não pode subir: faltam $FALTANDO (Secrets/Variables do repositório; guia em mobile/publicar/README.md)."
@@ -451,7 +480,9 @@ jobs:
               exit 1
             fi
             ARGS+=(--aguardar-build 60 --build "$BUILD")
+          elif [ "$REVISAO" = "true" ] && [ "$MESMO_BUILD" = "true" ]; then
+            ARGS+=(--mesmo-build)
           fi
-          # O publicador baixa o vídeo para $RUNNER_TEMP, confere tipo e tamanho e o anexa.
-          if [ -n "$VIDEO_REVISAO_URL" ]; then ARGS+=(--video-revisao "$VIDEO_REVISAO_URL"); fi
+          # O vídeo baixado no começo da rodada (o arquivo, já conferido), não o link de novo.
+          if [ -n "$VIDEO" ]; then ARGS+=(--video-revisao "$VIDEO"); fi
           node publicar/publicar.mjs "${ARGS[@]}"

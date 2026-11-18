@@ -16,7 +16,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { createWriteStream, existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -128,6 +128,26 @@ export async function obterVideo(origem, { pastaTemporaria, permitirHttp = false
     return lerVideo(caminho);
   } finally {
     rmSync(dirname(caminho), { recursive: true, force: true });
+  }
+}
+
+/**
+ * Baixa o vídeo do link UMA vez e o deixa em `pasta` (no Actions, $RUNNER_TEMP), já conferido,
+ * com o nome que sobe para a Apple. Devolve o caminho. É o que o workflow faz no começo da
+ * rodada: o link pré-assinado de uma sessão gravada (S3, BrowserStack) pode vencer em minutos,
+ * e baixar de novo depois de compilar (20 a 120 min) perdia a rodada inteira. Os passos
+ * seguintes recebem o CAMINHO, não o link. Download ou vídeo inválido não deixa nada na pasta.
+ */
+export async function guardarVideo(origem, pasta, { permitirHttp = false } = {}) {
+  mkdirSync(pasta, { recursive: true });
+  const baixado = await baixarVideo(origem, pasta, { permitirHttp });
+  try {
+    const { nome } = lerVideo(baixado);
+    const destino = join(pasta, nome);
+    renameSync(baixado, destino);
+    return destino;
+  } finally {
+    rmSync(dirname(baixado), { recursive: true, force: true });
   }
 }
 

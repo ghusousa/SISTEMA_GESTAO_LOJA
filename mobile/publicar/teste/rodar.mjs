@@ -401,7 +401,7 @@ if (!REAIS) {
     conferir(segunda.codigo === 0, '2ª rodada (--enviar --aguardar-build 1, o vídeo já anexado) terminou sem erro');
     conferir(e.consultasDeBuild >= 3 && segunda.saida.includes('PROCESSING'), `esperou o build: ${e.consultasDeBuild} consultas, passou por PROCESSING`);
     conferir(e.buildPreso.VER1 === 'B1', 'prendeu o build da versão do app.json (não o da versão antiga)');
-    conferir(contar(e, 'POST /v2/appAvailabilities') === 0 && e.disponibilidade.territorios.join() === 'BRA,USA,PRT', 'disponibilidade que já existia ficou intocada');
+    conferir(contar(e, 'POST /v2/appAvailabilities') === 0 && e.disponibilidade.territorios.join() === 'BRA', 'disponibilidade que já existia (só Brasil) ficou intocada');
     conferir(e.capturasApagadas.length === antes && antes === 20, `reenvio apagou as ${antes} capturas antigas`);
     conferirConjunto(conferir, e, 'APP_IPHONE_65', join(capturas, 'iphone-6.5'));
     conferirConjunto(conferir, e, 'APP_IPHONE_67', join(capturas, 'iphone-6.9'));
@@ -444,7 +444,25 @@ if (!REAIS) {
     conferir(recusasInesperadas(e).length === 0, 'todo corpo e parâmetro conforme a especificação');
   });
 
-  await cenario('Pedido de informação (2.1): mesmo build, notas e vídeo novos, e o mesmo envio reenviado', async ({ conferir, guardar }) => {
+  await cenario('Pedido de informação (2.1) sem build novo: o reenvio com o build que voltou é RECUSADO, sem mexer na Apple', async ({ conferir, guardar }) => {
+    // A caixa "revisao" fora do completo não leva --build: o build mais novo da versão ainda é
+    // o da 1ª submissão (o novo nem chegou à Apple). Antes, ele era preso e o envio, "REENVIADO".
+    const mock = await subirMock();
+    const primeira = await publicar(['--enviar', ...COM_VIDEO], { porta: mock.porta, capturas: baseSintetica });
+    guardar(primeira.saida);
+    const e = mock.estado;
+    mock.rejeitar({ estadoDaVersao: 'REJECTED' });
+    const escritasAntes = escritas(e).length;
+    const segunda = await publicar(['--enviar', '--video-revisao', videoSintetico(2)], { porta: mock.porta, capturas: baseSintetica });
+    guardar(segunda.saida);
+    await mock.fechar();
+    conferir(segunda.codigo === 1 && segunda.saida.includes('--enviar recusado'), 'recusado');
+    conferir(segunda.saida.includes('é o MESMO que já estava nele') && segunda.saida.includes('--mesmo-build'), 'diz por quê e as duas saídas (build novo ou --mesmo-build)');
+    conferir(escritas(e).length === escritasAntes, 'nada mexido na Apple');
+    conferir(e.envios[0].estado === 'UNRESOLVED_ISSUES', 'o envio devolvido continua esperando');
+  });
+
+  await cenario('Pedido de informação (2.1) com --mesmo-build: notas e vídeo novos, o MESMO build e o mesmo envio reenviado', async ({ conferir, guardar }) => {
     const mock = await subirMock();
     const primeira = await publicar(['--enviar', ...COM_VIDEO], { porta: mock.porta, capturas: baseSintetica });
     guardar(primeira.saida);
@@ -454,14 +472,29 @@ if (!REAIS) {
     const guiaAntigo = Object.entries(e.anexos).find(([, a]) => a.nome === 'app-review-guide.pdf')?.[0];
     const anexosAntes = contar(e, 'POST /v1/appStoreReviewAttachments');
     const novoVideo = videoSintetico(2);
-    const segunda = await publicar(['--enviar', '--video-revisao', novoVideo], { porta: mock.porta, capturas: baseSintetica });
+    const segunda = await publicar(['--enviar', '--mesmo-build', '--video-revisao', novoVideo], { porta: mock.porta, capturas: baseSintetica });
     guardar(segunda.saida);
     await mock.fechar();
     conferir(segunda.codigo === 0, 'reenviou sem erro');
     conferir(contar(e, 'POST /v1/appStoreReviewAttachments') - anexosAntes === 1, 'só o vídeo novo subiu (o guia igual ficou)');
     conferir(e.anexosApagados.includes(videoAntigo) && !e.anexosApagados.includes(guiaAntigo), 'o vídeo antigo saiu depois de o novo entrar; o guia ficou');
     conferirAnexo(conferir, e, 'screen-recording.mp4', readFileSync(novoVideo));
+    conferir(segunda.saida.includes('o mesmo que já estava preso'), 'o log diz que é o mesmo build, de propósito');
     conferir(e.buildPreso.VER1 === 'B1' && e.envios.length === 1 && e.envios[0].estado === 'WAITING_FOR_REVIEW', 'mesmo build, mesmo envio, de volta à fila');
+  });
+
+  await cenario('Devolvido e com um build novo processado: a caixa "revisao" (sem --build) prende o novo', async ({ conferir, guardar }) => {
+    const mock = await subirMock();
+    const primeira = await publicar(['--enviar', ...COM_VIDEO], { porta: mock.porta, capturas: baseSintetica });
+    guardar(primeira.saida);
+    const e = mock.estado;
+    mock.rejeitar({ estadoDaVersao: 'REJECTED' });
+    mock.novoBuild({ id: 'B2', numero: '8', validoEm: 1 });
+    const segunda = await publicar(['--enviar'], { porta: mock.porta, capturas: baseSintetica });
+    guardar(segunda.saida);
+    await mock.fechar();
+    conferir(segunda.codigo === 0 && segunda.saida.includes('REENVIADO'), 'reenviou sem erro');
+    conferir(e.buildPreso.VER1 === 'B2', 'o build novo (8) foi preso no lugar do que voltou');
   });
 
   await cenario('Apple que não aceita a marca de "resolvido": o reenvio segue assim mesmo', async ({ conferir, guardar }) => {
@@ -470,7 +503,7 @@ if (!REAIS) {
     guardar(primeira.saida);
     const e = mock.estado;
     mock.rejeitar();
-    const segunda = await publicar(['--enviar'], { porta: mock.porta, capturas: baseSintetica });
+    const segunda = await publicar(['--enviar', '--mesmo-build'], { porta: mock.porta, capturas: baseSintetica });
     guardar(segunda.saida);
     await mock.fechar();
     conferir(segunda.codigo === 0 && e.envios.length === 1 && e.envios[0].estado === 'WAITING_FOR_REVIEW', 'reenviou o mesmo envio');
@@ -488,6 +521,21 @@ if (!REAIS) {
     conferir(e.versaoLocsApagadas.includes('VLOC-SITE-en-US') && e.infoLocsApagadas.includes('ILOC-INFO1-en-US'), 'as localizações en-US (da versão e do appInfo) foram apagadas');
     conferir(e.versoes.find((v) => v.id === 'VER-SITE')?.versionString === VERSAO, `a versão "1.0" do site virou ${VERSAO}`);
     conferir(e.envios[0]?.estado === 'WAITING_FOR_REVIEW', 'ENVIADO para revisão (nada em inglês incompleto travou)');
+    conferir(recusasInesperadas(e).length === 0, 'todo corpo e parâmetro conforme a especificação');
+  });
+
+  await cenario('Disponibilidade feita no site com outros países: as notas dizem "Brazil only" — --enviar recusado', async ({ conferir, guardar }) => {
+    const mock = await subirMock({ disponibilidade: ['BRA', 'USA', 'PRT'], disponibilidadeEmNovos: true });
+    const enviar = await publicar(['--enviar', ...COM_VIDEO], { porta: mock.porta, capturas: baseSintetica });
+    guardar(enviar.saida);
+    const e = mock.estado;
+    conferir(enviar.codigo === 1 && enviar.saida.includes('2 território(s) além do Brasil (USA, PRT') && enviar.saida.includes('Brazil only'), 'recusado, com os territórios a mais');
+    conferir(escritas(e).length === 0, 'nada mexido na Apple');
+    const ficha = await publicar([], { porta: mock.porta, capturas: baseSintetica });
+    guardar(ficha.saida);
+    await mock.fechar();
+    conferir(ficha.codigo === 0 && ficha.saida.includes('PENDENTE: Disponibilidade: o app está à venda em 2 território(s)'), 'só a ficha: sobe, com a pendência');
+    conferir(e.disponibilidade.territorios.join() === 'BRA,USA,PRT' && contar(e, 'POST /v2/appAvailabilities') === 0, 'a disponibilidade do site não é mexida pelo publicador');
     conferir(recusasInesperadas(e).length === 0, 'todo corpo e parâmetro conforme a especificação');
   });
 
@@ -740,7 +788,9 @@ if (!REAIS) {
     writeFileSync(textoFalso, Buffer.alloc(100 * 1024, 'x'));
     const cinco = await publicar(['--simular', '--video-revisao', textoFalso], { capturas: baseSintetica });
     const seis = await publicar(['--simular', '--video-revisao', 'http://exemplo.dev/video.mp4'], { capturas: baseSintetica });
-    guardar([um, dois, tres, quatro, cinco, seis].map((r) => r.saida).join('\n'));
+    const sete = await publicar(['--enviar', '--mesmo-build', '--build', '7'], { capturas: baseSintetica });
+    guardar([um, dois, tres, quatro, cinco, seis, sete].map((r) => r.saida).join('\n'));
+    conferir(sete.codigo === 1 && sete.saida.includes('Use um ou outro'), '--mesmo-build com --build');
     conferir(um.codigo === 1 && um.saida.includes('--aguardar-build pede os minutos'), '--aguardar-build sem número');
     conferir(dois.codigo === 1 && dois.saida.includes('Opção desconhecida: --enviar-revisao'), 'opção com erro de digitação');
     conferir(tres.codigo === 1 && tres.saida.includes('--build pede o número do build'), '--build sem número');

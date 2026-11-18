@@ -1802,14 +1802,26 @@ não tem API e não é preciso: o reenvio leva notas e anexos (texto opcional em
 `revisao/resposta-ao-app-review.txt`). *Build desta rodada:* o modo completo lê o
 `appBuildVersion` do `eas build --wait --json` e passa `--build N`; só esse build é preso
 (`filter[version]`) — antes, um VALID mais antigo da mesma versão ia para a revisão no lugar dele.
+Fora do completo, "revisao" com "compilar"/"enviar" na mesma rodada é recusada no passo "Decidir"
+(com `--no-wait`, o build novo não chegaria a tempo); e, num envio devolvido, o `--enviar` sem
+`--build` recusa, antes de escrever, quando o build mais novo da versão é o MESMO que já estava
+preso (`GET /v1/appStoreVersions/{id}/build`): o app desta rodada não chegou à Apple, e as notas
+citariam telas que ele não tem. Reenviar o mesmo build é escolha explícita (`--mesmo-build`,
+caixa "mesmo_build"), para a resposta que não pede app novo. *Regiões:* disponibilidade que já
+existe fica como está, mas é lida (`territoryAvailabilities`): à venda fora do Brasil, o envio é
+recusado, porque o item 6 das notas e o guia respondem "Brazil only". *Vídeo:* o link é baixado UMA
+vez, no começo da rodada (`baixar-video.mjs`), e os passos seguintes recebem o arquivo — um link
+pré-assinado venceria durante a compilação.
 *Antes de compilar:* `ci.mjs preparar` expõe o estado da versão do app.json (inexistente,
 editável ou travada; a mesma regra do publicador, `versoes.mjs`) e a travada para a compilação e o
 envio do build; no completo, `publicar.mjs --conferir-envio` confere, só LENDO a Apple, tudo o que
 a revisão cobrará. *Servidor de demonstração* conferido pela API pública do sistema: `/health`, o
-login da conta demo com papel ADMIN, o código demo, a privacidade, a rota do leitor (404
-`NAO_ENCONTRADO` × 404 genérico de deploy velho) e a da exclusão da própria conta
-(`DELETE /usuarios/me` com corpo vazio: 422 no campo senha, a validação recusa antes da rota e
-nada é excluído); a sessão aberta é encerrada e a senha não sai em mensagem. Ele fica no ar
+login da conta demo com papel ADMIN, o código demo com ao menos 3 peças em estoque, a
+privacidade, a rota do leitor (404 `NAO_ENCONTRADO` × 404 genérico de deploy velho), a da exclusão
+da própria conta (`DELETE /usuarios/me` com corpo vazio: 422 no campo senha, a validação recusa
+antes da rota e nada é excluído) e a proteção da conta demo (uma senha aleatória recebe 409
+`CONTA_DE_DEMONSTRACAO`, que vem antes de conferir a senha — ADR-45); a sessão aberta é encerrada
+e a senha da demo não sai em mensagem. Ele fica no ar
 depois da revisão: serve a política de privacidade da ficha. *Ficha fiel ao build:*
 `TELAS_CITADAS` (rótulo → arquivo do app que o mostra) para antes de falar com a Apple quando um
 texto cita tela que o commit não tem (a exclusão de conta é o ADR-45). *Idioma:* registro criado
@@ -1826,7 +1838,10 @@ reassina; o da App Store não instala) e a caixa "aparelhos" no Actions — `ci.
 pergunta à Apple pelos iPhones registrados (`GET /v1/devices`; o perfil ad hoc exige um) e
 registra o da entrada `udid_aparelho` (`POST /v1/devices`, UDID mascarado no log); sem nenhum,
 para dizendo como resolver; o eas compila com `--wait --json` e o link do `.ipa` vai para o resumo
-da execução. *Consequências:* o reenvio depois de uma recusa é um clique, sem site; a revisão só
+da execução. O perfil é ad hoc de propósito (`enterpriseProvisioning: "adhoc"`) e o build leva
+`--refresh-ad-hoc-provisioning-profile` com a chave da Apple: sem eles, o eas-cli em modo não
+interativo parava pedindo o modo interativo. A Expo monta o perfil com os iPhones do cadastro
+DELA (não os da Apple): na 1ª vez, `npx eas-cli device:create` num computador, uma vez. *Consequências:* o reenvio depois de uma recusa é um clique, sem site; a revisão só
 sai com o que a Apple pediu e com o servidor da demonstração conferido; mudar prints ou a lista de
 aparelhos pede refazer o guia (o CI acusa). A Apple de mentira ganhou um envio ativo por
 plataforma, o estado `UNRESOLVED_ISSUES`, anexos, aparelhos, localizações de outro idioma, pontos

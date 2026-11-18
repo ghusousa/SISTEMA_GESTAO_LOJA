@@ -36,6 +36,8 @@ const ROTAS = [
   'GET /v1/appInfos/{id}/ageRatingDeclaration',
   'PATCH /v1/ageRatingDeclarations/{id}',
   'GET /v1/apps/{id}/appAvailabilityV2',
+  // Os territórios de uma disponibilidade que já existe: as notas dizem "Brazil only".
+  'GET /v2/appAvailabilities/{id}/territoryAvailabilities',
   'POST /v2/appAvailabilities',
   'GET /v1/apps/{id}/appStoreVersions',
   'POST /v1/appStoreVersions',
@@ -64,6 +66,8 @@ const ROTAS = [
   'GET /v1/apps/{id}/appPricePoints',
   'POST /v1/appPriceSchedules',
   'GET /v1/builds',
+  // O build que a versão já tem preso (o da submissão que a Apple devolveu).
+  'GET /v1/appStoreVersions/{id}/build',
   'PATCH /v1/appStoreVersions/{id}/relationships/build',
   'GET /v1/reviewSubmissions',
   'POST /v1/reviewSubmissions',

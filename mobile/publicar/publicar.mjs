@@ -13,6 +13,12 @@
  *   npm run publicar -- --enviar --aguardar-build 60 --build 42
  *                                             espera até 60 min o build 42 (o que esta rodada
  *                                             compilou) ficar VALID na Apple e prende ELE
+ *   npm run publicar -- --enviar --mesmo-build
+ *                                             reenvia um envio que a Apple devolveu com o MESMO
+ *                                             build que já estava preso (resposta que não pede
+ *                                             app novo). Sem ela e sem --build, o reenvio com o
+ *                                             build antigo é RECUSADO: as notas citam telas que
+ *                                             ele pode não ter
  *   npm run publicar -- --video-revisao gravacao.mp4   (ou um endereço https://...)
  *                                             anexa a gravação de tela à revisão
  *   npm run publicar -- --conferir-envio      só confere o que a revisão precisa (abaixo) e a
@@ -22,8 +28,10 @@
  *
  * --enviar é RECUSADO, antes de mexer em qualquer coisa na Apple, sem a lista de aparelhos
  * testados (ficha/aparelhos-testados.txt), sem a gravação de tela (--video-revisao ou um
- * vídeo já anexado), com o guia PDF desatualizado ou com o servidor de demonstração fora do
- * jeito que as notas descrevem. Só a ficha pode subir sem eles.
+ * vídeo já anexado), com o guia PDF desatualizado, com o servidor de demonstração fora do
+ * jeito que as notas descrevem, com o app à venda fora do Brasil (as notas dizem "Brazil only")
+ * ou reenviando, sem --build nem --mesmo-build, o mesmo build que a Apple devolveu. Só a ficha
+ * pode subir sem eles.
  *
  * O que NENHUM programa faz — a API 4.6 da Apple não tem rota para isso:
  *   • criar o registro do app (só no site, uma vez);
@@ -80,13 +88,14 @@ let appExiste = null;
 // ---------- argumentos e ambiente ----------
 
 function lerArgumentos(argv) {
-  const args = { simular: false, enviar: false, conferirEnvio: false, aguardarMinutos: 0, build: null, video: null };
+  const args = { simular: false, enviar: false, conferirEnvio: false, aguardarMinutos: 0, build: null, mesmoBuild: false, video: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const valor = () => (a.includes('=') ? a.slice(a.indexOf('=') + 1) : argv[++i]);
     if (a === '--simular') args.simular = true;
     else if (a === '--enviar') args.enviar = true;
     else if (a === '--conferir-envio') args.conferirEnvio = true;
+    else if (a === '--mesmo-build') args.mesmoBuild = true;
     else if (a === '--aguardar-build' || a.startsWith('--aguardar-build=')) {
       const bruto = valor();
       const minutos = Number(bruto);
@@ -104,10 +113,13 @@ function lerArgumentos(argv) {
       args.video = bruto;
     } else {
       throw new Error(
-        `Opção desconhecida: ${a}. Use --simular, --enviar, --conferir-envio, --aguardar-build <minutos>, --build <número> ` +
-          'e/ou --video-revisao <arquivo|https://...>.',
+        `Opção desconhecida: ${a}. Use --simular, --enviar, --conferir-envio, --aguardar-build <minutos>, --build <número>, ` +
+          '--mesmo-build e/ou --video-revisao <arquivo|https://...>.',
       );
     }
+  }
+  if (args.mesmoBuild && (args.build || args.aguardarMinutos)) {
+    throw new Error('--mesmo-build reenvia o build que a versão já tem preso; --build e --aguardar-build escolhem outro. Use um ou outro.');
   }
   if (args.conferirEnvio && args.enviar) {
     throw new Error('--conferir-envio só confere (não escreve nada na Apple); --enviar faz a mesma conferência antes de enviar. Use um dos dois.');
@@ -174,15 +186,86 @@ async function lerRevisaoNaApple(asc, versaoId) {
 }
 
 /**
+ * A disponibilidade que já existe na conta: { id, territorios (os à venda), emNovos } ou null
+ * (ainda não há). Só leitura. ~175 territórios cabem numa página de 200.
+ */
+async function lerDisponibilidade(asc, app) {
+  let atual = null;
+  try {
+    atual = (await asc.get(`/v1/apps/${app.id}/appAvailabilityV2`))?.data ?? null;
+  } catch (erro) {
+    if (erro.status !== 404) throw erro;
+  }
+  if (!atual) return null;
+  const r = await asc.get(`/v2/appAvailabilities/${atual.id}/territoryAvailabilities?include=territory&limit=200`);
+  const territorios = (r.data ?? [])
+    .filter((t) => t.attributes?.available === true)
+    .map((t) => t.relationships?.territory?.data?.id)
+    .filter(Boolean);
+  return { id: atual.id, territorios, emNovos: atual.attributes?.availableInNewTerritories === true };
+}
+
+/** O build que a versão já tem preso, ou null. */
+async function buildPreso(asc, versaoId) {
+  try {
+    return (await asc.get(`/v1/appStoreVersions/${versaoId}/build`))?.data ?? null;
+  } catch (erro) {
+    if (erro.status === 404) return null;
+    throw erro;
+  }
+}
+
+/** O envio que a Apple devolveu (recusa ou pedido de informação), ou null. */
+async function envioDevolvido(asc, app) {
+  const r = await asc.get(`/v1/reviewSubmissions?filter[app]=${app.id}&filter[platform]=IOS&filter[state]=UNRESOLVED_ISSUES&limit=10`);
+  return r.data?.[0] ?? null;
+}
+
+/**
  * --enviar só sai com tudo o que a Apple pediu: a lista de aparelhos, a gravação de tela, o
  * guia em dia e o servidor de demonstração do jeito que as notas descrevem. Confere TUDO antes
  * de escrever qualquer coisa na Apple e lista todas as faltas de uma vez.
  */
-async function conferirAntesDeEnviar({ aparelhos, video, guia, revisaoNaApple, config, soConferir = false }) {
+async function conferirAntesDeEnviar({ asc, app, versaoDoApp, situacao, args, aparelhos, video, guia, revisaoNaApple, config, soConferir = false }) {
   relatorio.passo(
-    `${soConferir ? 'O que a revisão vai precisar' : 'Antes de enviar'}: aparelhos testados, gravação de tela, guia PDF e servidor de demonstração`,
+    `${soConferir ? 'O que a revisão vai precisar' : 'Antes de enviar'}: aparelhos testados, gravação de tela, guia PDF, ` +
+      'regiões, build e servidor de demonstração',
   );
   const faltas = [];
+
+  // Item 6 das notas: "Brazil only". Disponibilidade feita no site com outros países desmente.
+  const disponivel = await lerDisponibilidade(asc, app);
+  const fora = (disponivel?.territorios ?? []).filter((t) => t !== TERRITORIO);
+  if (fora.length) {
+    faltas.push([
+      'regioes',
+      `O app está à venda em ${fora.length} território(s) além do Brasil (${fora.slice(0, 8).join(', ')}${fora.length > 8 ? '…' : ''}), ` +
+        'e as notas respondem "Brazil only" (item 6) — o revisor veria a outra coisa. Deixe só o Brasil em Pricing and ' +
+        'Availability, ou mude o item 6 de ficha/notas-revisao.txt e o guia (revisao/guia.mjs), e rode de novo.',
+    ]);
+  } else if (disponivel) {
+    relatorio.ok(`disponibilidade: só ${TERRITORIO}, como as notas dizem`);
+  }
+  if (disponivel?.emNovos) {
+    relatorio.avisar('A disponibilidade entra sozinha nos países que a Apple abrir (availableInNewTerritories); as notas dizem só Brasil.');
+  }
+
+  // Reenvio (a Apple devolveu) sem --build: o build mais novo da versão é o MESMO que voltou?
+  // Então o app desta rodada não chegou à Apple, e as notas citariam telas que ele não tem.
+  if (!soConferir && !args.build && !args.mesmoBuild && situacao.editavel && (await envioDevolvido(asc, app))) {
+    const preso = await buildPreso(asc, situacao.editavel.id);
+    const maisNovo = await acharBuild(asc, app, versaoDoApp, null);
+    if (preso && maisNovo && maisNovo.id === preso.id) {
+      faltas.push([
+        'build',
+        `A Apple devolveu o envio, e o build mais novo da versão ${versaoDoApp} (${preso.attributes?.version ?? preso.id}) é o MESMO ` +
+          'que já estava nele: o build com o código desta rodada não chegou à Apple. Compile (caixa "compilar"), espere o e-mail ' +
+          'de build processado e rode "revisao" de novo — ou passe --build <número>. Se a resposta à Apple não pede app novo, ' +
+          'reenvie o mesmo build com --mesmo-build (caixa "mesmo_build").',
+      ]);
+    }
+  }
+
   if (!aparelhos.length) {
     faltas.push([
       'aparelhos',
@@ -236,8 +319,8 @@ async function conferirAntesDeEnviar({ aparelhos, video, guia, revisaoNaApple, c
     );
   }
   relatorio.feito(
-    'Pronto para a revisão: aparelhos testados, gravação de tela, guia em dia e servidor de demonstração conferido ' +
-      '(no ar, conta de dono e protegida, código de barras com estoque, privacidade, leitor e exclusão de conta)',
+    'Pronto para a revisão: aparelhos testados, gravação de tela, guia em dia, só Brasil, e servidor de demonstração ' +
+      'conferido (no ar, conta de dono e protegida, código de barras com estoque, privacidade, leitor e exclusão de conta)',
   );
 }
 
@@ -333,18 +416,28 @@ async function disponibilidade(asc, app) {
   relatorio.passo('Disponibilidade (onde o app é vendido)');
   let atual = null;
   try {
-    atual = (await asc.get(`/v1/apps/${app.id}/appAvailabilityV2`))?.data ?? null;
+    atual = await lerDisponibilidade(asc, app);
   } catch (erro) {
-    if (erro.status !== 404) {
-      relatorio.pendente(
-        `Não deu para ler a disponibilidade (${erro.message}). Na tela: Pricing and Availability → só Brasil.`,
-        'disponibilidade',
-      );
-      return;
-    }
+    relatorio.pendente(
+      `Não deu para ler a disponibilidade (${erro.message}). Na tela: Pricing and Availability → só Brasil.`,
+      'disponibilidade',
+    );
+    return;
   }
   if (atual) {
-    relatorio.feito('Disponibilidade: já definida na conta — mantida como está');
+    // Mantida como está (mexer em país de app à venda é decisão de negócio), mas conferida:
+    // as notas respondem "Brazil only".
+    const fora = atual.territorios.filter((t) => t !== TERRITORIO);
+    if (fora.length) {
+      relatorio.pendente(
+        `Disponibilidade: o app está à venda em ${fora.length} território(s) além do Brasil (${fora.slice(0, 8).join(', ')}` +
+          `${fora.length > 8 ? '…' : ''}), e as notas dizem "Brazil only". Deixe só o Brasil em Pricing and Availability ` +
+          '(o --enviar recusa enquanto isso).',
+        'regioes',
+      );
+    } else {
+      relatorio.feito('Disponibilidade: já definida na conta, só no Brasil — mantida');
+    }
     return;
   }
   try {
@@ -857,7 +950,19 @@ async function publicar() {
     if (jaAnexado) ficha = lerFicha(config, { aparelhos, video: jaAnexado.attributes.fileName });
   }
   if (args.enviar || args.conferirEnvio) {
-    await conferirAntesDeEnviar({ aparelhos, video, guia, revisaoNaApple, config, soConferir: args.conferirEnvio });
+    await conferirAntesDeEnviar({
+      asc,
+      app,
+      versaoDoApp,
+      situacao,
+      args,
+      aparelhos,
+      video,
+      guia,
+      revisaoNaApple,
+      config,
+      soConferir: args.conferirEnvio,
+    });
   }
   if (args.conferirEnvio) {
     relatorio.feito(
@@ -953,9 +1058,14 @@ async function publicar() {
 
   await precoGratis(asc, app);
 
-  relatorio.passo(`Build da versão ${versaoDoApp}${args.build ? ` — o ${args.build}, compilado nesta rodada` : ''}`);
+  relatorio.passo(
+    `Build da versão ${versaoDoApp}${args.build ? ` — o ${args.build}, compilado nesta rodada` : args.mesmoBuild ? ' — o mesmo que já estava preso' : ''}`,
+  );
   let build;
-  if (args.aguardarMinutos) {
+  if (args.mesmoBuild) {
+    build = await buildPreso(asc, versao.id);
+    if (!build) throw new Error(`--mesmo-build: a versão ${versaoDoApp} não tem build preso para reenviar. Rode sem ela.`);
+  } else if (args.aguardarMinutos) {
     relatorio.ok(`esperando até ${args.aguardarMinutos} min, consultando a cada ${intervaloBuildMs / 1000} s`);
     build = await esperarBuild(asc, app, versaoDoApp, args.build, args.aguardarMinutos, intervaloBuildMs);
   } else {

@@ -252,7 +252,15 @@ async function aparelhos() {
   } else if (registrado) {
     process.stdout.write(`✔ O iPhone ${mascararUdid(limpo(process.env.UDID_APARELHO))} já estava registrado ("${registrado.nome}").\n`);
   }
-  process.stdout.write(`✔ ${lista.length} iPhone(s) registrado(s) na conta: o perfil ad hoc pode ser assinado.\n`);
+  // Registrar na Apple é a metade: a Expo monta o perfil ad hoc com os iPhones que ELA conhece
+  // (o cadastro dela, não o da Apple). Sem nenhum lá, o build para em "No devices are registered
+  // for this Apple team" — e isso só se resolve, uma vez, pelo eas-cli num computador.
+  process.stdout.write(
+    `✔ ${lista.length} iPhone(s) registrado(s) na conta da Apple. A Expo monta o perfil ad hoc com os iPhones do cadastro ` +
+      'DELA: se o build parar em "No devices are registered for this Apple team", rode uma vez num computador ' +
+      '"npx eas-cli device:create" (opção "Developer Portal", que importa os da Apple, ou "Input", com o mesmo UDID) e ' +
+      'dispare de novo.\n',
+  );
   saida('aparelhos', lista.length);
 }
 

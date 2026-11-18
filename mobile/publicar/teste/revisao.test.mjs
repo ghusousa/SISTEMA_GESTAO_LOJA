@@ -17,7 +17,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 
-import { baixarVideo, ehVideo, lerVideo, md5, MINIMO_DO_VIDEO, obterVideo, tipoDoVideo, videoAnexado } from '../anexos.mjs';
+import { baixarVideo, ehVideo, guardarVideo, lerVideo, md5, MINIMO_DO_VIDEO, obterVideo, tipoDoVideo, videoAnexado } from '../anexos.mjs';
 import { LIMITES, lerAparelhosTestados, lerFicha, PENDENTE, TELAS_CITADAS, telasQueFaltam } from '../ficha.mjs';
 import { diferencas, impressaoAtual, IMPRESSAO, lerGuia } from '../revisao/guia.mjs';
 
@@ -123,6 +123,26 @@ test('vídeo por link: página no lugar do vídeo, 404, tamanho além do teto, d
     await assert.rejects(baixarVideo('não é endereço', pasta), /nem endereço https/);
     // Nada pela metade sobra na pasta do runner.
     assert.deepEqual(readdirSync(pasta), [], 'sobrou o download pela metade');
+  } finally {
+    await fechar();
+  }
+});
+
+test('vídeo por link, baixado UMA vez no começo da rodada: fica na pasta, conferido, e o publicador lê o arquivo', async () => {
+  // O link pré-assinado vence durante a compilação: o workflow baixa antes e passa o CAMINHO.
+  const { base, fechar } = await servidorDeVideo();
+  try {
+    const pasta = join(mkdtempSync(join(TEMP, 'runner-')), 'video-revisao');
+    const caminho = await guardarVideo(`${base}/redireciona`, pasta, { permitirHttp: true });
+    assert.equal(caminho, join(pasta, 'screen-recording.mp4'));
+    assert.deepEqual(readdirSync(pasta), ['screen-recording.mp4'], 'sobrou pasta temporária do download');
+    const v = await obterVideo(caminho);
+    assert.equal(v.md5, md5(video()));
+    // Página no lugar do vídeo ou link vencido: para aqui, e nada fica para trás.
+    const outra = join(mkdtempSync(join(TEMP, 'runner-')), 'video-revisao');
+    await assert.rejects(guardarVideo(`${base}/pagina`, outra, { permitirHttp: true }), /devolveu uma página/);
+    await assert.rejects(guardarVideo(`${base}/sumiu`, outra, { permitirHttp: true }), /HTTP 404/);
+    assert.deepEqual(readdirSync(outra), []);
   } finally {
     await fechar();
   }

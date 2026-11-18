@@ -20,7 +20,8 @@
     "teste-aparelhos": {
       "distribution": "internal",
       "ios": {
-        "simulator": false
+        "simulator": false,
+        "enterpriseProvisioning": "adhoc"
       }
     }
   },

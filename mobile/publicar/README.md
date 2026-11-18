@@ -110,8 +110,10 @@ Sistema Obras.
 
 **Um clique: caixa "completo".** Antes de compilar, confere o que a revisão vai cobrar
 (`publicar.mjs --conferir-envio`: a versão do app.json ainda aberta na Apple, a lista de
-aparelhos, o vídeo — o link de `video_revisao_url` é baixado e conferido —, o guia em dia e o
-servidor de demonstração) e para ali se faltar algo, sem gastar build. Depois compila na nuvem
+aparelhos, o vídeo, o guia em dia, a disponibilidade só no Brasil e o servidor de demonstração)
+e para ali se faltar algo, sem gastar build. O link de `video_revisao_url` é baixado UMA vez, no
+começo da rodada (`publicar/baixar-video.mjs`, conferido ali), e os passos seguintes recebem o
+arquivo: um link pré-assinado (S3, sessão do BrowserStack) venceria durante a compilação. Depois compila na nuvem
 da Expo esperando o build terminar (o envio automático do EAS sobe o binário à Apple), guarda o
 **número desse build** (o `--json` do eas), sobe a ficha, espera a Apple processar ESSE build
 (até 60 min, uma consulta por minuto) e manda (ou reenvia) para a revisão. Um build VALID mais
@@ -125,8 +127,14 @@ tem teto de 150 min), e a conta já parou uma vez por limite de gasto.
    App Store Connect, a própria Expo o envia à Apple ao terminar. A Apple processa mais
    10–30 min e manda e-mail.
 2. Quando o build aparecer processado: rode de novo só com **revisão** marcada (desmarque
-   compilar) — e, se o vídeo ainda não estiver anexado, cole o link em **video_revisao_url**.
-   Ele prende o build mais novo da versão e **envia (ou reenvia) para a revisão**.
+   compilar — "revisao" com "compilar" ou "enviar" na mesma rodada só no completo: com
+   `--no-wait`, o build novo ainda não estaria na Apple e a revisão levaria o antigo; o passo
+   "Decidir" para a rodada) — e, se o vídeo ainda não estiver anexado, cole o link em
+   **video_revisao_url**. Ele prende o build mais novo da versão e **envia (ou reenvia) para a
+   revisão**. Num envio que a Apple devolveu, ele RECUSA reenviar com o mesmo build que voltou
+   (o app desta rodada não teria chegado à Apple, e as notas citariam telas que ele não tem):
+   compile antes — ou, se a resposta à Apple não pede app novo, marque **mesmo_build**
+   (`--mesmo-build`).
 
 **Versão já enviada ou publicada**: compilar ou enviar um build com o mesmo número do app.json
 não tem para onde ir. O passo "Conferir a versão na Apple antes de compilar" para a rodada
@@ -154,7 +162,16 @@ Expo e é enviado à Apple mesmo assim. Quando chegar o e-mail da Apple, rode s�
 
 A Apple pediu a gravação num aparelho físico e a lista dos testados. Os iPhones reais da nuvem
 do BrowserStack instalam um `.ipa` **ad hoc** (o da App Store não instala fora dela); o perfil
-`teste-aparelhos` do `eas.json` (distribuição interna) gera esse `.ipa`.
+`teste-aparelhos` do `eas.json` (distribuição interna, `enterpriseProvisioning: "adhoc"`) gera
+esse `.ipa`. Sem o `adhoc`, o eas-cli em modo não interativo parava em "couldn't find any
+credentials suitable for internal distribution. Run this command again in interactive mode";
+com ele e com `--refresh-ad-hoc-provisioning-profile`, a Expo cria (ou refaz) o perfil com a
+chave da Apple — a caixa exige a chave (Secrets `ASC_*`) e `APPLE_TEAM_ID`.
+
+**Uma vez só, antes da 1ª rodada:** a Expo monta o perfil com os iPhones do cadastro DELA, não
+os da Apple. Num computador com Node, `npx eas-cli device:create` (logado na conta da Expo) →
+"Developer Portal" (importa os iPhones registrados na Apple) ou "Input" (o UDID, o mesmo de
+`udid_aparelho`). Sem isso, o build para em "No devices are registered for this Apple team".
 
 1. Marque só **aparelhos** (as outras caixas ficam de fora nesta rodada; com "completo" junto,
    a rodada recusa). Na 1ª vez, preencha **udid_aparelho** com o UDID de um iPhone qualquer da
@@ -162,13 +179,12 @@ do BrowserStack instalam um `.ipa` **ad hoc** (o da App Store não instala fora 
    BrowserStack reassina o app para os aparelhos dele.
 2. `publicar/ci.mjs aparelhos` pergunta à Apple quantos iPhones estão registrados
    (`GET /v1/devices`), registra o do UDID (`POST /v1/devices`, uma vez só; o UDID sai mascarado
-   no log) e, sem nenhum, para dizendo como achar o UDID sem Mac.
+   no log) e, sem nenhum, para dizendo como achar o UDID sem Mac. Registrar na Apple é a metade:
+   o log lembra o cadastro da Expo (acima).
 3. O eas compila esperando (`--wait --json`, teto de 90 min) e o **link do .ipa** vai para o
    resumo da execução. No BrowserStack, envie o app por esse link https.
 
-É experimental até a primeira rodada de verdade: em modo não interativo a Expo ainda pode pedir
-o aparelho no cadastro DELA (`npx eas-cli device:create`, uma vez) além do da Apple — se o log
-disser isso, é esse o passo.
+É experimental até a primeira rodada de verdade.
 
 ### Uma vez só: segredos e variáveis do repositório
 
@@ -225,7 +241,7 @@ da demo vira `•••` até em mensagem de erro da Apple.
 | Capturas iPhone 6,5" (**obrigatórias**) | `media/app-store/iphone-6.5/NN-nome.png` — 1242×2688, PNG RGB sem alfa, até 10 |
 | Capturas iPhone 6,9" (extra) | `media/app-store/iphone-6.9/NN-nome.png` — 1320×2868 (ou 1290×2796, 1260×2736) |
 | Classificação etária | `classificacao.mjs`: as 24 perguntas da API 4.6, "Não/Nenhum" → 4+ |
-| Direitos de conteúdo, disponibilidade, preço, categorias | fixos no `publicar.mjs`: não usa conteúdo de terceiros; só Brasil (se a conta ainda não tiver disponibilidade — se já tiver, fica como está); grátis; Negócios + Produtividade |
+| Direitos de conteúdo, disponibilidade, preço, categorias | fixos no `publicar.mjs`: não usa conteúdo de terceiros; só Brasil (se a conta ainda não tiver disponibilidade — se já tiver, fica como está, mas é conferida: à venda fora do Brasil, o `--enviar` recusa, porque as notas dizem "Brazil only"); grátis; Negócios + Produtividade |
 
 Os textos são conferidos antes de falar com a Apple: limite contado como a Apple conta
 (caractere, não byte), marcador `{{...}}` sem valor, menção a outra plataforma (diretriz
@@ -280,9 +296,12 @@ npm run publicar -- --enviar --aguardar-build 60 --video-revisao gravacao.mp4
   Estourou o limite ou a Apple marcou o build como inválido: mensagem clara e saída com erro.
 - `--build <número>` prende SÓ esse build (o CFBundleVersion que o eas devolveu) e espera por ele
   — é o que o modo completo do GitHub passa.
+- `--mesmo-build` reenvia um envio devolvido com o build que a versão já tem preso (resposta à
+  Apple que não pede app novo). Sem ela e sem `--build`, o `--enviar` de um envio devolvido é
+  recusado quando o build mais novo da versão é o mesmo que voltou.
 - `--video-revisao <arquivo ou https://...>` anexa a gravação de tela (MP4/MOV de verdade, pelo
-  cabeçalho; até 500 MB). O link é baixado para a pasta temporária (no Actions, `$RUNNER_TEMP`),
-  conferido e apagado depois de lido.
+  cabeçalho; até 500 MB). O link é baixado para a pasta temporária, conferido e apagado depois
+  de lido. No Actions o workflow baixa o link UMA vez (`baixar-video.mjs`) e passa o arquivo.
 - `--conferir-envio` só confere o que a revisão vai cobrar e a versão na Apple, sem escrever nada.
 - `npm run publicar:simular` só confere textos e capturas, sem falar com a Apple.
 
@@ -299,8 +318,10 @@ demonstração de mentira (`teste/demo-falso.mjs`) e roda o publicador de verdad
 primeira publicação com guia e vídeo anexados e o servidor demo conferido; atualização
 (novidades, disponibilidade intocada, capturas e anexos substituídos, `--aguardar-build`); o
 build DESTA rodada com um VALID antigo da mesma versão na Apple; recusada → corrige → reenvia
-(o mesmo envio `UNRESOLVED_ISSUES`, com o build novo); pedido de informação (mesmo build, vídeo
-novo no lugar do antigo); Apple que não aceita a marca de "resolvido"; app criado no site em
+(o mesmo envio `UNRESOLVED_ISSUES`, com o build novo); pedido de informação sem build novo
+(reenvio recusado, nada escrito) e com `--mesmo-build` (o mesmo build, vídeo novo no lugar do
+antigo); devolvido com um build novo processado (preso sem `--build`); disponibilidade do site
+com outros países (`--enviar` recusado, "Brazil only"); Apple que não aceita a marca de "resolvido"; app criado no site em
 inglês; rodada sem 6,9" apagando o conjunto velho; preço (pago primeiro, grátis na 2ª página,
 sem grátis, lista vazia); `--enviar` recusado sem aparelhos e sem vídeo (nenhuma escrita na
 Apple); só a ficha com "(pending)"; servidor demo fora do combinado (não-dono, código, leitor,

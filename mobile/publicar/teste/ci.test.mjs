@@ -10,9 +10,9 @@
  * registrado, e o UDID nunca aparece inteiro no log.
  */
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { generateKeyPairSync } from 'node:crypto';
-import { copyFileSync, mkdtempSync, readFileSync, statSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { test } from 'node:test';
@@ -229,6 +229,9 @@ test('aparelhos: já registrado basta; UDID torto, desativado ou sem chave param
     const ok = await rodarPreparar(base, 'aparelhos');
     assert.equal(ok.codigo, 0, ok.saida);
     assert.match(ok.saida, /1 iPhone\(s\) registrado\(s\)/, 'só os ativos contam');
+    // Registrar na Apple não garante o perfil: a Expo usa o cadastro DELA.
+    assert.match(ok.saida, /eas-cli device:create/);
+    assert.doesNotMatch(ok.saida, /pode ser assinado/);
 
     const torto = await rodarPreparar({ ...base, UDID_APARELHO: '1234-abcd' }, 'aparelhos');
     assert.equal(torto.codigo, 1);
@@ -272,4 +275,84 @@ test('sem a chave: não chama a Apple, não grava nada e diz o que falta', async
   assert.equal(s.tem_ficha, 'nao');
   assert.match(s.faltando_ficha, /ASC_KEY_ID/);
   assert.equal(s.chave_p8, undefined);
+});
+
+// ------------------------------------------------------------ o workflow (publicar-apple.yml)
+
+const WORKFLOW = readFileSync(join(MOBILE, '..', '.github', 'workflows', 'publicar-apple.yml'), 'utf8');
+
+/** O `run: |` de um passo do workflow, pelo nome (sem parser de YAML: o recuo diz onde acaba). */
+function scriptDoPasso(nome) {
+  const linhas = WORKFLOW.split('\n');
+  const inicio = linhas.findIndex((l) => l.trim() === `- name: ${nome}`);
+  assert.ok(inicio >= 0, `passo "${nome}" não achado`);
+  const run = linhas.findIndex((l, i) => i > inicio && /^\s+run: \|\s*$/.test(l));
+  const recuo = linhas[run].search(/\S/);
+  const corpo = [];
+  for (const l of linhas.slice(run + 1)) {
+    if (l.trim() && l.search(/\S/) <= recuo) break;
+    corpo.push(l);
+  }
+  return corpo.join('\n');
+}
+
+/** Roda o passo "Decidir" com as caixas do formulário; devolve { codigo, saida, saidas }. */
+function decidir(caixas) {
+  const pasta = mkdtempSync(join(tmpdir(), 'ci-decidir-'));
+  const script = join(pasta, 'decidir.sh');
+  writeFileSync(script, scriptDoPasso('Decidir o que fazer e conferir a versão'));
+  const github = join(pasta, 'saida');
+  writeFileSync(github, '');
+  const r = spawnSync('bash', [script], {
+    cwd: MOBILE,
+    encoding: 'utf8',
+    env: {
+      PATH: process.env.PATH,
+      EVENTO: 'workflow_dispatch',
+      EXPO_TOKEN: 'token-de-teste',
+      GITHUB_OUTPUT: github,
+      COMPLETO: 'false',
+      COMPILAR: 'false',
+      ENVIAR: 'false',
+      FICHA: 'false',
+      REVISAO: 'false',
+      APARELHOS: 'false',
+      ...caixas,
+    },
+  });
+  return { codigo: r.status, saida: `${r.stdout}${r.stderr}`, saidas: lerSaidas(github) };
+}
+
+test('workflow: "revisao" com "compilar" ou "enviar" fora do completo para antes de tudo (o build antigo iria)', () => {
+  for (const caixas of [{ COMPILAR: 'true', REVISAO: 'true' }, { ENVIAR: 'true', REVISAO: 'true', FICHA: 'true' }]) {
+    const r = decidir(caixas);
+    assert.equal(r.codigo, 1, r.saida);
+    assert.match(r.saida, /só no modo "completo"/);
+  }
+  // Os caminhos que continuam: revisão sozinha, compilar com a ficha, e o completo (que espera o build).
+  assert.equal(decidir({ REVISAO: 'true' }).saidas.revisao, 'true');
+  assert.equal(decidir({ COMPILAR: 'true', FICHA: 'true' }).saidas.compilar, 'true');
+  const completo = decidir({ COMPLETO: 'true', COMPILAR: 'true' });
+  assert.equal(completo.codigo, 0, completo.saida);
+  assert.deepEqual([completo.saidas.completo, completo.saidas.revisao], ['true', 'true']);
+});
+
+test('workflow: o vídeo do link é baixado UMA vez, e a conferência e a ficha recebem o arquivo', () => {
+  assert.match(WORKFLOW, /node publicar\/baixar-video\.mjs "\$VIDEO_REVISAO_URL" "\$RUNNER_TEMP\/video-revisao"/);
+  assert.doesNotMatch(WORKFLOW, /--video-revisao "\$VIDEO_REVISAO_URL"/, 'um passo ainda baixa o link de novo');
+  for (const passo of ['Conferir o que o modo completo precisa', 'Atualizar a ficha da loja (e enviar para a revisão, se pedido)']) {
+    assert.match(scriptDoPasso(passo), /--video-revisao "\$VIDEO"/, passo);
+  }
+});
+
+test('workflow: o .ipa de teste é ad hoc de verdade e monta o perfil sem modo interativo', () => {
+  const eas = JSON.parse(readFileSync(join(MOBILE, 'eas.json'), 'utf8'));
+  const perfil = eas.build['teste-aparelhos'];
+  assert.equal(perfil.distribution, 'internal');
+  // Sem isto, o eas-cli (27.x) cai em SetUpInternalProvisioningProfile e, sem credencial
+  // anterior, para em "You're in non-interactive mode ... Run this command again in interactive mode".
+  assert.equal(perfil.ios.enterpriseProvisioning, 'adhoc');
+  const script = scriptDoPasso('Compilar o .ipa de teste para iPhones reais');
+  assert.match(script, /--profile teste-aparelhos[\s\\]+--non-interactive --refresh-ad-hoc-provisioning-profile/);
+  assert.match(script, /EXPO_ASC_API_KEY_PATH=/, 'o refresh do perfil precisa da chave da Apple');
 });

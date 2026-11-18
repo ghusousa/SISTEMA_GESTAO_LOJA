@@ -290,6 +290,20 @@ export const ROTAS = {
       }
     }
   },
+  "GET /v2/appAvailabilities/{id}/territoryAvailabilities": {
+    "parametros": {
+      "fields[territoryAvailabilities]": {},
+      "fields[territories]": {},
+      "limit": {
+        "maximo": 200
+      },
+      "include": {
+        "enum": [
+          "territory"
+        ]
+      }
+    }
+  },
   "POST /v2/appAvailabilities": {
     "corpo": "AppAvailabilityV2CreateRequest"
   },
@@ -701,6 +715,11 @@ export const ROTAS = {
       "limit[individualTesters]": {
         "maximo": 50
       }
+    }
+  },
+  "GET /v1/appStoreVersions/{id}/build": {
+    "parametros": {
+      "fields[builds]": {}
     }
   },
   "PATCH /v1/appStoreVersions/{id}/relationships/build": {
