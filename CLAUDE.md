@@ -93,6 +93,10 @@ publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com o app de ve
   `LOGIN_FALHOU` grava `user_id`+nome se a conta existe e o e-mail MASCARADO se não existe;
   excluir usuário mascara o e-mail dele nas linhas antigas; `RETENCAO_AUDITORIA_DIAS` (730,
   0 = tudo) apaga o velho na faxina do login. São as duas únicas escritas depois do INSERT.
+- **Excluir conta (ADR-45)**: `DELETE /usuarios/me` `{senha}` (errada: 422 `SENHA_INCORRETA`, nunca
+  401; único dono: 409) e `DELETE /usuarios/{id}` têm UMA limpeza (`_apagar_conta`); com venda/caixa/
+  estoque (FK RESTRICT) a linha fica só com o nome e `deleted_at`. Autor que some no ato:
+  `congelar_autor(request, user)`. `web/js/exclusao-de-conta.js` ↔ `mobile/src/lib/exclusaoDeConta.ts`.
 - **Força bruta (ADR-24)**: o login conta as falhas recentes por e-mail e por IP
   (`login_attempts`, janela de 15 min) e responde 429 com `Retry-After` quando passa do teto.
   A resposta de e-mail real e falso é idêntica — a trava não vaza se a conta existe, nem pelo

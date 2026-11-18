@@ -1,11 +1,16 @@
 /** Tela de login. É a única que roda fora da moldura do sistema. */
 
 import { entrar } from '../api.js';
+import { AVISO_CONTA_EXCLUIDA } from '../exclusao-de-conta.js';
 import { ir } from '../router.js';
 import { html, cru } from '../ui.js';
 import { loja } from '../loja.js';
 
-export function render(raiz) {
+export function render(raiz, _params, consulta = {}) {
+  // Quem acabou de excluir a própria conta cai aqui (Minha conta): a tela confirma o que
+  // aconteceu, em vez de parecer que a sessão só caiu.
+  const contaExcluida = consulta.conta === 'excluida';
+
   raiz.innerHTML = html`
     <div class="entrada">
       <div class="entrada__caixa">
@@ -16,6 +21,7 @@ export function render(raiz) {
           </span>
         </div>
 
+        ${contaExcluida ? html`<div class="recado recado--ok" role="status" data-conta-excluida>${AVISO_CONTA_EXCLUIDA}</div>` : ''}
         <div data-erro hidden></div>
 
         <form data-form novalidate>

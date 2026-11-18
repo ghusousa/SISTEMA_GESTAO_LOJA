@@ -237,6 +237,17 @@ class LeitorService:
         await self.session.commit()
         return antes == StatusPareamento.ATIVO
 
+    async def esquecer_usuario(self, user_id: int) -> None:
+        """A conta foi excluída mas a linha dela ficou, presa ao histórico da loja (ADR-45).
+
+        Pareamento não é histórico: some como o CASCADE o levaria se a linha tivesse saído
+        (os bipes vão junto). Pelo ORM de propósito — o commit avisa "leitor", e o
+        computador que esperava bipe deste celular descobre na hora. Quem chama faz o commit,
+        junto com o resto da exclusão.
+        """
+        for pareamento in await self.repo.do_usuario(user_id):
+            await self.session.delete(pareamento)
+
     # ------------------------------------------------------------------ bipes
 
     async def bipar(self, dados: BipeIn, usuario: User) -> BipeOut:

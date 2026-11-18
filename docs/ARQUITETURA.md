@@ -54,15 +54,22 @@ users(id, name, email UNIQUE, password_hash,
       is_active BOOL DEFAULT TRUE,
       comissao_percentual NUMERIC(5,2) NOT NULL DEFAULT 0 CHECK (0 <= x <= 100),
       meta_diaria NUMERIC(14,2) NULL CHECK (meta_diaria > 0),   -- ADR-37
+      deleted_at TIMESTAMPTZ NULL,       -- conta excluída que segura histórico (ADR-45)
       created_at, updated_at)
+  CHECK (deleted_at IS NULL OR NOT is_active)   -- excluída nunca volta a entrar
 
 refresh_tokens(jti UUID PK, user_id FK→users, family_id UUID NOT NULL,
                expires_at, revoked BOOL DEFAULT FALSE, created_at)
   ix_refresh_tokens_user_id, ix_refresh_tokens_family_id, ix_refresh_tokens_expires_at
 ```
 
-E-mail é UNIQUE total (nunca reutilizável); desativar usuário é `is_active = false`, não delete —
-preserva a autoria das vendas.
+E-mail é UNIQUE total; desativar usuário é `is_active = false`, não delete — preserva a autoria
+das vendas e se desfaz. **Excluir** (pelo dono ou pela própria pessoa, ADR-45) é outra coisa:
+sem histórico, a linha sai inteira; com histórico (venda, caixa, estoque — FKs RESTRICT), fica só
+com nome e papel, `deleted_at` preenchido, `is_active = false`, senha que nenhuma senha confere e
+e-mail trocado por `conta-excluida-<id>@excluida.example` — o e-mail de verdade fica livre para
+uma conta nova. Excluída não sai em `GET /usuarios` e é 404 para editar, redefinir senha ou
+excluir de novo.
 
 ### 2.2 Catálogo
 
@@ -367,8 +374,9 @@ login_attempts(id BIGINT, email, ip, sucesso BOOL, created_at)
 
 `audit_log` nunca é editado por tela nenhuma e nunca é lido por vendedora — só por quem tem
 `VER_AUDITORIA` (ADR-23). `user_id` fica nulo em falha de login com e-mail sem conta (e aí
-`user_nome` guarda o e-mail MASCARADO, `ma***@g***.com`) e vira nulo se a conta for apagada; o
-nome/papel congelados preservam o histórico. A faxina do login também apaga, em lotes de 5 mil,
+`user_nome` guarda o e-mail MASCARADO, `ma***@g***.com`) e vira nulo se a linha da conta for
+apagada (a conta excluída que fica presa ao histórico, ADR-45, mantém o vínculo — a linha dela só
+guarda o nome); o nome/papel congelados preservam o histórico. A faxina do login também apaga, em lotes de 5 mil,
 o diário com mais de `RETENCAO_AUDITORIA_DIAS` (730 por padrão; 0 = guarda tudo). `login_attempts` alimenta a trava de
 força bruta (ADR-24): a contagem é por janela de 15 min. A faxina é oportunista, no login
 bem-sucedido (raro, e já escrevendo): apaga as tentativas com mais de um dia e os
@@ -911,7 +919,9 @@ lugar só, impossível de esquecer ao criar rota nova, e o texto sai do próprio
 A gravação é embrulhada em `try/except` largo: auditoria **nunca** derruba a requisição que
 ela observa — registro que falha vira log, não erro para o cliente. A middleware decodifica o
 token ela mesma (o `contextvar` do usuário, setado lá adentro, não volta visível depois do
-`call_next` no Starlette). **O 2xx que não mudou nada não é ato:** a rota idempotente que
+`call_next` no Starlette). Quem excluiu a própria conta (ADR-45) não existe mais quando a borda
+grava: a rota chama `congelar_autor(request, user)` antes, e a linha sai sem `user_id`, com o nome
+e o papel de antes. **O 2xx que não mudou nada não é ato:** a rota idempotente que
 responde sucesso sem efeito (desligar o leitor que já tinha terminado, o reenvio de um aceite —
 ADR-43) chama `fora_do_diario(request)` e a borda pula a linha; senão o dono leria atos que não
 aconteceram, no nome de quem só estava saindo do sistema. É opt-out de propósito: esquecer de
@@ -1776,6 +1786,56 @@ mesmos nomes; `png.mjs` grava RGB sem alfa. Nada é desenhado à mão: mudou uma
 O CI não roda o gerador (pede Postgres, Chromium e as fontes Inter), mas confere as commitadas nos
 bytes contra as cenas (`compor.mjs --conferir`) e as sobe na Apple de mentira (`rodar.mjs --reais`).
 
+**ADR-45 — Excluir a própria conta de dentro do app; o único dono passa o papel antes.**
+*Contexto:* a Apple devolveu a primeira submissão (Guideline 2.1, "Information Needed") pedindo,
+entre outras coisas, o vídeo do fluxo de exclusão de conta. A regra é a 5.1.1(v): app que cria
+conta tem de deixar a pessoa **iniciar a exclusão da própria conta dentro do app** — desativar não
+conta, e "peça ao administrador" também não. Aqui não há autocadastro, mas o app cria contas
+(Mais › Usuários › novo), e o dono só podia desativar pelo app; excluir existia na API e a
+própria conta era recusada. E havia um buraco pior: `DELETE /usuarios/{id}` de quem já tinha
+vendido dava **500** — `sales.seller_id` (e caixa, estoque, devolução, condicional, contas a pagar)
+é FK RESTRICT, e o "apagar a linha" só tinha olhado o `audit_log`. Na demo, a vendedora da carga
+faz 60% das vendas: o revisor que tentasse excluí-la veria um erro.
+*Decisão:* (1) `DELETE /usuarios/me` com `{senha}` para **qualquer** papel: a senha confirma que é a
+pessoa e não um celular destravado na mão de outra; errada é 422 `SENHA_INCORRETA` — nunca 401,
+que faria o cliente renovar e derrubar a sessão que a senha só confirmava (o mesmo cuidado do
+`senha_atual` do backup, ADR-28). No app: Mais › Minha conta › Excluir minha conta; no web: Minha
+conta. A tela diz o que some e o que fica (`lib/exclusaoDeConta.ts` e o espelho
+`js/exclusao-de-conta.js`), pede a senha e confirma; deu certo, a sessão fecha só do lado do
+cliente (o servidor já revogou tudo e apagou o cookie: um logout daria 401 e "sessão expirada") e
+a entrada diz "Conta excluída". (2) **O único dono ativo não se exclui** (409 com o caminho:
+"Passe o papel de dono a outra pessoa em Usuários antes"). É o padrão do Slack e do Google
+Workspace: a loja não pode ficar sem quem administra equipe, backup e diário — e a conta do dono
+é a chave do servidor da loja. Na demo da Vercel, o revisor testa a exclusão numa conta de
+funcionário criada por ele (o dono da demo é o único dono). A contagem de donos trava as linhas de
+dono (`FOR UPDATE`, em ordem de id): dois donos saindo juntos não deixam a loja sem nenhum — sem a
+trava, cada um contava o outro. (3) O dono (e o gerente, para quem não é dono) segue excluindo
+pela lista da equipe (`DELETE /usuarios/{id}`; agora com botão no app e no web); ninguém se exclui
+por ali. (4) **Uma limpeza só** (`_apagar_conta`): trava a linha da conta (`travar_viva`, `FOR
+UPDATE` só se ela ainda não foi excluída — duas exclusões da mesma conta ao mesmo tempo, de dois
+aparelhos ou dela e do dono, viram uma, e a segunda leva 404 em vez de 500 no flush) e tenta
+apagá-la num SAVEPOINT. Sem
+histórico, ela sai inteira (sessões e leitor pelo CASCADE, o diário perde o vínculo pelo `SET
+NULL`). Com histórico, o FK RESTRICT segura — e é para segurar: a venda é documento contábil da
+loja, e o relatório de comissão ainda precisa saber de quem foi. A linha fica só com o nome e o
+papel; o que é da CONTA vai embora do mesmo jeito: e-mail (trocado por
+`conta-excluida-<id>@excluida.example` — `.example` é reservado, nunca será de ninguém, e continua
+válido para o `EmailStr` de uma versão anterior —, e o de verdade fica livre para uma conta nova),
+senha (um valor que não é hash: nenhuma senha confere), sessões, pareamentos do leitor (pelo ORM,
+para avisar "leitor"), e `deleted_at` marca que ela não existe mais: fora de `GET /usuarios`, 404
+para editar, redefinir senha ou excluir de novo, e um CHECK impede que volte a ser ativa. Nos dois
+casos o e-mail sai do diário (máscara, ADR-23) e o nome congelado de quem agiu fica. (5) A linha do
+diário "Excluiu a própria conta" (`USUARIO_EXCLUIU_PROPRIA_CONTA`) é gravada pela borda DEPOIS do
+commit, quando a conta já saiu: a rota chama `congelar_autor(request, user)` antes do service, e a
+borda grava sem `user_id` (o FK derrubaria a linha inteira no `try/except`) e com o nome e o papel
+de antes. A borda também deixou de mandar o `user_id` de uma conta que não existe mais.
+*Consequências:* a exclusão é a mesma pelo app, pelo web e pelo dono, e funciona para quem já
+vendeu; as notas da revisão citam "Mais > Minha conta > Excluir minha conta" (qualquer pessoa) e
+"Mais > Usuários > (pessoa) > Excluir conta" (dono). A conta excluída com histórico continua no
+banco como o nome de quem vendeu — é o que a página pública de exclusão (`/exclusao-de-dados`) e a
+política dizem que fica, e por quê. A confirmação no app é um `Modal` do próprio app
+(`components/Confirmacao.tsx`), não `Alert.alert`, que não aparece no export web.
+
 ## 4. Contratos de API
 
 Prefixo `/api/v1`. Auth: `Authorization: Bearer <access_token>`.
@@ -1812,6 +1872,16 @@ Erros: `{"code": "...", "message": "...", "detail": {...}}`.
 `GET /usuarios` (A) · `POST /usuarios` (A) · `GET/PATCH /usuarios/{id}` (A) ·
 `PATCH /usuarios/{id}/senha` (A, reset) · `PATCH /usuarios/me/senha` (qualquer, exige senha atual).
 Desativar = `PATCH {ativo:false}`. Bootstrap do primeiro admin: `python -m app.cli create-admin`.
+(A) = `GERIR_USUARIOS` (dono e gerente; conta de dono só o dono mexe — 403).
+
+| método | rota | papel | notas |
+|---|---|---|---|
+| DELETE | `/usuarios/me` | qualquer logado | `{senha}` → 204 e apaga o cookie do refresh. Exclui a PRÓPRIA conta (ADR-45). Senha errada → **422 `SENHA_INCORRETA`** (nunca 401: derrubaria a sessão; nada muda). Sem senha → 422 `VALIDACAO`. Único dono ativo → **409 `OPERACAO_INVALIDA`** "Você é o único dono da loja. Passe o papel de dono a outra pessoa em Usuários antes de excluir a sua conta." Diário: `USUARIO_EXCLUIU_PROPRIA_CONTA`, "Excluiu a própria conta", sem `user_id` e com nome/papel de antes |
+| DELETE | `/usuarios/{id}` | A | 204. Exclui a conta de OUTRA pessoa (a mesma limpeza). A própria → 409 (o caminho é `/usuarios/me`, com a senha); o último dono ativo → 409; gerente em dono → 403; conta já excluída → 404 |
+
+As duas exclusões fazem a mesma limpeza (`UsuarioService._apagar_conta`): sessões derrubadas,
+celular-leitor desligado, e-mail mascarado no diário; a linha sai inteira, ou fica só com o nome
+de quem fez a venda (ADR-45). Venda e diário ficam, com o nome congelado.
 `UsuarioOut` traz `comissao_percentual` ("2.50") e `meta_diaria` (string ou `null`). No `POST` e no
 `PATCH` esses dois campos exigem `DEFINIR_COMISSAO` (só o dono): mandá-los sem ela é `403`, mesmo
 com o valor atual. No `PATCH`, ausente = não mexe, `meta_diaria: null` tira a meta (ADR-37).
@@ -2060,6 +2130,12 @@ caixa do dia, sem o resumo do mês. Guarda por capacidade no `_layout`.
   nova, detalhe com fechamento) e `(app)/financeiro/contas-pagar`; a Entrada ganhou a nota
   (`components/NotaFornecedor.tsx`) para quem vê dinheiro.
 
+- `lib/exclusaoDeConta.ts` (com teste; espelho de `web/js/exclusao-de-conta.js`): o que some e o
+  que fica na exclusão de conta, em quem a equipe mostra "Excluir conta" e onde vai a recusa (a
+  senha errada no campo, o dono único em destaque). Telas: `(app)/mais/conta.tsx` (Minha conta:
+  trocar senha e excluir a própria) e o "Excluir conta" de `(app)/mais/usuarios.tsx`, ambos com
+  `components/Confirmacao.tsx`; deu certo, `authStore.encerrarPorContaExcluida` fecha a sessão sem
+  falar com o servidor e o login mostra "Conta excluída" (ADR-45).
 - `lib/leitorRemoto.ts` (com teste; espelho de `web/js/leitor-remoto.js`): o convite do QR do
   leitor pelo celular — `normalizarCodigo`, `formatarCodigo`, `montarConvite`, `lerConvite`,
   `mesmoServidor` e `PRAZO_DO_BIPE_MS` (120 s, o mesmo do servidor); e, só do app, a espera
@@ -2088,6 +2164,7 @@ módulos ES em `js/`.
 | `js/leitor.js` | Captura do leitor USB (teclado) e foco permanente no campo de leitura. O último `criarLeitor` ligado é o da tela; `entregarCodigoDeFora` entrega a ele o bipe do celular, respeitando o `ocupadoQuando` da tela (gravando, ou `digitandoEm` a lista) (ADR-43) |
 | `js/leitor-remoto.js` | Espelho de `mobile/src/lib/leitorRemoto.ts` (teste em `testes/web/leitor-remoto.test.mjs`): o convite do QR do celular-leitor, o código normalizado e formatado, `mesmoServidor` e o prazo de 120 s do bipe; e, só do web, o ritmo da retirada, `umaPorVez`, a fila de entrega à tela (`criarEntrega`), o aviso dos descartados e a dona da aba (`criarDonaDaAba`) (ADR-43) |
 | `js/leitor-celular.js`, `js/leitor-celular-janela.js` | O celular como leitor (ADR-43): botão e selo da lateral, retirada da fila na hora do aviso (`ouvirNaHora` do `tempo-real.js`) e o modal do QR. `js/qr.js` desenha o QR em SVG pelo DOM com `js/vendor/qrcode.js` (qrcode-generator 1.4.4, MIT, copiado inteiro) |
+| `js/exclusao-de-conta.js` | Espelho de `mobile/src/lib/exclusaoDeConta.ts` (teste em `testes/web/exclusao-de-conta.test.mjs`): o que some e o que fica, em quem a lista mostra "Excluir conta" e onde vai a recusa. `views/conta.js` exclui a própria conta (modal com a senha; deu certo, `encerrarSessaoLocal` + `#/entrar?conta=excluida`), `views/usuarios-acoes.js` exclui a de outra pessoa (ADR-45) |
 | `js/grafico.js` | Barras e proporções em SVG escrito à mão — sem biblioteca, sem CDN |
 | `js/parcelas.js`, `js/condicional.js` | Espelhos de `mobile/src/lib/parcelas.ts` e `condicional.ts` (com teste lá): parcelas da nota do fornecedor e a conta do fechamento da condicional |
 | `js/nota-fornecedor.js` | A nota do fornecedor (valor, número, parcelas) — na Entrada e no lançamento avulso de Contas a pagar |
@@ -2131,4 +2208,7 @@ religa e manda refazer, o LISTEN que sobe depois do "conectado" manda refazer, e
 tela que sai fecha o LISTEN · leitor pelo celular (ADR-43): o bipe chega ao computador uma vez
 só, dois celulares no mesmo código (simultâneos) → um ganha, o mesmo bipe em duas requisições
 simultâneas grava uma linha, duas retiradas simultâneas pegam lotes disjuntos, bipe com mais de
-120 s é descartado, e a retirada não gera aviso de tempo real.
+120 s é descartado, e a retirada não gera aviso de tempo real · exclusão de conta (ADR-45): a
+própria conta sai com a senha certa e derruba as sessões; a errada é 422 e a sessão segue; o único
+dono leva 409 e dois donos saindo juntos deixam um; quem já vendeu também sai (a venda fica com o
+nome, o e-mail fica livre); o diário ganha a linha sem `user_id` e com o nome congelado.

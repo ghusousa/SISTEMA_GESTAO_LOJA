@@ -15,7 +15,6 @@ import {
   avisarErro,
   carregando,
   comAtraso,
-  confirmar,
   cru,
   diaNaLoja,
   erroBloco,
@@ -26,7 +25,9 @@ import {
   paginacao,
   vazio,
 } from '../ui.js';
+import { podeExcluirDaEquipe } from '../exclusao-de-conta.js';
 import { PAPEIS, titulo } from '../permissoes.js';
+import { excluirConta, redefinirSenha } from './usuarios-acoes.js';
 import { camposComissao, ligarCamposComissao, resumoComissao } from './usuarios-comissao.js';
 
 const TAMANHO = 25;
@@ -113,7 +114,7 @@ export async function render(raiz, _params, consulta) {
       return;
     }
 
-    const eu = sessao.get().usuario?.id;
+    const eu = sessao.get().usuario;
 
     areaLista.innerHTML = html`
       <div class="tabela-rolagem">
@@ -134,7 +135,7 @@ export async function render(raiz, _params, consulta) {
                 <tr>
                   <td>
                     <span class="celula-principal">${u.nome}</span>
-                    ${u.id === eu ? cru(html`<span class="celula-secundaria">é você</span>`) : ''}
+                    ${u.id === eu?.id ? cru(html`<span class="celula-secundaria">é você</span>`) : ''}
                   </td>
                   <td class="texto-suave">${u.email}</td>
                   <td>
@@ -146,6 +147,9 @@ export async function render(raiz, _params, consulta) {
                   <td class="direita">
                     <button class="botao-icone" data-editar="${u.id}" title="Editar" aria-label="Editar ${u.nome}">✏️</button>
                     <button class="botao-icone" data-senha="${u.id}" title="Redefinir senha" aria-label="Redefinir senha de ${u.nome}">🔑</button>
+                    ${podeExcluirDaEquipe(eu, u)
+                      ? html`<button class="botao-icone botao-icone--perigo" data-excluir="${u.id}" title="Excluir conta" aria-label="Excluir a conta de ${u.nome}">🗑️</button>`
+                      : ''}
                   </td>
                 </tr>
               `,
@@ -161,6 +165,11 @@ export async function render(raiz, _params, consulta) {
     );
     areaLista.querySelectorAll('[data-senha]').forEach((b) =>
       b.addEventListener('click', () => redefinirSenha(pagina.items.find((u) => u.id === Number(b.dataset.senha)))),
+    );
+    areaLista.querySelectorAll('[data-excluir]').forEach((b) =>
+      b.addEventListener('click', async () => {
+        if (await excluirConta(pagina.items.find((u) => u.id === Number(b.dataset.excluir)))) carregar();
+      }),
     );
     ligarPaginacao(areaLista, (p) => {
       filtros.page = p;
@@ -279,46 +288,6 @@ export async function render(raiz, _params, consulta) {
       },
     });
     if (salvou) carregar();
-  }
-
-  async function redefinirSenha(usuario) {
-    const nova = await modal({
-      titulo: `Nova senha para ${usuario.nome}`,
-      largura: '430px',
-      render: () => html`
-        <p class="texto-suave">
-          A pessoa entra com a nova senha na próxima vez. As sessões abertas dela caem.
-        </p>
-        <label class="campo">
-          <span>Nova senha <span class="campo__dica">mínimo de 8 caracteres</span></span>
-          <input data-senha type="password" autocomplete="new-password" />
-        </label>
-        <div class="modal__acoes">
-          <button class="botao botao--neutro" data-nao>Cancelar</button>
-          <button class="botao" data-ok>Redefinir</button>
-        </div>
-      `,
-      aoAbrir: (corpo, fechar) => {
-        corpo.querySelector('[data-nao]').addEventListener('click', () => fechar(undefined));
-        corpo.querySelector('[data-ok]').addEventListener('click', () => fechar(corpo.querySelector('[data-senha]').value));
-      },
-    });
-    if (!nova) return;
-    if (nova.length < 8) return aviso('A senha precisa de pelo menos 8 caracteres.', 'alerta');
-
-    const certeza = await confirmar({
-      titulo: 'Confirmar troca de senha',
-      mensagem: `${usuario.nome} vai precisar entrar de novo com a senha nova.`,
-      confirmarTexto: 'Redefinir',
-    });
-    if (!certeza) return;
-
-    try {
-      await api.patch(`/usuarios/${usuario.id}/senha`, { nova_senha: nova });
-      aviso('Senha redefinida.');
-    } catch (erro) {
-      avisarErro(erro);
-    }
   }
 
   raiz.querySelector('[data-novo]').addEventListener('click', novo);

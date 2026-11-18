@@ -1,7 +1,8 @@
+from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 
-from sqlalchemy import Boolean, CheckConstraint, Numeric, String, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Numeric, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base, TimestampMixin
@@ -42,6 +43,9 @@ class User(Base, TimestampMixin):
             name="comissao_percentual",
         ),
         CheckConstraint("meta_diaria IS NULL OR meta_diaria > 0", name="meta_diaria"),
+        # Conta excluída nunca volta a entrar: a rede de segurança de quem um dia tentar
+        # "reativar" a linha que ficou só para segurar o histórico (ADR-45).
+        CheckConstraint("deleted_at IS NULL OR NOT is_active", name="excluida_sem_acesso"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -57,6 +61,12 @@ class User(Base, TimestampMixin):
     )
     #: Meta de venda por dia. Opcional: sem meta, o PDV não mostra a régua.
     meta_diaria: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    #: Conta excluída que deixou a linha para trás (ADR-45). A linha só fica quando a loja
+    #: tem histórico dela — venda, caixa, estoque —, cujos FKs são RESTRICT: aí sobram o
+    #: nome e o papel de quem fez cada registro, e o resto (e-mail, senha, sessões, leitor)
+    #: some. Excluída não aparece na equipe, não entra e não se edita; sem histórico, a linha
+    #: sai inteira e esta coluna nem chega a ser usada.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     @property
     def titulo(self) -> str:

@@ -1,11 +1,14 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 
 from app.core.deps import CurrentUser, ExigeUsuarios, SessionDep
 from app.core.pagination import Pagina, Paginacao, paginacao
+from app.modules.auditoria.middleware import congelar_autor
+from app.modules.auth.router import COOKIE_REFRESH
 from app.modules.usuarios.models import Papel
 from app.modules.usuarios.schemas import (
+    ExclusaoDaPropriaConta,
     SenhaReset,
     SenhaTroca,
     UsuarioCreate,
@@ -43,6 +46,27 @@ async def trocar_propria_senha(
     await UsuarioService(session).trocar_propria_senha(
         user, dados.senha_atual, dados.nova_senha
     )
+
+
+# Antes de `/{user_id}`: "me" casaria com o parâmetro e cairia na validação de inteiro.
+@router.delete(
+    "/me",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Exclui a própria conta (pede a senha)",
+)
+async def excluir_propria_conta(
+    request: Request,
+    resposta: Response,
+    session: SessionDep,
+    user: CurrentUser,
+    dados: ExclusaoDaPropriaConta,
+) -> None:
+    # A borda grava a linha do diário DEPOIS do commit, quando esta conta já não existe:
+    # nome e papel vão congelados daqui, e a linha sai sem user_id (o FK a derrubaria).
+    congelar_autor(request, user)
+    await UsuarioService(session).excluir_propria_conta(user, dados.senha)
+    # No navegador o refresh mora num cookie httpOnly: sai junto, como no logout.
+    resposta.delete_cookie(COOKIE_REFRESH, path="/api/v1/auth")
 
 
 @router.get("/{user_id}", response_model=UsuarioOut, summary="Detalhe de usuário")

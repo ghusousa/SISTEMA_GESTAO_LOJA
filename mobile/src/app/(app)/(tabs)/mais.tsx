@@ -108,6 +108,13 @@ const OPCOES: Opcao[] = [
     pode: PODE.CONFIGURAR_LOJA,
   },
   {
+    // Para qualquer papel (ADR-45): trocar a senha e excluir a própria conta.
+    rotulo: 'Minha conta',
+    descricao: 'Sua senha, ou excluir a sua conta',
+    icone: 'account-circle-outline',
+    rota: '/mais/conta',
+  },
+  {
     rotulo: 'Trocar minha senha',
     descricao: 'Segurança da sua conta',
     icone: 'lock-outline',

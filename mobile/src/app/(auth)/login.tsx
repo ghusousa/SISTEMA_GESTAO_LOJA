@@ -41,6 +41,9 @@ export default function Login() {
   const loja = useLoja();
   const router = useRouter();
   const entrar = useAuthStore((e) => e.entrar);
+  // "Conta excluída" (ADR-45): quem acabou de excluir a própria conta cai aqui, e a tela
+  // confirma o que aconteceu em vez de parecer que a sessão só caiu.
+  const avisoDaEntrada = useAuthStore((e) => e.avisoDaEntrada);
   const [erroServidor, setErroServidor] = useState<string | null>(null);
   const insets = useSafeAreaInsets();
   // Lido do store para a linha do rodapé reagir na hora em que o endereço muda; sem isso,
@@ -134,6 +137,12 @@ export default function Login() {
           )}
         />
 
+        {!!avisoDaEntrada && !erroServidor && (
+          <Text style={s.avisoDaEntrada} accessibilityRole="alert">
+            {avisoDaEntrada}
+          </Text>
+        )}
+
         {!!erroServidor && <Text style={s.erroServidor}>{erroServidor}</Text>}
 
         <Botao
@@ -188,6 +197,16 @@ const s = StyleSheet.create({
     color: cores.textoSuave,
     marginTop: espaco.xs,
     textAlign: 'center',
+  },
+  avisoDaEntrada: {
+    color: cores.acaoEscura,
+    backgroundColor: cores.sucessoFraco,
+    borderRadius: raio.md,
+    padding: espaco.md,
+    fontSize: fonte.base,
+    marginBottom: espaco.lg,
+    textAlign: 'center',
+    fontWeight: '600',
   },
   erroServidor: {
     color: cores.perigo,

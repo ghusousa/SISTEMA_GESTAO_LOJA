@@ -157,6 +157,15 @@ cada bipe na câmera cai no campo do leitor da tela do computador (ADR-43).
     quando o leitor para, e marca "confira no computador" o que a rede não confirmou. Vale até alguém desligar (de qualquer um dos dois), sair do sistema, ou 12 h
     depois; o F5 não desliga. Um celular lê para um computador por vez: ler o código de outro
     computador desliga o primeiro.
+15. **Excluir uma conta** (ADR-45) — qualquer pessoa exclui a PRÓPRIA conta de dentro do app, em
+    Mais → "Minha conta" → "Excluir minha conta" (no computador, "Minha conta"): a tela diz o que
+    some (o login, as sessões em todos os aparelhos, o celular-leitor, o e-mail no diário) e o que
+    fica (as vendas e o diário, com o nome de quem fez), pede a senha e confirma. Senha errada não
+    derruba a sessão: a tela só pede de novo. Deu certo, o app volta à entrada dizendo "Conta
+    excluída". O único dono não se exclui — a tela diz para passar antes o papel de dono a outra
+    pessoa em Usuários. Quem administra a equipe exclui a conta de outra pessoa em Mais →
+    Usuários → (pessoa) → "Excluir conta", com confirmação; para um afastamento, segue existindo
+    o Desativar, que se desfaz.
 
 ## Regras de negócio que não podem ser violadas
 
@@ -214,6 +223,13 @@ cada bipe na câmera cai no campo do leitor da tela do computador (ADR-43).
   dele antes de existir sessão), mas documento, telefone e endereço da loja só com login.
 - Cliente que ainda deve não tem o cadastro excluído; quitada, a exclusão apaga os dados
   pessoais e mantém as vendas.
+- Toda pessoa com conta consegue excluí-la sozinha, de dentro do app, confirmando com a senha
+  (Apple 5.1.1(v)); errar a senha não desloga ninguém. A loja nunca fica sem dono ativo — nem
+  com dois donos saindo ao mesmo tempo. Excluir a conta derruba as sessões em todos os
+  aparelhos, desliga o celular-leitor e tira o e-mail do diário (vira máscara); não apaga venda,
+  devolução, caixa nem linha do diário, que ficam com o nome de quem fez — inclusive de quem já
+  vendeu, cuja conta sai do mesmo jeito. O e-mail de quem saiu volta a poder ser usado numa conta
+  nova.
 - Trocar a conta do Google ou a pasta do backup na nuvem pede a senha de quem está salvando, e
   a tela do backup diz "Atrasado" quando a cópia passou de duas vezes o intervalo.
 - A instalação termina com a cópia diária do banco ligada (Linux, Mac e Windows). O que sai do

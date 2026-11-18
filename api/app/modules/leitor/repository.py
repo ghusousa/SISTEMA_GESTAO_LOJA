@@ -9,7 +9,7 @@ pareada retiraria de novo por causa da própria retirada — eco sem fim, de 2 e
 import uuid
 from datetime import datetime, timedelta
 
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -172,6 +172,16 @@ class LeitorRepository:
             )
             .with_for_update()
             .execution_options(populate_existing=True)
+        )
+        return list((await self.session.execute(stmt)).scalars())
+
+    async def do_usuario(self, user_id: int) -> list[LeitorPareamento]:
+        """Todo pareamento em que a pessoa é o computador ou o celular, de qualquer status."""
+        stmt = select(LeitorPareamento).where(
+            or_(
+                LeitorPareamento.computador_user_id == user_id,
+                LeitorPareamento.aparelho_user_id == user_id,
+            )
         )
         return list((await self.session.execute(stmt)).scalars())
 
