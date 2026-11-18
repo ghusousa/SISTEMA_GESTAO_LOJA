@@ -203,7 +203,7 @@ da revisão:
 |---|---|---|
 | `EXPO_TOKEN` | expo.dev → Account settings → Access tokens (o nome do token lá é livre; o do Secret, não) | compilar, enviar |
 | `ASC_KEY_ID` | App Store Connect → Usuários e acesso → Integrações → API → **Chaves da equipe** → coluna "ID da chave". Chave com acesso **Administrador** (Desenvolvedor não mexe na ficha nem envia para revisão) | ficha, enviar, revisão |
-| `ASC_KEY_P8` | o arquivo `AuthKey_<ID>.p8` dessa chave, INTEIRO (linhas BEGIN/END) — a Apple só deixa baixar uma vez | ficha, enviar, revisão |
+| `ASC_KEY_P8` | o TEXTO de dentro do arquivo `AuthKey_<ID>.p8` dessa chave (Bloco de Notas → Ctrl+A → Ctrl+C), não o nome do arquivo — a Apple só deixa baixar uma vez. Linhas juntadas ou sem BEGIN/END ainda servem; se não for a chave, o passo diz o que parece ter sido colado (sem mostrá-lo) | ficha, enviar, revisão |
 | `APPLE_DEMO_PASSWORD` | a senha da conta demo do revisor: a mesma de `DEMO_ADMIN_SENHA` na Vercel | só a revisão |
 
 **O que não é segredo já está no repositório**, em `publicar/padroes.json`: o Issuer ID da chave,

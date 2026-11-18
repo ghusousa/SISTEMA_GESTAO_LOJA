@@ -19,7 +19,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 
-import { comAscAppId, montar, normalizarP8, SERVIDOR_DEMO_PADRAO, UDID } from '../ci.mjs';
+import { comAscAppId, montar, normalizarP8, porQueNaoEhP8, SERVIDOR_DEMO_PADRAO, UDID } from '../ci.mjs';
 import { DO_MODELO_ANTIGO, lerConfig, lerPadroes } from '../ficha.mjs';
 import { subirMock } from './mock-asc.mjs';
 
@@ -50,6 +50,35 @@ test('o .p8 colado com \\n literal ou \\r\\n vira PEM de verdade; lixo é recusa
   assert.equal(normalizarP8('MIGTAgEAMBMGByqGSM49'), null);
   assert.equal(normalizarP8(''), null);
   assert.equal(normalizarP8(undefined), null);
+  // Os jeitos tortos de colar o arquivo CERTO viram o PEM certo: linhas juntadas numa só,
+  // sem as linhas BEGIN/END, entre aspas.
+  const corpo = P8.replace(/-----(BEGIN|END) PRIVATE KEY-----/g, '').trim();
+  assert.equal(normalizarP8(P8.replace(/\n/g, ' ')), `${P8}\n`);
+  assert.equal(normalizarP8(corpo), `${P8}\n`);
+  assert.equal(normalizarP8(corpo.replace(/\n/g, '')), `${P8}\n`);
+  assert.equal(normalizarP8(`"${P8}"`), `${P8}\n`);
+  // Chave pela metade, ou outra coisa em base64, não passa: o Node tem de aceitar como PKCS#8.
+  assert.equal(normalizarP8(P8.slice(0, P8.length - 60) + '\n-----END PRIVATE KEY-----'), null);
+  assert.equal(normalizarP8(Buffer.from('não é chave nenhuma, só texto em base64').toString('base64')), null);
+});
+
+test('ASC_KEY_P8 errado: diz o que parece ter sido colado, sem mostrar o que foi colado', () => {
+  const casos = [
+    ['ABCDE12345', /ID da chave/],
+    ['e789df74-d2fd-47fe-b6f1-07e541a147b9', /Issuer ID/],
+    ['AuthKey_ABCDE12345.p8', /NOME ou o caminho/],
+    ['C:\\Users\\loja\\Downloads\\AuthKey_ABCDE12345.p8', /NOME ou o caminho/],
+    ['-----BEGIN PRIVATE KEY-----\nMIGTAgEAMBMG\n-----END PRIVATE KEY-----', /linha BEGIN, mas a chave não está inteira/],
+    ['qualquer outra coisa', /não é uma chave \.p8 \(20 caracteres/],
+  ];
+  for (const [colado, frase] of casos) {
+    const motivo = porQueNaoEhP8(colado);
+    assert.match(motivo, frase, colado);
+    assert.match(motivo, /Bloco de Notas/);
+    assert.ok(!motivo.includes(colado), `o motivo repetiu o que foi colado: ${colado}`);
+  }
+  const quebrada = montar({ ...CHAVE, ASC_KEY_P8: 'ABCDE12345' });
+  assert.match(quebrada.faltandoChave.join(), /ASC_KEY_P8 \(parece o ID da chave/);
 });
 
 test('montar: diz quais nomes faltam e nunca põe a ficha sem a chave', () => {
@@ -67,7 +96,7 @@ test('montar: diz quais nomes faltam e nunca põe a ficha sem a chave', () => {
 
   const quebrada = montar({ ...CHAVE, ASC_KEY_P8: 'não é chave' });
   assert.equal(quebrada.temChave, false);
-  assert.match(quebrada.faltandoChave.join(), /ASC_KEY_P8 \(não parece/);
+  assert.match(quebrada.faltandoChave.join(), /ASC_KEY_P8 \(não é uma chave \.p8/);
 
   const tudo = montar({ ...CHAVE, ...FICHA });
   assert.equal(tudo.temFicha, true);
