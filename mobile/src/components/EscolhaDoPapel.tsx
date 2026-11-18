@@ -28,6 +28,7 @@ export function EscolhaDoPapel({
           onPress={() => aoEscolher(opcao)}
           accessibilityRole="radio"
           accessibilityState={{ checked: valor === opcao }}
+          aria-checked={valor === opcao}
         >
           <View style={s.radio}>{valor === opcao && <View style={s.radioMarcado} />}</View>
           <View style={s.papelTexto}>

@@ -1841,9 +1841,10 @@ para dizendo como resolver; o eas compila com `--wait --json` e o link do `.ipa`
 da execução. O perfil é ad hoc de propósito (`enterpriseProvisioning: "adhoc"`) e o build leva
 `--refresh-ad-hoc-provisioning-profile` com a chave da Apple: sem eles, o eas-cli em modo não
 interativo parava pedindo o modo interativo. A Expo monta o perfil com os iPhones do cadastro
-DELA (não os da Apple): na 1ª vez, `npx eas-cli device:create` num computador, uma vez. *Consequências:* o reenvio depois de uma recusa é um clique, sem site; a revisão só
-sai com o que a Apple pediu e com o servidor da demonstração conferido; mudar prints ou a lista de
-aparelhos pede refazer o guia (o CI acusa). A Apple de mentira ganhou um envio ativo por
+DELA (não os da Apple): na 1ª vez, `npx eas-cli device:create` num computador, uma vez.
+*Consequências:* o reenvio depois de uma recusa é um clique, sem site; a revisão só sai com o que
+a Apple pediu e com o servidor da demonstração conferido; mudar prints ou a lista de aparelhos
+pede refazer o guia (o CI acusa). A Apple de mentira ganhou um envio ativo por
 plataforma, o estado `UNRESOLVED_ISSUES`, anexos, aparelhos, localizações de outro idioma, pontos
 de preço paginados e builds antigos da mesma versão; `teste/demo-falso.mjs` faz o servidor de
 demonstração.
@@ -1857,7 +1858,16 @@ deixarem de respeitar, o gerador para), e antes de cada foto `quadro.mjs` enquad
 nada cortado nas bordas, embaixo do indicador de início ou do botão flutuante, e o que a cena
 pede em `mostrar` inteiro; sem posição assim, a cena para e muda (por isso o caixa sai com a
 gaveta batendo e o estoque e os produtos pela busca). A hora da barra de status é a da foto, no
-fuso da loja — a mesma do recibo e da condicional da cena.
+fuso da loja — a mesma do recibo e da condicional da cena — e a COR é a que o app pede para a
+tela (`lib/barraDeStatus.ts`; escura nas telas claras sem cabeçalho: entrada, servidor, Vender),
+anotada pelo `gerar.mjs`: se ela sumir sobre o fundo, o `compor.mjs` para em vez de pintar a
+outra (antes, a cor vinha da foto e escondia a barra branca que o PDV tinha no iPhone). *O que a
+foto não é:* o export web é o código das telas, mas a NAVEGAÇÃO é a do navegador: no iPhone o
+cabeçalho é o nativo (título centralizado, "‹ Voltar", 44 pt) e o "Cobrar" abre como folha por
+cima do PDV; nas fotos, o cabeçalho do export web (seta "←", título à esquerda, ~63 pt) e o
+Cobrar em tela cheia. Para fotos com o cabeçalho do iPhone, só fotografando num aparelho ou
+simulador (a sessão do BrowserStack da gravação serve); a gravação anexada à revisão mostra o
+nativo.
 O CI não roda o gerador (pede Postgres, Chromium e as fontes Inter), mas confere as commitadas nos
 bytes contra as cenas (`compor.mjs --conferir`) e as sobe na Apple de mentira (`rodar.mjs --reais`).
 
@@ -2255,7 +2265,16 @@ caixa do dia, sem o resumo do mês. Guarda por capacidade no `_layout`.
 - `lib/resumoFinanceiro.ts` (com teste): as linhas do cartão "Resultado do mês" — faturamento,
   devoluções, custo das peças vendidas, custo das que voltaram ao estoque, lucro bruto, despesas e
   taxas — e a fórmula impressa (`Lucro bruto − despesas − taxas de cartão`). Espelho da conta de
-  `RelatorioService.resumo`; o teste soma as linhas com os números da demonstração.
+  `RelatorioService.resumo`; o teste soma as linhas com os números da demonstração. E o aviso de
+  boleto (`avisoDeContasAPagar`): vencidas e os próximos 7 dias são faixas disjuntas no servidor,
+  e cada uma sai com o SEU valor — o aviso contava só as vencidas com a soma das duas.
+- `lib/barraDeStatus.ts` (com teste) e `hooks/useBarraDeStatusEscura.ts`: a barra de status é
+  clara na raiz (cabeçalho azul) e escura no FOCO das telas claras sem cabeçalho (entrada,
+  servidor, Vender), pela pilha do `StatusBar` (no web, `<html data-barra-de-status>`, que as
+  capturas leem: o `compor.mjs` pinta essa cor e para se ela sumir sobre a foto).
+- `lib/permissaoDaCamera.ts` (com teste): o leitor pede a câmera ao SISTEMA ao montar; a tela do
+  app (botão primeiro, texto depois — cabe na faixa de 28% do SE) só aparece depois de recusada,
+  com "Abrir Ajustes" ou "Continuar", nunca um "Permitir" antes do alerta (Apple 5.1.1).
 - `lib/texto.ts` (com teste): `primeiraMaiuscula` e `plural` (espelho do `plural` de
   `web/js/ui.js`). `textTransform: 'capitalize'` não entra em frase: põe maiúscula em toda
   palavra ("Novembro De 2026").

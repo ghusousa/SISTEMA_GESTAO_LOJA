@@ -21,9 +21,10 @@
 PNG RGB **sem canal alfa** (a Apple recusa transparência), nomes `NN-nome.png` — a ordem do
 número é a ordem da vitrine, e as 3 primeiras aparecem na busca. As duas pastas têm os mesmos
 nomes, na mesma ordem. Só existe tela de iPhone porque o app declara `supportsTablet: false`: a
-Apple não pede iPad. Elas saem do app de verdade, com os dados de demonstração da "Loja Tria"
-num banco local, mais a arte por cima: `mobile/publicar/capturas/gerar.sh` refaz todas (ver o
-README de lá). A lista abaixo espelha as cenas de lá, e quem manda é a pasta.
+Apple não pede iPad. Elas saem das telas do app (o export web do próprio código), com os dados
+de demonstração da "Loja Tria" num banco local, mais a arte por cima: `mobile/publicar/capturas/gerar.sh`
+refaz todas (ver o README de lá). O cabeçalho e o "Cobrar" em tela cheia são os do navegador: no
+iPhone o cabeçalho é o nativo (título centralizado, "‹ Voltar") e o Cobrar é uma folha. A lista abaixo espelha as cenas de lá, e quem manda é a pasta.
 
 | Ordem | Arquivo | Título · subtítulo | O que mostra |
 |---|---|---|---|

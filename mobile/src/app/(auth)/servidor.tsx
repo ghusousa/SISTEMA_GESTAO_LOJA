@@ -27,10 +27,13 @@ import { enderecoSugerido, normalizarEndereco, testarServidor } from '@/api/serv
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { Botao, Campo } from '@/components/ui';
+import { useBarraDeStatusEscura } from '@/hooks/useBarraDeStatusEscura';
 import { ALVO_TOQUE, cores, espaco, fonte, raio } from '@/lib/tema';
 import { useServidorStore } from '@/stores/servidorStore';
 
 export default function ConfigurarServidor() {
+  // Sem cabeçalho e de fundo claro: a hora e a bateria em preto (a raiz é a clara).
+  useBarraDeStatusEscura();
   const router = useRouter();
   const definir = useServidorStore((e) => e.definir);
   const atual = useServidorStore((e) => e.endereco);

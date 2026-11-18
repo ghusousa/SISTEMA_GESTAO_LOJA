@@ -12,8 +12,9 @@
  *   resultado   = lucro_bruto − despesas − taxas de cartão
  */
 
-import type { ResumoFinanceiro } from '../api/tipos';
-import { paraCentavos, type Centavos } from './money';
+import type { ResumoContas, ResumoFinanceiro } from '../api/tipos';
+import { formatar, paraCentavos, type Centavos } from './money';
+import { plural } from './texto';
 
 export interface LinhaDoResumo {
   rotulo: string;
@@ -60,4 +61,32 @@ export function contasDoResumo(r: ResumoFinanceiro): ContasDoResumo {
     linhas,
     formula: temTaxas ? 'Lucro bruto − despesas − taxas de cartão' : 'Lucro bruto − despesas',
   };
+}
+
+/**
+ * O aviso de boleto do Financeiro, cada faixa com o SEU valor (ADR-40). As faixas da API são
+ * disjuntas — vencidas (antes de hoje) e os próximos 7 dias (de hoje em diante) —, e o aviso
+ * contava só as vencidas no texto com a soma das duas no valor: um boleto de R$ 500,00 vencido e
+ * dois da semana viravam "1 conta vencida — R$ 1.500,00", e Contas a pagar dizia R$ 500,00.
+ * `null` quando não há nada a pagar até 7 dias.
+ */
+export function avisoDeContasAPagar(r: ResumoContas | undefined | null): string | null {
+  if (!r) return null;
+  const vencidas = r.vencidas.quantidade;
+  const semana = r.proximos_7_dias.quantidade;
+  const valorVencidas = formatar(paraCentavos(r.vencidas.valor));
+  const valorSemana = formatar(paraCentavos(r.proximos_7_dias.valor));
+  if (vencidas && semana) {
+    return (
+      `${plural(vencidas, 'conta de fornecedor vencida', 'contas de fornecedor vencidas')} (${valorVencidas}) ` +
+      `e ${plural(semana, 'vencendo', 'vencendo')} nos próximos 7 dias (${valorSemana})`
+    );
+  }
+  if (vencidas) {
+    return `${plural(vencidas, 'conta de fornecedor vencida', 'contas de fornecedor vencidas')} — ${valorVencidas}`;
+  }
+  if (semana) {
+    return `${plural(semana, 'conta de fornecedor', 'contas de fornecedor')} nos próximos 7 dias — ${valorSemana}`;
+  }
+  return null;
 }

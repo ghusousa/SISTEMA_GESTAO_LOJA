@@ -51,7 +51,10 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <QueryClientProvider client={queryClient}>
-          <StatusBar style="light" />
+          {/* Clara: quase toda tela tem o cabeçalho azul embaixo da barra. As telas claras sem
+              cabeçalho (entrada, servidor, Vender) pedem a escura no foco
+              (useBarraDeStatusEscura); a abertura ("Abrindo a loja…", fundo claro) também. */}
+          <StatusBar style={carregando || servidorCarregando ? 'dark' : 'light'} />
           {carregando || servidorCarregando ? (
             <Carregando texto="Abrindo a loja…" />
           ) : (

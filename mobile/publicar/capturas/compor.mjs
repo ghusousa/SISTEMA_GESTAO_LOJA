@@ -13,8 +13,11 @@
  * a mesma do recibo e da condicional que a cena fez; o `gerar.mjs` a anota ao lado da foto)
  * e o indicador de início são desenhados aqui, por cima da foto, nas áreas seguras que o app
  * já deixou livres (o `gerar.mjs` as declara ao navegador): o export web não desenha nenhum
- * dos dois. A cor de cada um vem da
- * própria foto — clara sobre o cabeçalho azul, escura sobre o fundo claro do PDV.
+ * dos dois. A barra de status sai na cor que o APP pede para aquela tela (`lib/barraDeStatus.ts`,
+ * anotada pelo `gerar.mjs`), e não numa escolhida pela foto: a arte não pode corrigir o que o
+ * iPhone mostra. Se a cor pedida some sobre o fundo da tela (branco no claro, preto no escuro),
+ * a montagem PARA — é o app que está errado. O indicador de início o próprio iOS adapta ao
+ * fundo; ele sai pela luminância da foto.
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -97,17 +100,35 @@ function iconesDeStatus(pt) {
     </svg>`;
 }
 
-/** A hora que o `gerar.mjs` anotou quando a foto saiu ("22:56"). Sem ela, não há barra de status. */
-function horaDaFoto(arquivo) {
-  const hora = existsSync(arquivo) ? JSON.parse(readFileSync(arquivo, 'utf8')).hora : null;
-  if (!/^\d{2}:\d{2}$/.test(hora ?? '')) {
-    throw new Error(`falta a hora da foto em ${arquivo} — rode o gerar.sh (ele a anota junto da foto)`);
+/**
+ * O que o `gerar.mjs` anotou quando a foto saiu: a hora ("22:56") e a cor da barra de status que
+ * o app pediu ('clara' ou 'escura'). Sem elas, não há barra de status.
+ */
+function anotacaoDaFoto(arquivo) {
+  const dados = existsSync(arquivo) ? JSON.parse(readFileSync(arquivo, 'utf8')) : {};
+  if (!/^\d{2}:\d{2}$/.test(dados.hora ?? '') || !['clara', 'escura'].includes(dados.barraDeStatus)) {
+    throw new Error(`falta a hora ou a cor da barra de status em ${arquivo} — rode o gerar.sh (ele as anota junto da foto)`);
   }
-  return hora;
+  return dados;
 }
 
-/** A cor do que vai por cima da foto: barra de status e indicador de início. */
-function coresDaFoto(arquivo) {
+/**
+ * A tinta da barra de status: a que o app pediu. Se ela some sobre o fundo atrás da hora e dos
+ * ícones (branca no claro, preta no escuro), para: a foto não corrige o app.
+ */
+export function tintaDaBarra(pedida, fundoClaro, cena = 'a cena') {
+  const legivel = pedida === 'escura' ? fundoClaro : !fundoClaro;
+  if (!legivel) {
+    throw new Error(
+      `${cena}: o app pede a barra de status ${pedida} sobre um fundo ${fundoClaro ? 'claro' : 'escuro'} — a hora e a ` +
+        'bateria sumiriam no iPhone. Corrija a tela (useBarraDeStatusEscura, src/hooks) em vez de pintar outra cor na arte.',
+    );
+  }
+  return pedida === 'escura' ? '#000000' : '#FFFFFF';
+}
+
+/** A cor do que vai por cima da foto: barra de status (a pedida pelo app) e indicador de início. */
+function coresDaFoto(arquivo, barraDeStatus, cena) {
   const foto = lerPng(readFileSync(arquivo));
   const esperado = [APARELHO.largura * APARELHO.escala, APARELHO.altura * APARELHO.escala];
   if (foto.largura !== esperado[0] || foto.altura !== esperado[1]) {
@@ -117,10 +138,10 @@ function coresDaFoto(arquivo) {
   const e = APARELHO.escala;
   const L = APARELHO.largura;
   const area = (x0, y0, x1, y1) => corMedia(foto, x0 * e, y0 * e, x1 * e, y1 * e);
-  const tinta = (...cores) => (cores.every((c) => luminancia(c) > 0.45) ? '#000000' : '#FFFFFF');
+  const claro = (...cores) => cores.every((c) => luminancia(c) > 0.45);
   return {
-    status: tinta(area(28, 15, 108, 43), area(L - 100, 15, L - 30, 43)),
-    indicador: tinta(area(L / 2 - 70, APARELHO.altura - 15, L / 2 + 70, APARELHO.altura - 6)),
+    status: tintaDaBarra(barraDeStatus, claro(area(28, 15, 108, 43), area(L - 100, 15, L - 30, 43)), cena),
+    indicador: claro(area(L / 2 - 70, APARELHO.altura - 15, L / 2 + 70, APARELHO.altura - 6)) ? '#000000' : '#FFFFFF',
   };
 }
 
@@ -242,12 +263,12 @@ export async function compor({
   const require = createRequire(import.meta.url);
   const { chromium } = require('playwright');
 
-  const horas = {};
+  const anotacoes = {};
   for (const cena of cenas) {
     if (!existsSync(join(brutas, `${cena.arquivo}.png`))) {
       throw new Error(`falta a foto do app de ${cena.arquivo} em ${brutas} — rode o gerar.sh`);
     }
-    horas[cena.arquivo] = horaDaFoto(join(brutas, `${cena.arquivo}.json`));
+    anotacoes[cena.arquivo] = anotacaoDaFoto(join(brutas, `${cena.arquivo}.json`));
   }
   const navegador = await chromium.launch();
   try {
@@ -267,7 +288,8 @@ export async function compor({
       for (const cena of cenas) {
         const foto = join(brutas, `${cena.arquivo}.png`);
         const html = join(brutas, `arte-${tamanho.pasta}-${cena.arquivo}.html`);
-        writeFileSync(html, paginaDaArte(cena, pathToFileURL(foto).href, tamanho, coresDaFoto(foto), horas[cena.arquivo]));
+        const { hora, barraDeStatus } = anotacoes[cena.arquivo];
+        writeFileSync(html, paginaDaArte(cena, pathToFileURL(foto).href, tamanho, coresDaFoto(foto, barraDeStatus, cena.arquivo), hora));
         await pagina.goto(pathToFileURL(html).href);
         await pagina.evaluate(async () => {
           await document.fonts.ready;

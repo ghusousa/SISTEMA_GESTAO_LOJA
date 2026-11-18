@@ -19,7 +19,7 @@ import { Carregando, Cartao, ErroEstado } from '@/components/ui';
 import { formatar, formatarPercentual, paraCentavos } from '@/lib/money';
 import { chaves } from '@/lib/queryClient';
 import { PODE, pode } from '@/lib/permissoes';
-import { contasDoResumo, type LinhaDoResumo } from '@/lib/resumoFinanceiro';
+import { avisoDeContasAPagar, contasDoResumo, type LinhaDoResumo } from '@/lib/resumoFinanceiro';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
 import { plural, primeiraMaiuscula } from '@/lib/texto';
 import { useAuthStore } from '@/stores/authStore';
@@ -64,8 +64,8 @@ export default function Financeiro() {
     queryFn: contasPagar.resumo,
     enabled: veDinheiro,
   });
-  const aPagarNaSemana =
-    (contas.data?.vencidas.quantidade ?? 0) + (contas.data?.proximos_7_dias.quantidade ?? 0);
+  // Cada faixa com o seu valor: vencidas e a semana são disjuntas no servidor.
+  const avisoDeBoleto = avisoDeContasAPagar(contas.data);
 
   if (!veDinheiro) return <SoCaixa atalhos={atalhos} aoAbrir={(rota) => router.push(rota as never)} />;
   if (resumo.isPending) return <Carregando />;
@@ -132,18 +132,11 @@ export default function Financeiro() {
         </Pressable>
       )}
 
-      {aPagarNaSemana > 0 && contas.data && (
+      {!!avisoDeBoleto && (
         <Pressable onPress={() => router.push('/financeiro/contas-pagar')}>
           <View style={s.alerta}>
             <MaterialCommunityIcons name="calendar-alert" size={22} color="#7A5A00" />
-            <Text style={s.alertaTexto}>
-              {contas.data.vencidas.quantidade > 0
-                ? plural(contas.data.vencidas.quantidade, 'conta de fornecedor vencida', 'contas de fornecedor vencidas')
-                : `${plural(aPagarNaSemana, 'conta de fornecedor', 'contas de fornecedor')} nos próximos 7 dias`}{' '}
-              — {formatar(
-                paraCentavos(contas.data.vencidas.valor) + paraCentavos(contas.data.proximos_7_dias.valor),
-              )}
-            </Text>
+            <Text style={s.alertaTexto}>{avisoDeBoleto}</Text>
           </View>
         </Pressable>
       )}

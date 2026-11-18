@@ -28,6 +28,7 @@ import { Botao, Campo } from '@/components/ui';
 import { ALVO_TOQUE, cores, espaco, fonte, raio } from '@/lib/tema';
 import { useServidorStore } from '@/stores/servidorStore';
 import { useAuthStore } from '@/stores/authStore';
+import { useBarraDeStatusEscura } from '@/hooks/useBarraDeStatusEscura';
 import { useLoja } from '@/hooks/useLoja';
 
 const esquema = z.object({
@@ -38,6 +39,8 @@ const esquema = z.object({
 type Formulario = z.infer<typeof esquema>;
 
 export default function Login() {
+  // Sem cabeçalho e de fundo claro: a hora e a bateria em preto (a raiz é a clara).
+  useBarraDeStatusEscura();
   const loja = useLoja();
   const router = useRouter();
   const entrar = useAuthStore((e) => e.entrar);

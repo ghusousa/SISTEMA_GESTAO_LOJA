@@ -57,7 +57,7 @@ npm run publicar     # ficha inteira na App Store via API (mobile/publicar/; -- 
 node --test publicar/teste/*.test.mjs  # testes do publicador (ci.mjs, notas em inglês, guia PDF em dia)
 node publicar/teste/rodar.mjs  # o publicador contra a Apple de mentira (--reais: com as capturas de media/app-store)
 node publicar/revisao/gerar-guia.mjs  # refaz o guia PDF do revisor (mudou texto, prints ou ficha/aparelhos-testados.txt)
-publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com o app de verdade e o guia PDF (Postgres local + seed; --sem-build)
+publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com as telas do app (export web: cabeçalho do navegador) e o guia PDF (Postgres local + seed; --sem-build)
 # GitHub → Actions → "Publicar iOS na App Store": build na Expo + envio + ficha, sem Mac; caixa "completo"
 #   (ou etiqueta ios-v<versão>) faz tudo numa rodada, até a revisão; "video_revisao_url" anexa a gravação
 #   (baixada UMA vez, no começo); "revisao" com "compilar"/"enviar" só no completo; caixa "aparelhos"
@@ -271,6 +271,16 @@ publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com o app de ve
   DevTools (`Emulation.setSafeAreaInsetsOverride`).
 - Frase nunca leva `textTransform: 'capitalize'` (vira "Novembro De 2026"): `primeiraMaiuscula`
   e `plural` de `lib/texto.ts`, no lugar do "peça(s)".
+- **Barra de status**: a raiz é CLARA (texto branco sobre o cabeçalho azul). Tela clara sem
+  cabeçalho (entrada, servidor, Vender) chama `useBarraDeStatusEscura()` — no FOCO, não na
+  montagem: as abas seguem montadas, e um `<StatusBar>` na aba Vender escureceria a barra sobre
+  o azul de Produtos. No export web o pedido vai para `<html data-barra-de-status>`, e o
+  `compor.mjs` das capturas pinta essa cor e PARA se ela sumir sobre a foto (`lib/barraDeStatus.ts`).
+- **Câmera**: o leitor pede a permissão ao SISTEMA ao montar (`lib/permissaoDaCamera.ts`); a
+  tela do app só aparece depois de recusada — "Abrir Ajustes" quando o iOS não pergunta mais,
+  "Continuar" quando ainda pergunta. Nunca uma tela do app com "Permitir" antes do alerta (5.1.1).
+- Diálogo do app (`Confirmacao`, os de pagamento): corpo num `ScrollView` com `maxHeight` 85% e os
+  botões fora da rolagem — com o Texto Maior do iOS, sem isso os botões saem da tela.
 
 ## Testes
 

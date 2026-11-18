@@ -22,12 +22,15 @@ import { MetaDoDia } from '@/components/MetaDoDia';
 import { Scanner, type ScannerRef } from '@/components/Scanner';
 import { Botao } from '@/components/ui';
 import { useConexao } from '@/components/BannerConexao';
+import { useBarraDeStatusEscura } from '@/hooks/useBarraDeStatusEscura';
 import { formatar, paraCentavos } from '@/lib/money';
 import { ALVO_TOQUE, cores, espaco, fonte, raio } from '@/lib/tema';
 import { plural } from '@/lib/texto';
 import { useCartStore } from '@/stores/cartStore';
 
 export default function Pdv() {
+  // A aba Vender não tem cabeçalho: a barra de status fica sobre o fundo claro do PDV.
+  useBarraDeStatusEscura();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const online = useConexao((e) => e.online);

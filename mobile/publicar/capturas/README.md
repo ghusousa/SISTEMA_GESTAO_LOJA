@@ -1,9 +1,15 @@
 # Capturas da App Store
 
-As 10 imagens da ficha do app na Apple, com o **app de verdade**: o export web do próprio
-app, numa tela de iPhone, falando com uma API local cheia dos dados de mentira da seed (a
-mesma "Loja Tria" do servidor de demonstração). Nada é desenhado à mão — mudou a tela,
+As 10 imagens da ficha do app na Apple, com o **código das telas do app**: o export web do
+próprio app, numa tela de iPhone, falando com uma API local cheia dos dados de mentira da seed
+(a mesma "Loja Tria" do servidor de demonstração). Nada é desenhado à mão — mudou a tela,
 roda de novo.
+
+**O que é do navegador, e não do iPhone:** a navegação. O cabeçalho das fotos é o do export
+web (seta "←", título à esquerda, ~63 pt); no iPhone ele é o nativo (título centralizado,
+"‹ Voltar", 44 pt). E o "Cobrar" (02) abre em tela cheia, enquanto no iPhone ele é uma folha
+por cima do PDV. O conteúdo de cada tela é o do app; para fotos com o cabeçalho nativo, só
+fotografando num aparelho ou simulador (a sessão do BrowserStack da gravação serve).
 
 ```bash
 mobile/publicar/capturas/gerar.sh               # do zero (~3 min)
@@ -86,7 +92,10 @@ Tudo para o navegador mostrar o que o iPhone mostra — nada muda dado nem compo
 - a barra de status e o indicador de início são da moldura. A hora da barra é a da foto, no
   fuso da loja: a mesma do recibo e da condicional que a cena acabou de fazer (o gerador a
   anota em `.brutas/NN-nome.json`). Fora das 8h–22h o `gerar.sh` avisa: a venda da foto sai
-  com aquela hora;
+  com aquela hora. A COR da barra é a que o app pede para aquela tela (`lib/barraDeStatus.ts`:
+  escura na entrada, no servidor e em Vender; clara sob o cabeçalho azul), anotada junto: se
+  ela sumir sobre o fundo da foto, o `compor.mjs` para — a arte não corrige o que o iPhone
+  mostra;
 - campo de texto do tamanho do conteúdo (como o `TextInput`), sem barra de rolagem, sem
   cursor piscando.
 

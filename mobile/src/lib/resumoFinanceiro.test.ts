@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { ResumoFinanceiro } from '../api/tipos';
+import type { ResumoContas, ResumoFinanceiro } from '../api/tipos';
 import { paraCentavos } from './money';
-import { contasDoResumo, type LinhaDoResumo } from './resumoFinanceiro';
+import { avisoDeContasAPagar, contasDoResumo, type LinhaDoResumo } from './resumoFinanceiro';
 
 /**
  * `GET /relatorios/resumo` de novembro na loja de demonstração (api/scripts/seed_demo.py),
@@ -118,4 +118,29 @@ test('servidor sem taxa de cartão: a linha e a parte da fórmula somem', () => 
   assert.ok(!contas.linhas.some((l) => l.rotulo === 'Taxas de cartão'));
   assert.equal(contas.formula, 'Lucro bruto − despesas');
   assert.equal(contaDaTela(contas.linhas).depois, paraCentavos(NOVEMBRO.resultado));
+});
+
+/** O resumo de `/contas-pagar/resumo`: as faixas são disjuntas (vencidas × de hoje a +7 dias). */
+function contas(vencidas: [number, string], semana: [number, string]): ResumoContas {
+  return {
+    hoje: '2026-11-18',
+    vencidas: { quantidade: vencidas[0], valor: vencidas[1] },
+    proximos_7_dias: { quantidade: semana[0], valor: semana[1] },
+    em_aberto: { quantidade: vencidas[0] + semana[0], valor: '0.00' },
+  };
+}
+
+/** O `Intl` separa "R$" do número com espaço sem quebra; aqui a comparação é com o texto lido. */
+const lido = (texto: string | null) => texto?.replace(/\u00a0/g, ' ') ?? null;
+
+test('aviso de boleto: cada faixa com o seu valor — o vencido não leva a semana junto', () => {
+  // Um boleto de R$ 500,00 vencido ontem e dois de R$ 500,00 nesta semana: antes, "1 conta de
+  // fornecedor vencida — R$ 1.500,00", enquanto Contas a pagar mostrava Vencidas R$ 500,00.
+  const ambos = lido(avisoDeContasAPagar(contas([1, '500.00'], [2, '1000.00'])));
+  assert.equal(ambos, '1 conta de fornecedor vencida (R$ 500,00) e 2 vencendo nos próximos 7 dias (R$ 1.000,00)');
+  assert.doesNotMatch(ambos ?? '', /1\.500/);
+  assert.equal(lido(avisoDeContasAPagar(contas([2, '750.50'], [0, '0.00']))), '2 contas de fornecedor vencidas — R$ 750,50');
+  assert.equal(lido(avisoDeContasAPagar(contas([0, '0.00'], [1, '320.00']))), '1 conta de fornecedor nos próximos 7 dias — R$ 320,00');
+  assert.equal(avisoDeContasAPagar(contas([0, '0.00'], [0, '0.00'])), null);
+  assert.equal(avisoDeContasAPagar(undefined), null);
 });

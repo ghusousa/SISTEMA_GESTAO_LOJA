@@ -493,9 +493,9 @@ Mais duas respostas que o publicador grava fora da declaração: **direitos de c
 
 ---
 
-## 8. CAPTURAS — 10 por tamanho, tiradas do app de verdade
+## 8. CAPTURAS — 10 por tamanho, tiradas das telas do app
 
-O publicador sobe o que estiver nas duas pastas, na ordem do nome (as 3 primeiras aparecem na busca). PNG RGB sem canal alfa, os mesmos nomes nas duas:
+O publicador sobe o que estiver nas duas pastas, na ordem do nome (as 3 primeiras aparecem na busca). PNG RGB sem canal alfa, os mesmos nomes nas duas. Saem do export web do próprio app: o conteúdo de cada tela é o do iPhone, mas o cabeçalho (seta "←", título à esquerda) e o "Cobrar" em tela cheia são os do navegador — no iPhone, o cabeçalho nativo ("‹ Voltar", título centralizado) e o Cobrar como folha. Fotos com o cabeçalho nativo, só de um aparelho ou simulador.
 
 | Pasta | Slot na Apple | Tamanho | Papel |
 |---|---|---|---|

@@ -1,12 +1,16 @@
 #!/usr/bin/env node
 /**
  * Fotografa o app de verdade — o export web do próprio app, falando com a API local de
- * teste — cena por cena (`cenas.mjs`), numa tela do tamanho de um iPhone.
+ * teste — cena por cena (`cenas.mjs`), numa tela do tamanho de um iPhone. As telas são as do
+ * app; a navegação é a do navegador (cabeçalho com "←" e título à esquerda, o "Cobrar" em tela
+ * cheia), e não a nativa do iPhone ("‹ Voltar", título centralizado, o Cobrar como folha).
  *
  * Quem sobe API, banco, dados e o export é o `gerar.sh`; este arquivo só entra pela tela
  * de login com a dona de teste da seed e segue o `ROTEIRO`. Cada foto sai em
- * `.brutas/NN-nome.png` (428 × 926 pt a 3x), com a hora em que saiu em `.brutas/NN-nome.json`
- * (a da barra de status), e o `compor.mjs` monta a arte em cima.
+ * `.brutas/NN-nome.png` (428 × 926 pt a 3x), com a hora em que saiu e a cor de barra de status
+ * que o app pediu para aquela tela em `.brutas/NN-nome.json`, e o `compor.mjs` monta a arte em
+ * cima — com a barra na cor que o app declara (`lib/barraDeStatus.ts`), nunca uma que corrija
+ * o que o iPhone mostra.
  *
  * O que é diferente do navegador comum, e por quê (tudo para parecer o que o iPhone mostra):
  *   - as áreas seguras do iPhone, declaradas pelo DevTools: 47 pt em cima (barra de status)
@@ -431,11 +435,14 @@ async function principal() {
         // A hora da barra de status é a da foto, no fuso da loja: a mesma do recibo e da
         // condicional que a cena acabou de fazer (o "9:41" fixo desmentia as duas).
         const hora = relogio.format(new Date());
+        // A cor que o APP pede para a barra de status desta tela (o export web anota no <html>
+        // o que no iPhone vai para o StatusBar). Sem pedido, a clara da raiz.
+        const barraDeStatus = await page.evaluate(() => document.documentElement.dataset.barraDeStatus || 'clara');
         const cortados = await app.textosCortados();
         if (cortados.length) throw new Error(`texto cortado na tela: ${cortados.join(' | ')}`);
         if (!SO.length || SO.includes(nome)) {
           writeFileSync(join(BRUTAS, `${nome}.png`), foto);
-          writeFileSync(join(BRUTAS, `${nome}.json`), `${JSON.stringify({ hora })}\n`);
+          writeFileSync(join(BRUTAS, `${nome}.json`), `${JSON.stringify({ hora, barraDeStatus })}\n`);
         }
       } catch (erro) {
         await page.screenshot({ path: join(BRUTAS, `erro-${nome}.png`) }).catch(() => {});

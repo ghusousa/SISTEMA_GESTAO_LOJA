@@ -8,13 +8,14 @@
 
 import { CameraView, useCameraPermissions, type BarcodeType } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
-import { useCallback, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Botao } from '@/components/ui';
 import { respiroDeBaixo, respiroDeCima } from '@/lib/areaSegura';
 import { decidirLeitura } from '@/lib/leitura';
+import { avisoDaCamera, situacaoDaCamera } from '@/lib/permissaoDaCamera';
 import { ALVO_TOQUE, cores, espaco, fonte, raio } from '@/lib/tema';
 
 /** EAN-13/EAN-8 cobrem etiqueta de fornecedor; Code 128 e UPC aparecem em peças importadas. */
@@ -89,6 +90,16 @@ export function Scanner({
   const emCima = encosta === 'em-cima-e-embaixo' ? respiroDeCima(insets.top, 0) : 0;
   const embaixo = encosta ? respiroDeBaixo(insets.bottom, 0) : 0;
   const [permissao, pedirPermissao] = useCameraPermissions();
+  // Na primeira abertura quem pergunta é o alerta do sistema, pedido aqui mesmo — sem tela do
+  // app antes dele (ver `lib/permissaoDaCamera.ts`). Uma vez por montagem: dispensado, não volta
+  // sozinho em laço; a tela do app oferece "Continuar".
+  const jaPediu = useRef(false);
+  const situacao = situacaoDaCamera(permissao, jaPediu.current);
+  useEffect(() => {
+    if (situacao !== 'pedir-ao-sistema' || jaPediu.current) return;
+    jaPediu.current = true;
+    void pedirPermissao();
+  }, [situacao, pedirPermissao]);
   const [lanterna, setLanterna] = useState(false);
   const [ultimoLido, setUltimoLido] = useState<string | null>(null);
 
@@ -166,27 +177,32 @@ export function Scanner({
     [ativo, aoLer, modo],
   );
 
-  if (!permissao) {
+  if (situacao === 'lendo' || situacao === 'pedir-ao-sistema') {
+    // Por baixo do alerta do sistema: o fundo do próprio leitor.
     return <View style={s.preto} />;
   }
 
-  if (!permissao.granted) {
+  if (situacao !== 'liberada') {
+    const aviso = avisoDaCamera(situacao);
     return (
-      // Rola em vez de cortar: na faixa de câmera do SE (28% da tela na condicional) o aviso
-      // inteiro não cabe, e centralizado ele perdia o título em cima e o botão embaixo.
+      // Centraliza quando cabe e rola quando não cabe. O botão vem logo depois do título: na
+      // faixa de câmera do SE (28% da tela na Nova condicional, 163 pt) o aviso inteiro não
+      // cabe, e o botão embaixo do texto ficava com 19 de 48 pt à vista, sem o rótulo.
       <ScrollView
         style={s.avisoRolagem}
         contentContainerStyle={[
           s.aviso,
-          { paddingTop: espaco.xl + emCima, paddingBottom: espaco.xl + embaixo },
+          { paddingTop: espaco.lg + emCima, paddingBottom: espaco.lg + embaixo },
         ]}
       >
-        <Text style={s.avisoTitulo}>A câmera precisa de permissão</Text>
-        <Text style={s.avisoTexto}>
-          É com ela que o app lê o código de barras das peças. Sem a câmera, use
-          "Digitar código" para buscar a peça pelo número da etiqueta.
-        </Text>
-        <Botao titulo="Permitir câmera" onPress={() => void pedirPermissao()} />
+        <Text style={s.avisoTitulo}>{aviso.titulo}</Text>
+        <Botao
+          titulo={aviso.botao}
+          onPress={() =>
+            situacao === 'abrir-ajustes' ? void Linking.openSettings() : void pedirPermissao()
+          }
+        />
+        <Text style={s.avisoTexto}>{aviso.texto}</Text>
         {/* O rodapé vem junto — é ele que traz o "Digitar código" que o texto acima
             promete, e o "Voltar". Sem isto, a tela de ajuste (que É o scanner, dentro de
             um Modal sem cabeçalho) virava beco sem saída para quem negasse a câmera: nem
@@ -277,10 +293,10 @@ const s = StyleSheet.create({
     flexGrow: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: espaco.xl,
+    paddingHorizontal: espaco.xl,
     gap: espaco.md,
   },
   avisoRodape: { alignSelf: 'stretch', gap: espaco.sm, marginTop: espaco.sm },
-  avisoTitulo: { fontSize: fonte.media, fontWeight: '700', color: cores.texto },
+  avisoTitulo: { fontSize: fonte.media, fontWeight: '700', color: cores.texto, textAlign: 'center' },
   avisoTexto: { fontSize: fonte.base, color: cores.textoSuave, textAlign: 'center' },
 });
