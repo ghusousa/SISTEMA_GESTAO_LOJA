@@ -24,12 +24,14 @@ Do balcão ao resultado do mês, na palma da mão:
 CELULAR E COMPUTADOR JUNTOS
 
 • Tudo se atualiza na hora entre os aparelhos da loja: vendeu no balcão, o estoque do celular já mostra.
-• O celular vira o leitor de código de barras do computador: leia com o app o QR que aparece na tela do computador, e cada etiqueta que a câmera bipar entra na venda aberta lá.
+• O celular vira o leitor de código de barras do computador: no navegador, o botão "Celular como leitor" mostra um QR; no app, Mais > Leitor do computador > "Ler o QR do computador". Cada etiqueta bipada entra na venda aberta lá.
 • No computador, o mesmo sistema abre no navegador, com leitor USB e teclado.
 
 CADA UM VÊ O QUE É DO SEU CARGO
 
 Dono, gerente, supervisora e vendedora. A vendedora vende e consulta preço, mas não recebe custo, lucro nem despesa — quem recusa é o servidor, não a tela. A auditoria, que guarda o que cada login fez, é só do dono.
+
+Não há cadastro aberto: o dono cria as contas da equipe em Mais > Usuários. Cada pessoa exclui a própria conta no app, em Mais > Minha conta > Excluir minha conta; o dono exclui a de alguém da equipe em Mais > Usuários > (pessoa) > Excluir conta.
 
 SERVE A MAIS DE UM RAMO
 

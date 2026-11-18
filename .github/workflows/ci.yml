@@ -207,8 +207,9 @@ jobs:
       # O web não tem build nem package.json: o canal de tempo real dele (espelho do
       # `lib/canal.ts`) roda com o node que este job já instalou.
       - run: node --test ../testes/web/*.test.mjs
-      # O publicador da App Store e o preparo do botão "Publicar iOS", contra uma Apple de mentira.
-      - run: node --test publicar/teste/ci.test.mjs && node publicar/teste/rodar.mjs
+      # O publicador da App Store e o preparo do botão "Publicar iOS", contra uma Apple de mentira;
+      # e a resposta à Apple (vídeo, aparelhos testados, notas, guia PDF em dia com as entradas).
+      - run: node --test publicar/teste/*.test.mjs && node publicar/teste/rodar.mjs
       # As 20 capturas que vão para a Apple (media/app-store): conferidas nos bytes contra as
       # cenas do gerador (tamanho, RGB sem alfa, nomes) e subidas na Apple de mentira.
       - run: node publicar/capturas/compor.mjs --conferir && node publicar/teste/rodar.mjs --reais

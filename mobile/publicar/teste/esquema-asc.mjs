@@ -264,6 +264,7 @@ export const ROTAS = {
   "PATCH /v1/appInfoLocalizations/{id}": {
     "corpo": "AppInfoLocalizationUpdateRequest"
   },
+  "DELETE /v1/appInfoLocalizations/{id}": {},
   "PATCH /v1/appInfos/{id}": {
     "corpo": "AppInfoUpdateRequest"
   },
@@ -436,6 +437,7 @@ export const ROTAS = {
   "PATCH /v1/appStoreVersionLocalizations/{id}": {
     "corpo": "AppStoreVersionLocalizationUpdateRequest"
   },
+  "DELETE /v1/appStoreVersionLocalizations/{id}": {},
   "GET /v1/appStoreVersionLocalizations/{id}/appScreenshotSets": {
     "parametros": {
       "filter[screenshotDisplayType]": {
@@ -548,6 +550,38 @@ export const ROTAS = {
   "PATCH /v1/appStoreReviewDetails/{id}": {
     "corpo": "AppStoreReviewDetailUpdateRequest"
   },
+  "GET /v1/appStoreReviewDetails/{id}/appStoreReviewAttachments": {
+    "parametros": {
+      "fields[appStoreReviewAttachments]": {},
+      "fields[appStoreReviewDetails]": {},
+      "limit": {
+        "maximo": 200
+      },
+      "include": {
+        "enum": [
+          "appStoreReviewDetail"
+        ]
+      }
+    }
+  },
+  "POST /v1/appStoreReviewAttachments": {
+    "corpo": "AppStoreReviewAttachmentCreateRequest"
+  },
+  "GET /v1/appStoreReviewAttachments/{id}": {
+    "parametros": {
+      "fields[appStoreReviewAttachments]": {},
+      "fields[appStoreReviewDetails]": {},
+      "include": {
+        "enum": [
+          "appStoreReviewDetail"
+        ]
+      }
+    }
+  },
+  "PATCH /v1/appStoreReviewAttachments/{id}": {
+    "corpo": "AppStoreReviewAttachmentUpdateRequest"
+  },
+  "DELETE /v1/appStoreReviewAttachments/{id}": {},
   "GET /v1/apps/{id}/appPricePoints": {
     "parametros": {
       "filter[territory]": {},
@@ -771,6 +805,50 @@ export const ROTAS = {
   },
   "POST /v1/reviewSubmissionItems": {
     "corpo": "ReviewSubmissionItemCreateRequest"
+  },
+  "PATCH /v1/reviewSubmissionItems/{id}": {
+    "corpo": "ReviewSubmissionItemUpdateRequest"
+  },
+  "GET /v1/devices": {
+    "parametros": {
+      "filter[name]": {},
+      "filter[platform]": {
+        "enum": [
+          "IOS",
+          "MAC_OS",
+          "UNIVERSAL"
+        ]
+      },
+      "filter[udid]": {},
+      "filter[status]": {
+        "enum": [
+          "ENABLED",
+          "DISABLED"
+        ]
+      },
+      "filter[id]": {},
+      "sort": {
+        "enum": [
+          "name",
+          "-name",
+          "platform",
+          "-platform",
+          "udid",
+          "-udid",
+          "status",
+          "-status",
+          "id",
+          "-id"
+        ]
+      },
+      "fields[devices]": {},
+      "limit": {
+        "maximo": 200
+      }
+    }
+  },
+  "POST /v1/devices": {
+    "corpo": "DeviceCreateRequest"
   }
 };
 
@@ -1303,6 +1381,50 @@ export const CORPOS = {
     "relacoes": {},
     "relacoesObrigatorias": []
   },
+  "AppStoreReviewAttachmentCreateRequest": {
+    "tipo": "appStoreReviewAttachments",
+    "id": "proibido",
+    "atributos": {
+      "fileSize": {
+        "t": "integer"
+      },
+      "fileName": {
+        "t": "string"
+      }
+    },
+    "atributosObrigatorios": [
+      "fileName",
+      "fileSize"
+    ],
+    "atributosObrigatorioNoCorpo": true,
+    "relacoes": {
+      "appStoreReviewDetail": {
+        "tipo": "appStoreReviewDetails",
+        "lista": false
+      }
+    },
+    "relacoesObrigatorias": [
+      "appStoreReviewDetail"
+    ]
+  },
+  "AppStoreReviewAttachmentUpdateRequest": {
+    "tipo": "appStoreReviewAttachments",
+    "id": "obrigatorio",
+    "atributos": {
+      "sourceFileChecksum": {
+        "t": "string",
+        "nulo": true
+      },
+      "uploaded": {
+        "t": "boolean",
+        "nulo": true
+      }
+    },
+    "atributosObrigatorios": [],
+    "atributosObrigatorioNoCorpo": false,
+    "relacoes": {},
+    "relacoesObrigatorias": []
+  },
   "AppStoreReviewDetailCreateRequest": {
     "tipo": "appStoreReviewDetails",
     "id": "proibido",
@@ -1679,6 +1801,34 @@ export const CORPOS = {
     "relacoes": {},
     "relacoesObrigatorias": []
   },
+  "DeviceCreateRequest": {
+    "tipo": "devices",
+    "id": "proibido",
+    "atributos": {
+      "name": {
+        "t": "string"
+      },
+      "platform": {
+        "t": "string",
+        "enum": [
+          "IOS",
+          "MAC_OS",
+          "UNIVERSAL"
+        ]
+      },
+      "udid": {
+        "t": "string"
+      }
+    },
+    "atributosObrigatorios": [
+      "name",
+      "udid",
+      "platform"
+    ],
+    "atributosObrigatorioNoCorpo": true,
+    "relacoes": {},
+    "relacoesObrigatorias": []
+  },
   "ReviewSubmissionCreateRequest": {
     "tipo": "reviewSubmissions",
     "id": "proibido",
@@ -1789,6 +1939,24 @@ export const CORPOS = {
     "relacoesObrigatorias": [
       "reviewSubmission"
     ]
+  },
+  "ReviewSubmissionItemUpdateRequest": {
+    "tipo": "reviewSubmissionItems",
+    "id": "obrigatorio",
+    "atributos": {
+      "resolved": {
+        "t": "boolean",
+        "nulo": true
+      },
+      "removed": {
+        "t": "boolean",
+        "nulo": true
+      }
+    },
+    "atributosObrigatorios": [],
+    "atributosObrigatorioNoCorpo": false,
+    "relacoes": {},
+    "relacoesObrigatorias": []
   },
   "ReviewSubmissionUpdateRequest": {
     "tipo": "reviewSubmissions",

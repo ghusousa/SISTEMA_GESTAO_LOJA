@@ -179,5 +179,12 @@ CAPTURAS_WEB="$WEB" CAPTURAS_API="$API" CAPTURAS_EMAIL="$EMAIL" CAPTURAS_SENHA="
 passo "Montando a arte (compor.mjs)"
 node "$AQUI/compor.mjs"
 
+# O guia PDF do revisor (mobile/publicar/revisao) leva os prints de 6,5": mudou print, o guia
+# commitado fica velho — o CI e o `--enviar` do publicador recusam. Refeito aqui, junto.
+if [ -z "${CAPTURAS_DESTINO:-}" ]; then
+  passo "Guia do revisor da Apple (revisao/gerar-guia.mjs)"
+  node "$AQUI/../revisao/gerar-guia.mjs"
+fi
+
 printf '\n✓ Capturas prontas em %s (iphone-6.5 e iphone-6.9).\n' "${CAPTURAS_DESTINO:-$RAIZ/media/app-store}"
-printf '  Confira cada uma com os olhos antes do commit.\n'
+printf '  Confira cada uma com os olhos antes do commit (e o guia PDF, que foi refeito com elas).\n'

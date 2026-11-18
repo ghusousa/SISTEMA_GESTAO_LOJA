@@ -74,10 +74,15 @@ inteiro do mesmo jeito; só essas imagens são trocadas). Para comparar antes de
 noutra pasta: `CAPTURAS_DESTINO=/outra/pasta gerar.sh` — as commitadas ficam como estão.
 
 Mudou título, subtítulo, nome ou ordem de uma cena? Atualize também as tabelas de
-`media/app-store/FASE-6-COLAR-NA-APPLE.md` e do §8 de `docs/LOJAS-DE-APP.md`. O CI confere as
-imagens commitadas contra as cenas (`compor.mjs --conferir`) e as sobe na Apple de mentira
-(`publicar/teste/rodar.mjs --reais`), mas não roda o gerador: ele pede Postgres, Chromium e
-as fontes.
+`media/app-store/FASE-6-COLAR-NA-APPLE.md` e do §8 de `docs/LOJAS-DE-APP.md` (e a legenda em
+inglês de `publicar/revisao/guia.mjs`). O CI confere as imagens commitadas contra as cenas
+(`compor.mjs --conferir`) e as sobe na Apple de mentira (`publicar/teste/rodar.mjs --reais`),
+mas não roda o gerador: ele pede Postgres, Chromium e as fontes.
+
+O guia PDF do revisor da Apple (`publicar/revisao/app-review-guide.pdf`) leva os prints de
+6,5": o `gerar.sh` o refaz no fim (`revisao/gerar-guia.mjs`), menos com `CAPTURAS_DESTINO`.
+Faça commit dele e do `app-review-guide.entradas.json` junto com as imagens — o CI e o
+`--enviar` do publicador recusam o guia de prints velhos.
 
 A seed lança as despesas do mês inteiro de uma vez: na primeira quinzena o "Resultado do
 mês" ainda sai negativo, e a cena 03 para avisando. Rode na segunda quinzena (ou

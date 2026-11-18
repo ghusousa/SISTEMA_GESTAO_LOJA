@@ -6,14 +6,20 @@
  *  - todo parâmetro de consulta e todo corpo é conferido contra o esquema: atributo
  *    desconhecido, tipo errado, valor fora da lista ou campo obrigatório faltando voltam
  *    400/409 no formato de erro da Apple, e ficam anotados em `estado.recusas`;
- *  - captura só vira COMPLETE se os bytes chegaram inteiros, o MD5 confere e o PNG tem o
- *    tamanho do slot, sem alfa;
+ *  - captura e anexo da revisão só viram COMPLETE se os bytes chegaram inteiros e o MD5
+ *    confere (e a captura tem o tamanho do slot, sem alfa);
  *  - o envio para revisão só passa com a ficha completa (classificação etária inteira,
- *    direitos de conteúdo, disponibilidade, capturas de 6,5" processadas, conta demo, preço,
- *    build preso, "Novidades" quando é atualização) — senão, 409 com `associatedErrors`.
+ *    direitos de conteúdo, disponibilidade, TODAS as localizações preenchidas, capturas de
+ *    6,5" processadas, conta demo, preço, build preso, "Novidades" quando é atualização) —
+ *    senão, 409 com `associatedErrors`;
+ *  - um envio ATIVO por plataforma (READY_FOR_REVIEW, WAITING_FOR_REVIEW, IN_REVIEW ou
+ *    UNRESOLVED_ISSUES): o segundo POST volta 409. O devolvido (UNRESOLVED_ISSUES) é reenviado
+ *    com PATCH submitted, depois de o item recusado ser marcado como resolvido;
+ *  - a localização do idioma principal não pode ser apagada.
  *
- * `opcoes` liga os cenários (app já lançado, build que demora, upload de 6,9" que cai...).
- * Tudo o que recebeu fica em `estado` (também em GET /_estado).
+ * `opcoes` liga os cenários (app criado no site em inglês, build antigo da mesma versão,
+ * preço pago na frente, upload de 6,9" que cai...). Tudo o que recebeu fica em `estado`
+ * (também em GET /_estado); `rejeitar()` e `novoBuild()` fazem o papel da Apple entre rodadas.
  */
 
 import { createHash } from 'node:crypto';
@@ -38,19 +44,38 @@ const PARTE_DO_UPLOAD = 16 * 1024; // a Apple divide o arquivo em partes; pequen
 const TERRITORIOS = new Set(['BRA', 'USA', 'PRT']);
 const ID_LOCAL = /^\$\{[^}]+\}$/;
 const JA_ESTEVE_A_VENDA = new Set(['READY_FOR_SALE', 'REPLACED_WITH_NEW_VERSION']);
+const EDITAVEIS = ['PREPARE_FOR_SUBMISSION', 'REJECTED', 'DEVELOPER_REJECTED', 'METADATA_REJECTED'];
+// Envio que ainda não terminou: só pode haver UM por plataforma.
+const ENVIO_ATIVO = new Set(['READY_FOR_REVIEW', 'WAITING_FOR_REVIEW', 'IN_REVIEW', 'UNRESOLVED_ISSUES']);
+const PRECOS_POR_PAGINA = 3; // a Apple pagina os pontos de preço; pouco aqui para o teste seguir links.next
 
 const PADRAO = {
   appExiste: true,
+  // O app como o SITE o cria: idioma principal escolhido no formulário, a versão "1.0" em
+  // preparo com a localização desse idioma VAZIA e o appInfo com só o nome. null = nada disso
+  // (o registro sem versão, como os cenários antigos).
+  criadoNoSite: null,
   jaLancado: false, // existe a 0.9.0 à venda — e o appInfo dela, que não é mais editável
+  // A versão do app.json já passou da edição, neste estado (ex.: 'WAITING_FOR_REVIEW',
+  // 'READY_FOR_SALE'): não aceita build nem ficha. null = não existe.
+  versaoTravada: null,
+  versaoDoAppJson: '1.0.0',
   disponibilidade: false, // a conta já tem disponibilidade definida
   semDisponibilidade: 404, // quando não tem: 404 ou 'nulo' (200 com data: null)
   idadeDesconhece: [], // atributos que esta Apple recusa como desconhecidos
   descritoresNovos: [], // perguntas novas (fora da 4.6) que ela cobra no envio
   falharUploadDoTipo: null, // ex.: 'APP_IPHONE_67' → o PUT dos bytes devolve 500
+  falharUploadDoAnexo: null, // nome do anexo da revisão cujo PUT devolve 500
   buildValidoNaConsulta: 1, // em que consulta a /v1/builds o build da versão fica VALID
   buildNunca: false, // fica em PROCESSING para sempre
   versaoDoBuild: '1.0.0',
+  buildAntigo: false, // já existe um build VALID da MESMA versão, de uma rodada anterior (o nº 6)
   revisaoEcoaSenha: false, // o POST do detalhe de revisão devolve 409 citando a senha
+  // Pontos de preço do território-base: 'gratis-primeiro' (o comum), 'pago-primeiro',
+  // 'gratis-na-2a-pagina', 'sem-gratis' ou 'vazio'.
+  precos: 'gratis-primeiro',
+  itemNaoAceitaResolved: false, // esta Apple recusa o PATCH resolved (e reenvia sem ele)
+  aparelhos: [], // aparelhos já registrados na conta (GET /v1/devices)
 };
 
 // ---------------------------------------------------------------- validação do esquema
@@ -154,6 +179,9 @@ function validarConsulta(rota, url) {
   const erro = (code, detail, parameter) =>
     erros.push({ status: '400', code, title: 'A parameter has an invalid value', detail, source: { parameter } });
   for (const [nome, valor] of url.searchParams) {
+    // "cursor" é o parâmetro das páginas seguintes (o links.next da própria Apple); a
+    // especificação não o lista em rota nenhuma, mas toda listagem paginada o aceita.
+    if (nome === 'cursor' && rota.startsWith('GET ') && aceitos.limit) continue;
     const d = aceitos[nome];
     if (!d) {
       erro('PARAMETER_ERROR.ILLEGAL', `'${nome}' não é parâmetro de ${rota}`, nome);
@@ -178,6 +206,18 @@ function lerPng(dados) {
   return { tamanho: `${dados.readUInt32BE(16)}x${dados.readUInt32BE(20)}`, tipoDeCor: dados[25] };
 }
 
+/** Os pontos de preço do território, do jeito que cada cenário pede. */
+function pontosDePreco(modo, territorio) {
+  const ponto = (preco, n) => ({ type: 'appPricePoints', id: `PP-${territorio}-${n}`, attributes: { customerPrice: preco, proceeds: preco } });
+  const pagos = ['0.99', '1.99', '2.99', '3.99', '4.99'].map((p) => ponto(p, p.replace('.', '')));
+  const gratis = ponto('0.0', 0);
+  if (modo === 'vazio') return [];
+  if (modo === 'sem-gratis') return pagos;
+  if (modo === 'pago-primeiro') return [pagos[0], gratis, ...pagos.slice(1)];
+  if (modo === 'gratis-na-2a-pagina') return [...pagos.slice(0, PRECOS_POR_PAGINA), gratis, ...pagos.slice(PRECOS_POR_PAGINA)];
+  return [gratis, ...pagos];
+}
+
 // ---------------------------------------------------------------- o servidor
 
 export function subirMock(opcoesDoTeste = {}) {
@@ -186,19 +226,21 @@ export function subirMock(opcoesDoTeste = {}) {
   const novoId = (prefixo) => `${prefixo}${++sequencia}`;
   const perguntas = Object.keys(CORPOS.AgeRatingDeclarationUpdateRequest.atributos);
   const declaracaoVazia = () => Object.fromEntries([...perguntas, ...o.descritoresNovos].map((n) => [n, null]));
+  const idiomaDoSite = o.criadoNoSite;
 
   const estado = {
     app: {
       name: 'Gestão de Loja',
       bundleId: 'com.gestaoloja.app',
       sku: 'gestao-loja',
-      primaryLocale: 'en-US',
+      primaryLocale: idiomaDoSite ?? 'en-US',
       contentRightsDeclaration: null,
     },
     infos: o.jaLancado
       ? [{ id: 'INFO0', state: 'READY_FOR_DISTRIBUTION' }]
       : [{ id: 'INFO1', state: 'PREPARE_FOR_SUBMISSION' }],
-    infoLocs: {}, // infoId -> atributos
+    infoLocs: {}, // locId -> {info, atributos (com locale)}
+    infoLocsApagadas: [],
     categorias: {}, // infoId -> {principal, secundaria}
     idade: {}, // infoId -> atributos da declaração
     idadeRecebida: [], // cada PATCH, como chegou
@@ -208,25 +250,59 @@ export function subirMock(opcoesDoTeste = {}) {
       ? [{ id: 'VER0', platform: 'IOS', versionString: '0.9.0', appStoreState: 'READY_FOR_SALE', appVersionState: 'READY_FOR_DISTRIBUTION' }]
       : [],
     versaoLocs: {}, // id -> {versao, atributos}
+    versaoLocsApagadas: [],
     conjuntos: {}, // id -> {loc, tipo, ordem}
     capturas: {}, // id -> {conjunto, nome, esperado, partes, bytes, md5, checksum, estado, erros}
     capturasApagadas: [],
     conjuntosApagados: [],
     revisoes: {}, // versaoId -> {id, atributos}
+    anexos: {}, // id -> {detalhe, nome, esperado, partes, totalDePartes, bytes, md5, checksum, estado, erros}
+    anexosApagados: [],
     preco: null,
     consultasDeBuild: 0,
     buildPreso: {}, // versaoId -> buildId
-    envios: [], // {id, estado, platform, itens: [versaoId], tentativas}
+    envios: [], // {id, estado, platform, itens: [{id, versao, estado, resolvido}], tentativas}
+    aparelhos: o.aparelhos.map((a, i) => ({ id: `DEV${i + 1}`, platform: 'IOS', status: 'ENABLED', ...a })),
     recusas: [], // {rota, status, erros, simulada}
     requisicoes: [],
   };
   for (const info of estado.infos) estado.idade[info.id] = declaracaoVazia();
 
+  // Os builds: {id, versao, numero, uploadedDate, aparece, valido, nunca} — "aparece" e
+  // "valido" são números de consulta a /v1/builds (o build some antes de "aparece").
+  const listaDeBuilds = [];
+  if (o.jaLancado) listaDeBuilds.push({ id: 'B0', versao: '0.9.0', numero: '3', uploadedDate: '2026-01-10T10:00:00Z', aparece: 0, valido: 0 });
+  if (o.buildAntigo) listaDeBuilds.push({ id: 'B-ANTIGO', versao: o.versaoDoBuild, numero: '6', uploadedDate: '2026-11-10T09:00:00Z', aparece: 0, valido: 0 });
+  listaDeBuilds.push({
+    id: 'B1',
+    versao: o.versaoDoBuild,
+    numero: '7',
+    uploadedDate: '2026-11-17T12:00:00Z',
+    aparece: o.buildValidoNaConsulta - 1,
+    valido: o.buildValidoNaConsulta,
+    nunca: o.buildNunca,
+  });
+
+  if (o.versaoTravada) {
+    // A mesma versão do app.json já enviada (ou aprovada): o appStoreState antigo acompanha.
+    const antigo = o.versaoTravada === 'READY_FOR_DISTRIBUTION' ? 'READY_FOR_SALE' : o.versaoTravada;
+    estado.versoes.push({ id: 'VER-TRAVADA', platform: 'IOS', versionString: o.versaoDoAppJson, appStoreState: antigo, appVersionState: o.versaoTravada });
+  }
+
+  if (idiomaDoSite) {
+    // O que o formulário "Novo app" do site deixa pronto.
+    estado.versoes.push({ id: 'VER-SITE', platform: 'IOS', versionString: '1.0', appStoreState: 'PREPARE_FOR_SUBMISSION', appVersionState: 'PREPARE_FOR_SUBMISSION' });
+    estado.versaoLocs[`VLOC-SITE-${idiomaDoSite}`] = { versao: 'VER-SITE', atributos: { locale: idiomaDoSite } };
+    estado.infoLocs[`ILOC-INFO1-${idiomaDoSite}`] = { info: 'INFO1', atributos: { locale: idiomaDoSite, name: 'Gestão de Loja' } };
+  }
+
   const versao = (id) => estado.versoes.find((v) => v.id === id);
   const estadoDaVersao = (v) => v.appVersionState ?? v.appStoreState;
-  const editavel = (v) => ['PREPARE_FOR_SUBMISSION', 'REJECTED', 'DEVELOPER_REJECTED', 'METADATA_REJECTED'].includes(v?.appStoreState);
+  const editavel = (v) => EDITAVEIS.includes(v?.appStoreState);
   const jaLancado = () => estado.versoes.some((v) => JA_ESTEVE_A_VENDA.has(v.appStoreState));
   const infoEditavel = () => estado.infos.find((i) => i.state === 'PREPARE_FOR_SUBMISSION');
+  const locsDoInfo = (infoId) => Object.entries(estado.infoLocs).filter(([, l]) => l.info === infoId);
+  const locPtDoInfo = (infoId) => locsDoInfo(infoId).find(([, l]) => l.atributos.locale === 'pt-BR');
   const capturasDoConjunto = (id) => {
     const c = estado.conjuntos[id];
     const todas = Object.entries(estado.capturas).filter(([, x]) => x.conjunto === id).map(([i]) => i);
@@ -236,20 +312,21 @@ export function subirMock(opcoesDoTeste = {}) {
     return [...naOrdem, ...todas.filter((i) => !naOrdem.includes(i))];
   };
   const builds = () => {
-    const lista = [];
-    if (o.jaLancado) {
-      lista.push({ id: 'B0', versao: '0.9.0', attributes: { version: '3', processingState: 'VALID', expired: false, uploadedDate: '2026-01-10T10:00:00Z' } });
-    }
     const n = estado.consultasDeBuild;
-    let situacao = null;
-    if (o.buildNunca) situacao = 'PROCESSING';
-    else if (n >= o.buildValidoNaConsulta) situacao = 'VALID';
-    else if (n === o.buildValidoNaConsulta - 1) situacao = 'PROCESSING';
-    if (situacao) {
-      lista.push({ id: 'B1', versao: o.versaoDoBuild, attributes: { version: '7', processingState: situacao, expired: false, uploadedDate: '2026-11-17T12:00:00Z' } });
+    const lista = [];
+    for (const b of listaDeBuilds) {
+      if (n < b.aparece) continue;
+      const processingState = b.nunca ? 'PROCESSING' : n >= b.valido ? 'VALID' : 'PROCESSING';
+      lista.push({ id: b.id, versao: b.versao, attributes: { version: b.numero, processingState, expired: false, uploadedDate: b.uploadedDate } });
     }
     return lista;
   };
+  const anexosDoDetalhe = (detalheId) => Object.entries(estado.anexos).filter(([, a]) => a.detalhe === detalheId);
+  const anexoVisto = (id, a) => ({
+    type: 'appStoreReviewAttachments',
+    id,
+    attributes: { fileName: a.nome, fileSize: a.esperado, sourceFileChecksum: a.checksum, assetDeliveryState: { state: a.estado, errors: a.erros } },
+  });
 
   /** O que falta para a Apple aceitar o envio da versão — no formato associatedErrors. */
   function faltasParaEnviar(versaoId) {
@@ -261,8 +338,11 @@ export function subirMock(opcoesDoTeste = {}) {
     const info = infoEditavel();
     if (!info) falta('/v1/apps/APP1/appInfos', 'nenhum appInfo editável');
     else {
-      const loc = estado.infoLocs[info.id];
-      if (!loc?.name || !loc?.privacyPolicyUrl) falta(`/v1/appInfos/${info.id}`, 'nome e URL de privacidade em pt-BR');
+      if (!locPtDoInfo(info.id)) falta(`/v1/appInfos/${info.id}`, 'nome e URL de privacidade em pt-BR');
+      // A Apple cobra TODA localização do appInfo, não só a do idioma principal.
+      for (const [id, l] of locsDoInfo(info.id)) {
+        if (!l.atributos.name || !l.atributos.privacyPolicyUrl) falta(`/v1/appInfoLocalizations/${id}`, `${l.atributos.locale}: nome e privacyPolicyUrl são obrigatórios`);
+      }
       if (!estado.categorias[info.id]) falta(`/v1/appInfos/${info.id}`, 'categoria principal');
       const decl = estado.idade[info.id];
       const cobradas = [...perguntas.filter((p) => !OPCIONAIS_DA_DECLARACAO.has(p) && !o.idadeDesconhece.includes(p)), ...o.descritoresNovos];
@@ -272,12 +352,15 @@ export function subirMock(opcoesDoTeste = {}) {
       }
     }
     if (!estado.disponibilidade) falta('/v1/apps/APP1/appAvailabilityV2', 'defina em quais países o app é vendido');
-    const loc = Object.entries(estado.versaoLocs).find(([, l]) => l.versao === versaoId && l.atributos.locale === 'pt-BR');
+    const locsDaVersao = Object.entries(estado.versaoLocs).filter(([, l]) => l.versao === versaoId);
+    const loc = locsDaVersao.find(([, l]) => l.atributos.locale === 'pt-BR');
     if (!loc) falta(`/v1/appStoreVersions/${versaoId}`, 'localização pt-BR');
-    else {
-      const a = loc[1].atributos;
-      for (const campo of ['description', 'keywords', 'supportUrl']) if (!a[campo]) falta(`/v1/appStoreVersionLocalizations/${loc[0]}`, `${campo} é obrigatório`);
-      if (jaLancado() && !a.whatsNew) falta(`/v1/appStoreVersionLocalizations/${loc[0]}`, 'whatsNew é obrigatório numa atualização');
+    for (const [id, l] of locsDaVersao) {
+      const a = l.atributos;
+      for (const campo of ['description', 'keywords', 'supportUrl']) if (!a[campo]) falta(`/v1/appStoreVersionLocalizations/${id}`, `${a.locale}: ${campo} é obrigatório`);
+      if (jaLancado() && !a.whatsNew) falta(`/v1/appStoreVersionLocalizations/${id}`, `${a.locale}: whatsNew é obrigatório numa atualização`);
+    }
+    if (loc) {
       const conjuntos = Object.entries(estado.conjuntos).filter(([, c]) => c.loc === loc[0]);
       const de65 = conjuntos.find(([, c]) => c.tipo === 'APP_IPHONE_65');
       if (!de65 || !capturasDoConjunto(de65[0]).length) falta(`/v1/appStoreVersionLocalizations/${loc[0]}`, 'capturas de iPhone 6,5" são obrigatórias');
@@ -291,7 +374,7 @@ export function subirMock(opcoesDoTeste = {}) {
     if (!rev?.atributos.demoAccountName || !rev?.atributos.demoAccountPassword) falta(`/v1/appStoreVersions/${versaoId}`, 'conta de demonstração do revisor');
     if (!estado.preco) falta('/v1/apps/APP1', 'preço');
     if (!estado.buildPreso[versaoId]) falta(`/v1/appStoreVersions/${versaoId}`, 'build');
-    if (v && estadoDaVersao(v) !== 'PREPARE_FOR_SUBMISSION' && !editavel(v)) falta(`/v1/appStoreVersions/${versaoId}`, 'versão não editável', 'STATE_ERROR');
+    if (v && !editavel(v)) falta(`/v1/appStoreVersions/${versaoId}`, 'versão não editável', 'STATE_ERROR');
     return faltas;
   }
 
@@ -307,21 +390,33 @@ export function subirMock(opcoesDoTeste = {}) {
       200,
       { data: estado.infos.map((i) => ({ type: 'appInfos', id: i.id, attributes: { state: i.state, appStoreState: i.state === 'PREPARE_FOR_SUBMISSION' ? 'PREPARE_FOR_SUBMISSION' : 'READY_FOR_SALE' } })) },
     ],
-    'GET /v1/appInfos/{id}/appInfoLocalizations': ({ ids }) => {
-      const loc = estado.infoLocs[ids[0]];
-      return [200, { data: loc ? [{ type: 'appInfoLocalizations', id: `ILOC-${ids[0]}`, attributes: loc }] : [] }];
-    },
+    'GET /v1/appInfos/{id}/appInfoLocalizations': ({ ids }) => [
+      200,
+      { data: locsDoInfo(ids[0]).map(([id, l]) => ({ type: 'appInfoLocalizations', id, attributes: { ...l.atributos } })) },
+    ],
     'POST /v1/appInfoLocalizations': ({ corpo }) => {
       const infoId = corpo.data.relationships.appInfo.data.id;
       if (infoEditavel()?.id !== infoId) return erro(409, 'STATE_ERROR', `appInfo ${infoId} não é editável`);
-      estado.infoLocs[infoId] = { ...corpo.data.attributes };
-      return [201, { data: { type: 'appInfoLocalizations', id: `ILOC-${infoId}`, attributes: estado.infoLocs[infoId] } }];
+      const locale = corpo.data.attributes.locale;
+      if (locsDoInfo(infoId).some(([, l]) => l.atributos.locale === locale)) return erro(409, 'ENTITY_ERROR', `já existe a localização ${locale}`);
+      const id = `ILOC-${infoId}-${locale}`;
+      estado.infoLocs[id] = { info: infoId, atributos: { ...corpo.data.attributes } };
+      return [201, { data: { type: 'appInfoLocalizations', id, attributes: estado.infoLocs[id].atributos } }];
     },
     'PATCH /v1/appInfoLocalizations/{id}': ({ ids, corpo }) => {
-      const infoId = ids[0].replace('ILOC-', '');
-      if (infoEditavel()?.id !== infoId) return erro(409, 'STATE_ERROR', `appInfo ${infoId} não é editável`);
-      Object.assign(estado.infoLocs[infoId], corpo.data.attributes);
-      return [200, { data: { type: 'appInfoLocalizations', id: ids[0], attributes: estado.infoLocs[infoId] } }];
+      const loc = estado.infoLocs[ids[0]];
+      if (!loc) return erro(404, 'NOT_FOUND', 'localização inexistente');
+      if (infoEditavel()?.id !== loc.info) return erro(409, 'STATE_ERROR', `appInfo ${loc.info} não é editável`);
+      Object.assign(loc.atributos, corpo.data.attributes);
+      return [200, { data: { type: 'appInfoLocalizations', id: ids[0], attributes: loc.atributos } }];
+    },
+    'DELETE /v1/appInfoLocalizations/{id}': ({ ids }) => {
+      const loc = estado.infoLocs[ids[0]];
+      if (!loc) return erro(404, 'NOT_FOUND', 'localização inexistente');
+      if (loc.atributos.locale === estado.app.primaryLocale) return erro(409, 'STATE_ERROR', 'a localização do idioma principal não pode ser apagada');
+      delete estado.infoLocs[ids[0]];
+      estado.infoLocsApagadas.push(ids[0]);
+      return [204, null];
     },
     'PATCH /v1/appInfos/{id}': ({ ids, corpo }) => {
       if (infoEditavel()?.id !== ids[0]) return erro(409, 'STATE_ERROR', `appInfo ${ids[0]} não é editável`);
@@ -388,7 +483,9 @@ export function subirMock(opcoesDoTeste = {}) {
         const anterior = estado.infos[0];
         estado.infos.push({ id: 'INFO1', state: 'PREPARE_FOR_SUBMISSION' });
         estado.idade.INFO1 = { ...estado.idade[anterior.id] };
-        if (estado.infoLocs[anterior.id]) estado.infoLocs.INFO1 = { ...estado.infoLocs[anterior.id] };
+        for (const [, l] of locsDoInfo(anterior.id)) {
+          estado.infoLocs[`ILOC-INFO1-${l.atributos.locale}`] = { info: 'INFO1', atributos: { ...l.atributos } };
+        }
       }
       const { id, ...attributes } = nova;
       return [201, { data: { type: 'appStoreVersions', id, attributes } }];
@@ -416,6 +513,10 @@ export function subirMock(opcoesDoTeste = {}) {
       if (!jaLancado() && corpo.data.attributes.whatsNew != null) {
         return erro(409, 'ENTITY_ERROR.ATTRIBUTE.INVALID', "whatsNew can not be edited for the first version of an app", '/data/attributes/whatsNew');
       }
+      const locale = corpo.data.attributes.locale;
+      if (Object.values(estado.versaoLocs).some((l) => l.versao === versaoId && l.atributos.locale === locale)) {
+        return erro(409, 'ENTITY_ERROR', `a versão já tem a localização ${locale}`);
+      }
       const id = novoId('VLOC');
       estado.versaoLocs[id] = { versao: versaoId, atributos: { ...corpo.data.attributes } };
       return [201, { data: { type: 'appStoreVersionLocalizations', id, attributes: estado.versaoLocs[id].atributos } }];
@@ -426,6 +527,15 @@ export function subirMock(opcoesDoTeste = {}) {
       }
       Object.assign(estado.versaoLocs[ids[0]].atributos, corpo.data.attributes);
       return [200, { data: { type: 'appStoreVersionLocalizations', id: ids[0] } }];
+    },
+    'DELETE /v1/appStoreVersionLocalizations/{id}': ({ ids }) => {
+      const loc = estado.versaoLocs[ids[0]];
+      if (!loc) return erro(404, 'NOT_FOUND', 'localização inexistente');
+      if (loc.atributos.locale === estado.app.primaryLocale) return erro(409, 'STATE_ERROR', 'a localização do idioma principal não pode ser apagada');
+      for (const [id, c] of Object.entries(estado.conjuntos)) if (c.loc === ids[0]) delete estado.conjuntos[id];
+      delete estado.versaoLocs[ids[0]];
+      estado.versaoLocsApagadas.push(ids[0]);
+      return [204, null];
     },
     'GET /v1/appStoreVersionLocalizations/{id}/appScreenshotSets': ({ ids }) => [
       200,
@@ -473,16 +583,7 @@ export function subirMock(opcoesDoTeste = {}) {
       if (capturasDoConjunto(conjunto).length >= 10) return erro(409, 'ENTITY_ERROR', 'no máximo 10 capturas por conjunto');
       const id = novoId('SHOT');
       const { fileName, fileSize } = corpo.data.attributes;
-      const operacoes = [];
-      for (let offset = 0, parte = 0; offset < fileSize; offset += PARTE_DO_UPLOAD, parte++) {
-        operacoes.push({
-          method: 'PUT',
-          url: `http://127.0.0.1:${porta}/_upload/${id}/${parte}`,
-          offset,
-          length: Math.min(PARTE_DO_UPLOAD, fileSize - offset),
-          requestHeaders: [{ name: 'Content-Type', value: 'image/png' }],
-        });
-      }
+      const operacoes = operacoesDeUpload(porta, 'upload', id, fileSize, 'image/png');
       estado.capturas[id] = { conjunto, nome: fileName, esperado: fileSize, partes: {}, totalDePartes: operacoes.length, md5: null, checksum: null, estado: 'AWAITING_UPLOAD', erros: [] };
       return [201, { data: { type: 'appScreenshots', id, attributes: { fileName, fileSize, uploadOperations: operacoes } } }];
     },
@@ -492,16 +593,11 @@ export function subirMock(opcoesDoTeste = {}) {
       const a = corpo.data.attributes ?? {};
       c.checksum = a.sourceFileChecksum ?? c.checksum;
       if (a.uploaded === true) {
-        const partes = Object.keys(c.partes).length;
-        const bytes = Buffer.concat(Object.keys(c.partes).sort((x, y) => x - y).map((k) => c.partes[k]));
-        c.bytes = bytes.length;
-        c.md5 = createHash('md5').update(bytes).digest('hex');
+        const bytes = juntarPartes(c);
         const png = lerPng(bytes);
         const tipo = estado.conjuntos[c.conjunto].tipo;
-        if (partes !== c.totalDePartes || bytes.length !== c.esperado) c.erros.push({ code: 'FILE_INCOMPLETE', description: 'nem todas as partes chegaram' });
-        else if (c.md5 !== c.checksum) c.erros.push({ code: 'CHECKSUM_MISMATCH', description: 'o MD5 não confere com os bytes recebidos' });
-        else if (!png || !TAMANHOS_DO_SLOT[tipo].includes(png.tamanho)) c.erros.push({ code: 'IMAGE_INCORRECT_DIMENSIONS', description: `tamanho ${png?.tamanho} não serve para ${tipo}` });
-        else if (png.tipoDeCor !== 2) c.erros.push({ code: 'IMAGE_ALPHA_NOT_ALLOWED', description: 'canal alfa não é aceito' });
+        if (!c.erros.length && (!png || !TAMANHOS_DO_SLOT[tipo].includes(png.tamanho))) c.erros.push({ code: 'IMAGE_INCORRECT_DIMENSIONS', description: `tamanho ${png?.tamanho} não serve para ${tipo}` });
+        else if (!c.erros.length && png.tipoDeCor !== 2) c.erros.push({ code: 'IMAGE_ALPHA_NOT_ALLOWED', description: 'canal alfa não é aceito' });
         c.estado = c.erros.length ? 'FAILED' : 'UPLOAD_COMPLETE';
       }
       return [200, { data: { type: 'appScreenshots', id: ids[0] } }];
@@ -521,6 +617,7 @@ export function subirMock(opcoesDoTeste = {}) {
       if (o.revisaoEcoaSenha) {
         return erro(409, 'ENTITY_ERROR.ATTRIBUTE.INVALID', `demoAccountPassword '${corpo.data.attributes.demoAccountPassword}' não pôde ser validada`);
       }
+      if (estado.revisoes[versaoId]) return erro(409, 'ENTITY_ERROR', 'a versão já tem o detalhe de revisão');
       estado.revisoes[versaoId] = { id: `REV-${versaoId}`, atributos: { ...corpo.data.attributes } };
       return [201, { data: { type: 'appStoreReviewDetails', id: `REV-${versaoId}` } }];
     },
@@ -529,10 +626,61 @@ export function subirMock(opcoesDoTeste = {}) {
       Object.assign(estado.revisoes[versaoId].atributos, corpo.data.attributes);
       return [200, { data: { type: 'appStoreReviewDetails', id: ids[0] } }];
     },
-    'GET /v1/apps/{id}/appPricePoints': ({ url }) => [
-      200,
-      { data: [{ type: 'appPricePoints', id: `PP-${url.searchParams.get('filter[territory]')}-0`, attributes: { customerPrice: '0.0', proceeds: '0.0' } }] },
-    ],
+    // ------------------------------------------------ anexos da revisão
+    'GET /v1/appStoreReviewDetails/{id}/appStoreReviewAttachments': ({ ids }) => {
+      if (!Object.values(estado.revisoes).some((r) => r.id === ids[0])) return erro(404, 'NOT_FOUND', 'detalhe inexistente');
+      return [200, { data: anexosDoDetalhe(ids[0]).map(([id, a]) => anexoVisto(id, a)) }];
+    },
+    'POST /v1/appStoreReviewAttachments': ({ corpo, porta }) => {
+      const detalhe = corpo.data.relationships.appStoreReviewDetail.data.id;
+      if (!Object.values(estado.revisoes).some((r) => r.id === detalhe)) return erro(404, 'NOT_FOUND', 'detalhe inexistente');
+      const id = novoId('ATT');
+      const { fileName, fileSize } = corpo.data.attributes;
+      const tipo = fileName.endsWith('.pdf') ? 'application/pdf' : 'video/mp4';
+      const operacoes = operacoesDeUpload(porta, 'upload-anexo', id, fileSize, tipo);
+      estado.anexos[id] = { detalhe, nome: fileName, esperado: fileSize, partes: {}, totalDePartes: operacoes.length, md5: null, checksum: null, estado: 'AWAITING_UPLOAD', erros: [] };
+      return [201, { data: { ...anexoVisto(id, estado.anexos[id]), attributes: { fileName, fileSize, uploadOperations: operacoes } } }];
+    },
+    'GET /v1/appStoreReviewAttachments/{id}': ({ ids }) => {
+      const a = estado.anexos[ids[0]];
+      if (!a) return erro(404, 'NOT_FOUND', 'anexo inexistente');
+      const visto = anexoVisto(ids[0], a);
+      if (a.estado === 'UPLOAD_COMPLETE') a.estado = 'COMPLETE'; // processa "em segundo plano"
+      return [200, { data: visto }];
+    },
+    'PATCH /v1/appStoreReviewAttachments/{id}': ({ ids, corpo }) => {
+      const a = estado.anexos[ids[0]];
+      if (!a) return erro(404, 'NOT_FOUND', 'anexo inexistente');
+      const at = corpo.data.attributes ?? {};
+      a.checksum = at.sourceFileChecksum ?? a.checksum;
+      if (at.uploaded === true) {
+        juntarPartes(a);
+        a.estado = a.erros.length ? 'FAILED' : 'UPLOAD_COMPLETE';
+      }
+      return [200, { data: anexoVisto(ids[0], a) }];
+    },
+    'DELETE /v1/appStoreReviewAttachments/{id}': ({ ids }) => {
+      if (!estado.anexos[ids[0]]) return erro(404, 'NOT_FOUND', 'anexo inexistente');
+      delete estado.anexos[ids[0]];
+      estado.anexosApagados.push(ids[0]);
+      return [204, null];
+    },
+    // ------------------------------------------------ preço
+    'GET /v1/apps/{id}/appPricePoints': ({ url, porta }) => {
+      const territorio = url.searchParams.get('filter[territory]');
+      const todos = pontosDePreco(o.precos, territorio);
+      const limite = Math.min(Number(url.searchParams.get('limit') ?? 50), PRECOS_POR_PAGINA);
+      const inicio = Number(url.searchParams.get('cursor') ?? 0);
+      const pagina = todos.slice(inicio, inicio + limite);
+      const links = { self: url.href };
+      if (inicio + limite < todos.length) {
+        const proxima = new URL(`http://127.0.0.1:${porta}${url.pathname}`);
+        for (const [k, v] of url.searchParams) if (k !== 'cursor') proxima.searchParams.set(k, v);
+        proxima.searchParams.set('cursor', String(inicio + limite));
+        links.next = proxima.href;
+      }
+      return [200, { data: pagina, links }];
+    },
     'POST /v1/appPriceSchedules': ({ corpo }) => {
       const citados = corpo.data.relationships.manualPrices.data.map((d) => d.id);
       const incluidos = (corpo.included ?? []).filter((i) => i.type === 'appPrices');
@@ -540,11 +688,14 @@ export function subirMock(opcoesDoTeste = {}) {
       estado.preco = incluidos[0].relationships.appPricePoint.data.id;
       return [201, { data: { type: 'appPriceSchedules', id: 'PS1' } }];
     },
+    // ------------------------------------------------ builds
     'GET /v1/builds': ({ url }) => {
       estado.consultasDeBuild += 1;
       const versaoPedida = url.searchParams.get('filter[preReleaseVersion.version]');
+      const numeroPedido = url.searchParams.get('filter[version]');
       const lista = builds()
         .filter((b) => !versaoPedida || versaoPedida.split(',').includes(b.versao))
+        .filter((b) => !numeroPedido || numeroPedido.split(',').includes(b.attributes.version))
         .sort((a, b) => b.attributes.uploadedDate.localeCompare(a.attributes.uploadedDate));
       return [200, { data: lista.map(({ id, attributes }) => ({ type: 'builds', id, attributes })) }];
     },
@@ -556,6 +707,7 @@ export function subirMock(opcoesDoTeste = {}) {
       estado.buildPreso[ids[0]] = b.id;
       return [204, null];
     },
+    // ------------------------------------------------ envio para revisão
     'GET /v1/reviewSubmissions': ({ url }) => {
       const estados = url.searchParams.get('filter[state]')?.split(',');
       const lista = estado.envios.filter((e) => !estados || estados.includes(e.estado));
@@ -563,9 +715,8 @@ export function subirMock(opcoesDoTeste = {}) {
     },
     'POST /v1/reviewSubmissions': ({ corpo }) => {
       const platform = corpo.data.attributes?.platform ?? 'IOS';
-      if (estado.envios.some((e) => e.platform === platform && e.estado === 'READY_FOR_REVIEW')) {
-        return erro(409, 'ENTITY_ERROR', 'já existe um envio aberto para esta plataforma');
-      }
+      const ativo = estado.envios.find((e) => e.platform === platform && ENVIO_ATIVO.has(e.estado));
+      if (ativo) return erro(409, 'ENTITY_ERROR', `já existe um envio ativo para esta plataforma (${ativo.id}, ${ativo.estado})`);
       const novo = { id: novoId('RS'), platform, estado: 'READY_FOR_REVIEW', itens: [], tentativas: 0 };
       estado.envios.push(novo);
       return [201, { data: { type: 'reviewSubmissions', id: novo.id, attributes: { platform, state: novo.estado } } }];
@@ -576,11 +727,11 @@ export function subirMock(opcoesDoTeste = {}) {
       return [
         200,
         {
-          data: envio.itens.map((versaoId, i) => ({
+          data: envio.itens.map((item) => ({
             type: 'reviewSubmissionItems',
-            id: `${envio.id}-I${i}`,
-            attributes: { state: 'READY_FOR_REVIEW' },
-            ...(incluir ? { relationships: { appStoreVersion: { data: { type: 'appStoreVersions', id: versaoId } } } } : {}),
+            id: item.id,
+            attributes: { state: item.estado },
+            ...(incluir ? { relationships: { appStoreVersion: { data: { type: 'appStoreVersions', id: item.versao } } } } : {}),
           })),
         },
       ];
@@ -588,17 +739,40 @@ export function subirMock(opcoesDoTeste = {}) {
     'POST /v1/reviewSubmissionItems': ({ corpo }) => {
       const envio = estado.envios.find((e) => e.id === corpo.data.relationships.reviewSubmission.data.id);
       const versaoId = corpo.data.relationships.appStoreVersion?.data?.id;
-      if (!envio || envio.estado !== 'READY_FOR_REVIEW') return erro(409, 'STATE_ERROR', 'o envio não aceita itens');
-      if (envio.itens.includes(versaoId)) return erro(409, 'ENTITY_ERROR', 'esta versão já está no envio');
-      envio.itens.push(versaoId);
-      return [201, { data: { type: 'reviewSubmissionItems', id: `${envio.id}-I${envio.itens.length - 1}` } }];
+      if (!envio || !['READY_FOR_REVIEW', 'UNRESOLVED_ISSUES'].includes(envio.estado)) return erro(409, 'STATE_ERROR', 'o envio não aceita itens');
+      if (envio.itens.some((i) => i.versao === versaoId && i.estado !== 'REMOVED')) return erro(409, 'ENTITY_ERROR', 'esta versão já está no envio');
+      const item = { id: `${envio.id}-I${envio.itens.length}`, versao: versaoId, estado: 'READY_FOR_REVIEW', resolvido: false };
+      envio.itens.push(item);
+      return [201, { data: { type: 'reviewSubmissionItems', id: item.id } }];
+    },
+    'PATCH /v1/reviewSubmissionItems/{id}': ({ ids, corpo }) => {
+      const envio = estado.envios.find((e) => e.itens.some((i) => i.id === ids[0]));
+      const item = envio?.itens.find((i) => i.id === ids[0]);
+      if (!item) return erro(404, 'NOT_FOUND', 'item inexistente');
+      const a = corpo.data.attributes ?? {};
+      if (a.resolved === true) {
+        if (o.itemNaoAceitaResolved) return erro(409, 'ENTITY_ERROR.ATTRIBUTE.INVALID', "'resolved' cannot be set for this item");
+        if (item.estado !== 'REJECTED') return erro(409, 'STATE_ERROR', 'só item recusado pode ser marcado como resolvido');
+        item.resolvido = true;
+      }
+      if (a.removed === true) item.estado = 'REMOVED';
+      return [200, { data: { type: 'reviewSubmissionItems', id: item.id, attributes: { state: item.estado } } }];
     },
     'PATCH /v1/reviewSubmissions/{id}': ({ ids, corpo, rota }) => {
       const envio = estado.envios.find((e) => e.id === ids[0]);
       if (corpo.data.attributes?.submitted !== true) return [200, { data: { type: 'reviewSubmissions', id: envio.id } }];
       envio.tentativas += 1;
-      if (!envio.itens.length) return erro(409, 'STATE_ERROR', 'envio sem itens');
-      const faltas = Object.assign({}, ...envio.itens.map(faltasParaEnviar));
+      if (!['READY_FOR_REVIEW', 'UNRESOLVED_ISSUES'].includes(envio.estado)) return erro(409, 'STATE_ERROR', `o envio está ${envio.estado}`);
+      const vivos = envio.itens.filter((i) => i.estado !== 'REMOVED');
+      if (!vivos.length) return erro(409, 'STATE_ERROR', 'envio sem itens');
+      const faltas = Object.assign({}, ...vivos.map((i) => faltasParaEnviar(i.versao)));
+      // O devolvido só sai de novo com o item recusado marcado como resolvido (nesta Apple;
+      // a que recusa a marca, `itemNaoAceitaResolved`, também não a cobra).
+      for (const i of vivos) {
+        if (i.estado === 'REJECTED' && !i.resolvido && !o.itemNaoAceitaResolved) {
+          (faltas[`/v1/reviewSubmissionItems/${i.id}`] ??= []).push({ code: 'STATE_ERROR', title: 'Unresolved', detail: 'the item still has unresolved issues' });
+        }
+      }
       if (Object.keys(faltas).length) {
         const erros = [
           {
@@ -613,13 +787,62 @@ export function subirMock(opcoesDoTeste = {}) {
         return [409, { errors: erros }];
       }
       envio.estado = 'WAITING_FOR_REVIEW';
-      for (const versaoId of envio.itens) Object.assign(versao(versaoId), { appStoreState: 'WAITING_FOR_REVIEW', appVersionState: 'WAITING_FOR_REVIEW' });
+      for (const i of vivos) {
+        i.estado = 'READY_FOR_REVIEW';
+        i.resolvido = false;
+        Object.assign(versao(i.versao), { appStoreState: 'WAITING_FOR_REVIEW', appVersionState: 'WAITING_FOR_REVIEW' });
+      }
       return [200, { data: { type: 'reviewSubmissions', id: envio.id, attributes: { state: envio.estado } } }];
+    },
+    // ------------------------------------------------ aparelhos (perfil ad hoc)
+    'GET /v1/devices': ({ url }) => {
+      const p = (n) => url.searchParams.get(n)?.split(',');
+      const [plataformas, situacoes, udids] = [p('filter[platform]'), p('filter[status]'), p('filter[udid]')];
+      const lista = estado.aparelhos
+        .filter((d) => !plataformas || plataformas.includes(d.platform))
+        .filter((d) => !situacoes || situacoes.includes(d.status))
+        .filter((d) => !udids || udids.map((u) => u.toLowerCase()).includes(d.udid.toLowerCase()));
+      return [200, { data: lista.map(({ id, ...attributes }) => ({ type: 'devices', id, attributes })) }];
+    },
+    'POST /v1/devices': ({ corpo }) => {
+      const a = corpo.data.attributes;
+      if (estado.aparelhos.some((d) => d.udid.toLowerCase() === a.udid.toLowerCase())) return erro(409, 'ENTITY_ERROR.ATTRIBUTE.INVALID', 'este UDID já está registrado');
+      if (!/^([0-9A-Fa-f]{8}-[0-9A-Fa-f]{16}|[0-9A-Fa-f]{40})$/.test(a.udid)) return erro(409, 'ENTITY_ERROR.ATTRIBUTE.INVALID', 'UDID inválido', '/data/attributes/udid');
+      const novo = { id: novoId('DEV'), name: a.name, udid: a.udid, platform: a.platform, status: 'ENABLED' };
+      estado.aparelhos.push(novo);
+      const { id, ...attributes } = novo;
+      return [201, { data: { type: 'devices', id, attributes } }];
     },
   };
 
   function erro(status, code, detail, pointer) {
     return [status, { errors: [{ status: String(status), code, title: code.split('.')[0], detail, ...(pointer ? { source: { pointer } } : {}) }] }];
+  }
+
+  /** As uploadOperations que a Apple devolve: o arquivo em partes, um PUT por parte. */
+  function operacoesDeUpload(porta, rota, id, tamanho, tipo) {
+    const operacoes = [];
+    for (let offset = 0, parte = 0; offset < tamanho; offset += PARTE_DO_UPLOAD, parte++) {
+      operacoes.push({
+        method: 'PUT',
+        url: `http://127.0.0.1:${porta}/_${rota}/${id}/${parte}`,
+        offset,
+        length: Math.min(PARTE_DO_UPLOAD, tamanho - offset),
+        requestHeaders: [{ name: 'Content-Type', value: tipo }],
+      });
+    }
+    return operacoes;
+  }
+
+  /** Junta as partes recebidas, confere inteireza e MD5 e anota o erro (captura ou anexo). */
+  function juntarPartes(x) {
+    const partes = Object.keys(x.partes).length;
+    const bytes = Buffer.concat(Object.keys(x.partes).sort((a, b) => a - b).map((k) => x.partes[k]));
+    x.bytes = bytes.length;
+    x.md5 = createHash('md5').update(bytes).digest('hex');
+    if (partes !== x.totalDePartes || bytes.length !== x.esperado) x.erros.push({ code: 'FILE_INCOMPLETE', description: 'nem todas as partes chegaram' });
+    else if (x.md5 !== x.checksum) x.erros.push({ code: 'CHECKSUM_MISMATCH', description: 'o MD5 não confere com os bytes recebidos' });
+    return bytes;
   }
 
   const servidor = createServer((req, res) => {
@@ -644,6 +867,14 @@ export function subirMock(opcoesDoTeste = {}) {
         if (!c) return responder(404, {});
         if (o.falharUploadDoTipo && estado.conjuntos[c.conjunto]?.tipo === o.falharUploadDoTipo) return responder(500, {});
         c.partes[upload[2]] = bruto;
+        return responder(200, {});
+      }
+      const uploadAnexo = /^\/_upload-anexo\/([^/]+)\/(\d+)$/.exec(url.pathname);
+      if (req.method === 'PUT' && uploadAnexo) {
+        const a = estado.anexos[uploadAnexo[1]];
+        if (!a) return responder(404, {});
+        if (o.falharUploadDoAnexo && a.nome === o.falharUploadDoAnexo) return responder(500, {});
+        a.partes[uploadAnexo[2]] = bruto;
         return responder(200, {});
       }
 
@@ -707,6 +938,28 @@ export function subirMock(opcoesDoTeste = {}) {
           const info = infoEditavel();
           Object.assign(estado.idade[info.id], atributos);
         },
+        /**
+         * A Apple devolve o envio que está na fila: o envio vira UNRESOLVED_ISSUES, os itens,
+         * REJECTED, e a versão, `estadoDaVersao` (REJECTED na recusa; METADATA_REJECTED quando
+         * só a ficha precisa de mudança, como num pedido de informação).
+         */
+        rejeitar({ estadoDaVersao: novo = 'REJECTED' } = {}) {
+          const envio = [...estado.envios].reverse().find((e) => e.estado === 'WAITING_FOR_REVIEW');
+          if (!envio) throw new Error('não há envio esperando revisão para rejeitar');
+          envio.estado = 'UNRESOLVED_ISSUES';
+          for (const i of envio.itens) {
+            if (i.estado === 'REMOVED') continue;
+            i.estado = 'REJECTED';
+            Object.assign(versao(i.versao), { appStoreState: novo, appVersionState: novo });
+          }
+          return envio.id;
+        },
+        /** Um build novo da versão: aparece na próxima consulta e fica VALID em `validoEm` consultas. */
+        novoBuild({ id, numero, versao: versaoDoBuild = o.versaoDoBuild, validoEm = 1 }) {
+          const n = estado.consultasDeBuild;
+          listaDeBuilds.push({ id, versao: versaoDoBuild, numero, uploadedDate: new Date(Date.UTC(2026, 10, 18, 12, listaDeBuilds.length)).toISOString(), aparece: n + 1, valido: n + validoEm });
+        },
+        estadoDaVersao: (id) => estadoDaVersao(versao(id)),
         fechar: () => new Promise((r) => servidor.close(r)),
       }),
     );

@@ -5,7 +5,9 @@
  *
  * O que não pode quebrar: segredo nunca aparece na saída; chave e ficha saem com
  * permissão 600 FORA do repositório; o ascAppId só vai para o perfil "ci" do eas.json;
- * faltou peça → diz QUAIS nomes faltam, sem derrubar o build.
+ * faltou peça → diz QUAIS nomes faltam, sem derrubar o build; versão do app.json já enviada
+ * ou publicada é dita ANTES de compilar; o .ipa de teste (ad hoc) não sai sem um iPhone
+ * registrado, e o UDID nunca aparece inteiro no log.
  */
 
 import { spawn } from 'node:child_process';
@@ -17,11 +19,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 
-import { comAscAppId, montar, normalizarP8, SERVIDOR_DEMO_PADRAO } from '../ci.mjs';
+import { comAscAppId, montar, normalizarP8, SERVIDOR_DEMO_PADRAO, UDID } from '../ci.mjs';
 import { subirMock } from './mock-asc.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const MOBILE = resolve(AQUI, '..', '..');
+const VERSAO = JSON.parse(readFileSync(join(MOBILE, 'app.json'), 'utf8')).expo.version;
+const UDID_NOVO = '00008030-001A2B3C4D5E802E';
 const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
 const P8 = privateKey.export({ type: 'pkcs8', format: 'pem' }).trim();
 
@@ -80,9 +84,9 @@ test('ascAppId vai só para o perfil "ci", e o production fica intocado', () => 
   assert.throws(() => comAscAppId({ submit: {} }, 1), /perfil de envio "ci"/);
 });
 
-function rodarPreparar(env) {
+function rodarPreparar(env, comando = 'preparar') {
   return new Promise((resolver) => {
-    const filho = spawn(process.execPath, [join(MOBILE, 'publicar', 'ci.mjs'), 'preparar'], {
+    const filho = spawn(process.execPath, [join(MOBILE, 'publicar', 'ci.mjs'), comando], {
       cwd: MOBILE,
       env: { PATH: process.env.PATH, ...env },
     });
@@ -128,10 +132,127 @@ test('preparar de ponta a ponta: arquivos 600 fora do repo, app achado, segredo 
     assert.equal(config.arquivo_p8, 'chave-apple.p8');
     assert.equal(config.url_servidor_demo, SERVIDOR_DEMO_PADRAO);
     assert.equal(JSON.parse(readFileSync(eas, 'utf8')).submit.ci.ios.ascAppId, 'APP1');
+    assert.equal(s.versao_estado, 'inexistente', 'app sem versão: o publicador cria');
     assert.ok(!saida.includes(FICHA.APPLE_DEMO_PASSWORD), 'senha da demo apareceu no log');
     assert.ok(!saida.includes('PRIVATE KEY'), 'a chave apareceu no log');
   } finally {
     fechar();
+  }
+});
+
+test('preparar diz, ANTES de compilar, que a versão do app.json já foi enviada ou publicada', async () => {
+  for (const estadoNaApple of ['WAITING_FOR_REVIEW', 'READY_FOR_DISTRIBUTION']) {
+    const { porta, fechar } = await subirMock({ versaoTravada: estadoNaApple, versaoDoAppJson: VERSAO });
+    try {
+      const pasta = mkdtempSync(join(tmpdir(), 'ci-apple-'));
+      const eas = join(pasta, 'eas.json');
+      copyFileSync(join(MOBILE, 'eas.json'), eas);
+      const github = join(pasta, 'github-output');
+      const { codigo, saida } = await rodarPreparar({
+        ...CHAVE,
+        ...FICHA,
+        ASC_BASE: `http://127.0.0.1:${porta}`,
+        PASTA_SAIDA: join(pasta, 'apple'),
+        EAS_JSON: eas,
+        GITHUB_OUTPUT: github,
+      });
+      assert.equal(codigo, 0, saida);
+      const s = lerSaidas(github);
+      assert.equal(s.versao_estado, 'travada', estadoNaApple);
+      assert.match(s.versao_mensagem, new RegExp(`versão ${VERSAO.replace(/\./g, '\\.')} já existe na Apple no estado ${estadoNaApple}`));
+      assert.match(s.versao_mensagem, /suba "version"/, 'diz como sair: versão nova no app.json');
+      assert.match(saida, /⚠ A versão/);
+    } finally {
+      fechar();
+    }
+  }
+});
+
+test('aparelhos: sem iPhone registrado e sem UDID, falha dizendo como resolver — e não registra nada', async () => {
+  const { porta, estado, fechar } = await subirMock();
+  try {
+    const pasta = mkdtempSync(join(tmpdir(), 'ci-apple-'));
+    const { codigo, saida } = await rodarPreparar(
+      { ...CHAVE, ASC_BASE: `http://127.0.0.1:${porta}`, GITHUB_OUTPUT: join(pasta, 'saida') },
+      'aparelhos',
+    );
+    assert.equal(codigo, 1, saida);
+    assert.match(saida, /Nenhum iPhone registrado/);
+    assert.match(saida, /udid_aparelho/);
+    assert.match(saida, /BrowserStack reassina/);
+    assert.ok(!estado.requisicoes.includes('POST /v1/devices'), 'registrou sem pedir');
+    assert.ok(!saida.includes('PRIVATE KEY'));
+  } finally {
+    fechar();
+  }
+});
+
+test('aparelhos: com o UDID, registra o iPhone UMA vez (o reenvio não duplica) e nunca mostra o UDID inteiro', async () => {
+  const { porta, estado, fechar } = await subirMock();
+  try {
+    const pasta = mkdtempSync(join(tmpdir(), 'ci-apple-'));
+    const env = {
+      ...CHAVE,
+      ASC_BASE: `http://127.0.0.1:${porta}`,
+      UDID_APARELHO: ` ${UDID_NOVO} `,
+      NOME_APARELHO: 'iPhone da Dona',
+    };
+    const primeira = await rodarPreparar({ ...env, GITHUB_OUTPUT: join(pasta, 'um') }, 'aparelhos');
+    assert.equal(primeira.codigo, 0, primeira.saida);
+    assert.match(primeira.saida, /registrado na conta da Apple \("iPhone da Dona"\)/);
+    assert.equal(lerSaidas(join(pasta, 'um')).aparelhos, '1');
+    assert.deepEqual(
+      estado.aparelhos.map((d) => [d.udid, d.platform, d.name]),
+      [[UDID_NOVO, 'IOS', 'iPhone da Dona']],
+    );
+    const segunda = await rodarPreparar({ ...env, GITHUB_OUTPUT: join(pasta, 'dois') }, 'aparelhos');
+    assert.equal(segunda.codigo, 0, segunda.saida);
+    assert.match(segunda.saida, /já estava registrado/);
+    assert.equal(estado.requisicoes.filter((r) => r === 'POST /v1/devices').length, 1, 'registrou duas vezes');
+    for (const { saida } of [primeira, segunda]) assert.ok(!saida.includes(UDID_NOVO), 'o UDID saiu inteiro no log');
+    assert.equal(estado.recusas.length, 0, `fora da especificação: ${JSON.stringify(estado.recusas)}`);
+  } finally {
+    fechar();
+  }
+});
+
+test('aparelhos: já registrado basta; UDID torto, desativado ou sem chave param com a frase certa', async () => {
+  const UDID_ANTIGO = 'a'.repeat(40);
+  const { porta, estado, fechar } = await subirMock({
+    aparelhos: [
+      { name: 'iPhone antigo', udid: UDID_ANTIGO },
+      { name: 'iPhone parado', udid: UDID_NOVO, status: 'DISABLED' },
+    ],
+  });
+  try {
+    const base = { ...CHAVE, ASC_BASE: `http://127.0.0.1:${porta}` };
+    const ok = await rodarPreparar(base, 'aparelhos');
+    assert.equal(ok.codigo, 0, ok.saida);
+    assert.match(ok.saida, /1 iPhone\(s\) registrado\(s\)/, 'só os ativos contam');
+
+    const torto = await rodarPreparar({ ...base, UDID_APARELHO: '1234-abcd' }, 'aparelhos');
+    assert.equal(torto.codigo, 1);
+    assert.match(torto.saida, /não parece um UDID de iPhone/);
+
+    const parado = await rodarPreparar({ ...base, UDID_APARELHO: UDID_NOVO }, 'aparelhos');
+    assert.equal(parado.codigo, 1);
+    assert.match(parado.saida, /DESATIVADO/);
+    assert.ok(!parado.saida.includes(UDID_NOVO));
+
+    const semChave = await rodarPreparar({ ASC_BASE: base.ASC_BASE }, 'aparelhos');
+    assert.equal(semChave.codigo, 1);
+    assert.match(semChave.saida, /faltam os Secrets: ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8/);
+    assert.ok(!estado.requisicoes.includes('POST /v1/devices'));
+  } finally {
+    fechar();
+  }
+});
+
+test('UDID: os dois formatos da Apple passam; o resto não', () => {
+  assert.ok(UDID.test(UDID_NOVO));
+  assert.ok(UDID.test('0123456789abcdef0123456789abcdef01234567'));
+  for (const torto of ['', '00008030001A2B3C4D5E802E', '00008030-001A2B3C4D5E802', 'z'.repeat(40), `${UDID_NOVO}\n`]) {
+    assert.ok(!UDID.test(torto), torto);
   }
 });
 
