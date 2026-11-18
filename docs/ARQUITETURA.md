@@ -1737,8 +1737,8 @@ três campos); o `ascAppId` entra só na cópia do runner. Com o time da Apple (
 o build recebe `EXPO_ASC_*`/`EXPO_APPLE_*` e a Expo cria ou conserta certificado e perfil sem
 perguntar. **O que não é segredo mora em `mobile/publicar/padroes.json`** (Issuer ID da chave,
 time, contato, URL de suporte, copyright, conta e código de barras da demo): o GitHub só precisa
-de `EXPO_TOKEN`, `ASC_KEY_ID` e `ASC_KEY_P8` para subir a ficha, e Secret/Variable de mesmo
-assunto vence o padrão. Pedir nove Variables a quem só quer publicar era o que travava a
+de `EXPO_TOKEN`, `ASC_KEY_ID` e `ASC_KEY_P8` para subir a ficha, e Variable de mesmo nome vence o
+padrão (`ASC_ISSUER_ID` e o telefone também como Secret: o passo "Preparar" lê os dois contextos). Pedir nove Variables a quem só quer publicar era o que travava a
 primeira rodada; segredo de verdade (chave, senha da demo) nunca entra nesse arquivo, e o
 `ci.test.mjs` recusa. Senha da demo e telefone de contato são **só da revisão**: sem eles a
 ficha sobe (notas com "(pending)", campo vazio não vai à Apple e ela guarda o que tinha) e o

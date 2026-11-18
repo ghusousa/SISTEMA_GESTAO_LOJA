@@ -55,7 +55,7 @@ import { fileURLToPath } from 'node:url';
 import { lerAnexos, NOME_DO_VIDEO, obterVideo, subirAnexo, videoAnexado } from './anexos.mjs';
 import { criarCliente } from './asc.mjs';
 import { RESPOSTAS, responderClassificacao } from './classificacao.mjs';
-import { lerAparelhosTestados, lerConfig, lerFicha } from './ficha.mjs';
+import { DO_MODELO_ANTIGO, lerAparelhosTestados, lerConfig, lerFicha } from './ficha.mjs';
 import { CONJUNTOS, lerConjunto, subirConjunto } from './imagens.mjs';
 import { criarRelatorio } from './relatorio.mjs';
 import { lerGuia } from './revisao/guia.mjs';
@@ -301,11 +301,14 @@ async function conferirAntesDeEnviar({ asc, app, versaoDoApp, situacao, args, ap
   }
   // A ficha sobe sem eles (padroes.json não guarda segredo nem telefone); a revisão, não: a
   // senha vai nas notas e no campo da conta demo, e a Apple exige um telefone de contato.
-  const telefone = config.telefone_contato || revisaoNaApple.detalhe?.attributes?.contactPhone;
+  // O da Apple vale — menos o telefone de mentira do config.exemplo.json antigo, que uma
+  // rodada local com o modelo sem editar pode ter gravado lá.
+  const naApple = revisaoNaApple.detalhe?.attributes?.contactPhone;
+  const telefone = config.telefone_contato || (naApple && naApple.trim() !== DO_MODELO_ANTIGO.telefone_contato ? naApple : '');
   if (!telefone) {
     faltas.push([
       'telefone',
-      'Falta o telefone de contato para a revisão (a Apple exige): Variable APPLE_TELEFONE_CONTATO do repositório, ' +
+      'Falta o telefone de contato para a revisão (a Apple exige): Variable (ou Secret) APPLE_TELEFONE_CONTATO do repositório, ' +
         'com +55 e DDD — ex.: +55 11 91234-5678 (ou "telefone_contato" no config.json).',
     ]);
   } else if (!config.telefone_contato) {

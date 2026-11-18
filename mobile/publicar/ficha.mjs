@@ -57,8 +57,22 @@ export function lerPadroes(caminho = process.env.PUBLICAR_PADROES || join(AQUI, 
  */
 export const SO_DA_REVISAO = ['telefone_contato', 'senha_demo'];
 
-/** "COLE_AQUI" e e-mail de exemplo do config.exemplo.json valem o mesmo que vazio. */
-const naoPreenchido = (valor) => !valor || /COLE_AQUI|exemplo\./.test(String(valor));
+/**
+ * Os textos de exemplo do config.exemplo.json ANTIGO (antes do padroes.json): um config.json
+ * copiado dele e não editado não pode mandar "Nome Sobrenome" ou um telefone de mentira à
+ * Apple por cima do padrão. Campo a campo — url_suporte/url_servidor_demo de lá eram reais.
+ */
+export const DO_MODELO_ANTIGO = {
+  nome_contato: 'Nome Sobrenome',
+  telefone_contato: '+55 11 90000-0000',
+  titular_copyright: 'Seu nome ou o da sua empresa',
+  senha_demo: 'senha-da-conta-demo',
+  codigo_demo: 'um código de barras que exista no servidor de demonstração',
+};
+
+/** Vazio, "COLE_AQUI", e-mail @exemplo e o texto de exemplo daquele campo valem o mesmo que vazio. */
+const naoPreenchido = (valor, campo) =>
+  !valor || /COLE_AQUI|exemplo\./.test(String(valor)) || (campo in DO_MODELO_ANTIGO && DO_MODELO_ANTIGO[campo] === String(valor).trim());
 
 /**
  * Rótulo citado na ficha → o arquivo (da raiz do repositório) onde o app o mostra. Se a ficha
@@ -102,9 +116,9 @@ export function lerConfig() {
   // Padrões da loja embaixo; o que o config.json PREENCHE vence (vazio e "COLE_AQUI", não).
   const c = { url_servidor_demo: SERVIDOR_DEMO_PADRAO, ...lerPadroes() };
   for (const [campo, valor] of Object.entries(JSON.parse(readFileSync(caminho, 'utf8')))) {
-    if (!naoPreenchido(valor)) c[campo] = valor;
+    if (!naoPreenchido(valor, campo)) c[campo] = valor;
   }
-  for (const campo of SO_DA_REVISAO) if (naoPreenchido(c[campo])) c[campo] = '';
+  for (const campo of SO_DA_REVISAO) if (naoPreenchido(c[campo], campo)) c[campo] = '';
   const obrigatorios = [
     'key_id',
     'issuer_id',
@@ -117,7 +131,7 @@ export function lerConfig() {
     'titular_copyright',
     'url_servidor_demo',
   ];
-  const faltando = obrigatorios.filter((campo) => naoPreenchido(c[campo]));
+  const faltando = obrigatorios.filter((campo) => naoPreenchido(c[campo], campo));
   if (faltando.length) throw new Error(`Preencha no config.json: ${faltando.join(', ')}`);
   // O revisor conecta o app NESTE endereço: sem HTTPS o iOS recusa a conexão (ATS) e a
   // revisão volta. Antes ele vinha escrito nas notas e apontava para o site de outro

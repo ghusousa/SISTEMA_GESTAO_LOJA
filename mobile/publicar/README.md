@@ -210,17 +210,18 @@ da revisão:
 o time da Apple (Team ID e tipo), nome e e-mail de contato, URL de suporte, copyright, conta
 demo e código de barras dela (o EAN da primeira camiseta do seed, `7890000000000`). Nunca ponha
 senha, chave ou token nesse arquivo — o teste do `ci.mjs` recusa. Para trocar um valor sem mexer
-no código, crie uma **Variable** (ou Secret) de mesmo assunto, que vence o padrão:
+no código, crie uma **Variable** de mesmo nome, que vence o padrão (o `ASC_ISSUER_ID` e o telefone
+podem ser Variable ou Secret; o resto, só Variable — Secret com esses nomes é ignorado):
 
 | Variable (opcional) | Padrão (`padroes.json`) |
 |---|---|
-| `ASC_ISSUER_ID` (pode ser Secret) | `issuer_id` |
+| `ASC_ISSUER_ID` (Variable ou Secret) | `issuer_id` |
 | `APPLE_TEAM_ID`, `APPLE_TEAM_TYPE` | `apple_team_id`, `apple_team_type` |
 | `APPLE_EMAIL_SUPORTE`, `APPLE_URL_SUPORTE`, `APPLE_NOME_CONTATO`, `APPLE_COPYRIGHT` | contato, suporte e copyright |
 | `APPLE_EMAIL_DEMO`, `APPLE_CODIGO_DEMO` | conta demo (perfil **dono**) e um código de barras que exista nela |
 | `APPLE_SERVIDOR_DEMO` | `https://loja-tria.vercel.app` |
 | `APPLE_URL_PRIVACIDADE`, `APPLE_URL_ETIQUETAS_DEMO` | `<servidor demo>/privacidade` e nenhum |
-| `APPLE_TELEFONE_CONTATO` | nenhum: só a revisão pede, e só se a Apple ainda não tiver um telefone (de um envio anterior) |
+| `APPLE_TELEFONE_CONTATO` (Variable ou Secret: é dado pessoal) | nenhum: só a revisão pede, e só se a Apple ainda não tiver um telefone (de um envio anterior) |
 
 Sem a senha da demo e sem telefone a **ficha sobe** (as notas dizem "(pending)") e o
 `--enviar` para dizendo o que falta — sem mexer na Apple. Faltou outra peça? O passo que

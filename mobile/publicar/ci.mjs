@@ -61,6 +61,10 @@ export const CAMPOS_DA_FICHA = [
 
 const limpo = (v) => (typeof v === 'string' ? v.trim() : '');
 
+/** Onde cada peça só da revisão mora no GitHub (o workflow lê a senha só de Secret). */
+const ondeVai = (nome) =>
+  nome === 'APPLE_DEMO_PASSWORD' ? `${nome} (Secret)` : nome === 'APPLE_TELEFONE_CONTATO' ? `${nome} (Variable ou Secret)` : nome;
+
 /**
  * O .p8 colado no Secret às vezes chega com "\n" literal (copiado de um JSON) ou com
  * \r\n do Windows. A Apple só aceita o PEM com quebras de verdade.
@@ -238,7 +242,7 @@ async function preparar() {
     saida('config', caminhoConfig);
     if (r.faltandoRevisao.length) {
       process.stdout.write(
-        `ℹ A ficha sobe; a REVISÃO ainda pede: ${r.faltandoRevisao.join(', ')} (Secrets/Variables do repositório). ` +
+        `ℹ A ficha sobe; a REVISÃO ainda pede: ${r.faltandoRevisao.map(ondeVai).join(', ')}. ` +
           'O telefone pode já estar na Apple, de um envio anterior — o publicador confere antes de enviar.\n',
       );
     }

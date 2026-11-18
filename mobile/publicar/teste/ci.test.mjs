@@ -20,7 +20,7 @@ import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 
 import { comAscAppId, montar, normalizarP8, SERVIDOR_DEMO_PADRAO, UDID } from '../ci.mjs';
-import { lerPadroes } from '../ficha.mjs';
+import { DO_MODELO_ANTIGO, lerConfig, lerPadroes } from '../ficha.mjs';
 import { subirMock } from './mock-asc.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
@@ -34,7 +34,7 @@ const FICHA = {
   APPLE_EMAIL_SUPORTE: 'suporte@teste.dev',
   APPLE_URL_SUPORTE: 'https://demo.teste.dev',
   APPLE_NOME_CONTATO: 'Dona Teste',
-  APPLE_TELEFONE_CONTATO: '+55 11 90000-0000',
+  APPLE_TELEFONE_CONTATO: '+55 11 91234-5678',
   APPLE_COPYRIGHT: 'Loja Teste',
   APPLE_EMAIL_DEMO: 'revisao@teste.dev',
   APPLE_DEMO_PASSWORD: 'senha-que-nao-pode-vazar',
@@ -93,7 +93,16 @@ test('padroes.json: nada secreto, e a ficha sobe só com ASC_KEY_ID + ASC_KEY_P8
     'url_suporte', 'email_demo', 'codigo_demo', 'url_servidor_demo', 'url_privacidade', 'url_etiquetas_demo',
   ]);
   for (const chave of Object.keys(padroes)) assert.ok(PERMITIDOS.has(chave), `padroes.json não guarda "${chave}"`);
-  assert.ok(!/PRIVATE KEY|senha_demo|password|token|key_id|telefone/i.test(JSON.stringify(padroes)), 'segredo no padroes.json');
+  // O ARQUIVO, não só o que o lerPadroes deixa passar: segredo num "_comentário" ou num valor
+  // que não é texto também seria commitado.
+  const cru = JSON.parse(bruto);
+  for (const [chave, valor] of Object.entries(cru)) {
+    assert.ok(chave === '_leia' || PERMITIDOS.has(chave), `padroes.json não guarda "${chave}"`);
+    assert.equal(typeof valor, 'string', `"${chave}" no padroes.json tem de ser texto`);
+  }
+  assert.ok(!/PRIVATE KEY|-----BEGIN/.test(bruto), 'chave privada no padroes.json (nem no _leia)');
+  const { _leia, ...semComentario } = cru;
+  assert.ok(!/senha_demo|password|token|key_id|telefone/i.test(JSON.stringify(semComentario)), 'segredo no padroes.json');
   assert.ok(!('_leia' in padroes), 'comentário ("_…") não vira padrão');
   assert.match(bruto, /"_leia"/);
   assert.match(padroes.issuer_id, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
@@ -130,6 +139,49 @@ test('padroes.json: nada secreto, e a ficha sobe só com ASC_KEY_ID + ASC_KEY_P8
   assert.equal(outro.config.url_suporte, 'https://suporte.outro.dev');
   assert.deepEqual(outro.time, { id: 'ABCDE12345', tipo: 'COMPANY_OR_ORGANIZATION' });
   assert.deepEqual(outro.faltandoRevisao, []);
+});
+
+test('config.json local copiado do modelo: vazio e texto de exemplo caem no padroes.json, nunca na Apple', () => {
+  const pasta = mkdtempSync(join(tmpdir(), 'config-local-'));
+  writeFileSync(join(pasta, 'chave-apple.p8'), `${P8}\n`);
+  const modeloNovo = JSON.parse(readFileSync(join(MOBILE, 'publicar', 'config.exemplo.json'), 'utf8'));
+  const modeloAntigo = {
+    ...modeloNovo,
+    issuer_id: 'COLE_AQUI o Issuer ID (aparece no topo da mesma tela)',
+    email_suporte: 'voce@exemplo.com',
+    email_demo: 'revisao@exemplo.com',
+    url_suporte: 'https://loja-tria.vercel.app',
+    ...DO_MODELO_ANTIGO,
+  };
+  const padroes = lerPadroes(PADROES_DO_REPO);
+  const antes = { config: process.env.PUBLICAR_CONFIG, padroes: process.env.PUBLICAR_PADROES };
+  try {
+    process.env.PUBLICAR_PADROES = PADROES_DO_REPO;
+    for (const [rotulo, modelo] of [['modelo de hoje', modeloNovo], ['modelo antigo', modeloAntigo]]) {
+      const caminho = join(pasta, `config-${rotulo.replace(' ', '-')}.json`);
+      writeFileSync(caminho, JSON.stringify({ ...modelo, key_id: 'TESTE123' }));
+      process.env.PUBLICAR_CONFIG = caminho;
+      const c = lerConfig();
+      for (const campo of ['issuer_id', 'nome_contato', 'titular_copyright', 'codigo_demo', 'email_demo', 'email_suporte']) {
+        assert.equal(c[campo], padroes[campo], `${rotulo}: ${campo} do padroes.json`);
+      }
+      assert.equal(c.telefone_contato, '', `${rotulo}: telefone de exemplo não vira telefone`);
+      assert.equal(c.senha_demo, '', `${rotulo}: senha de exemplo não vira senha`);
+      assert.equal(c.key_id, 'TESTE123');
+    }
+    // O que a pessoa PREENCHE vence o padrão.
+    const proprio = join(pasta, 'config-proprio.json');
+    writeFileSync(proprio, JSON.stringify({ ...modeloNovo, key_id: 'TESTE123', nome_contato: 'Outra Pessoa', telefone_contato: '+55 21 99999-0000' }));
+    process.env.PUBLICAR_CONFIG = proprio;
+    const c = lerConfig();
+    assert.equal(c.nome_contato, 'Outra Pessoa');
+    assert.equal(c.telefone_contato, '+55 21 99999-0000');
+  } finally {
+    for (const [k, v] of [['PUBLICAR_CONFIG', antes.config], ['PUBLICAR_PADROES', antes.padroes]]) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
 });
 
 test('ascAppId vai só para o perfil "ci", e o production fica intocado', () => {
@@ -233,7 +285,7 @@ test('preparar só com ASC_KEY_ID + ASC_KEY_P8: o resto vem do padroes.json, e a
     assert.equal(config.issuer_id, padroes.issuer_id);
     assert.equal(config.codigo_demo, padroes.codigo_demo);
     assert.equal(config.senha_demo, '');
-    assert.match(saida, /a REVISÃO ainda pede: APPLE_TELEFONE_CONTATO, APPLE_DEMO_PASSWORD/);
+    assert.match(saida, /a REVISÃO ainda pede: APPLE_TELEFONE_CONTATO \(Variable ou Secret\), APPLE_DEMO_PASSWORD \(Secret\)/);
     assert.ok(!saida.includes('PRIVATE KEY'), 'a chave apareceu no log');
   } finally {
     fechar();
@@ -241,7 +293,14 @@ test('preparar só com ASC_KEY_ID + ASC_KEY_P8: o resto vem do padroes.json, e a
 });
 
 test('workflow: o eas recebe o issuer e o time do padroes.json quando não há Secret/Variable', () => {
-  const depoisDoPreparar = WORKFLOW.slice(WORKFLOW.indexOf('run: node publicar/ci.mjs preparar'));
+  const marco = WORKFLOW.indexOf('run: node publicar/ci.mjs preparar');
+  const preparar = WORKFLOW.slice(WORKFLOW.lastIndexOf('- name:', marco), marco);
+  // O "Preparar" lê o issuer de Variable OU Secret (o README promete os dois), e o telefone
+  // (dado pessoal) também — os passos do eas caem na saída dele.
+  assert.match(preparar, /ASC_ISSUER_ID: \$\{\{ secrets\.ASC_ISSUER_ID \|\| vars\.ASC_ISSUER_ID \}\}/);
+  assert.match(preparar, /APPLE_TELEFONE_CONTATO: \$\{\{ vars\.APPLE_TELEFONE_CONTATO \|\| secrets\.APPLE_TELEFONE_CONTATO \}\}/);
+  assert.match(preparar, /APPLE_DEMO_PASSWORD: \$\{\{ secrets\.APPLE_DEMO_PASSWORD \}\}/, 'a senha da demo só de Secret');
+  const depoisDoPreparar = WORKFLOW.slice(marco);
   assert.ok(!/ASC_ISSUER_ID: \$\{\{ secrets\.ASC_ISSUER_ID \}\}/.test(depoisDoPreparar), 'passo do eas com o issuer só do Secret');
   assert.ok(!/APPLE_TEAM_ID: \$\{\{ vars\.APPLE_TEAM_ID \}\}/.test(depoisDoPreparar), 'passo do eas com o time só da Variable');
   assert.equal((depoisDoPreparar.match(/secrets\.ASC_ISSUER_ID \|\| steps\.apple\.outputs\.issuer_id/g) ?? []).length, 4);

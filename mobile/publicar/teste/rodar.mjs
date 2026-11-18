@@ -171,7 +171,7 @@ writeFileSync(
     email_suporte: 'suporte@teste.dev',
     url_suporte: 'https://demo-da-loja.teste.dev',
     nome_contato: 'Dona Teste',
-    telefone_contato: '+55 11 90000-0000',
+    telefone_contato: '+55 11 91234-5678',
     titular_copyright: 'Loja Teste',
     email_demo: 'revisao@teste.dev',
     senha_demo: SENHA_DEMO,
