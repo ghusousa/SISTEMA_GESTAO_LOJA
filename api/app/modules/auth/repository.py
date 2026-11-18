@@ -143,3 +143,10 @@ class AuthRepository:
             delete(LoginAttempt).where(LoginAttempt.created_at < agora - RETENCAO_TENTATIVAS)
         )
         return resultado.rowcount or 0
+
+    async def apagar_tentativas_do_email(self, email: str) -> int:
+        """Todas as tentativas deste e-mail, certas e erradas (a conta dele foi excluída)."""
+        resultado = await self.session.execute(
+            delete(LoginAttempt).where(LoginAttempt.email == email.lower().strip())
+        )
+        return resultado.rowcount or 0

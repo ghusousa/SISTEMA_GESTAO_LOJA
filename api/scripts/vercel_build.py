@@ -282,10 +282,34 @@ def semear(admin: dict[str, str], vendedora: dict[str, str]) -> None:
             cliente.portal.call(engine.dispose)
 
 
+def _garantir_dono_da_demonstracao() -> None:
+    """Demonstração já semeada: o dono das notas da revisão continua lá?
+
+    Na Vercel a conta DEMO_ADMIN_EMAIL não se exclui (ADR-45), mas uma demo de antes da
+    trava pode tê-la perdido — e aí o revisor não entra. O e-mail de quem saiu fica livre, e o
+    `create-admin` é idempotente: cria se falta, não mexe se existe. Nunca derruba o build:
+    o resto da demonstração continua servindo.
+    """
+    try:
+        contas = contas_da_demonstracao(os.environ)
+    except SystemExit as erro:
+        _passo(f"aviso: dono da demonstração não conferido ({erro})")
+        return
+    if contas is None:
+        return
+    admin, _ = contas
+    if asyncio.run(_criar_dono(admin["nome"], admin["email"], admin["senha"])) != 0:
+        _passo(
+            "aviso: o e-mail DEMO_ADMIN_EMAIL está numa conta que não é de dono ativo; "
+            "a conta das notas da revisão não entra como dono (veja Usuários na demo)"
+        )
+
+
 def preparar_demonstracao() -> None:
     estado = asyncio.run(_ler_estado())
     if estado is Estado.SEMEADA:
-        _passo("demonstração já semeada (Auditoria mostra quando): nada a criar nem a semear")
+        _passo("demonstração já semeada (Auditoria mostra quando): nada a semear")
+        _garantir_dono_da_demonstracao()
         return
     if estado is Estado.EM_USO:
         _passo("a loja já tem produtos ou vendas que não vieram da carga: nada a semear")

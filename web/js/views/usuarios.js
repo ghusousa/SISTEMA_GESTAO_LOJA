@@ -26,7 +26,7 @@ import {
   vazio,
 } from '../ui.js';
 import { podeExcluirDaEquipe } from '../exclusao-de-conta.js';
-import { PAPEIS, titulo } from '../permissoes.js';
+import { PAPEIS, papeisQuePossoDar, titulo } from '../permissoes.js';
 import { excluirConta, redefinirSenha } from './usuarios-acoes.js';
 import { camposComissao, ligarCamposComissao, resumoComissao } from './usuarios-comissao.js';
 
@@ -40,10 +40,9 @@ const DESCRICAO = {
 };
 
 // Um gerente administra a equipe, mas não cria nem promove dono: seria virar dono. O
-// servidor recusa de qualquer jeito; aqui a opção nem aparece, para não oferecer um 403.
-const papeisQuePossoDar = PAPEIS.filter(
-  (p) => p !== 'ADMIN' || sessao.get().usuario?.papel === 'ADMIN',
-);
+// servidor recusa de qualquer jeito; aqui a opção nem aparece, para não oferecer um 403. Lido
+// a cada janela, não na carga do módulo: quem entra depois na mesma aba tem outro papel.
+const possoDar = () => papeisQuePossoDar(sessao.get().usuario?.papel);
 
 export async function render(raiz, _params, consulta) {
   const filtros = {
@@ -197,7 +196,7 @@ export async function render(raiz, _params, consulta) {
         <label class="campo">
           <span>Papel</span>
           <select data-papel>
-            ${PAPEIS.filter((p) => papeisQuePossoDar.includes(p)).map(
+            ${PAPEIS.filter((p) => possoDar().includes(p)).map(
               (p) => html`<option value="${p}">${titulo(p)} — ${DESCRICAO[p]}</option>`,
             )}
           </select>
@@ -249,7 +248,7 @@ export async function render(raiz, _params, consulta) {
         <label class="campo">
           <span>Papel ${ajuda('Decide o que a pessoa enxerga: vendedora e supervisora não veem custo, lucro nem despesa. Cancelar venda é do dono e do gerente; auditoria e backup, só do dono.')}</span>
           <select data-papel ${cru(eu ? 'disabled' : '')}>
-            ${PAPEIS.filter((p) => papeisQuePossoDar.includes(p) || p === usuario.papel).map(
+            ${PAPEIS.filter((p) => possoDar().includes(p) || p === usuario.papel).map(
               (p) => html`<option value="${p}" ${cru(usuario.papel === p ? 'selected' : '')}>${titulo(p)}</option>`,
             )}
           </select>

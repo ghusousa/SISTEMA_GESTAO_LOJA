@@ -26,8 +26,10 @@ URL pública. Os caminhos, com os rótulos exatos que a pessoa vê (as notas da 
   confirmação. O gerente faz o mesmo com quem não é dono. Para um afastamento, existe o
   `Desativar`, que se desfaz.
 - **O único dono não se exclui:** a tela responde "Você é o único dono da loja. Passe o papel de
-  dono a outra pessoa em Usuários antes de excluir a sua conta." Na demonstração, a conta de
-  revisão é a única dona — o revisor testa a exclusão numa conta de funcionário criada por ele
+  dono a outra pessoa em Usuários antes de excluir a sua conta." — e o caminho existe no app:
+  `Mais > Usuários > (pessoa) > Mudar papel`. Na demonstração, a conta de revisão é **protegida**
+  no servidor (não se exclui, não perde o papel nem troca de senha: o revisor seguinte precisa
+  entrar com ela) — o revisor testa a exclusão numa conta de funcionário criada por ele
   (`Mais > Usuários > +`): entra com ela e usa `Mais > Minha conta > Excluir minha conta`, ou a
   exclui pela conta de dono em `Mais > Usuários > (pessoa) > Excluir conta`.
 - **Sem acesso ao app** (saiu da loja, perdeu a senha): a página pública
@@ -460,7 +462,7 @@ ACCOUNTS: no sign-up. The owner creates staff accounts in Mais > Usuários > "+"
 ACCOUNT DELETION (5.1.1(v)), inside the app:
 - Any user, own account: Mais > Minha conta > Excluir minha conta. It asks for the password, lists what is deleted and confirms; the sign-in screen then shows "Conta excluída".
 - Owner, a staff account: Mais > Usuários > (pessoa) > Excluir conta ("pessoa" is the person's card).
-The demo account is the shop's only owner, so it cannot delete itself. Please create a staff account and delete it either way.
+The demo account is protected (can't be deleted) for the next reviewer: please create a staff account and delete it either way.
 
 5) EXTERNAL SERVICES: data and sign-in come only from the shop's own server (FastAPI + PostgreSQL, installed by the shop). The demo server runs on Vercel, with Neon (PostgreSQL) and Vercel Blob (item photos). NFC-e (Brazilian e-receipt) is optional, via an accredited issuer (Focus NFe); off in the demo. No payments in the app (the card terminal is separate; the app only records the method), no AI, no third-party sign-in, no analytics or ad SDKs. The network library only checks connectivity (empty request to Google's generate_204).
 

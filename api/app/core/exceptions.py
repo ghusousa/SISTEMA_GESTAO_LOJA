@@ -63,6 +63,18 @@ class OperacaoInvalida(AppError):
     message = "Operação não permitida no estado atual."
 
 
+class ContaDeDemonstracao(OperacaoInvalida):
+    """A conta do dono da demonstração (DEMO_ADMIN_EMAIL, na Vercel) não sai nem muda de
+    acesso: é com ela que o próximo revisor da App Store entra (ADR-45)."""
+
+    code = "CONTA_DE_DEMONSTRACAO"
+    message = (
+        "Esta é a conta da demonstração, que fica no ar para a próxima pessoa que for testar: "
+        "ela não pode ser excluída, perder o papel de dono, ser desativada nem trocar de senha. "
+        "Para testar a exclusão de conta, crie uma conta de funcionário em Usuários e exclua-a."
+    )
+
+
 class PagamentoDivergente(AppError):
     code = "PAGAMENTO_DIVERGENTE"
     http_status = status.HTTP_422_UNPROCESSABLE_CONTENT

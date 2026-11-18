@@ -296,8 +296,10 @@ ${caminho('Mais > Usuários > "+"')} (the round button at the bottom right).</p>
   <li><b>Deleted:</b> the login (e-mail and password), the sessions on every device, a phone paired as barcode reader,
     and the e-mail in the shop's log (masked). <b>Kept:</b> the sales, returns, stock entries and cash counts the person
     registered, with their name — they are the shop's bookkeeping.</li>
-  <li>The shop's only owner cannot delete their own account: the app asks to pass the owner role to someone else in
-    "Usuários" first. The demo account is the only owner, so please create a staff account and delete it either way.</li>
+  <li>The shop's only owner cannot delete their own account: the app asks to pass the owner role to someone else
+    first (${caminho('Mais > Usuários > (pessoa) > Mudar papel')}). The demo account itself is protected on the demo
+    server (it cannot be deleted, demoted or have its password changed), so the next reviewer can still sign in:
+    please create a staff account and delete it either way.</li>
 </ul>
 <h3>User-generated content</h3>
 <p>Item names, photos and notes stay on one shop's server, visible only to that shop's team. There is no publishing,

@@ -99,8 +99,14 @@ publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com o app de ve
   0 = tudo) apaga o velho na faxina do login. São as duas únicas escritas depois do INSERT.
 - **Excluir conta (ADR-45)**: `DELETE /usuarios/me` `{senha}` (errada: 422 `SENHA_INCORRETA`, nunca
   401; único dono: 409) e `DELETE /usuarios/{id}` têm UMA limpeza (`_apagar_conta`); com venda/caixa/
-  estoque (FK RESTRICT) a linha fica só com o nome e `deleted_at`. Autor que some no ato:
+  estoque (FK RESTRICT) a linha fica só com o nome e `deleted_at` (sem e-mail, senha, comissão e
+  meta), e as `login_attempts` do e-mail saem junto (`AuthService.esquecer_tentativas`). O domínio
+  `excluida.example` da marca é recusado no cadastro. Autor que some no ato:
   `congelar_autor(request, user)`. `web/js/exclusao-de-conta.js` ↔ `mobile/src/lib/exclusaoDeConta.ts`.
+  Na Vercel, a conta `DEMO_ADMIN_EMAIL` (a das notas da Apple) não se exclui, não perde o papel, não
+  é desativada nem troca de senha — 409 `CONTA_DE_DEMONSTRACAO`, ANTES da senha (o publicador
+  confere com uma senha aleatória) —, e o Redeploy a recria se faltar. Sem resposta (status 0) a
+  tela não diz "não foi excluída": a próxima tentativa lê o 401 pela renovação (`depoisDaIncerta`).
 - **Força bruta (ADR-24)**: o login conta as falhas recentes por e-mail e por IP
   (`login_attempts`, janela de 15 min) e responde 429 com `Retry-After` quando passa do teto.
   A resposta de e-mail real e falso é idêntica — a trava não vaza se a conta existe, nem pelo

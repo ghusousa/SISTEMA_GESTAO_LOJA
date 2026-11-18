@@ -6,7 +6,7 @@ Thank you for reviewing Gestão de Loja. We resubmitted the app with everything 
 2. Devices and iOS versions tested: in the App Review notes, item 2.
 3 to 7. Purpose and audience, how to set up and access the main features with the demo account, external services, regional differences (none: Brazil only) and regulation (not a regulated industry) are answered in the notes and, in full with screenshots, in the attached "app-review-guide.pdf".
 
-Account deletion is inside the app: any user deletes their own account in Mais > Minha conta > Excluir minha conta, and the owner deletes a staff account in Mais > Usuários > (pessoa) > Excluir conta. The demo account is the shop's only owner, so please create a staff account and delete it.
+Account deletion is inside the app: any user deletes their own account in Mais > Minha conta > Excluir minha conta, and the owner deletes a staff account in Mais > Usuários > (pessoa) > Excluir conta. The demo account itself is protected on the demo server so the next reviewer can sign in, so please create a staff account and delete it.
 
 The demo server and the demo account are in Sign-in information. If anything else is needed, we answer at the contact e-mail in the notes.
 

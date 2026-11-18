@@ -237,7 +237,7 @@ async function conferirAntesDeEnviar({ aparelhos, video, guia, revisaoNaApple, c
   }
   relatorio.feito(
     'Pronto para a revisão: aparelhos testados, gravação de tela, guia em dia e servidor de demonstração conferido ' +
-      '(no ar, conta de dono, código de barras, privacidade, leitor e exclusão de conta)',
+      '(no ar, conta de dono e protegida, código de barras com estoque, privacidade, leitor e exclusão de conta)',
   );
 }
 

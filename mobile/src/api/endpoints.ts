@@ -141,8 +141,8 @@ export const usuarios = {
    * Exclui a própria conta (204). A senha vai no corpo do DELETE; errada, é 422
    * `SENHA_INCORRETA` — nunca 401, que faria o interceptor tentar renovar e deslogar.
    */
-  async excluirMinhaConta(senha: string) {
-    await api.delete('/usuarios/me', { data: { senha } });
+  async excluirMinhaConta(senha: string, { semRenovar = false }: { semRenovar?: boolean } = {}) {
+    await api.delete('/usuarios/me', { data: { senha }, semRenovar });
   },
 };
 

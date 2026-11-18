@@ -138,7 +138,9 @@ async function pedir(metodo, caminho, opcoes = {}) {
       !opcoes.semAuth &&
       !caminho.startsWith('/auth/refresh') &&
       !caminho.startsWith('/auth/login');
-    if (!podeRenovar) throw erro;
+    // `semRenovar`: quem chamou lê o 401 por conta própria (a nova tentativa de "Excluir minha
+    // conta" depois de uma sem resposta, ver `sessaoContinua`).
+    if (!podeRenovar || opcoes.semRenovar) throw erro;
 
     try {
       await renovar();
@@ -173,7 +175,7 @@ export const api = {
   patch: (caminho, corpo) => pedir('PATCH', caminho, { corpo }),
   put: (caminho, corpo) => pedir('PUT', caminho, { corpo }),
   // Corpo só quando a rota pede (a senha do "Excluir minha conta"); o resto vai sem.
-  delete: (caminho, corpo) => pedir('DELETE', caminho, { corpo }),
+  delete: (caminho, corpo, { semRenovar = false } = {}) => pedir('DELETE', caminho, { corpo, semRenovar }),
   upload: (caminho, formData) => pedir('PUT', caminho, { formData }),
 };
 
@@ -195,6 +197,21 @@ export async function sair() {
   }
   accessToken = null;
   sessao.set({ usuario: null, carregando: false });
+}
+
+/**
+ * O servidor ainda reconhece esta sessão? Renova pelo cookie (a mesma fila das outras telas) e
+ * responde `false` só quando o servidor RECUSA o refresh — sem o aviso de "sessão expirada":
+ * quem perguntou decide o que dizer (a conta que já saiu, ADR-45). Rede caída rejeita.
+ */
+export async function sessaoContinua() {
+  try {
+    await renovar();
+    return true;
+  } catch (erro) {
+    if (refreshRecusado(erro)) return false;
+    throw erro;
+  }
 }
 
 /**

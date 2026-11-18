@@ -13,8 +13,10 @@ import test from 'node:test';
 
 import {
   AVISO_CONTA_EXCLUIDA,
+  depoisDaIncerta,
   podeExcluirDaEquipe,
   recusaDaExclusao,
+  SEM_RESPOSTA,
   textosDaExclusao,
 } from '../../web/js/exclusao-de-conta.js';
 
@@ -72,12 +74,24 @@ test('o dono único lê o caminho que o servidor manda', () => {
   assert.deepEqual(r, { onde: 'geral', texto: frase });
 });
 
-test('sem rede, diz que a conta NÃO foi excluída', () => {
+test('sem resposta, NÃO afirma que a conta continua: o pedido pode ter chegado', () => {
+  // Tempo esgotado ou conexão que caiu depois do envio: o servidor pode ter excluído.
   for (const falha of [{ status: 0, code: 'SEM_REDE', message: 'x' }, {}]) {
     const r = recusaDaExclusao(falha);
-    assert.equal(r.onde, 'geral');
-    assert.match(r.texto, /não foi excluída/);
+    assert.deepEqual(r, { onde: 'geral', texto: SEM_RESPOSTA, incerta: true });
+    assert.match(r.texto, /pode ter sido excluída ou não/);
+    assert.doesNotMatch(r.texto, /não foi excluída|continua como estava/);
   }
+  // As recusas de verdade não são incertas: o servidor respondeu.
+  assert.equal(recusaDaExclusao({ status: 422, code: 'SENHA_INCORRETA', message: 'x' }).incerta, undefined);
+  assert.equal(recusaDaExclusao({ status: 409, code: 'OPERACAO_INVALIDA', message: 'x' }).incerta, undefined);
+});
+
+test('depois de uma tentativa sem resposta, o 401 é desempatado pela renovação', () => {
+  // O servidor recusou o refresh: a exclusão levou as sessões — a entrada diz "Conta excluída".
+  assert.equal(depoisDaIncerta(false), 'excluida');
+  // Renovou: era só o crachá vencido, e a conta continua — pede a exclusão de novo.
+  assert.equal(depoisDaIncerta(true), 'pedir-de-novo');
 });
 
 test('erro sem frase do servidor não fica mudo', () => {

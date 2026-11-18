@@ -136,6 +136,11 @@ class Settings(BaseSettings):
     vercel_branch_url: str = ""
     vercel_project_production_url: str = ""
     vercel_git_commit_sha: str = ""
+    #: O dono da demonstração (a mesma variável que o build usa para criá-lo, ADR-42). Na
+    #: Vercel, a conta deste e-mail não se exclui, não perde o papel, não é desativada e não
+    #: troca de senha: é a conta das notas da revisão da App Store, e o revisor seguinte
+    #: precisa entrar com ela (ADR-45). Fora da Vercel não vale nada.
+    demo_admin_email: str = ""
 
     @field_validator("cors_origins", mode="before")
     @classmethod

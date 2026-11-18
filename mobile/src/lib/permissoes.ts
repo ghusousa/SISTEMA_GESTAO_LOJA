@@ -90,3 +90,25 @@ export function pode(papel: Papel | undefined, capacidade: Capacidade): boolean 
 
 export const titulo = (papel: Papel | undefined): string =>
   papel ? (TITULO[papel] ?? papel) : '';
+
+/**
+ * Os papéis que `meuPapel` pode dar a alguém — a régua de `_barrar_escalada` no servidor:
+ * só o dono cria ou promove outro dono. Do mais baixo ao mais alto, a escada da loja.
+ */
+export function papeisQuePossoDar(meuPapel: Papel | undefined): Papel[] {
+  const escada: Papel[] = ['VENDEDOR', 'SUPERVISORA', 'GERENTE', 'ADMIN'];
+  return escada.filter((p) => p !== 'ADMIN' || meuPapel === 'ADMIN');
+}
+
+/**
+ * Em quem a lista da equipe oferece "Mudar papel": quem administra a equipe, nunca no próprio
+ * papel (a loja não fica sem dono por um toque), e conta de dono só o dono mexe. É o caminho do
+ * dono único que quer sair: passa o papel de dono a outra pessoa antes (ADR-45).
+ */
+export function possoMudarPapel(
+  eu: { id: number; papel: Papel } | null | undefined,
+  alvo: { id: number; papel: Papel } | null | undefined,
+): boolean {
+  if (!eu || !alvo || eu.id === alvo.id || !pode(eu.papel, PODE.GERIR_USUARIOS)) return false;
+  return alvo.papel !== 'ADMIN' || eu.papel === 'ADMIN';
+}

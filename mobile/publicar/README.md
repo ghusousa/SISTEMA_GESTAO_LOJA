@@ -46,17 +46,26 @@ As notas citam a lista e o vídeo por marcadores (`{{APARELHOS_TESTADOS}}`, `{{A
 - não há vídeo: nem `--video-revisao`, nem um já anexado (e processado) à revisão desta versão;
 - o guia PDF commitado não é o das entradas de agora (texto, lista de aparelhos, prints);
 - o servidor de demonstração não está como as notas dizem: `GET /health` no ar; a conta demo
-  entra e é de **dono**; o código de barras demo existe; a política de privacidade abre; e há
-  rota para o leitor pelo celular e para a exclusão da própria conta (deploy na mesma versão).
-  Tudo pela API pública do sistema, a mesma do app; a sessão aberta para conferir é encerrada,
-  e a conferência da exclusão manda corpo vazio — a validação recusa antes de a rota rodar, e
-  nada é excluído. Nenhuma mensagem leva a senha.
+  entra e é de **dono**; o código de barras demo existe e tem ao menos 3 peças em estoque (as
+  notas mandam vender, e o PDV recusa peça sem estoque: reponha pela Entrada na demo); a
+  política de privacidade abre; há rota para o leitor pelo celular e para a exclusão da própria
+  conta (deploy na mesma versão); e a conta demo é **protegida** lá (ADR-45: não se exclui, não
+  perde o papel nem troca de senha — senão o revisor que cria outro dono apaga a conta das notas
+  no meio da revisão). Tudo pela API pública do sistema, a mesma do app; a sessão aberta para
+  conferir é encerrada. A conferência da exclusão manda corpo vazio (a validação recusa antes de
+  a rota rodar) e, para a proteção, uma senha aleatória: a recusa da conta da demonstração vem
+  antes de a senha ser conferida, e uma senha que nunca confere não exclui nada. Nenhuma
+  mensagem leva a senha da demo. Login recusado (401): confira `APPLE_EMAIL_DEMO` e
+  `APPLE_DEMO_PASSWORD`; se a conta foi excluída lá antes da proteção, um Redeploy da demo a
+  recria com `DEMO_ADMIN_EMAIL`/`DEMO_ADMIN_SENHA` da Vercel (que tem de ser o mesmo e-mail).
 
 O que as notas e o guia dizem da **exclusão de conta** (5.1.1(v)) é o que o app faz: qualquer
 pessoa em `Mais > Minha conta > Excluir minha conta` (pede a senha, diz o que some e o que fica,
 confirma; a entrada mostra "Conta excluída"); o dono, a conta de alguém da equipe, em
-`Mais > Usuários > (pessoa) > Excluir conta`. A conta demo é a única dona e não se exclui — as
-notas pedem ao revisor que crie uma conta de funcionário e a exclua. A ficha **para antes de
+`Mais > Usuários > (pessoa) > Excluir conta`. O dono único não se exclui: passa antes o papel de
+dono a outra pessoa (`Mais > Usuários > (pessoa) > Mudar papel`, também no app). A conta demo é
+protegida no servidor de demonstração — as notas pedem ao revisor que crie uma conta de
+funcionário e a exclua. A ficha **para antes de
 falar com a Apple** se citar tela que o app deste commit não tem (`TELAS_CITADAS` em
 `ficha.mjs`: rótulo citado → arquivo do app que o mostra; rótulo novo nas notas = uma linha lá).
 

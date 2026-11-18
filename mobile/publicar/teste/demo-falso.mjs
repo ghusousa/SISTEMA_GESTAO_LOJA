@@ -3,10 +3,10 @@
  * antes de mandar para a revisão (servidor-demo.mjs), respondendo no formato do sistema
  * ({code, message, detail}; 404 genérico do FastAPI quando a rota não existe no deploy).
  *
- * `opcoes` liga as falhas: senha errada, conta que não é de dono, código que não existe,
- * deploy sem o leitor ou sem a exclusão da própria conta, privacidade fora, servidor fora.
- * `chamadas` guarda o que chegou — o teste confere que ninguém mandou uma senha para a
- * rota de excluir a própria conta.
+ * `opcoes` liga as falhas: senha errada, conta que não é de dono, código que não existe ou
+ * sem estoque, deploy sem o leitor, sem a exclusão da própria conta ou sem a proteção da conta
+ * demo, privacidade fora, servidor fora. `chamadas` guarda o que chegou — o teste confere que
+ * ninguém mandou a senha DA DEMO para a rota de excluir a própria conta (e que nada saiu).
  */
 
 import { createServer } from 'node:http';
@@ -18,6 +18,8 @@ const PADRAO = {
   codigos: ['7890000000000'],
   semLeitor: false, // deploy anterior ao ADR-43
   semExclusao: false, // deploy anterior ao ADR-45: /usuarios/me cai na rota /usuarios/{id}
+  protegida: true, // a conta demo não se exclui (CONTA_DE_DEMONSTRACAO antes da senha)
+  saldo: 12, // peças do código demo em estoque
   privacidade: 200,
   fora: false, // /health devolve 503
 };
@@ -72,7 +74,7 @@ export function subirDemoFalso(opcoes = {}) {
       if (codigo && req.method === 'GET') {
         const pedido = decodeURIComponent(codigo[1]);
         return o.codigos.includes(pedido)
-          ? json(res, 200, { variante_id: 1, produto: 'Camiseta Básica', codigo_barras: pedido, preco_venda: '49.90', saldo: 12 })
+          ? json(res, 200, { variante_id: 1, produto: 'Camiseta Básica', codigo_barras: pedido, preco_venda: '49.90', saldo: o.saldo })
           : json(res, 404, { code: 'NAO_ENCONTRADO', message: 'Código não encontrado.', detail: {} });
       }
       if (/^\/api\/v1\/leitor\/pareamentos\/\d+$/.test(caminho) && req.method === 'GET') {
@@ -87,7 +89,13 @@ export function subirDemoFalso(opcoes = {}) {
         if (!corpo?.senha) {
           return json(res, 422, { code: 'VALIDACAO', message: 'Dados inválidos.', detail: { campos: [{ campo: 'senha', erro: 'Field required' }] } });
         }
-        // Com senha, a demo de verdade excluiria: o publicador NUNCA pode chegar aqui.
+        if (o.protegida) {
+          return json(res, 409, { code: 'CONTA_DE_DEMONSTRACAO', message: 'Esta é a conta da demonstração…', detail: {} });
+        }
+        if (corpo.senha !== o.senha) {
+          return json(res, 422, { code: 'SENHA_INCORRETA', message: 'Senha incorreta. A conta continua como estava.', detail: {} });
+        }
+        // Com a senha certa, a demo de verdade excluiria: o publicador NUNCA pode chegar aqui.
         chamadas.push({ metodo: 'EXCLUIU A CONTA', caminho, corpo: null });
         res.writeHead(204);
         return res.end();

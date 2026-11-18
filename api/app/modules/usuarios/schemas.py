@@ -7,6 +7,11 @@ from app.modules.usuarios.models import Papel
 
 SENHA_MIN = 8
 
+#: Domínio do e-mail que marca a conta excluída que ficou para segurar o histórico
+#: (`conta-excluida-<id>@excluida.example`, ADR-45). É da loja, não de alguém: o cadastro
+#: recusa, senão um endereço ocupado antes travaria a exclusão daquela conta.
+DOMINIO_DA_CONTA_EXCLUIDA = "excluida.example"
+
 
 class UsuarioOut(BaseModel):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
@@ -37,6 +42,16 @@ class UsuarioCreate(BaseModel):
     @classmethod
     def _limpar(cls, v: str) -> str:
         return v.strip()
+
+    @field_validator("email")
+    @classmethod
+    def _dominio_reservado(cls, v: str) -> str:
+        if v.strip().lower().endswith(f"@{DOMINIO_DA_CONTA_EXCLUIDA}"):
+            raise ValueError(
+                f"o domínio {DOMINIO_DA_CONTA_EXCLUIDA} é reservado às contas excluídas; "
+                "use o e-mail da pessoa"
+            )
+        return v
 
 
 class UsuarioUpdate(BaseModel):

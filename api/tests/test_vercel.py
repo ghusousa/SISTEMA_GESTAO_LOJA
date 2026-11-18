@@ -459,6 +459,25 @@ async def test_build_de_producao_migra_e_semeia_uma_vez_so(
     assert "já semeada" in de_novo.stdout
     assert await _contagens() == antes
 
+    # A conta do dono da demo excluída numa demo de antes da trava (a linha fica, presa às
+    # vendas, com o e-mail de marca): o redeploy a recria, e o revisor volta a entrar.
+    await _consultar(
+        banco_da_vercel,
+        "UPDATE users SET email = 'conta-excluida-' || id || '@excluida.example', "
+        "is_active = false, deleted_at = now() WHERE email = 'dono@demo.com'",
+    )
+    recriou = _rodar_build(tmp_path, **env)
+    assert recriou.returncode == 0, (recriou.stdout + recriou.stderr)[-3000:]
+    assert SENHA_DO_DONO not in recriou.stdout + recriou.stderr
+    dono = await _consultar(
+        banco_da_vercel,
+        "SELECT role, is_active, password_hash FROM users "
+        "WHERE email = 'dono@demo.com' AND deleted_at IS NULL",
+    )
+    assert len(dono) == 1 and dono[0]["role"] == "ADMIN" and dono[0]["is_active"]
+    assert verificar_senha(SENHA_DO_DONO, dono[0]["password_hash"])
+    assert (await _contagens())[:2] == antes[:2]
+
 
 def _ambiente_de_producao(url_neon: str, **extra: str) -> dict[str, str]:
     return dict(

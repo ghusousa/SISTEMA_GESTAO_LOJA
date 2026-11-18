@@ -292,11 +292,16 @@ export const avisarErro = (erro) =>
   aviso(erro?.textoAmigavel || erro?.message || 'Não foi possível concluir.', 'erro');
 
 /**
- * Modal. `render(fechar)` devolve o HTML do corpo; `aoAbrir(elemento, fechar)` recebe o nó
- * já na tela para ligar os eventos. Resolve com o valor passado a `fechar(valor)`.
+ * Modal. `render(fechar)` devolve o HTML do corpo; `aoAbrir(elemento, fechar, travar)` recebe
+ * o nó já na tela para ligar os eventos. Resolve com o valor passado a `fechar(valor)`.
+ * `travar(true)` segura o modal aberto (Esc, ✕ e clique fora não fecham) enquanto um pedido
+ * roda; `fechar` continua valendo para quem chamou.
  */
 export function modal({ titulo, render, aoAbrir, largura = '520px' }) {
   return new Promise((resolve) => {
+    // Preso: Esc, ✕ e clique fora não fecham. É para o pedido que está no ar (excluir conta):
+    // fechado no meio, a resposta que chegasse depois não teria mais a quem avisar.
+    let preso = false;
     const fundo = document.createElement('div');
     fundo.className = 'modal-fundo';
     fundo.innerHTML = html`
@@ -321,19 +326,27 @@ export function modal({ titulo, render, aoAbrir, largura = '520px' }) {
     const aoTeclar = (e) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
-        fechar(undefined);
+        if (!preso) fechar(undefined);
       }
+    };
+    const botaoFechar = fundo.querySelector('[data-fechar]');
+    /** `travar(true)` enquanto um pedido roda; `travar(false)` quando ele volta. */
+    const travar = (sim) => {
+      preso = Boolean(sim);
+      botaoFechar.disabled = preso;
     };
 
     fundo.querySelector('.modal__corpo').innerHTML = render ? render(fechar) : '';
-    fundo.querySelector('[data-fechar]').addEventListener('click', () => fechar(undefined));
+    botaoFechar.addEventListener('click', () => {
+      if (!preso) fechar(undefined);
+    });
     fundo.addEventListener('mousedown', (e) => {
-      if (e.target === fundo) fechar(undefined);
+      if (e.target === fundo && !preso) fechar(undefined);
     });
     document.addEventListener('keydown', aoTeclar);
     document.body.append(fundo);
 
-    aoAbrir?.(fundo.querySelector('.modal__corpo'), fechar);
+    aoAbrir?.(fundo.querySelector('.modal__corpo'), fechar, travar);
     const primeiro = fundo.querySelector(
       'input:not([type=hidden]), select, textarea, button:not([data-fechar])',
     );

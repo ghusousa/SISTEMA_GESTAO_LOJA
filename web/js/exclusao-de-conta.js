@@ -53,21 +53,32 @@ export function podeExcluirDaEquipe(eu, alvo) {
   return alvo.papel !== 'ADMIN' || eu.papel === 'ADMIN';
 }
 
+/** O que a tela diz quando o pedido ficou sem resposta: nem "excluída", nem "não excluída". */
+export const SEM_RESPOSTA =
+  'Sem resposta do servidor: a conta pode ter sido excluída ou não. Tente de novo — se ela já ' +
+  'tiver saído, o app volta para a entrada.';
+
 /**
  * Onde mostrar a recusa do "Excluir minha conta": `'senha'` vai embaixo do campo (a pessoa
  * só redigita); `'geral'` vai em destaque — o dono único lê ali o caminho que o servidor
  * manda (passar o papel de dono antes). Nada aqui desloga: a senha errada é 422, não 401.
+ * `status` 0 é o pedido que ficou sem resposta: o servidor pode ter excluído e a resposta é
+ * que se perdeu (`incerta`; a próxima tentativa lê o 401 com `depoisDaIncerta`).
  */
 export function recusaDaExclusao({ status = 0, code = '', message = '' } = {}) {
   if (code === 'SENHA_INCORRETA') {
     return { onde: 'senha', texto: message || 'Senha incorreta. A conta continua como estava.' };
   }
   if (code === 'VALIDACAO') return { onde: 'senha', texto: 'Digite a sua senha para confirmar.' };
-  if (!status || code === 'SEM_REDE') {
-    return {
-      onde: 'geral',
-      texto: 'Sem conexão com o servidor. A conta não foi excluída; tente de novo.',
-    };
-  }
+  if (!status || code === 'SEM_REDE') return { onde: 'geral', texto: SEM_RESPOSTA, incerta: true };
   return { onde: 'geral', texto: message || 'Não deu para excluir a conta. Ela continua como estava.' };
+}
+
+/**
+ * A tentativa anterior ficou sem resposta, e esta levou 401: o crachá que venceu, ou a conta
+ * que já saiu com as sessões. A renovação (sem o aviso de "sessão expirada") desempata:
+ * recusada → a conta saiu; renovou → pede a exclusão de novo.
+ */
+export function depoisDaIncerta(sessaoContinua) {
+  return sessaoContinua ? 'pedir-de-novo' : 'excluida';
 }

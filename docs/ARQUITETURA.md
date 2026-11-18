@@ -1895,6 +1895,28 @@ vendeu; as notas da revisão citam "Mais > Minha conta > Excluir minha conta" (q
 banco como o nome de quem vendeu — é o que a página pública de exclusão (`/exclusao-de-dados`) e a
 política dizem que fica, e por quê. A confirmação no app é um `Modal` do próprio app
 (`components/Confirmacao.tsx`), não `Alert.alert`, que não aparece no export web.
+*Revisão (o que a primeira versão deixava para trás):* (6) **O caminho do dono único existe no
+celular**: a recusa manda passar o papel de dono a outra pessoa em Usuários, e a lista da equipe do
+app só tinha comissão, Desativar e Excluir — trocar papel era só no web. Agora `Mais › Usuários ›
+(pessoa) › Mudar papel` (`mais/usuario-papel.tsx`, `PATCH /usuarios/{id}` `{papel}`), com a régua
+do servidor espelhada em `possoMudarPapel`/`papeisQuePossoDar` (`lib/permissoes.ts` ↔
+`js/permissoes.js`). (7) **O que a conta deixava**: a linha que fica perde também comissão e meta
+(a remuneração da pessoa; a comissão de cada venda já está congelada nela, ADR-37), e as
+`login_attempts` do e-mail saem na mesma transação (`AuthService.esquecer_tentativas`) — o login
+grava o e-mail por extenso e a faxina só leva o de mais de um dia. O domínio da marca
+(`excluida.example`) é recusado no cadastro: ocupado antes, ele fazia a exclusão daquela conta
+estourar a UNIQUE (500) para sempre. (8) **Sem resposta não é "não excluída"**: o pedido que passa
+do tempo (15 s no app) ou perde a conexão pode ter sido commitado; a tela diz que não dá para saber
+e, na tentativa seguinte, lê o 401 sem o desvio de "sessão expirada" (`semRenovar`) e desempata pela
+renovação (`depoisDaIncerta`): o servidor recusou o refresh → a conta saiu, e a entrada diz "Conta
+excluída". No web, o modal da exclusão fica preso enquanto o pedido roda (`travar` do `modal`):
+fechado no meio, a resposta não tinha mais a quem avisar. (9) **A conta da demonstração**: na
+Vercel, a conta `DEMO_ADMIN_EMAIL` (a das notas da revisão) não se exclui, não perde o papel, não
+é desativada e não troca de senha — 409 `CONTA_DE_DEMONSTRACAO`, antes de conferir a senha. Sem
+isso, o revisor que criasse outro dono e voltasse em "Excluir minha conta" apagava a conta das
+notas no meio da revisão. O publicador confere a trava com uma senha aleatória (que nunca confere
+e não exclui nada) e recusa o envio sem ela; e o Redeploy recria o dono se uma demo de antes da
+trava o perdeu (`_garantir_dono_da_demonstracao`, idempotente).
 
 ## 4. Contratos de API
 
@@ -1919,6 +1941,7 @@ Erros: `{"code": "...", "message": "...", "detail": {...}}`.
 | `LEITOR_CODIGO_INVALIDO` | 404 | código do leitor pelo celular inexistente, vencido, já aceito por outro ou encerrado — a MESMA resposta (ADR-43) |
 | `LEITOR_DESLIGADO` | 409 | bipe num pareamento que não está ATIVO; `detail.status` diz qual (ADR-43) |
 | `LEITOR_FILA_CHEIA` | 409 | 100 bipes esperando o computador retirar (ADR-43) |
+| `CONTA_DE_DEMONSTRACAO` | 409 | na Vercel, excluir, rebaixar, desativar ou trocar a senha da conta `DEMO_ADMIN_EMAIL` (ADR-45) — antes de conferir a senha |
 
 ### 4.1 `auth`
 | método | rota | papel | descrição |
@@ -1936,7 +1959,7 @@ Desativar = `PATCH {ativo:false}`. Bootstrap do primeiro admin: `python -m app.c
 
 | método | rota | papel | notas |
 |---|---|---|---|
-| DELETE | `/usuarios/me` | qualquer logado | `{senha}` → 204 e apaga o cookie do refresh. Exclui a PRÓPRIA conta (ADR-45). Senha errada → **422 `SENHA_INCORRETA`** (nunca 401: derrubaria a sessão; nada muda). Sem senha → 422 `VALIDACAO`. Único dono ativo → **409 `OPERACAO_INVALIDA`** "Você é o único dono da loja. Passe o papel de dono a outra pessoa em Usuários antes de excluir a sua conta." Diário: `USUARIO_EXCLUIU_PROPRIA_CONTA`, "Excluiu a própria conta", sem `user_id` e com nome/papel de antes |
+| DELETE | `/usuarios/me` | qualquer logado | `{senha}` → 204 e apaga o cookie do refresh. Exclui a PRÓPRIA conta (ADR-45). Senha errada → **422 `SENHA_INCORRETA`** (nunca 401: derrubaria a sessão; nada muda). Sem senha → 422 `VALIDACAO`. Único dono ativo → **409 `OPERACAO_INVALIDA`** "Você é o único dono da loja. Passe o papel de dono a outra pessoa em Usuários antes de excluir a sua conta." Na Vercel, a conta `DEMO_ADMIN_EMAIL` → **409 `CONTA_DE_DEMONSTRACAO`**, antes da senha. Diário: `USUARIO_EXCLUIU_PROPRIA_CONTA`, "Excluiu a própria conta", sem `user_id` e com nome/papel de antes |
 | DELETE | `/usuarios/{id}` | A | 204. Exclui a conta de OUTRA pessoa (a mesma limpeza). A própria → 409 (o caminho é `/usuarios/me`, com a senha); o último dono ativo → 409; gerente em dono → 403; conta já excluída → 404 |
 
 As duas exclusões fazem a mesma limpeza (`UsuarioService._apagar_conta`): sessões derrubadas,

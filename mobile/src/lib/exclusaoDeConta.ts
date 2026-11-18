@@ -75,12 +75,23 @@ export interface Recusa {
   /** `'senha'`: embaixo do campo (a pessoa só redigita); `'geral'`: em destaque. */
   onde: 'senha' | 'geral';
   texto: string;
+  /**
+   * Sem resposta do servidor (`status` 0: rede que caiu, tempo esgotado): o pedido pode ter
+   * chegado e a conta, saído. A próxima tentativa lê o 401 com `depoisDaIncerta`.
+   */
+  incerta?: boolean;
 }
+
+/** O que a tela diz quando o pedido ficou sem resposta: nem "excluída", nem "não excluída". */
+export const SEM_RESPOSTA =
+  'Sem resposta do servidor: a conta pode ter sido excluída ou não. Tente de novo — se ela já ' +
+  'tiver saído, o app volta para a entrada.';
 
 /**
  * Onde mostrar a recusa do "Excluir minha conta". O dono único lê, em destaque, o caminho que
  * o servidor manda (passar o papel de dono antes). Nada aqui desloga: a senha errada é 422,
- * não 401. `status` 0 é a rede que caiu antes de o servidor responder.
+ * não 401. `status` 0 é o pedido que ficou sem resposta — e aí não dá para dizer que a conta
+ * continua: o servidor pode ter excluído e a resposta é que se perdeu.
  */
 export function recusaDaExclusao({
   status = 0,
@@ -91,11 +102,17 @@ export function recusaDaExclusao({
     return { onde: 'senha', texto: message || 'Senha incorreta. A conta continua como estava.' };
   }
   if (code === 'VALIDACAO') return { onde: 'senha', texto: 'Digite a sua senha para confirmar.' };
-  if (!status || code === 'SEM_REDE') {
-    return {
-      onde: 'geral',
-      texto: 'Sem conexão com o servidor. A conta não foi excluída; tente de novo.',
-    };
-  }
+  if (!status || code === 'SEM_REDE') return { onde: 'geral', texto: SEM_RESPOSTA, incerta: true };
   return { onde: 'geral', texto: message || 'Não deu para excluir a conta. Ela continua como estava.' };
+}
+
+/**
+ * A tentativa anterior ficou sem resposta, e esta levou 401. Pode ser o crachá que venceu no
+ * meio — ou a conta que já saiu e levou as sessões junto. Quem desempata é a renovação da
+ * sessão, feita sem o desvio de "sessão expirada": o servidor recusou o refresh
+ * (`sessaoContinua` false) → a conta saiu, e a entrada diz "Conta excluída"; renovou → era só
+ * o crachá, e a exclusão é pedida de novo.
+ */
+export function depoisDaIncerta(sessaoContinua: boolean): 'excluida' | 'pedir-de-novo' {
+  return sessaoContinua ? 'pedir-de-novo' : 'excluida';
 }

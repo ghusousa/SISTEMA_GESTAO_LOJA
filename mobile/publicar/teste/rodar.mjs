@@ -361,7 +361,15 @@ await cenario(
       ['GET /health', 'POST /api/v1/auth/login', 'GET /api/v1/variantes/codigo-barras/7890000000000', 'GET /api/v1/leitor/pareamentos/0', 'DELETE /api/v1/usuarios/me', 'POST /api/v1/auth/logout', 'GET /privacidade'].every((c) => demo.includes(c)),
       'servidor de demonstração conferido: no ar, login de dono, código, leitor, exclusão, privacidade (e a sessão encerrada)',
     );
-    conferir(!DEMO.chamadas.some((c) => c.metodo === 'EXCLUIU A CONTA' || c.corpo?.senha && c.caminho === '/api/v1/usuarios/me'), 'a conferência da exclusão nunca manda senha (não exclui nada)');
+    const exclusoes = DEMO.chamadas.slice(antesDaDemo).filter((c) => c.metodo === 'DELETE' && c.caminho === '/api/v1/usuarios/me');
+    conferir(
+      exclusoes.some((c) => typeof c.corpo?.senha === 'string') && saida.includes('é protegida lá'),
+      'a conta demo é conferida como protegida (a recusa da demo, com uma senha que nunca confere)',
+    );
+    conferir(
+      !DEMO.chamadas.some((c) => c.metodo === 'EXCLUIU A CONTA' || (c.caminho === '/api/v1/usuarios/me' && c.corpo?.senha === SENHA_DEMO)),
+      'a conferência da exclusão nunca manda a senha da demo (não exclui nada)',
+    );
     conferir(e.preco === 'PP-USA-0', 'preço grátis');
     conferir(e.buildPreso.VER1 === 'B1', 'build da versão preso');
     conferir(e.envios.length === 1 && e.envios[0].estado === 'WAITING_FOR_REVIEW' && itensDoEnvio(e.envios[0]) === 'VER1', 'ENVIADO para revisão');
@@ -545,7 +553,9 @@ if (!REAIS) {
   await cenario('Servidor de demonstração fora do combinado: --enviar recusado, com cada problema', async ({ conferir, guardar }) => {
     const casos = [
       [{ papel: 'GERENTE', codigos: [], semLeitor: true, semExclusao: true, privacidade: 404 }, ['não de dono', 'não existe no servidor de demonstração', 'não tem o leitor pelo celular', 'não tem a exclusão da própria conta', 'política de privacidade da ficha não abre'], 'conta não-dono, código, leitor, exclusão e privacidade'],
-      [{ senha: 'outra-senha' }, ['não entra no servidor de demonstração', 'APPLE_DEMO_PASSWORD'], 'senha da demo errada'],
+      [{ senha: 'outra-senha' }, ['não entra no servidor de demonstração', 'APPLE_DEMO_PASSWORD', 'Redeploy da demo a recria'], 'senha da demo errada (ou conta excluída lá)'],
+      [{ protegida: false }, ['não está protegida no servidor de demonstração', 'DEMO_ADMIN_EMAIL'], 'conta demo sem a proteção'],
+      [{ saldo: 2 }, ['tem 2 peça(s) em estoque', 'Reponha pela Entrada'], 'código demo quase sem estoque'],
       [{ fora: true }, ['não respondeu ao /health'], 'servidor fora do ar'],
     ];
     for (const [opcoes, frases, rotulo] of casos) {

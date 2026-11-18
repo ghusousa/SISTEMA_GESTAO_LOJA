@@ -10,7 +10,15 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { Papel } from '@/api/tipos';
-import { PAPEIS, PODE, pode, titulo, type Capacidade } from './permissoes';
+import {
+  PAPEIS,
+  PODE,
+  papeisQuePossoDar,
+  pode,
+  possoMudarPapel,
+  titulo,
+  type Capacidade,
+} from './permissoes';
 
 const DONO: Papel = 'ADMIN';
 const GERENTE: Papel = 'GERENTE';
@@ -75,4 +83,26 @@ test('todo papel tem um título legível', () => {
     assert.match(titulo(papel), /^[A-ZÀ-Ú]/);
   }
   assert.equal(titulo(undefined), '');
+});
+
+test('quem dá qual papel: só o dono dá "Dono"; o gerente dá os outros três', () => {
+  assert.deepEqual(papeisQuePossoDar(DONO), ['VENDEDOR', 'SUPERVISORA', 'GERENTE', 'ADMIN']);
+  assert.deepEqual(papeisQuePossoDar(GERENTE), ['VENDEDOR', 'SUPERVISORA', 'GERENTE']);
+  assert.deepEqual(papeisQuePossoDar(undefined), ['VENDEDOR', 'SUPERVISORA', 'GERENTE']);
+});
+
+test('"Mudar papel" na equipe: nunca em si mesmo, dono só pelo dono, e só para quem administra', () => {
+  const dona = { id: 1, papel: DONO };
+  const outroDono = { id: 2, papel: DONO };
+  const gerente = { id: 3, papel: GERENTE };
+  const vendedora = { id: 4, papel: VENDEDORA };
+  const supervisora = { id: 5, papel: SUPERVISORA };
+  // O caminho do dono único que quer excluir a conta: passa o papel de dono à gerente.
+  assert.equal(possoMudarPapel(dona, gerente), true);
+  assert.equal(possoMudarPapel(dona, outroDono), true);
+  assert.equal(possoMudarPapel(dona, dona), false, 'o próprio papel não se troca');
+  assert.equal(possoMudarPapel(gerente, vendedora), true);
+  assert.equal(possoMudarPapel(gerente, dona), false, 'gerente não mexe em dono');
+  assert.equal(possoMudarPapel(supervisora, vendedora), false, 'supervisora não administra a equipe');
+  assert.equal(possoMudarPapel(null, vendedora), false);
 });

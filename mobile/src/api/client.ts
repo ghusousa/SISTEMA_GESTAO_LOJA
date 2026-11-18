@@ -31,6 +31,17 @@ export const api: AxiosInstance = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
+declare module 'axios' {
+  interface AxiosRequestConfig {
+    /**
+     * O 401 desta requisição volta direto para quem chamou, sem renovar nem deslogar por
+     * "sessão vencida". Só a nova tentativa de "Excluir minha conta" depois de uma sem
+     * resposta usa: ali o 401 pode querer dizer que a conta já saiu (`sessaoContinua`).
+     */
+    semRenovar?: boolean;
+  }
+}
+
 type Pendente = InternalAxiosRequestConfig & { _jaTentouRefresh?: boolean };
 
 let refreshEmAndamento: Promise<string | null> | null = null;
@@ -82,7 +93,13 @@ api.interceptors.response.use(
     const ehLoginOuRefresh =
       original?.url?.includes('/auth/login') || original?.url?.includes('/auth/refresh');
 
-    if (erro.response?.status !== 401 || !original || original._jaTentouRefresh || ehLoginOuRefresh) {
+    if (
+      erro.response?.status !== 401 ||
+      !original ||
+      original._jaTentouRefresh ||
+      original.semRenovar ||
+      ehLoginOuRefresh
+    ) {
       return Promise.reject(erro);
     }
 
@@ -111,6 +128,18 @@ api.interceptors.response.use(
     return api(original);
   },
 );
+
+/**
+ * O servidor ainda reconhece esta sessão? Renova o crachá pelo mesmo mutex do interceptor e
+ * responde `false` só quando o servidor RECUSA o refresh (401/403) — sem deslogar: quem
+ * perguntou decide o que dizer (a conta que já saiu, ADR-45). Rede caída rejeita.
+ */
+export async function sessaoContinua(): Promise<boolean> {
+  refreshEmAndamento ??= renovarSessao().finally(() => {
+    refreshEmAndamento = null;
+  });
+  return (await refreshEmAndamento) !== null;
+}
 
 /** Extrai a mensagem que o usuário deve ler. A API sempre manda `message` em português. */
 export function mensagemDoErro(erro: unknown, padrao = 'Não foi possível concluir.'): string {

@@ -79,6 +79,17 @@ class AuthService:
         await self.session.commit()
         return tokens
 
+    async def esquecer_tentativas(self, email: str) -> int:
+        """A conta deste e-mail foi excluída: as tentativas de login dela saem junto, na mesma
+        transação de quem chamou (sem commit aqui).
+
+        O login grava o e-mail por extenso, certo ou errado, e a faxina só leva o que passou
+        de um dia — e só roda num login certo. Sem isto, o e-mail de quem saiu ficava dias na
+        tabela, e a exclusão promete que ele deixa de existir no sistema (ADR-45). A trava de
+        força bruta não perde nada: não há mais conta para proteger com esse e-mail.
+        """
+        return await self.repo.apagar_tentativas_do_email(email)
+
     async def _anotar_falha(self, email: str, ip: str | None) -> None:
         """A linha do diário de um login que falhou, sem guardar e-mail à toa (ADR-23).
 

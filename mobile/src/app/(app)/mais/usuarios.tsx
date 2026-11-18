@@ -13,7 +13,7 @@ import { resumoDaComissao } from '@/lib/comissao';
 import { podeExcluirDaEquipe, textosDaExclusao } from '@/lib/exclusaoDeConta';
 import { formatar } from '@/lib/money';
 import { chaves, queryClient } from '@/lib/queryClient';
-import { PODE, pode, titulo } from '@/lib/permissoes';
+import { PODE, pode, possoMudarPapel, titulo } from '@/lib/permissoes';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -146,20 +146,40 @@ export default function Usuarios() {
                 )}
               </View>
 
-              {podeExcluirDaEquipe(eu, usuario) && (
-                <Pressable
-                  style={s.excluir}
-                  hitSlop={6}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Excluir a conta de ${usuario.nome}`}
-                  onPress={() => {
-                    setErroExclusao(null);
-                    setExcluindo(usuario);
-                  }}
-                >
-                  <MaterialCommunityIcons name="account-remove-outline" size={18} color={cores.perigo} />
-                  <Text style={s.excluirTexto}>Excluir conta</Text>
-                </Pressable>
+              {(possoMudarPapel(eu, usuario) || podeExcluirDaEquipe(eu, usuario)) && (
+                <View style={s.acoes}>
+                  {/* Trocar o papel é também o caminho do dono único que quer sair: passa o
+                      papel de dono a outra pessoa antes de excluir a própria conta (ADR-45). */}
+                  {possoMudarPapel(eu, usuario) && (
+                    <Pressable
+                      style={s.acao}
+                      hitSlop={6}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Mudar o papel de ${usuario.nome}`}
+                      onPress={() =>
+                        router.push({ pathname: '/mais/usuario-papel', params: { id: usuario.id } })
+                      }
+                    >
+                      <MaterialCommunityIcons name="account-switch-outline" size={18} color={cores.primaria} />
+                      <Text style={s.acaoTexto}>Mudar papel</Text>
+                    </Pressable>
+                  )}
+                  {podeExcluirDaEquipe(eu, usuario) && (
+                    <Pressable
+                      style={s.acao}
+                      hitSlop={6}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Excluir a conta de ${usuario.nome}`}
+                      onPress={() => {
+                        setErroExclusao(null);
+                        setExcluindo(usuario);
+                      }}
+                    >
+                      <MaterialCommunityIcons name="account-remove-outline" size={18} color={cores.perigo} />
+                      <Text style={s.excluirTexto}>Excluir conta</Text>
+                    </Pressable>
+                  )}
+                </View>
               )}
             </View>
           );
@@ -220,15 +240,15 @@ const s = StyleSheet.create({
   },
   itemLinha: { flexDirection: 'row', alignItems: 'center', gap: espaco.md },
   itemInfo: { flex: 1, gap: 2 },
-  excluir: {
+  acoes: { flexDirection: 'row', flexWrap: 'wrap', columnGap: espaco.xl, marginTop: espaco.md },
+  acao: {
     flexDirection: 'row',
     alignItems: 'center',
-    alignSelf: 'flex-start',
     gap: espaco.xs,
-    marginTop: espaco.md,
     paddingTop: espaco.sm,
     paddingRight: espaco.sm,
   },
+  acaoTexto: { fontSize: fonte.pequena, fontWeight: '700', color: cores.primaria },
   excluirTexto: { fontSize: fonte.pequena, fontWeight: '700', color: cores.perigo },
   confirmaSubtitulo: {
     fontSize: fonte.pequena,

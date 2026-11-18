@@ -5,7 +5,12 @@
  *   - está no ar (GET /health);
  *   - a conta demo entra (POST /api/v1/auth/login) e é de DONO (o revisor precisa ver tudo,
  *     inclusive "Usuários", onde cria a conta de funcionário que vai excluir);
- *   - o código de barras das notas existe (o mesmo lookup do "Digitar código" do PDV);
+ *   - a conta demo é PROTEGIDA lá (ADR-45): não se exclui nem troca de senha, senão o revisor
+ *     que criar outro dono e voltar em "Excluir minha conta" apaga a conta das notas no meio
+ *     da revisão. A recusa vem antes da senha: a conferência manda uma senha aleatória, que
+ *     nunca confere, e espera a recusa da conta da demonstração;
+ *   - o código de barras das notas existe E tem peças para vender (as notas mandam vender;
+ *     com o saldo zerado, o PDV recusa a peça);
  *   - a política de privacidade abre (a URL da ficha);
  *   - as duas coisas que as notas mandam testar têm rota lá: o leitor pelo celular (ADR-43) e
  *     a exclusão da própria conta (ADR-45). Servidor com deploy velho = revisor sem a tela.
@@ -15,7 +20,11 @@
  * sai. Nenhuma mensagem leva a senha.
  */
 
+import { randomBytes } from 'node:crypto';
+
 const ESPERA_MS = 20_000; // a Vercel acorda a função fria em alguns segundos
+/** Peças do código demo que sobram para o revisor vender (e cancelar, e devolver) à vontade. */
+export const SALDO_MINIMO_DEMO = 3;
 
 /** Junta a base (sem barra no fim) com o caminho. */
 const em = (base, caminho) => `${base.replace(/\/+$/, '')}${caminho}`;
@@ -72,7 +81,9 @@ export async function conferirServidorDemo({ base, servidor = base, email, senha
   if (login.status !== 200 || !login.json?.access_token) {
     const motivo =
       login.status === 401
-        ? 'e-mail ou senha não conferem — veja a variável APPLE_EMAIL_DEMO e o segredo APPLE_DEMO_PASSWORD'
+        ? 'e-mail ou senha não conferem — veja a variável APPLE_EMAIL_DEMO e o segredo APPLE_DEMO_PASSWORD. Se a ' +
+          'conta foi excluída no servidor de demonstração (antes da proteção da conta demo), um Redeploy da demo a ' +
+          'recria com DEMO_ADMIN_EMAIL e DEMO_ADMIN_SENHA da Vercel'
         : login.status === 429
           ? 'o login da conta está travado por tentativas erradas; espere 15 min'
           : comoFalhou(login);
@@ -93,7 +104,16 @@ export async function conferirServidorDemo({ base, servidor = base, email, senha
   try {
     const peca = await chamar(em(base, `/api/v1/variantes/codigo-barras/${encodeURIComponent(codigo)}`), { ...opcoes, token });
     if (peca.status === 200 && peca.json?.codigo_barras === codigo) {
-      conferidos.push(`código de barras ${codigo} existe (${peca.json.produto ?? 'peça'})`);
+      const saldo = Number(peca.json.saldo ?? 0);
+      if (saldo >= SALDO_MINIMO_DEMO) {
+        conferidos.push(`código de barras ${codigo} existe (${peca.json.produto ?? 'peça'}, ${saldo} em estoque)`);
+      } else {
+        problemas.push(
+          `O código de barras demo ${codigo} existe, mas tem ${saldo} peça(s) em estoque: as notas mandam vender, ` +
+            `e o PDV recusa peça sem estoque. Reponha pela Entrada na demo (Estoque › Entrada, ao menos ${SALDO_MINIMO_DEMO}) ` +
+            'e rode de novo.',
+        );
+      }
     } else if (peca.status === 404) {
       problemas.push(
         `O código de barras demo ${codigo} não existe no servidor de demonstração — é o que as notas mandam digitar. ` +
@@ -122,6 +142,24 @@ export async function conferirServidorDemo({ base, servidor = base, email, senha
     const campos = (exclusao.json?.detail?.campos ?? []).map((c) => c.campo);
     if (exclusao.status === 422 && exclusao.json?.code === 'VALIDACAO' && campos.includes('senha')) {
       conferidos.push('a exclusão da própria conta tem rota no servidor');
+      // A conta das notas é protegida? Uma senha aleatória (nunca a da demo, que nem passa por
+      // aqui) recebe a recusa da conta da demonstração, que vem antes de conferir a senha. Sem
+      // a proteção, a resposta é "senha incorreta" — e nada foi excluído do mesmo jeito.
+      const protecao = await chamar(em(base, '/api/v1/usuarios/me'), {
+        ...opcoes,
+        metodo: 'DELETE',
+        token,
+        corpo: { senha: `conferencia-${randomBytes(18).toString('hex')}` },
+      });
+      if (protecao.status === 409 && protecao.json?.code === 'CONTA_DE_DEMONSTRACAO') {
+        conferidos.push(`a conta demo ${email} é protegida lá (não se exclui, não perde o papel nem troca de senha)`);
+      } else {
+        problemas.push(
+          `A conta demo (${email}) não está protegida no servidor de demonstração (${comoFalhou(protecao)}): o revisor ` +
+            'que criar outro dono pode excluí-la, e a próxima revisão não entra. Atualize o deploy da demo com o código ' +
+            'deste commit e confira que DEMO_ADMIN_EMAIL (Vercel) é o mesmo e-mail de APPLE_EMAIL_DEMO.',
+        );
+      }
     } else {
       problemas.push(
         `O servidor de demonstração não tem a exclusão da própria conta (${comoFalhou(exclusao)}${

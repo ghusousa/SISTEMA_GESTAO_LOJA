@@ -3,8 +3,8 @@
  * conta (ADR-45 — as lojas de app exigem que quem tem conta consiga excluí-la sozinho).
  */
 
-import { api, encerrarSessaoLocal } from '../api.js';
-import { recusaDaExclusao, textosDaExclusao } from '../exclusao-de-conta.js';
+import { api, encerrarSessaoLocal, sessaoContinua } from '../api.js';
+import { depoisDaIncerta, recusaDaExclusao, textosDaExclusao } from '../exclusao-de-conta.js';
 import { pararLeitorCelular } from '../leitor-celular.js';
 import { ir } from '../router.js';
 import { limparTudoDaSessao, sessao } from '../store.js';
@@ -132,9 +132,11 @@ export async function render(raiz) {
   });
 
   const caixaRecusa = raiz.querySelector('[data-recusa]');
+  // A tentativa anterior ficou sem resposta: na próxima, o 401 pode ser a conta que já saiu.
+  const estado = { incerta: false };
   raiz.querySelector('[data-excluir]').addEventListener('click', async () => {
     caixaRecusa.hidden = true;
-    const resultado = await pedirExclusao();
+    const resultado = await pedirExclusao(estado);
     if (resultado === 'excluida') {
       // A mesma limpeza do Sair, sem falar com o servidor: ele já derrubou tudo, e um
       // logout agora daria 401 e o aviso de "sessão expirada". Carrinho e conferência não
@@ -151,11 +153,29 @@ export async function render(raiz) {
 }
 
 /**
+ * Exclui a própria conta. Depois de uma tentativa sem resposta, o 401 não vira "sessão
+ * expirada": a renovação desempata (`depoisDaIncerta`) — recusada, a conta já tinha saído.
+ */
+async function excluirAMinha(senha, estado) {
+  if (!estado.incerta) return api.delete('/usuarios/me', { senha });
+  try {
+    await api.delete('/usuarios/me', { senha }, { semRenovar: true });
+  } catch (falha) {
+    if (falha?.status !== 401) throw falha;
+    if (depoisDaIncerta(await sessaoContinua()) === 'pedir-de-novo') {
+      await api.delete('/usuarios/me', { senha });
+    }
+  }
+  return null;
+}
+
+/**
  * O que some, o que fica, a senha e o botão — um passo só, no modal. Resolve `'excluida'`,
  * `{ recusa }` (o dono único, a rede caída) ou `undefined` (cancelou). A senha errada fica
- * no próprio modal, embaixo do campo: é 422, e a sessão segue.
+ * no próprio modal, embaixo do campo: é 422, e a sessão segue. Com o pedido no ar o modal
+ * não fecha (Esc, ✕, clique fora): a resposta precisa de quem a leia.
  */
-function pedirExclusao() {
+function pedirExclusao(estado) {
   const t = textosDaExclusao({ propria: true });
   return modal({
     titulo: 'Excluir minha conta',
@@ -182,7 +202,7 @@ function pedirExclusao() {
         </div>
       </form>
     `,
-    aoAbrir: (corpo, fechar) => {
+    aoAbrir: (corpo, fechar, travar) => {
       const form = corpo.querySelector('[data-form]');
       const campo = form.querySelector('[name=senha]');
       const erro = corpo.querySelector('[data-erro]');
@@ -193,7 +213,8 @@ function pedirExclusao() {
         campo.value = '';
         campo.focus();
       };
-      corpo.querySelector('[data-nao]').addEventListener('click', () => fechar(undefined));
+      const cancelar = corpo.querySelector('[data-nao]');
+      cancelar.addEventListener('click', () => fechar(undefined));
       form.addEventListener('submit', async (evento) => {
         evento.preventDefault();
         if (!campo.value) {
@@ -202,16 +223,21 @@ function pedirExclusao() {
         }
         erro.hidden = true;
         botao.disabled = true;
+        cancelar.disabled = true;
         botao.innerHTML = cru('<span class="giro" aria-hidden="true"></span> Excluindo…');
+        travar(true);
         try {
-          await api.delete('/usuarios/me', { senha: campo.value });
+          await excluirAMinha(campo.value, estado);
           fechar('excluida');
         } catch (falha) {
           const recusa = recusaDaExclusao(falha);
+          estado.incerta = Boolean(recusa.incerta);
           if (recusa.onde === 'senha') mostrarErro(recusa.texto);
           else fechar({ recusa: recusa.texto });
         } finally {
+          travar(false);
           botao.disabled = false;
+          cancelar.disabled = false;
           botao.textContent = 'Excluir minha conta';
         }
       });

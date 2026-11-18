@@ -8,7 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # usuarios.service, e usar o service aqui fecharia um ciclo de import.
 from app.modules.auth.models import RefreshToken
 
+from app.core.config import settings
 from app.core.exceptions import (
+    ContaDeDemonstracao,
     CredenciaisInvalidas,
     Duplicado,
     NaoEncontrado,
@@ -24,7 +26,12 @@ from app.modules.auditoria.service import AuditoriaService
 from app.modules.leitor.service import LeitorService
 from app.modules.usuarios.models import Papel, User
 from app.modules.usuarios.repository import UsuarioRepository
-from app.modules.usuarios.schemas import UsuarioCreate, UsuarioOut, UsuarioUpdate
+from app.modules.usuarios.schemas import (
+    DOMINIO_DA_CONTA_EXCLUIDA,
+    UsuarioCreate,
+    UsuarioOut,
+    UsuarioUpdate,
+)
 
 #: A recusa do "Excluir minha conta" ao único dono ativo. A loja não fica sem dono, e o
 #: caminho é o mesmo do Slack e do Google Workspace: passar o papel antes de sair (ADR-45).
@@ -42,9 +49,11 @@ def email_da_conta_excluida(user_id: int) -> str:
     """O e-mail de verdade sai da linha que ficou e volta a ficar livre para uma conta nova.
 
     `.example` é reservado (RFC 2606): nunca será o endereço de alguém. E continua sendo um
-    e-mail válido para o `EmailStr` — uma versão anterior lendo a linha não quebra.
+    e-mail válido para o `EmailStr` — uma versão anterior lendo a linha não quebra. O
+    cadastro recusa o domínio (`UsuarioCreate`): ocupado antes, o endereço da marca fazia a
+    exclusão desta conta estourar a UNIQUE, e a pessoa nunca conseguia sair.
     """
-    return f"conta-excluida-{user_id}@excluida.example"
+    return f"conta-excluida-{user_id}@{DOMINIO_DA_CONTA_EXCLUIDA}"
 
 
 class UsuarioService:
@@ -85,6 +94,20 @@ class UsuarioService:
     ) -> Pagina[UsuarioOut]:
         items, total = await self.repo.listar(p, q=q, papel=papel, ativo=ativo)
         return Pagina.montar([UsuarioOut.model_validate(u) for u in items], total, p)
+
+    @staticmethod
+    def _proteger_conta_da_demonstracao(user: User) -> None:
+        """Na Vercel, a conta do dono da demonstração fica como está (ADR-45).
+
+        É a conta que as notas da revisão da App Store dão ao revisor. Excluída, rebaixada,
+        desativada ou com a senha trocada, o próximo revisor (ou a próxima rodada) não entra
+        e a resposta volta como "conta demo inválida" (2.1). Vale antes da senha: quem está
+        com ela na mão não precisa de senha nenhuma para saber que é a conta da demo, e é
+        assim que o publicador confere, sem risco, que a proteção está de pé.
+        """
+        demo = settings.demo_admin_email.strip().lower()
+        if settings.vercel and demo and user.email.strip().lower() == demo:
+            raise ContaDeDemonstracao()
 
     @staticmethod
     def _barrar_escalada(ator: User, papel_alvo: Papel | None, alvo: User | None = None) -> None:
@@ -145,6 +168,8 @@ class UsuarioService:
         user = await self.obter(user_id)
         self._barrar_escalada(ator, dados.papel, alvo=user)
         self._barrar_comissao(ator, dados)
+        if (dados.papel is not None and dados.papel != user.role) or dados.ativo is False:
+            self._proteger_conta_da_demonstracao(user)
         if dados.nome is not None:
             user.name = dados.nome.strip()
         if "comissao_percentual" in dados.model_fields_set:
@@ -185,6 +210,7 @@ class UsuarioService:
         user = await self.obter(user_id)
         # Mexer em dono é só do dono — a mesma regra de editar e redefinir senha.
         self._barrar_escalada(ator, None, alvo=user)
+        self._proteger_conta_da_demonstracao(user)
 
         if user.id == ator.id:
             raise OperacaoInvalida(
@@ -202,8 +228,10 @@ class UsuarioService:
         A senha confirma que é ela, e não um celular destravado na mão de outra pessoa; a
         errada é `SenhaIncorreta` (422), nunca 401 — o 401 derrubaria a sessão que a senha
         só devia confirmar. O único dono ativo não sai: a loja ficaria sem quem administra
-        a equipe, o backup e o diário; ele passa o papel a outra pessoa antes.
+        a equipe, o backup e o diário; ele passa o papel a outra pessoa antes. Na Vercel, a
+        conta do dono da demonstração não sai nunca (`_proteger_conta_da_demonstracao`).
         """
+        self._proteger_conta_da_demonstracao(user)
         if not await verificar_senha_async(senha, user.password_hash):
             raise SenhaIncorreta()
         if user.role == Papel.ADMIN and await self.repo.outros_donos_ativos(user.id) == 0:
@@ -222,10 +250,15 @@ class UsuarioService:
         Com histórico — vendeu, abriu caixa, deu entrada: FKs RESTRICT —, apagar a linha
         daria 500 e reescreveria a contabilidade; ela fica só com o nome e o papel de quem
         fez cada registro, e o que é da CONTA vai embora do mesmo jeito: e-mail (fica livre
-        para uma conta nova), senha, sessões e leitor, com `deleted_at` marcando que ela não
-        existe mais (ADR-45). Nos dois casos o e-mail sai também do diário, onde vira
-        máscara; o nome congelado de quem agiu fica.
+        para uma conta nova), senha, sessões, leitor, comissão e meta (a remuneração da
+        pessoa; a comissão de cada venda já está congelada nela, ADR-37), com `deleted_at`
+        marcando que ela não existe mais (ADR-45). Nos dois casos o e-mail sai também do
+        diário, onde vira máscara, e das tentativas de login; o nome congelado de quem agiu
+        fica.
         """
+        # Import aqui: auth.service importa este módulo (o login autentica por ele).
+        from app.modules.auth.service import AuthService
+
         user_id, email = user.id, user.email
         # A outra exclusão desta conta (outro aparelho, o dono) que chegou antes já levou.
         if not await self.repo.travar_viva(user_id):
@@ -240,21 +273,27 @@ class UsuarioService:
             user.email = email_da_conta_excluida(user_id)
             user.password_hash = SEM_SENHA
             user.is_active = False
+            user.comissao_percentual = Decimal("0")
+            user.meta_diaria = None
             user.deleted_at = func.now()
         # O e-mail sai também do diário (as tentativas de login antigas o traziam por
-        # extenso). O nome congelado de quem agiu fica: é o que a auditoria prova (ADR-23).
+        # extenso) e da tabela da trava de força bruta, que o guarda a cada login. O nome
+        # congelado de quem agiu fica: é o que a auditoria prova (ADR-23).
         await AuditoriaService(self.session).esquecer_email(email)
+        await AuthService(self.session).esquecer_tentativas(email)
         await self.session.commit()
 
     async def redefinir_senha(self, user_id: int, nova_senha: str, ator: User) -> None:
         user = await self.obter(user_id)
         # Redefinir a senha do dono daria a chave da casa: é entrar como ele.
         self._barrar_escalada(ator, None, alvo=user)
+        self._proteger_conta_da_demonstracao(user)
         user.password_hash = await hash_senha_async(nova_senha)
         await self._derrubar_sessoes(user_id)
         await self.session.commit()
 
     async def trocar_propria_senha(self, user: User, senha_atual: str, nova_senha: str) -> None:
+        self._proteger_conta_da_demonstracao(user)
         if not await verificar_senha_async(senha_atual, user.password_hash):
             raise Validacao("Senha atual incorreta.")
         if senha_atual == nova_senha:

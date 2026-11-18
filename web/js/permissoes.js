@@ -78,6 +78,24 @@ export function pode(capacidade) {
 
 export const titulo = (papel) => TITULO[papel] ?? papel;
 
+/**
+ * Os papéis que `meuPapel` pode dar a alguém — a régua de `_barrar_escalada` no servidor: só o
+ * dono cria ou promove outro dono. Espelho de `mobile/src/lib/permissoes.ts`.
+ */
+export function papeisQuePossoDar(meuPapel) {
+  return ['VENDEDOR', 'SUPERVISORA', 'GERENTE', 'ADMIN'].filter((p) => p !== 'ADMIN' || meuPapel === 'ADMIN');
+}
+
+/**
+ * Quem pode ter o papel trocado por `eu`: quem administra a equipe, nunca no próprio papel, e
+ * conta de dono só o dono mexe. Espelho de `mobile/src/lib/permissoes.ts` (ADR-45: é o caminho
+ * do dono único que quer excluir a conta).
+ */
+export function possoMudarPapel(eu, alvo) {
+  if (!eu || !alvo || eu.id === alvo.id || !papelPode(eu.papel, PODE.GERIR_USUARIOS)) return false;
+  return alvo.papel !== 'ADMIN' || eu.papel === 'ADMIN';
+}
+
 /** O que cada capacidade significa para quem está lendo a tela. */
 const EM_PORTUGUES = {
   [PODE.VER_DINHEIRO]: 'ver custo, lucro e margem',

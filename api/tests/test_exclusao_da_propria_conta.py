@@ -9,6 +9,7 @@ nome congelado, inclusive para quem já vendeu, cuja linha não pode sair.
 
 import asyncio
 import uuid
+from decimal import Decimal
 
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
@@ -408,3 +409,91 @@ async def test_o_email_de_quem_saiu_fica_livre_para_uma_conta_nova(
     })
     assert nova.status_code == 201, nova.text
     assert nova.json()["id"] != vendedor.id
+
+
+# ------------------------------------------------------- o que a conta deixava para trás
+
+
+async def test_tentativas_de_login_do_email_saem_junto_com_a_conta(
+    client: AsyncClient, admin: User, vendedor: User, session: AsyncSession
+) -> None:
+    """O login (certo e errado) grava o e-mail por extenso em `login_attempts`, e a faxina só
+    roda num login certo, levando o que tem mais de um dia. Excluída a conta, o e-mail não
+    fica ali esperando: ele "deixa de existir no sistema", como a página de exclusão promete."""
+    errada = await client.post("/auth/login", json={"email": vendedor.email, "senha": "errada-1"})
+    assert errada.status_code == 401
+    auth, _ = await _entrar(client, vendedor.email)
+    await _entrar(client, admin.email)
+    sql = "SELECT count(*) FROM login_attempts WHERE email = :e"
+    assert await _contar(session, sql, e=vendedor.email) == 2
+
+    assert (await _excluir_a_minha(client, auth)).status_code == 204
+
+    assert await _contar(session, sql, e=vendedor.email) == 0
+    # As tentativas dos outros ficam: a trava de força bruta continua contando por elas.
+    assert await _contar(session, sql, e=admin.email) == 1
+
+
+async def test_dono_excluindo_funcionaria_tambem_leva_as_tentativas_dela(
+    client: AsyncClient, admin: User, vendedor: User, session: AsyncSession
+) -> None:
+    await _entrar(client, vendedor.email)
+    auth_dono, _ = await _entrar(client, admin.email)
+    assert (await client.delete(f"/usuarios/{vendedor.id}", headers=auth_dono)).status_code == 204
+    assert await _contar(
+        session, "SELECT count(*) FROM login_attempts WHERE email = :e", e=vendedor.email
+    ) == 0
+
+
+async def test_linha_que_fica_nao_guarda_comissao_nem_meta(
+    client: AsyncClient, admin: User, vendedor: User, session: AsyncSession
+) -> None:
+    """Comissão e meta são a remuneração da pessoa: saem com a conta. A comissão das vendas
+    dela continua certa no relatório, porque cada venda guarda a % do dia em que aconteceu."""
+    auth_dono, _ = await _entrar(client, admin.email)
+    combinado = await client.patch(
+        f"/usuarios/{vendedor.id}",
+        headers=auth_dono,
+        json={"comissao_percentual": "5.00", "meta_diaria": "800.00"},
+    )
+    assert combinado.status_code == 200, combinado.text
+    auth, _ = await _entrar(client, vendedor.email)
+    await _vender(client, auth_dono, auth)
+
+    assert (await _excluir_a_minha(client, auth)).status_code == 204
+
+    linha = (
+        await session.execute(
+            text("SELECT comissao_percentual, meta_diaria FROM users WHERE id = :i").bindparams(
+                i=vendedor.id
+            )
+        )
+    ).one()
+    assert linha.comissao_percentual == 0 and linha.meta_diaria is None
+    hoje = (await client.get("/relatorios/meu-dia", headers=auth_dono)).json()["data"]
+    relatorio = await client.get(
+        "/relatorios/vendedoras", headers=auth_dono, params={"inicio": hoje, "fim": hoje}
+    )
+    assert relatorio.status_code == 200, relatorio.text
+    dela = next(v for v in relatorio.json()["items"] if v["usuario_id"] == vendedor.id)
+    assert Decimal(dela["comissao_percentual"]) == 0
+    assert Decimal(dela["comissao"]) == Decimal("2.00")  # 5% de R$ 39,90, congelado na venda
+
+
+async def test_email_da_marca_de_excluida_nao_se_cadastra(
+    client: AsyncClient, admin: User, vendedor: User, session: AsyncSession
+) -> None:
+    """O e-mail que marca a linha que ficou (`conta-excluida-<id>@excluida.example`) não é de
+    ninguém: ocupado antes por um cadastro, a exclusão da conta <id> estourava a UNIQUE (500)
+    e a pessoa nunca conseguia sair."""
+    auth_dono, _ = await _entrar(client, admin.email)
+    for email in (f"conta-excluida-{vendedor.id}@excluida.example", "QUALQUER@Excluida.Example"):
+        resp = await client.post("/usuarios", headers=auth_dono, json={
+            "nome": "Xis", "email": email, "senha": "senha-do-xis", "papel": "VENDEDOR",
+        })
+        assert resp.status_code == 422, resp.text
+        assert [c["campo"] for c in resp.json()["detail"]["campos"]] == ["email"]
+
+    auth, _ = await _entrar(client, vendedor.email)
+    await _vender(client, auth_dono, auth)
+    assert (await _excluir_a_minha(client, auth)).status_code == 204

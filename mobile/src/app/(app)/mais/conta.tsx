@@ -11,7 +11,7 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useMutation } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -22,11 +22,11 @@ import {
   View,
 } from 'react-native';
 
-import { codigoDoErro, mensagemDoErro, statusDoErro } from '@/api/client';
+import { codigoDoErro, mensagemDoErro, sessaoContinua, statusDoErro } from '@/api/client';
 import { usuarios } from '@/api/endpoints';
 import { Confirmacao } from '@/components/Confirmacao';
 import { Botao, Campo, Cartao, Etiqueta } from '@/components/ui';
-import { recusaDaExclusao, textosDaExclusao } from '@/lib/exclusaoDeConta';
+import { depoisDaIncerta, recusaDaExclusao, textosDaExclusao } from '@/lib/exclusaoDeConta';
 import { titulo } from '@/lib/permissoes';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
 import { useAuthStore } from '@/stores/authStore';
@@ -44,8 +44,24 @@ export default function MinhaConta() {
   const [recusa, setRecusa] = useState<string | null>(null);
   const [confirmando, setConfirmando] = useState(false);
 
+  // A tentativa anterior ficou sem resposta (o servidor pode ter excluído e a resposta se
+  // perdido): nesta, o 401 é lido sem o desvio de "sessão vencida" (ver `depoisDaIncerta`).
+  const incerta = useRef(false);
+
   const excluir = useMutation({
-    mutationFn: () => usuarios.excluirMinhaConta(senha),
+    mutationFn: async () => {
+      if (!incerta.current) return usuarios.excluirMinhaConta(senha);
+      try {
+        await usuarios.excluirMinhaConta(senha, { semRenovar: true });
+      } catch (erro) {
+        if (statusDoErro(erro) !== 401) throw erro;
+        if (depoisDaIncerta(await sessaoContinua()) === 'pedir-de-novo') {
+          await usuarios.excluirMinhaConta(senha);
+        }
+        // 'excluida': a tentativa sem resposta tinha excluído; o servidor não conhece mais esta
+        // sessão, e a entrada diz "Conta excluída" em vez de "sessão expirada".
+      }
+    },
     onSuccess: () => {
       setConfirmando(false);
       // A navegação volta à entrada sozinha (usuario = null), com o recado.
@@ -58,6 +74,7 @@ export default function MinhaConta() {
         code: codigoDoErro(erro),
         message: mensagemDoErro(erro, ''),
       });
+      incerta.current = !!r.incerta;
       if (r.onde === 'senha') {
         setErroSenha(r.texto);
         setSenha('');
@@ -130,7 +147,7 @@ export default function MinhaConta() {
           {ehDono && (
             <Text style={s.dica}>
               A loja não fica sem dono: se você é o único, passe antes o papel de dono a outra
-              pessoa em Mais › Usuários.
+              pessoa em Mais › Usuários › (a pessoa) › Mudar papel.
             </Text>
           )}
 

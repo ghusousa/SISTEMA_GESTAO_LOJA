@@ -81,19 +81,25 @@ export function excluirConta(usuario) {
         <button class="botao botao--perigo" data-sim>Excluir conta</button>
       </div>
     `,
-    aoAbrir: (corpo, fechar) => {
+    aoAbrir: (corpo, fechar, travar) => {
       const botao = corpo.querySelector('[data-sim]');
-      corpo.querySelector('[data-nao]').addEventListener('click', () => fechar(false));
+      const cancelar = corpo.querySelector('[data-nao]');
+      cancelar.addEventListener('click', () => fechar(false));
       botao.addEventListener('click', async () => {
         botao.disabled = true;
+        cancelar.disabled = true;
         botao.innerHTML = cru('<span class="giro" aria-hidden="true"></span> Excluindo…');
+        // Com o pedido no ar o modal não fecha: fechado, a conta sumia e a lista não recarregava.
+        travar(true);
         try {
           await api.delete(`/usuarios/${usuario.id}`);
           aviso(`Conta de ${usuario.nome} excluída.`);
           fechar(true);
         } catch (erro) {
+          travar(false);
           avisarErro(erro);
           botao.disabled = false;
+          cancelar.disabled = false;
           botao.textContent = 'Excluir conta';
         }
       });
