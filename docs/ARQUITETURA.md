@@ -1733,10 +1733,19 @@ repositório, com permissão 600, e acha o `ascAppId` pelo bundle do `app.json` 
 eas não envia em modo não interativo, e o app NÃO pode ser criado pela API da Apple, então
 app inexistente vira aviso com o passo do site e o build sai mesmo assim. O perfil de envio
 `ci` do `eas.json` lê caminho e ids da chave das variáveis do runner (o eas interpola só esses
-três campos); o `ascAppId` entra só na cópia do runner. Com `APPLE_TEAM_ID`/`APPLE_TEAM_TYPE`,
+três campos); o `ascAppId` entra só na cópia do runner. Com o time da Apple (Team ID e tipo),
 o build recebe `EXPO_ASC_*`/`EXPO_APPLE_*` e a Expo cria ou conserta certificado e perfil sem
-perguntar. O app.json ainda não tem `projectId`: o passo `eas init --non-interactive --force`
-cria/liga `@conta/gestao-loja` a cada disparo, só no runner. O endereço que o revisor usa é
+perguntar. **O que não é segredo mora em `mobile/publicar/padroes.json`** (Issuer ID da chave,
+time, contato, URL de suporte, copyright, conta e código de barras da demo): o GitHub só precisa
+de `EXPO_TOKEN`, `ASC_KEY_ID` e `ASC_KEY_P8` para subir a ficha, e Variable de mesmo nome vence o
+padrão (`ASC_ISSUER_ID` e o telefone também como Secret: o passo "Preparar" lê os dois contextos). Pedir nove Variables a quem só quer publicar era o que travava a
+primeira rodada; segredo de verdade (chave, senha da demo) nunca entra nesse arquivo, e o
+`ci.test.mjs` recusa. Senha da demo e telefone de contato são **só da revisão**: sem eles a
+ficha sobe (notas com "(pending)", campo vazio não vai à Apple e ela guarda o que tinha) e o
+`--enviar` para dizendo o que falta — o telefone que a Apple já tem de um envio anterior basta.
+O issuer e o time chegam aos passos do eas por `secrets.X || steps.apple.outputs.x` (saída do
+`ci.mjs`), nunca por saída que contenha Secret. O `app.json` guarda o `projectId` da Expo; sem
+`owner`, porque do SDK 53 em diante o eas-cli não o exige nem com token de robô. O endereço que o revisor usa é
 `url_servidor_demo` (padrão `https://loja-tria.vercel.app`, ADR-42) e a política de
 privacidade sai de `<servidor>/privacidade`, que o próprio sistema serve. Entrada do formulário
 vai por `env`, nunca colada no script (`${{ }}` no `run:` viraria comando num runner com

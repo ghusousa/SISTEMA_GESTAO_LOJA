@@ -24,22 +24,30 @@
  * UDID_APARELHO (a entrada "udid_aparelho" do botão), registra esse. Sem nenhum, falha
  * dizendo como resolver. Experimental até a primeira rodada real.
  *
- * Nunca imprime valor de segredo: só quais nomes estão faltando (e o UDID, mascarado).
- * Saídas (GITHUB_OUTPUT): tem_chave, tem_ficha, faltando_ficha, chave_p8, config, app_id,
- * versao_estado (inexistente | editavel | travada) e versao_mensagem; no "aparelhos", aparelhos.
+ * Nunca imprime valor de segredo: só quais nomes estão faltando (e o UDID, mascarado). O que
+ * não é segredo (issuer da chave, time da Apple, contato, conta e código da demo) tem padrão
+ * em publicar/padroes.json: com ele, o GitHub só precisa de EXPO_TOKEN, ASC_KEY_ID e
+ * ASC_KEY_P8 para subir a ficha.
+ * Saídas (GITHUB_OUTPUT): issuer_id, team_id, team_type, faltando_revisao, tem_chave,
+ * tem_ficha, faltando_ficha, chave_p8, config, app_id, versao_estado (inexistente | editavel |
+ * travada) e versao_mensagem; no "aparelhos", aparelhos.
  */
 
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { criarCliente } from './asc.mjs';
+import { SERVIDOR_DEMO_PADRAO, SO_DA_REVISAO, lerPadroes } from './ficha.mjs';
 import { mensagemDaTravada, situacaoDaVersao } from './versoes.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const MOBILE = resolve(AQUI, '..');
-export const SERVIDOR_DEMO_PADRAO = 'https://loja-tria.vercel.app';
+export { SERVIDOR_DEMO_PADRAO };
 
-/** Variável → campo do config.json do publicar.mjs. As opcionais têm padrão. */
+/**
+ * Variável → campo do config.json do publicar.mjs. Vazia, vale o publicar/padroes.json (nada
+ * secreto); os de SO_DA_REVISAO (senha da demo, telefone) só a revisão exige.
+ */
 export const CAMPOS_DA_FICHA = [
   ['APPLE_EMAIL_SUPORTE', 'email_suporte'],
   ['APPLE_URL_SUPORTE', 'url_suporte'],
@@ -53,6 +61,10 @@ export const CAMPOS_DA_FICHA = [
 
 const limpo = (v) => (typeof v === 'string' ? v.trim() : '');
 
+/** Onde cada peça só da revisão mora no GitHub (o workflow lê a senha só de Secret). */
+const ondeVai = (nome) =>
+  nome === 'APPLE_DEMO_PASSWORD' ? `${nome} (Secret)` : nome === 'APPLE_TELEFONE_CONTATO' ? `${nome} (Variable ou Secret)` : nome;
+
 /**
  * O .p8 colado no Secret às vezes chega com "\n" literal (copiado de um JSON) ou com
  * \r\n do Windows. A Apple só aceita o PEM com quebras de verdade.
@@ -64,27 +76,46 @@ export function normalizarP8(bruto) {
   return `${texto}\n`;
 }
 
-/** O que dá para montar com o ambiente que chegou. Puro: o teste chama direto. */
-export function montar(env) {
+/**
+ * O que dá para montar com o ambiente que chegou, sobre os `padroes` da loja (padroes.json:
+ * issuer, time, contato, demo). Puro: o teste chama direto — sem `padroes`, só o ambiente.
+ * `faltandoFicha` impede a ficha; `faltandoRevisao` (senha da demo, telefone) só a revisão.
+ */
+export function montar(env, padroes = {}) {
+  const valor = (variavel, campo) => limpo(env[variavel]) || limpo(padroes[campo]);
   const p8 = normalizarP8(env.ASC_KEY_P8);
-  const temChave = Boolean(limpo(env.ASC_KEY_ID) && limpo(env.ASC_ISSUER_ID) && p8);
+  const issuer = valor('ASC_ISSUER_ID', 'issuer_id');
+  const temChave = Boolean(limpo(env.ASC_KEY_ID) && issuer && p8);
   const faltandoChave = [
     !limpo(env.ASC_KEY_ID) && 'ASC_KEY_ID',
-    !limpo(env.ASC_ISSUER_ID) && 'ASC_ISSUER_ID',
+    !issuer && 'ASC_ISSUER_ID',
     !p8 && (limpo(env.ASC_KEY_P8) ? 'ASC_KEY_P8 (não parece um .p8: copie o arquivo INTEIRO, com as linhas BEGIN/END)' : 'ASC_KEY_P8'),
   ].filter(Boolean);
 
-  const faltandoFicha = CAMPOS_DA_FICHA.filter(([variavel]) => !limpo(env[variavel])).map(([v]) => v);
+  const faltam = (soDaRevisao) =>
+    CAMPOS_DA_FICHA.filter(([v, campo]) => SO_DA_REVISAO.includes(campo) === soDaRevisao && !valor(v, campo)).map(([v]) => v);
+  const faltandoFicha = faltam(false);
   const config = {
     key_id: limpo(env.ASC_KEY_ID),
-    issuer_id: limpo(env.ASC_ISSUER_ID),
+    issuer_id: issuer,
     arquivo_p8: 'chave-apple.p8',
-    url_etiquetas_demo: limpo(env.APPLE_URL_ETIQUETAS_DEMO),
-    url_servidor_demo: limpo(env.APPLE_SERVIDOR_DEMO) || SERVIDOR_DEMO_PADRAO,
-    url_privacidade: limpo(env.APPLE_URL_PRIVACIDADE),
+    url_etiquetas_demo: valor('APPLE_URL_ETIQUETAS_DEMO', 'url_etiquetas_demo'),
+    url_servidor_demo: valor('APPLE_SERVIDOR_DEMO', 'url_servidor_demo') || SERVIDOR_DEMO_PADRAO,
+    url_privacidade: valor('APPLE_URL_PRIVACIDADE', 'url_privacidade'),
   };
-  for (const [variavel, campo] of CAMPOS_DA_FICHA) config[campo] = limpo(env[variavel]);
-  return { p8, temChave, faltandoChave, temFicha: temChave && faltandoFicha.length === 0, faltandoFicha, config };
+  for (const [variavel, campo] of CAMPOS_DA_FICHA) config[campo] = valor(variavel, campo);
+  // O time da Apple (para a Expo montar certificado e perfil sozinha): nada secreto.
+  const time = { id: valor('APPLE_TEAM_ID', 'apple_team_id'), tipo: valor('APPLE_TEAM_TYPE', 'apple_team_type') || 'INDIVIDUAL' };
+  return {
+    p8,
+    temChave,
+    faltandoChave,
+    temFicha: temChave && faltandoFicha.length === 0,
+    faltandoFicha,
+    faltandoRevisao: faltam(true),
+    config,
+    time,
+  };
 }
 
 /** Grava o ascAppId no perfil de envio "ci" (que herda do production). Devolve o JSON novo. */
@@ -180,8 +211,14 @@ function saida(nome, valor) {
 async function preparar() {
   const pasta = resolve(process.env.PASTA_SAIDA || join(process.env.RUNNER_TEMP || '/tmp', 'apple'));
   mkdirSync(pasta, { recursive: true, mode: 0o700 });
-  const r = montar(process.env);
+  const r = montar(process.env, lerPadroes());
 
+  // Nada secreto: o issuer e o time vêm do padroes.json quando não há Secret/Variable, e os
+  // passos do eas leem daqui (secrets.X || steps.apple.outputs.x no workflow).
+  saida('issuer_id', r.config.issuer_id);
+  saida('team_id', r.time.id);
+  saida('team_type', r.time.tipo);
+  saida('faltando_revisao', r.faltandoRevisao.join(' '));
   saida('tem_chave', r.temChave ? 'sim' : 'nao');
   if (!r.temChave) {
     process.stdout.write(`⚠ Chave da Apple incompleta — faltam os Secrets: ${r.faltandoChave.join(', ')}.\n`);
@@ -203,6 +240,12 @@ async function preparar() {
     writeFileSync(caminhoConfig, JSON.stringify(r.config, null, 2), { mode: 0o600 });
     chmodSync(caminhoConfig, 0o600);
     saida('config', caminhoConfig);
+    if (r.faltandoRevisao.length) {
+      process.stdout.write(
+        `ℹ A ficha sobe; a REVISÃO ainda pede: ${r.faltandoRevisao.map(ondeVai).join(', ')}. ` +
+          'O telefone pode já estar na Apple, de um envio anterior — o publicador confere antes de enviar.\n',
+      );
+    }
   } else {
     process.stdout.write(`⚠ Ficha da loja não será enviada — faltam: ${r.faltandoFicha.join(', ')}.\n`);
   }
@@ -238,7 +281,7 @@ async function preparar() {
 
 /** O comando "aparelhos": antes de compilar o .ipa de teste (ad hoc) para iPhones reais. */
 async function aparelhos() {
-  const r = montar(process.env);
+  const r = montar(process.env, lerPadroes());
   if (!r.temChave) {
     throw new Error(`Chave da Apple incompleta — faltam os Secrets: ${r.faltandoChave.join(', ')}. Sem ela não há como consultar os aparelhos.`);
   }

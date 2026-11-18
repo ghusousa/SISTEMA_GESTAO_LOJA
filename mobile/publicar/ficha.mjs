@@ -34,6 +34,46 @@ const OUTRA_PLATAFORMA = /\b(android|google\s*play|play\s*store|apk|galaxy\s*sto
 /** O que vai no lugar de um dado que ainda não existe (a ficha sobe; a revisão, não). */
 export const PENDENTE = '(pending)';
 
+/** Onde o revisor conecta o app quando ninguém disser outro endereço (a demo na Vercel). */
+export const SERVIDOR_DEMO_PADRAO = 'https://loja-tria.vercel.app';
+
+/**
+ * Os padrões desta loja (publicar/padroes.json): issuer da chave, time da Apple, contato,
+ * conta e código de barras da demo — nada secreto. Quem configura (config.json na máquina do
+ * dono, Secrets/Variables no GitHub) vence; o que ficou vazio cai aqui. Chave começada por
+ * "_" é comentário. PUBLICAR_PADROES aponta outro arquivo (os testes usam).
+ */
+export function lerPadroes(caminho = process.env.PUBLICAR_PADROES || join(AQUI, 'padroes.json')) {
+  if (!existsSync(caminho)) return {};
+  const bruto = JSON.parse(readFileSync(caminho, 'utf8'));
+  return Object.fromEntries(
+    Object.entries(bruto).filter(([chave, valor]) => !chave.startsWith('_') && typeof valor === 'string' && valor.trim()),
+  );
+}
+
+/**
+ * Só a revisão precisa deles: sem eles a ficha sobe (as notas dizem "(pending)") e o
+ * --enviar para dizendo o que falta. O telefone pode já estar na Apple (envio anterior).
+ */
+export const SO_DA_REVISAO = ['telefone_contato', 'senha_demo'];
+
+/**
+ * Os textos de exemplo do config.exemplo.json ANTIGO (antes do padroes.json): um config.json
+ * copiado dele e não editado não pode mandar "Nome Sobrenome" ou um telefone de mentira à
+ * Apple por cima do padrão. Campo a campo — url_suporte/url_servidor_demo de lá eram reais.
+ */
+export const DO_MODELO_ANTIGO = {
+  nome_contato: 'Nome Sobrenome',
+  telefone_contato: '+55 11 90000-0000',
+  titular_copyright: 'Seu nome ou o da sua empresa',
+  senha_demo: 'senha-da-conta-demo',
+  codigo_demo: 'um código de barras que exista no servidor de demonstração',
+};
+
+/** Vazio, "COLE_AQUI", e-mail @exemplo e o texto de exemplo daquele campo valem o mesmo que vazio. */
+const naoPreenchido = (valor, campo) =>
+  !valor || /COLE_AQUI|exemplo\./.test(String(valor)) || (campo in DO_MODELO_ANTIGO && DO_MODELO_ANTIGO[campo] === String(valor).trim());
+
 /**
  * Rótulo citado na ficha → o arquivo (da raiz do repositório) onde o app o mostra. Se a ficha
  * cita o rótulo, o arquivo tem de existir e mostrá-lo: notas que mandam o revisor a uma tela
@@ -73,7 +113,12 @@ export function lerConfig() {
         `  ponha ao lado o arquivo .p8 baixado do App Store Connect.`,
     );
   }
-  const c = JSON.parse(readFileSync(caminho, 'utf8'));
+  // Padrões da loja embaixo; o que o config.json PREENCHE vence (vazio e "COLE_AQUI", não).
+  const c = { url_servidor_demo: SERVIDOR_DEMO_PADRAO, ...lerPadroes() };
+  for (const [campo, valor] of Object.entries(JSON.parse(readFileSync(caminho, 'utf8')))) {
+    if (!naoPreenchido(valor, campo)) c[campo] = valor;
+  }
+  for (const campo of SO_DA_REVISAO) if (naoPreenchido(c[campo], campo)) c[campo] = '';
   const obrigatorios = [
     'key_id',
     'issuer_id',
@@ -81,14 +126,12 @@ export function lerConfig() {
     'email_suporte',
     'url_suporte',
     'nome_contato',
-    'telefone_contato',
     'email_demo',
-    'senha_demo',
     'codigo_demo',
     'titular_copyright',
     'url_servidor_demo',
   ];
-  const faltando = obrigatorios.filter((campo) => !c[campo] || /COLE_AQUI|exemplo\./.test(String(c[campo])));
+  const faltando = obrigatorios.filter((campo) => naoPreenchido(c[campo], campo));
   if (faltando.length) throw new Error(`Preencha no config.json: ${faltando.join(', ')}`);
   // O revisor conecta o app NESTE endereço: sem HTTPS o iOS recusa a conexão (ATS) e a
   // revisão volta. Antes ele vinha escrito nas notas e apontava para o site de outro
@@ -160,11 +203,12 @@ export function lerFicha(config, { aparelhos = [], video = null } = {}) {
     ? `   No label? Open ${config.url_etiquetas_demo} on another screen to scan sample barcodes.`
     : null;
   const valores = {
-    EMAIL_SUPORTE: config.email_suporte,
+    EMAIL_SUPORTE: config.email_suporte || PENDENTE,
     URL_PRIVACIDADE: config.url_privacidade,
     SERVIDOR_DEMO: config.url_servidor_demo,
     EMAIL_DEMO: config.email_demo,
-    SENHA_DEMO: config.senha_demo,
+    // Sem a senha (Secret APPLE_DEMO_PASSWORD) a ficha sobe; a revisão, não (--enviar confere).
+    SENHA_DEMO: config.senha_demo || PENDENTE,
     CODIGO_DEMO: config.codigo_demo,
     APARELHOS_TESTADOS: aparelhos.length ? aparelhos.join('; ') : PENDENTE,
     APARELHO_DO_VIDEO: aparelhos[0] ?? PENDENTE,

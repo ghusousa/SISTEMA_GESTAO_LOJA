@@ -52,17 +52,17 @@
 #   udid_aparelho → o UDID de um iPhone para registrar na conta da Apple (caixa "aparelhos").
 # O resumo de cada rodada (feito, avisos, pendências) aparece na página da execução.
 #
-# SEGREDOS (Settings → Secrets and variables → Actions → Secrets):
+# SEGREDOS (Settings → Secrets and variables → Actions → Secrets) — só estes três são exigidos:
 #   EXPO_TOKEN            compilar/enviar (expo.dev → Account settings → Access tokens)
-#   ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8   chave da API da Apple (o .p8 inteiro, BEGIN/END)
-#   APPLE_DEMO_PASSWORD   senha da conta demo do revisor (fica só na memória do runner)
-# VARIÁVEIS (mesma tela, aba Variables — não são segredo):
-#   APPLE_TEAM_ID, APPLE_TEAM_TYPE (INDIVIDUAL ou COMPANY_OR_ORGANIZATION) — deixam a Expo criar
-#     ou consertar sozinha o certificado e o perfil do app, sem perguntar nada;
-#   APPLE_EMAIL_SUPORTE, APPLE_URL_SUPORTE, APPLE_NOME_CONTATO, APPLE_TELEFONE_CONTATO,
-#   APPLE_COPYRIGHT, APPLE_EMAIL_DEMO, APPLE_CODIGO_DEMO — a ficha e o contato do revisor;
-#   APPLE_SERVIDOR_DEMO (opcional; padrão https://loja-tria.vercel.app), APPLE_URL_PRIVACIDADE
-#   e APPLE_URL_ETIQUETAS_DEMO (opcionais).
+#   ASC_KEY_ID, ASC_KEY_P8   chave da API da Apple, acesso Administrador (o .p8 inteiro, BEGIN/END)
+#   APPLE_DEMO_PASSWORD   só para a REVISÃO: senha da conta demo do revisor (memória do runner)
+# O que não é segredo tem padrão em mobile/publicar/padroes.json: issuer da chave, time da Apple,
+# contato, URL de suporte, copyright, conta e código de barras da demo. Variable de mesmo nome
+# vence o padrão (opcionais): APPLE_TEAM_ID, APPLE_TEAM_TYPE; APPLE_EMAIL_SUPORTE,
+# APPLE_URL_SUPORTE, APPLE_NOME_CONTATO, APPLE_COPYRIGHT, APPLE_EMAIL_DEMO, APPLE_CODIGO_DEMO,
+# APPLE_SERVIDOR_DEMO, APPLE_URL_PRIVACIDADE, APPLE_URL_ETIQUETAS_DEMO; ASC_ISSUER_ID pode ser
+# Variable ou Secret. O telefone de contato (APPLE_TELEFONE_CONTATO, Variable ou Secret — é dado
+# pessoal) só a revisão pede, e só se a Apple ainda não tiver um.
 # Faltou peça? O passo que depende dela diz QUAIS nomes faltam; os outros seguem.
 name: Publicar iOS na App Store
 
@@ -252,13 +252,13 @@ jobs:
         env:
           PASTA_SAIDA: ${{ runner.temp }}/apple
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID || vars.ASC_ISSUER_ID }}
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
           APPLE_DEMO_PASSWORD: ${{ secrets.APPLE_DEMO_PASSWORD }}
           APPLE_EMAIL_SUPORTE: ${{ vars.APPLE_EMAIL_SUPORTE }}
           APPLE_URL_SUPORTE: ${{ vars.APPLE_URL_SUPORTE }}
           APPLE_NOME_CONTATO: ${{ vars.APPLE_NOME_CONTATO }}
-          APPLE_TELEFONE_CONTATO: ${{ vars.APPLE_TELEFONE_CONTATO }}
+          APPLE_TELEFONE_CONTATO: ${{ vars.APPLE_TELEFONE_CONTATO || secrets.APPLE_TELEFONE_CONTATO }}
           APPLE_COPYRIGHT: ${{ vars.APPLE_COPYRIGHT }}
           APPLE_EMAIL_DEMO: ${{ vars.APPLE_EMAIL_DEMO }}
           APPLE_CODIGO_DEMO: ${{ vars.APPLE_CODIGO_DEMO }}
@@ -335,9 +335,9 @@ jobs:
           APP_ID: ${{ steps.apple.outputs.app_id }}
           CHAVE: ${{ steps.apple.outputs.chave_p8 }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
-          APPLE_TEAM_TYPE: ${{ vars.APPLE_TEAM_TYPE }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID || steps.apple.outputs.issuer_id }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID || steps.apple.outputs.team_id }}
+          APPLE_TEAM_TYPE: ${{ vars.APPLE_TEAM_TYPE || steps.apple.outputs.team_type }}
         run: |
           # Com a chave da Apple e o time, a Expo cria/conserta certificado e perfil sozinha.
           # Sem eles, usa o que já estiver guardado na Expo (do primeiro build feito à mão).
@@ -345,7 +345,7 @@ jobs:
             export EXPO_ASC_API_KEY_PATH="$CHAVE" EXPO_ASC_KEY_ID="$ASC_KEY_ID" EXPO_ASC_ISSUER_ID="$ASC_ISSUER_ID"
             export EXPO_APPLE_TEAM_ID="$APPLE_TEAM_ID" EXPO_APPLE_TEAM_TYPE="${APPLE_TEAM_TYPE:-INDIVIDUAL}"
           else
-            echo "::notice::Sem APPLE_TEAM_ID (Variables) ou sem a chave: o build usa as credenciais já guardadas na Expo."
+            echo "::notice::Sem a chave da Apple (Secrets ASC_KEY_ID/ASC_KEY_P8) ou sem o time: o build usa as credenciais já guardadas na Expo."
           fi
           ENVIO=()
           if [ -n "$APP_ID" ]; then
@@ -386,7 +386,7 @@ jobs:
           APP_ID: ${{ steps.apple.outputs.app_id }}
           CHAVE: ${{ steps.apple.outputs.chave_p8 }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID || steps.apple.outputs.issuer_id }}
         run: |
           if [ -z "$APP_ID" ]; then
             echo "::error::Sem o app no App Store Connect (ou sem a chave) não há para onde enviar. Veja o passo \"Preparar a chave da Apple e a ficha\"."
@@ -405,7 +405,7 @@ jobs:
         if: ${{ steps.modo.outputs.aparelhos == 'true' }}
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID || steps.apple.outputs.issuer_id }}
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
           UDID_APARELHO: ${{ inputs.udid_aparelho }}
         run: node publicar/ci.mjs aparelhos
@@ -416,16 +416,16 @@ jobs:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           CHAVE: ${{ steps.apple.outputs.chave_p8 }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
-          APPLE_TEAM_TYPE: ${{ vars.APPLE_TEAM_TYPE }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID || steps.apple.outputs.issuer_id }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID || steps.apple.outputs.team_id }}
+          APPLE_TEAM_TYPE: ${{ vars.APPLE_TEAM_TYPE || steps.apple.outputs.team_type }}
         run: |
           # Sem modo interativo, a Expo só monta o perfil ad hoc com a chave da Apple: o perfil
           # "teste-aparelhos" é ad hoc de propósito (enterpriseProvisioning no eas.json), e o
           # --refresh-ad-hoc-provisioning-profile cria ou refaz o perfil com os iPhones que a
           # Expo conhece. Sem a chave e o time, para aqui com o que falta.
           if [ -z "$CHAVE" ] || [ -z "$APPLE_TEAM_ID" ]; then
-            echo "::error::A caixa aparelhos precisa da chave da Apple (Secrets ASC_*) e de APPLE_TEAM_ID (Variables): sem elas a Expo não monta o perfil ad hoc fora do modo interativo."
+            echo "::error::A caixa aparelhos precisa da chave da Apple (Secrets ASC_KEY_ID e ASC_KEY_P8) e do time da Apple (padroes.json ou Variable APPLE_TEAM_ID): sem eles a Expo não monta o perfil ad hoc fora do modo interativo."
             exit 1
           fi
           export EXPO_ASC_API_KEY_PATH="$CHAVE" EXPO_ASC_KEY_ID="$ASC_KEY_ID" EXPO_ASC_ISSUER_ID="$ASC_ISSUER_ID"

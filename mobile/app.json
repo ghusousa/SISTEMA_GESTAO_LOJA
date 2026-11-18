@@ -74,6 +74,11 @@
           "backgroundColor": "#1E3A5F"
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "d21eaf2c-5582-416e-904e-2a735b2d3420"
+      }
+    }
   }
 }
