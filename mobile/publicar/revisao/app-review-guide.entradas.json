@@ -1,17 +1,17 @@
 {
   "gerado_por": "mobile/publicar/revisao/gerar-guia.mjs",
   "entradas": {
-    "mobile/publicar/revisao/guia.mjs": "13df6a90942b4445a7f89635566ef537422575831a1318e22e636a50197880b9",
+    "mobile/publicar/revisao/guia.mjs": "2af0c5454ec72b5142392db02d8c2e5539ed74debfcb44ac0e7db39ad9797904",
     "mobile/publicar/ficha/aparelhos-testados.txt": "266689159aac72a3d810f1cd6f8f0ee00c478492b1ea72db2970f9dabaac800e",
-    "media/app-store/iphone-6.5/01-vender.png": "9166eea83b860d02c4551a6f7076f60a1f0f0e18a424a142bfc6f94851632a5c",
-    "media/app-store/iphone-6.5/02-cobrar.png": "1c7fe512007b096d7c3d28108e5b36e9dbd3002b23c5eeea270bc6d062d8a8b5",
-    "media/app-store/iphone-6.5/03-financeiro.png": "cb1958e5155604b61486820e79949171874e4e513765fcda88ac969e06dde3f6",
-    "media/app-store/iphone-6.5/04-relatorios.png": "849da17434a86bfbee139b5455cc5f94735e524fa7e0cbd407ee50597662a89d",
-    "media/app-store/iphone-6.5/05-estoque.png": "c19fafd457d0da4cc192df621b9cb76286973ad78de408f0bf47033948837f2c",
-    "media/app-store/iphone-6.5/06-produtos.png": "676b5dddb389142a7ea980431d15b4179ad77a6be83a3f371032b261b593fc91",
-    "media/app-store/iphone-6.5/07-caixa.png": "07233574fc00af3d8ebeacac05baa6d0beb3fa2e7f52ac967e84b39fed1779ba",
-    "media/app-store/iphone-6.5/08-crediario.png": "29ac6564dbd8ccc74ef08431e7ce8e7ac938057dfbd25b1115cd98e835d64d89",
-    "media/app-store/iphone-6.5/09-condicional.png": "3271cf49a46a8377a75f4cc8a9216899b69c797adb5c6a975b45748999df06c2",
-    "media/app-store/iphone-6.5/10-recibo.png": "ade9e989bae4663a80528e012cd4058684d3e215d2631dba8e378e2f2e48782c"
+    "media/app-store/iphone-6.5/01-vender.png": "9e7988f8762f3da9691e8b19cb1d7d1c113520e4bf544494e7e3fdb1922a70f4",
+    "media/app-store/iphone-6.5/02-cobrar.png": "7cb06267a1d51e2c7c7b0a9bb8d2bafd9c95c0a3c978618834c65a1525779a62",
+    "media/app-store/iphone-6.5/03-financeiro.png": "1ce86bfe02f21fd719b5638a99cec31762f00e20f377f29f4aff1b9c9341ce1d",
+    "media/app-store/iphone-6.5/04-relatorios.png": "c75a121eeffc216d9881c45c4952c719fa4fff64ea833474481ab31bb6d8d894",
+    "media/app-store/iphone-6.5/05-estoque.png": "dceeb6681efa1f3de253d4d58760230f302a655072511168df2a0daeb747ad1f",
+    "media/app-store/iphone-6.5/06-produtos.png": "04d2e626c7d2c4a8d18f8ce8e3102c6d62536f5e15a697481c9d86d65990b7c7",
+    "media/app-store/iphone-6.5/07-caixa.png": "8a1fb525dd6ad95e57d68827ebc3c824226c3bcad8f0b67bcde6329927f5d297",
+    "media/app-store/iphone-6.5/08-crediario.png": "b2cb44069dc0c5904d5831ab8b606bc0ad400b730413c97eba1f243eb4fb96ea",
+    "media/app-store/iphone-6.5/09-condicional.png": "71fd412e2f2a6cd1fc190a0c274e3992e2f38ca398e09ee400714d31dfff4b79",
+    "media/app-store/iphone-6.5/10-recibo.png": "502a0161ff4311ad70c441ae76a5c86e06150ec5f0e7b5f01a30dc68c5416a7c"
   }
 }

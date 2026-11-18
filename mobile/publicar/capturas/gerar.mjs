@@ -5,18 +5,15 @@
  *
  * Quem sobe API, banco, dados e o export é o `gerar.sh`; este arquivo só entra pela tela
  * de login com a dona de teste da seed e segue o `ROTEIRO`. Cada foto sai em
- * `.brutas/NN-nome.png` (428 × 926 pt a 3x), e o `compor.mjs` monta a arte em cima.
+ * `.brutas/NN-nome.png` (428 × 926 pt a 3x), com a hora em que saiu em `.brutas/NN-nome.json`
+ * (a da barra de status), e o `compor.mjs` monta a arte em cima.
  *
  * O que é diferente do navegador comum, e por quê (tudo para parecer o que o iPhone mostra):
  *   - as áreas seguras do iPhone, declaradas pelo DevTools: 47 pt em cima (barra de status)
- *     e 34 pt embaixo (indicador de início). O app as lê como no aparelho, e a moldura
- *     desenha a barra e o indicador por cima;
- *   - a barra de abas com a área segura de baixo somada à altura, se o app não a somou: o
- *     `tabBarStyle` com altura fixa ignora o indicador de início, e no iPhone com Face ID os
- *     rótulos encostam nele. A foto mostra a barra como ela deve ficar;
+ *     e 34 pt embaixo (indicador de início). O app as lê como no aparelho — a barra de abas
+ *     e os rodapés se afastam do indicador sozinhos, sem retoque da foto — e a moldura
+ *     desenha a barra de status e o indicador por cima;
  *   - sem barra de rolagem e sem cursor piscando (nenhum dos dois aparece parado no iPhone);
- *   - o rótulo das abas sem encolher: no navegador o flex corta a parte de baixo das letras,
- *     no iPhone o texto sai inteiro;
  *   - campo de texto do tamanho do que tem dentro, como o TextInput do iPhone: o <input> do
  *     navegador nasce com ~20 letras de largura e espremia o nome da peça ao lado dele.
  *
@@ -32,6 +29,7 @@ import { fileURLToPath } from 'node:url';
 
 import { CENAS, ROTEIRO, prepararLoja } from './cenas.mjs';
 import { APARELHO } from './compor.mjs';
+import { medirQuadro } from './quadro.mjs';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require('playwright');
@@ -45,9 +43,11 @@ const LOJA = process.env.CAPTURAS_LOJA || 'Loja Tria';
 const BRUTAS = process.env.CAPTURAS_BRUTAS || join(AQUI, '.brutas');
 const SO = (process.env.CAPTURAS_SO || '').split(',').filter(Boolean);
 
+/** A faixa de baixo onde o iPhone desenha o indicador de início e a tela se arredonda. */
+const FAIXA_DO_INDICADOR = 28;
+
 /** Ajustes só de fotografia (ver o cabeçalho). Nada aqui muda dado ou comportamento. */
 const CSS_DA_FOTO = `
-  a[role="tab"] div[dir="auto"] { flex-shrink: 0 !important; }
   input, textarea { field-sizing: content; }
   * { scrollbar-width: none !important; }
   *::-webkit-scrollbar { display: none !important; }
@@ -71,6 +71,14 @@ async function entrarNaApi() {
   });
   if (!resposta.ok) falhar(`a API local recusou o login da conta de teste (${resposta.status}).`);
   return (await resposta.json()).access_token;
+}
+
+/** Hora e minuto no fuso da loja (`GET /configuracao`), como o app escreve no recibo. */
+async function relogioDaLoja() {
+  const resposta = await fetch(`${API}/api/v1/configuracao`);
+  if (!resposta.ok) falhar(`a API local não disse o fuso da loja (${resposta.status}).`);
+  const { timezone } = await resposta.json();
+  return new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: timezone });
 }
 
 /** Tudo o que uma cena pode fazer na tela — sempre pelo caminho que uma pessoa usaria. */
@@ -127,6 +135,19 @@ function criarApp(page, token, pendentes) {
       throw new Error(`o campo "${placeholder}" não guardou o que foi digitado`);
     },
 
+    /**
+     * Busca de lista (estoque, produtos): escreve, espera a API responder com aquele termo
+     * e solta o campo. A lista mostra o resultado na assentada que vem depois.
+     */
+    async buscar(placeholder, termo) {
+      const respondeu = page.waitForResponse(
+        (r) => r.url().startsWith(API) && new URL(r.url()).searchParams.get('q') === termo,
+      );
+      await app.digitar(placeholder, termo);
+      await respondeu;
+      await app.soltarCampo();
+    },
+
     /** Teclado de caixa do app: os dígitos entram pela direita ("100,00" = 1-0-0-0-0). */
     async teclar(valor) {
       for (const digito of valor.replace(/\D/g, '')) {
@@ -178,24 +199,6 @@ function criarApp(page, token, pendentes) {
       for (const [i, peca] of pecas.entries()) await campos.nth(i).fill(String(voltaram[peca]));
     },
 
-    /** O campo de uma linha da tela, achado pelo texto da linha (ex.: "Dinheiro na gaveta"). */
-    async campoDe(textoDaLinha, placeholder) {
-      const campos = visiveis(page.getByPlaceholder(placeholder, { exact: true }));
-      const indice = await campos.evaluateAll(
-        (els, alvo) =>
-          els.findIndex((el) => {
-            for (let no = el.parentElement; no; no = no.parentElement) {
-              if (no.querySelectorAll('input').length > 1) return false;
-              if (no.textContent.includes(alvo)) return true;
-            }
-            return false;
-          }),
-        textoDaLinha,
-      );
-      if (indice < 0) throw new Error(`não achei o campo de "${textoDaLinha}"`);
-      return campos.nth(indice);
-    },
-
     /** Tira o foco do campo, como tocar fora dele no iPhone (o teclado desce). */
     async soltarCampo() {
       await page.evaluate(() => document.activeElement?.blur());
@@ -224,53 +227,36 @@ function criarApp(page, token, pendentes) {
     },
 
     /**
-     * O indicador de início é desenhado por cima da foto, como no iPhone, e a faixa dele
-     * (os 28 pt de baixo) é a borda arredondada da tela: texto ali sai cortado ou riscado.
-     * Se houver texto visível na faixa, a lista rola o mínimo — para baixo ou para cima,
-     * dentro do que a rolagem permite — até a faixa ficar só com fundo.
+     * Enquadra a tela como uma pessoa faria antes de mostrar: nada cortado nas bordas do que
+     * se vê, nada embaixo do indicador de início nem do botão flutuante, e o que a cena pede
+     * em `mostrar` inteiro à vista (as regras estão em `quadro.mjs`). A lista rola o mínimo,
+     * a partir de onde a cena a deixou; sem posição assim, a cena para dizendo o que cortou.
      */
-    async afastarDoIndicador() {
-      const { largura, altura } = APARELHO;
-      const faixa = { x0: 0, x1: largura, y0: altura - 28, y1: altura };
-      const movido = await page.evaluate((z) => {
-        const textoNaFaixa = () => {
-          const andar = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-          for (let no = andar.nextNode(); no; no = andar.nextNode()) {
-            const pai = no.parentElement;
-            if (!no.textContent.trim() || !pai?.checkVisibility({ opacityProperty: true, visibilityProperty: true })) continue;
-            const pedaco = document.createRange();
-            pedaco.selectNodeContents(no);
-            for (const r of pedaco.getClientRects()) {
-              if (r.right <= z.x0 || r.left >= z.x1 || r.bottom <= z.y0 || r.top >= z.y1) continue;
-              // Texto cortado pela rolagem ou coberto por um rodapé fixo não aparece: não conta.
-              const visto = document.elementFromPoint(
-                Math.min(Math.max((r.left + r.right) / 2, z.x0 + 1), z.x1 - 1),
-                Math.min(Math.max((r.top + r.bottom) / 2, z.y0 + 1), z.y1 - 1),
-              );
-              if (visto && (visto === pai || pai.contains(visto) || visto.contains(pai))) return true;
-            }
-          }
-          return false;
-        };
-        if (!textoNaFaixa()) return 0;
-        let rolador = document.elementFromPoint(z.x1 / 2, z.y0 + 1);
-        while (rolador && !(['auto', 'scroll'].includes(getComputedStyle(rolador).overflowY) && rolador.scrollHeight > rolador.clientHeight + 1)) {
-          rolador = rolador.parentElement;
+    async enquadrar(mostrar = []) {
+      const medidas = {
+        largura: APARELHO.largura,
+        altura: APARELHO.altura,
+        status: APARELHO.status,
+        faixa: FAIXA_DO_INDICADOR,
+        mostrar,
+      };
+      for (let vez = 0; vez < 3; vez += 1) {
+        const quadro = await page.evaluate(medirQuadro, { ...medidas, procurar: true });
+        if (!quadro.ok) {
+          throw new Error(
+            `não há enquadramento sem corte (onde a cena deixou: ${quadro.antes.slice(0, 3).join('; ')}); ` +
+              `o mais perto: ${quadro.problemas.join('; ')}`,
+          );
         }
-        if (!rolador) return null;
-        const inicio = rolador.scrollTop;
-        const maximo = rolador.scrollHeight - rolador.clientHeight;
-        for (let passo = 2; passo <= 120; passo += 2) {
-          for (const destino of [inicio + passo, inicio - passo]) {
-            if (destino < 0 || destino > maximo) continue;
-            rolador.scrollTop = destino;
-            if (!textoNaFaixa()) return destino - inicio;
-          }
+        if (quadro.para !== quadro.de) {
+          const quanto = Math.round(quadro.para - quadro.de);
+          process.stdout.write(`  (rolou ${quanto} pt: ${quadro.antes.slice(0, 2).join('; ')})\n`);
         }
-        rolador.scrollTop = inicio;
-        return null;
-      }, faixa);
-      if (movido === null) process.stderr.write('  (aviso: ficou texto na faixa do indicador de início)\n');
+        await app.assentar();
+        // A lista pode ter desenhado mais linhas ao rolar: confere de novo, parada.
+        if ((await page.evaluate(medirQuadro, { ...medidas, procurar: false })).ok) return;
+      }
+      throw new Error('a tela não parou num enquadramento sem corte');
     },
 
     /** O gráfico de barras começa no dia mais antigo; arrastado, mostra até hoje. */
@@ -358,6 +344,7 @@ async function principal() {
   if (!SO.length) rmSync(BRUTAS, { recursive: true, force: true });
   mkdirSync(BRUTAS, { recursive: true });
   const token = await entrarNaApi();
+  const relogio = await relogioDaLoja();
 
   const navegador = await chromium.launch();
   try {
@@ -404,17 +391,26 @@ async function principal() {
     await page.getByPlaceholder('••••••••').fill(SENHA);
     await page.getByRole('button', { name: 'Entrar', exact: true }).click();
     await page.getByRole('tab').filter({ hasText: 'Vender' }).waitFor({ timeout: 30_000 });
-    await page.evaluate((inset) => {
-      const barra = document.querySelector('[role="tablist"]')?.parentElement;
-      const estilo = barra && getComputedStyle(barra);
-      if (!estilo || parseFloat(estilo.paddingBottom) >= inset) return;
-      const css = document.createElement('style');
-      css.textContent = `div:has(> [role="tablist"]) {
-        height: ${parseFloat(estilo.height) + inset}px !important;
-        padding-bottom: ${parseFloat(estilo.paddingBottom) + inset}px !important;
-      }`;
-      document.head.appendChild(css);
-    }, base);
+    // A barra de abas é a do app, sem retoque: ela soma a área segura de baixo sozinha
+    // (`medidasDaBarraDeAbas`). Se um dia voltar a ignorá-la, a foto para aqui em vez de
+    // mostrar os rótulos em cima do indicador de início.
+    const barra = await page.evaluate(() => {
+      const el = document.querySelector('[role="tablist"]')?.parentElement;
+      const rotulos = [...document.querySelectorAll('a[role="tab"] div[dir="auto"]')].filter((r) => r.textContent.trim());
+      return {
+        folga: el ? parseFloat(getComputedStyle(el).paddingBottom) : null,
+        espremidos: rotulos.filter((r) => r.scrollHeight > r.clientHeight + 1).map((r) => r.textContent.trim()),
+      };
+    });
+    if (barra.folga === null || barra.folga < base) {
+      falhar(
+        `a barra de abas do app não deixa a área segura de baixo (${barra.folga ?? '?'} pt de folga, ` +
+          `precisa de ${base}): confira o medidasDaBarraDeAbas (src/lib/areaSegura.ts).`,
+      );
+    }
+    if (barra.espremidos.length) {
+      falhar(`rótulo de aba sem altura para a linha inteira: ${barra.espremidos.join(', ')} (src/lib/areaSegura.ts).`);
+    }
 
     const app = criarApp(page, token, pendentes);
     process.stdout.write('• preparo: taxas da maquininha (Mais → Taxas do cartão)\n');
@@ -430,11 +426,17 @@ async function principal() {
       try {
         await cena.preparar(app);
         await app.assentar();
-        await app.afastarDoIndicador();
+        await app.enquadrar(cena.mostrar);
         const foto = await app.assentar();
+        // A hora da barra de status é a da foto, no fuso da loja: a mesma do recibo e da
+        // condicional que a cena acabou de fazer (o "9:41" fixo desmentia as duas).
+        const hora = relogio.format(new Date());
         const cortados = await app.textosCortados();
         if (cortados.length) throw new Error(`texto cortado na tela: ${cortados.join(' | ')}`);
-        if (!SO.length || SO.includes(nome)) writeFileSync(join(BRUTAS, `${nome}.png`), foto);
+        if (!SO.length || SO.includes(nome)) {
+          writeFileSync(join(BRUTAS, `${nome}.png`), foto);
+          writeFileSync(join(BRUTAS, `${nome}.json`), `${JSON.stringify({ hora })}\n`);
+        }
       } catch (erro) {
         await page.screenshot({ path: join(BRUTAS, `erro-${nome}.png`) }).catch(() => {});
         falhar(`cena ${nome}: ${erro.message.split('\n')[0]}\n  (a tela na hora do erro: ${join(BRUTAS, `erro-${nome}.png`)})`);

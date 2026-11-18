@@ -75,6 +75,12 @@ FONTES="$(fc-list : family 2>/dev/null || true)"  # numa variável: grep -q no p
 grep -q '^Inter Display' <<<"$FONTES" && grep -q '^Inter' <<<"$FONTES" \
   || falha "Falta a fonte Inter (Inter e Inter Display; no Ubuntu: fonts-inter)."
 psql -d postgres -tAc 'select 1' >/dev/null 2>&1 || falha "O Postgres em $PGHOST:$PGPORT não respondeu como $PGUSER."
+# A hora da barra de status é a da foto, a mesma que o recibo e a condicional mostram: de
+# madrugada, a venda da foto sai de madrugada também. Coerente, mas fora do horário da loja.
+HORA_DA_LOJA="$(TZ=America/Sao_Paulo date +%H)"
+if [ "$((10#$HORA_DA_LOJA))" -lt 8 ] || [ "$((10#$HORA_DA_LOJA))" -ge 22 ]; then
+  echo "aviso: são $(TZ=America/Sao_Paulo date +%H:%M) na loja; o recibo e a barra de status vão mostrar essa hora (rode entre 8h e 22h para a foto sair em horário de loja)."
+fi
 for porta in "$PORTA_API" "$PORTA_WEB"; do
   if curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$porta/"; then
     falha "A porta $porta já está em uso. Libere-a ou escolha outra (CAPTURAS_PORTA_API/WEB)."

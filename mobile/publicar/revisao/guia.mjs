@@ -31,7 +31,7 @@ const PRINTS = join(RAIZ, 'media', 'app-store', 'iphone-6.5');
 export const LEGENDAS = {
   '01-vender.png': 'Point of sale ("Vender"): items in the cart, the total and "Cobrar".',
   '02-cobrar.png': 'Payment ("Cobrar"): one sale split between PIX and a 3x credit card.',
-  '03-financeiro.png': '"Financeiro": the month result — revenue, cost, profit, expenses, card fees.',
+  '03-financeiro.png': '"Financeiro": the month result — revenue, returns, cost, profit, expenses, card fees.',
   '04-relatorios.png': 'Reports: sales per day and the best sellers with their profit.',
   '05-estoque.png': 'Stock by size and color, with the restock ("repor") alert.',
   '06-produtos.png': 'Catalog ("Produtos"): price, sizes and stock of each item.',

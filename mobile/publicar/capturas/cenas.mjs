@@ -10,6 +10,10 @@
  * cena fotografa. Sem preço, sem "grátis", sem citar outra plataforma. O título tem sempre
  * duas linhas (o `\n`) e o subtítulo, uma — `compor.mjs` recusa a arte se não couber.
  *
+ * `mostrar` é o que tem de sair INTEIRO na foto. Depois do `preparar`, o enquadramento
+ * (`quadro.mjs`) rola a lista o mínimo para isso e para nada sair cortado nas bordas; se não
+ * houver posição assim, a cena para dizendo o que cortou — e o ajuste é aqui.
+ *
  * `ROTEIRO` é a ordem em que as cenas são FOTOGRAFADAS, que não é a ordem da loja: o fiado
  * e a condicional acontecem antes, para o caixa e o financeiro já contarem com eles, e a
  * venda do PDV atravessa três cenas (carrinho → cobrança → recibo).
@@ -45,16 +49,13 @@ const FIADO = [
   { cliente: 'Sônia Barbosa', pecas: ['Saia Midi Plissada'] },
 ];
 
-/** "349,55" (como o campo mostra) em centavos, e de volta. */
-const centavos = (texto) => Math.round(Number(texto.replace(/\./g, '').replace(',', '.')) * 100);
-const reais = (c) => `${Math.trunc(c / 100)},${String(c % 100).padStart(2, '0')}`;
-
 export const CENAS = [
   {
     arquivo: '01-vender',
     titulo: 'Venda feita\nem segundos',
     subtitulo: 'Bipe a etiqueta ou busque pelo nome',
     tela: 'PDV com quatro peças no carrinho (o vestido pelo "Digitar código", as outras pela busca por nome), o total e o Cobrar',
+    mostrar: ['4 peças', 'Total', 'Cobrar'],
     async preparar(app) {
       await app.aba('Vender');
       const vestido = await app.peca('Vestido Longo Festa');
@@ -71,6 +72,7 @@ export const CENAS = [
     titulo: 'Pix, cartão\ne fiado',
     subtitulo: 'Divida a conta e parcele no crédito',
     tela: 'Cobrança da mesma venda: R$ 300,00 no PIX e R$ 400,00 no crédito em 3x (Visa) já lançados, o que falta e as seis formas de pagamento',
+    mostrar: ['Falta receber', 'Crédito 3x · Visa', 'Vale de troca', 'Fiado'],
     async preparar(app) {
       await app.botao('Cobrar');
       await app.esperarTexto('Falta receber');
@@ -91,6 +93,7 @@ export const CENAS = [
     titulo: 'Seu lucro\nde verdade',
     subtitulo: 'Já descontados custo, despesas e taxas',
     tela: 'Financeiro: resultado do mês, faturamento, custo das peças vendidas, lucro bruto, despesas, taxas de cartão, margem e o aviso de repor',
+    mostrar: ['Resultado do mês', 'Devoluções', 'Lucro bruto', 'Taxas de cartão', 'hora de repor'],
     async preparar(app) {
       await app.aba('Financeiro');
       await app.esperarTexto('Resultado do mês');
@@ -116,6 +119,7 @@ export const CENAS = [
     titulo: 'Saiba o que\nmais vende',
     subtitulo: 'Vendas por dia e o lucro de cada peça',
     tela: 'Relatórios dos últimos 30 dias: vendas por dia (gráfico arrastado até hoje) e o ranking dos mais vendidos, com o lucro de cada um',
+    mostrar: ['Vendas por dia', 'Mais vendidos'],
     async preparar(app) {
       await app.aba('Financeiro');
       await app.tocar('Relatórios');
@@ -127,39 +131,45 @@ export const CENAS = [
     arquivo: '05-estoque',
     titulo: 'Estoque por\ntamanho e cor',
     subtitulo: 'O app avisa a hora de repor',
-    tela: 'Estoque: saldo de cada tamanho e cor, o valor parado em custo e a etiqueta "repor" no que chegou ao mínimo',
+    tela: 'Estoque das blusas (pela busca): saldo de cada tamanho e cor, o valor parado em custo e a etiqueta "repor" no que chegou ao mínimo',
+    mostrar: ['Inventário', 'repor'],
     async preparar(app) {
       await app.aba('Estoque');
       await app.esperarTexto('Inventário');
+      // As blusas, pela busca: as seis linhas cabem inteiras na tela. A lista do estoque
+      // inteiro deixaria uma fatia de cartão em cima da barra de abas.
+      await app.buscar('Peça ou código', 'Blusa');
     },
   },
   {
     arquivo: '06-produtos',
     titulo: 'Catálogo na\npalma da mão',
     subtitulo: 'Grade, preço e saldo de cada peça',
-    tela: 'Produtos: cada peça com preço, categoria, a grade com o saldo de cada tamanho e o total em estoque',
+    tela: 'Produtos (as calças, pela busca): cada peça com preço, categoria, a grade com o saldo de cada tamanho (o zerado em vermelho) e o total em estoque',
+    mostrar: ['Calça Alfaiataria', 'Calça Jeans Skinny', 'em estoque'],
     async preparar(app) {
       await app.aba('Produtos');
       await app.esperarTexto('em estoque');
+      // As calças, pela busca. Com o catálogo inteiro, o botão + flutua sempre em cima do
+      // preço ou do saldo de algum cartão (o vão entre dois é menor que ele), e no fim da
+      // lista o primeiro cartão sai cortado em cima.
+      await app.buscar('Buscar por nome ou código de barras', 'Calça');
     },
   },
   {
     arquivo: '07-caixa',
     titulo: 'Feche o caixa\nsem planilha',
     subtitulo: 'O esperado e o contado, forma por forma',
-    tela: 'Fechamento de caixa do dia, no fim da conferência: dinheiro (faltaram R$ 4,50), PIX, débito e crédito com o esperado e o contado, o total contado, a diferença e o Fechar caixa',
+    tela: 'Fechamento de caixa do dia, no fim da conferência: dinheiro, PIX, débito e crédito com o esperado e o contado de cada um, o total contado, a diferença e o Fechar caixa',
+    mostrar: ['Dinheiro na gaveta', 'Cartão de crédito', 'Diferença', 'Fechar caixa'],
     async preparar(app) {
       await app.aba('Financeiro');
       await app.tocar('Caixa');
       await app.esperarTexto('Dinheiro na gaveta');
-      // A dona contou a gaveta e deu R$ 4,50 a menos que o sistema esperava.
-      const gaveta = await app.campoDe('Dinheiro na gaveta', '0,00');
-      const esperado = centavos(await gaveta.inputValue());
-      if (!(esperado > 450)) throw new Error(`a gaveta do dia não tem dinheiro bastante para a cena (${esperado})`);
-      await gaveta.fill(reais(esperado - 450));
-      await app.soltarCampo();
-      await app.esperarTexto('Faltou R$ 4,50');
-      // Desce até o fim: o total contado, a diferença e o "Fechar caixa".
+      // A conferência do dia inteira numa tela só: as quatro formas, o total, a diferença e o
+      // "Fechar caixa". Diferença numa forma acrescenta uma linha ("Faltou R$ 4,50") ao cartão
+      // dela, e aí a tela do iPhone não cabe mais o primeiro cartão inteiro e o botão longe do
+      // indicador de início ao mesmo tempo: a gaveta desta foto bate.
       await app.rolarAteOFim();
     },
   },
@@ -168,6 +178,7 @@ export const CENAS = [
     titulo: 'Fiado sob\ncontrole',
     subtitulo: 'O que levou, o que pagou e o que falta',
     tela: 'Conta da Marizete no crediário: quanto deve, o aviso de que passou do limite combinado, o que levou no fiado, o que já pagou e cada compra',
+    mostrar: ['acima do limite combinado', 'Deve', 'Compras no fiado', 'Pagamentos'],
     async preparar(app) {
       // Três vendas no fiado, pelo PDV, como no balcão. A seed deixa o crediário quase vazio
       // (as peças sorteadas para o fiado costumam ter acabado), e a tela vazia não diz nada.
@@ -206,7 +217,8 @@ export const CENAS = [
     arquivo: '09-condicional',
     titulo: 'Condicional\nsem caderno',
     subtitulo: 'O que voltou para a arara e o que cobrar',
-    tela: 'Condicional da Cleide (prazo de 3 dias) sendo fechada: o vestido voltou para a arara, a blusa ficou e vai no PIX',
+    tela: 'Condicional da Cleide (prazo de 3 dias) sendo fechada: o vestido voltou para a arara, a blusa ficou, o que cobrar dela e as formas de pagamento',
+    mostrar: ['Cleide Ramos', 'Tudo voltou', 'A cobrar', 'Fiado', 'Fechar condicional'],
     async preparar(app) {
       await app.aba('Mais');
       await app.tocar('Condicional');
@@ -222,10 +234,10 @@ export const CENAS = [
       // Na volta, peça por peça: o vestido voltou, a blusa ficou.
       await app.responderVolta({ 'Vestido Longo Festa': 1, 'Blusa de Tricô': 0 });
       await app.esperarTexto('A cobrar');
-      await app.tocar('PIX');
-      await app.esperarTexto('Pago');
       await app.soltarCampo();
-      // Desce até o "Fechar condicional": a conta pronta e o botão de concluir à vista.
+      // Desce até o "Fechar condicional": o que cobrar, as formas e o botão de concluir. Sem
+      // tocar a forma: a linha do pagamento escolhido deixaria a tela mais alta que o iPhone
+      // (o cartão da Cleide, em cima, ou o botão, embaixo, sairia cortado).
       await app.rolarAteOFim();
     },
   },
@@ -234,6 +246,7 @@ export const CENAS = [
     titulo: 'Recibo\nna hora',
     subtitulo: 'Mande para a cliente pelo celular',
     tela: 'Recibo da venda das cenas 1 e 2, concluída com o resto no dinheiro: as peças, o total e as três formas de pagamento, com o botão Enviar recibo',
+    mostrar: ['Total', 'Troca em até 30 dias', 'Enviar recibo'],
     async preparar(app) {
       // Continua a cobrança da cena 2: o que falta vai no dinheiro.
       await app.tocar('Dinheiro');

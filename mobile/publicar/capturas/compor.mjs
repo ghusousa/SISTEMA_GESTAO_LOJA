@@ -9,9 +9,11 @@
  * 6,5" (1242 × 2688) é o conjunto obrigatório; 6,9" (1320 × 2868) é o extra. A composição é
  * a mesma nos dois: tudo é medido numa régua de 1242 de largura e escalado.
  *
- * A barra de status (9:41, sinal, Wi-Fi, bateria) e o indicador de início são desenhados
- * aqui, por cima da foto, nas áreas seguras que o app já deixou livres (o `gerar.mjs` as
- * declara ao navegador): o export web não desenha nenhum dos dois. A cor de cada um vem da
+ * A barra de status (sinal, Wi-Fi, bateria e a hora em que a foto saiu, no fuso da loja —
+ * a mesma do recibo e da condicional que a cena fez; o `gerar.mjs` a anota ao lado da foto)
+ * e o indicador de início são desenhados aqui, por cima da foto, nas áreas seguras que o app
+ * já deixou livres (o `gerar.mjs` as declara ao navegador): o export web não desenha nenhum
+ * dos dois. A cor de cada um vem da
  * própria foto — clara sobre o cabeçalho azul, escura sobre o fundo claro do PDV.
  */
 
@@ -95,6 +97,15 @@ function iconesDeStatus(pt) {
     </svg>`;
 }
 
+/** A hora que o `gerar.mjs` anotou quando a foto saiu ("22:56"). Sem ela, não há barra de status. */
+function horaDaFoto(arquivo) {
+  const hora = existsSync(arquivo) ? JSON.parse(readFileSync(arquivo, 'utf8')).hora : null;
+  if (!/^\d{2}:\d{2}$/.test(hora ?? '')) {
+    throw new Error(`falta a hora da foto em ${arquivo} — rode o gerar.sh (ele a anota junto da foto)`);
+  }
+  return hora;
+}
+
 /** A cor do que vai por cima da foto: barra de status e indicador de início. */
 function coresDaFoto(arquivo) {
   const foto = lerPng(readFileSync(arquivo));
@@ -113,7 +124,7 @@ function coresDaFoto(arquivo) {
   };
 }
 
-function paginaDaArte(cena, foto, tamanho, cores) {
+function paginaDaArte(cena, foto, tamanho, cores, hora) {
   const u = tamanho.largura / REGUA.base;
   const px = (v) => `${(v * u).toFixed(2)}px`;
   const pt = (v) => px(v * REGUA.porPonto);
@@ -185,7 +196,7 @@ function paginaDaArte(cena, foto, tamanho, cores) {
   <div class="aparelho"><div class="moldura"><div class="tela">
     <img src="${foto}" alt="">
     <div class="indicador"></div>
-    <div class="status"><div class="hora">9:41</div><div class="icones">${iconesDeStatus(pt)}</div></div>
+    <div class="status"><div class="hora">${hora}</div><div class="icones">${iconesDeStatus(pt)}</div></div>
     <div class="ilha"></div>
   </div></div></div>
 </body></html>`;
@@ -231,10 +242,12 @@ export async function compor({
   const require = createRequire(import.meta.url);
   const { chromium } = require('playwright');
 
+  const horas = {};
   for (const cena of cenas) {
     if (!existsSync(join(brutas, `${cena.arquivo}.png`))) {
       throw new Error(`falta a foto do app de ${cena.arquivo} em ${brutas} — rode o gerar.sh`);
     }
+    horas[cena.arquivo] = horaDaFoto(join(brutas, `${cena.arquivo}.json`));
   }
   const navegador = await chromium.launch();
   try {
@@ -254,7 +267,7 @@ export async function compor({
       for (const cena of cenas) {
         const foto = join(brutas, `${cena.arquivo}.png`);
         const html = join(brutas, `arte-${tamanho.pasta}-${cena.arquivo}.html`);
-        writeFileSync(html, paginaDaArte(cena, pathToFileURL(foto).href, tamanho, coresDaFoto(foto)));
+        writeFileSync(html, paginaDaArte(cena, pathToFileURL(foto).href, tamanho, coresDaFoto(foto), horas[cena.arquivo]));
         await pagina.goto(pathToFileURL(html).href);
         await pagina.evaluate(async () => {
           await document.fonts.ready;
