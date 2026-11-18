@@ -1837,6 +1837,12 @@ demonstração.
 web do próprio app, fotografado cena a cena pelo Playwright numa tela de iPhone (áreas seguras
 declaradas ao navegador), com a arte montada por cima (`compor.mjs`) nos dois tamanhos e com os
 mesmos nomes; `png.mjs` grava RGB sem alfa. Nada é desenhado à mão: mudou uma tela, roda de novo.
+A foto não retoca o app: a barra de abas e os rodapés respeitam a área segura sozinhos (se
+deixarem de respeitar, o gerador para), e antes de cada foto `quadro.mjs` enquadra a lista —
+nada cortado nas bordas, embaixo do indicador de início ou do botão flutuante, e o que a cena
+pede em `mostrar` inteiro; sem posição assim, a cena para e muda (por isso o caixa sai com a
+gaveta batendo e o estoque e os produtos pela busca). A hora da barra de status é a da foto, no
+fuso da loja — a mesma do recibo e da condicional da cena.
 O CI não roda o gerador (pede Postgres, Chromium e as fontes Inter), mas confere as commitadas nos
 bytes contra as cenas (`compor.mjs --conferir`) e as sobe na Apple de mentira (`rodar.mjs --reais`).
 

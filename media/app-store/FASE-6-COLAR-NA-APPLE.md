@@ -29,13 +29,13 @@ README de lá). A lista abaixo espelha as cenas de lá, e quem manda é a pasta.
 |---|---|---|---|
 | 1 | `01-vender.png` | Venda feita em segundos · Bipe a etiqueta ou busque pelo nome | PDV com 4 peças no carrinho, o total e o Cobrar |
 | 2 | `02-cobrar.png` | Pix, cartão e fiado · Divida a conta e parcele no crédito | Cobrança dividida: PIX + crédito 3x Visa lançados, o que falta e as 6 formas |
-| 3 | `03-financeiro.png` | Seu lucro de verdade · Já descontados custo, despesas e taxas | Resultado do mês, faturamento, custo, lucro bruto, despesas, taxas e margem |
+| 3 | `03-financeiro.png` | Seu lucro de verdade · Já descontados custo, despesas e taxas | Resultado do mês e a conta que fecha: faturamento, devoluções, custo, lucro bruto, despesas, taxas e margem |
 | 4 | `04-relatorios.png` | Saiba o que mais vende · Vendas por dia e o lucro de cada peça | Vendas por dia (30 dias) e o ranking dos mais vendidos com o lucro |
-| 5 | `05-estoque.png` | Estoque por tamanho e cor · O app avisa a hora de repor | Saldo por tamanho e cor, valor em custo e a etiqueta "repor" |
-| 6 | `06-produtos.png` | Catálogo na palma da mão · Grade, preço e saldo de cada peça | Catálogo com preço, grade e saldo de cada tamanho |
-| 7 | `07-caixa.png` | Feche o caixa sem planilha · O esperado e o contado, forma por forma | Conferência por forma, a diferença na gaveta e o Fechar caixa |
+| 5 | `05-estoque.png` | Estoque por tamanho e cor · O app avisa a hora de repor | As blusas (pela busca): saldo por tamanho e cor, valor em custo e a etiqueta "repor" |
+| 6 | `06-produtos.png` | Catálogo na palma da mão · Grade, preço e saldo de cada peça | As calças (pela busca): preço, grade e saldo de cada tamanho, o zerado em vermelho |
+| 7 | `07-caixa.png` | Feche o caixa sem planilha · O esperado e o contado, forma por forma | Conferência por forma (a gaveta batendo), o total contado, a diferença e o Fechar caixa |
 | 8 | `08-crediario.png` | Fiado sob controle · O que levou, o que pagou e o que falta | Conta da cliente: deve, passou do limite, compras e pagamentos |
-| 9 | `09-condicional.png` | Condicional sem caderno · O que voltou para a arara e o que cobrar | Fechamento de condicional: o que voltou, o que ficou e o pagamento |
+| 9 | `09-condicional.png` | Condicional sem caderno · O que voltou para a arara e o que cobrar | Fechamento de condicional: o que voltou, o que ficou, o que cobrar e as formas de pagamento |
 | 10 | `10-recibo.png` | Recibo na hora · Mande para a cliente pelo celular | Recibo da venda com as 3 formas de pagamento e o Enviar recibo |
 
 ---
