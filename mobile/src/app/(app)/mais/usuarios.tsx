@@ -8,7 +8,7 @@ import { mensagemDoErro } from '@/api/client';
 import { usuarios } from '@/api/endpoints';
 import type { Usuario } from '@/api/tipos';
 import { Confirmacao } from '@/components/Confirmacao';
-import { Carregando, ErroEstado, Etiqueta } from '@/components/ui';
+import { Carregando, ErroEstado, Etiqueta, useRespiroDeBaixo } from '@/components/ui';
 import { resumoDaComissao } from '@/lib/comissao';
 import { podeExcluirDaEquipe, textosDaExclusao } from '@/lib/exclusaoDeConta';
 import { formatar } from '@/lib/money';
@@ -19,6 +19,9 @@ import { useAuthStore } from '@/stores/authStore';
 
 export default function Usuarios() {
   const router = useRouter();
+  // O botão de novo usuário encosta na base da tela: no iPhone de Face ID, acima do
+  // indicador de início (como em Despesas).
+  const respiroDeBaixo = useRespiroDeBaixo();
   const eu = useAuthStore((e) => e.usuario);
   // Comissão e meta são do dono (ADR-37): para os outros, a linha não abre nada.
   const defineComissao = pode(eu?.papel, PODE.DEFINIR_COMISSAO);
@@ -64,7 +67,7 @@ export default function Usuarios() {
   return (
     <View style={s.tela}>
       <ScrollView
-        contentContainerStyle={s.conteudo}
+        contentContainerStyle={[s.conteudo, { paddingBottom: respiroDeBaixo + 80 }]}
         refreshControl={
           <RefreshControl
             refreshing={consulta.isRefetching}
@@ -196,7 +199,7 @@ export default function Usuarios() {
       </Confirmacao>
 
       <Pressable
-        style={s.botaoFlutuante}
+        style={[s.botaoFlutuante, { bottom: respiroDeBaixo }]}
         onPress={() => router.push('/mais/usuario-novo')}
         accessibilityLabel="Novo usuário"
       >
@@ -208,7 +211,7 @@ export default function Usuarios() {
 
 const s = StyleSheet.create({
   tela: { flex: 1, backgroundColor: cores.fundo },
-  conteudo: { padding: espaco.lg, paddingBottom: 96 },
+  conteudo: { padding: espaco.lg },
   item: {
     backgroundColor: cores.superficie,
     borderRadius: raio.md,
@@ -245,7 +248,6 @@ const s = StyleSheet.create({
   botaoFlutuante: {
     position: 'absolute',
     right: espaco.lg,
-    bottom: espaco.lg,
     width: 60,
     height: 60,
     borderRadius: raio.redondo,
