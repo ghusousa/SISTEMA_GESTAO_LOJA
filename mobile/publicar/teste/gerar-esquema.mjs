@@ -31,6 +31,7 @@ const ROTAS = [
   'GET /v1/appInfos/{id}/appInfoLocalizations',
   'POST /v1/appInfoLocalizations',
   'PATCH /v1/appInfoLocalizations/{id}',
+  'DELETE /v1/appInfoLocalizations/{id}',
   'PATCH /v1/appInfos/{id}',
   'GET /v1/appInfos/{id}/ageRatingDeclaration',
   'PATCH /v1/ageRatingDeclarations/{id}',
@@ -42,6 +43,7 @@ const ROTAS = [
   'GET /v1/appStoreVersions/{id}/appStoreVersionLocalizations',
   'POST /v1/appStoreVersionLocalizations',
   'PATCH /v1/appStoreVersionLocalizations/{id}',
+  'DELETE /v1/appStoreVersionLocalizations/{id}',
   'GET /v1/appStoreVersionLocalizations/{id}/appScreenshotSets',
   'POST /v1/appScreenshotSets',
   'DELETE /v1/appScreenshotSets/{id}',
@@ -53,6 +55,12 @@ const ROTAS = [
   'GET /v1/appStoreVersions/{id}/appStoreReviewDetail',
   'POST /v1/appStoreReviewDetails',
   'PATCH /v1/appStoreReviewDetails/{id}',
+  // Anexos da revisão (o guia PDF e o vídeo): reservar → PUT dos bytes → confirmar com o MD5.
+  'GET /v1/appStoreReviewDetails/{id}/appStoreReviewAttachments',
+  'POST /v1/appStoreReviewAttachments',
+  'GET /v1/appStoreReviewAttachments/{id}',
+  'PATCH /v1/appStoreReviewAttachments/{id}',
+  'DELETE /v1/appStoreReviewAttachments/{id}',
   'GET /v1/apps/{id}/appPricePoints',
   'POST /v1/appPriceSchedules',
   'GET /v1/builds',
@@ -62,6 +70,10 @@ const ROTAS = [
   'PATCH /v1/reviewSubmissions/{id}',
   'GET /v1/reviewSubmissions/{id}/items',
   'POST /v1/reviewSubmissionItems',
+  'PATCH /v1/reviewSubmissionItems/{id}',
+  // ci.mjs aparelhos: o perfil ad hoc do teste em iPhones reais pede um aparelho registrado.
+  'GET /v1/devices',
+  'POST /v1/devices',
 ];
 
 const caminhoSpec = process.argv[2];

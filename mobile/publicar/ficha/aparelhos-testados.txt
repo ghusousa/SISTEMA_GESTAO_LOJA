@@ -1,0 +1,6 @@
+# iPhones FÍSICOS em que o app foi testado de verdade — uma linha por aparelho, assim:
+#   iPhone 17 — iOS 26.1
+# A primeira linha é o aparelho da gravação de tela (o iOS mais novo). Só entra o que rodou:
+# a Apple pediu esta lista (Guideline 2.1) e ela vai nas notas e no guia PDF. Vazia (só
+# comentários), a ficha sobe mas a revisão NÃO sai. Mudou? node publicar/revisao/gerar-guia.mjs
+# e commit dos três (esta lista, o PDF e app-review-guide.entradas.json).

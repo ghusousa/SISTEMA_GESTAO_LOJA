@@ -27,5 +27,8 @@ docker/Caddyfile text eol=lf
 # Binários: o git não deve tentar converter nada.
 *.png           binary
 *.jpg           binary
+# O guia do revisor da Apple (mobile/publicar/revisao): tem \r nos fluxos; como texto, o eol=lf o
+# estragaria — hoje só não estraga porque o git acha um NUL nos primeiros 8000 bytes.
+*.pdf           binary
 *.ico           binary
 *.dump          binary

@@ -1778,6 +1778,60 @@ registro do app (não existe `POST /v1/apps`) e a ficha "Privacidade do App" (n�
 resumo lembra das duas. A Apple de mentira (`teste/mock-asc.mjs`) confere toda rota, parâmetro
 e corpo contra `teste/esquema-asc.mjs`, recorte gerado da especificação oficial por
 `teste/gerar-esquema.mjs` — especificação nova, gera de novo e o diff mostra o que mudou.
+*Resposta à Guideline 2.1 e revisão do publicador (nov/2026):* a 1ª submissão voltou com
+"Information Needed" — gravação de tela num iPhone FÍSICO, modelos e iOS testados, propósito e
+público, como acessar, serviços externos, regiões, setor regulado —, e o dono continua sem querer
+usar o site da Apple. *Notas em inglês* (o revisor lê inglês; rótulos das telas entre aspas em português, como
+aparecem), até 4000 contados como a Apple, com os sete itens; a lista de aparelhos
+(`ficha/aparelhos-testados.txt`, uma linha por iPhone em que o teste rodou de verdade, a 1ª é a
+da gravação) e o nome do vídeo entram por marcador e, sem eles, viram "(pending)": a ficha sobe,
+mas o `--enviar` é RECUSADO antes de qualquer escrita na Apple — também com o guia PDF
+desatualizado ou o servidor de demonstração fora do que as notas dizem. Nada é inventado: lista e
+vídeo vêm de teste real. *Anexos pela API* (`/v1/appStoreReviewAttachments`, presos ao
+appStoreReviewDetail; reserva → partes → MD5 → processamento): o guia `revisao/app-review-guide.pdf`
+(os sete itens por extenso e os prints, impresso de `revisao/guia.mjs` pelo Playwright e
+commitado; a impressão digital das entradas — texto, lista, prints — é conferida pelo CI e pelo
+`--enviar`, e o `capturas/gerar.sh` o refaz) e o vídeo (`--video-revisao` arquivo ou https; no
+Actions, `video_revisao_url`, baixado para `$RUNNER_TEMP`, MP4/MOV pelo cabeçalho, até 500 MB).
+O reenvio substitui o anexo de mesmo nome sem duplicar: igual (MD5) fica, diferente sobe antes e
+o antigo sai depois, falha apaga a reserva pela metade. *Reenvio:* a Apple aceita um envio ativo
+por plataforma; o que voltou `UNRESOLVED_ISSUES` (recusa ou pedido de informação) é retomado — item
+da versão garantido, o recusado marcado `resolved` (se a Apple recusar a marca, segue) e
+`PATCH submitted: true` no MESMO envio; envio em andamento para a rodada. A Central de Resolução
+não tem API e não é preciso: o reenvio leva notas e anexos (texto opcional em
+`revisao/resposta-ao-app-review.txt`). *Build desta rodada:* o modo completo lê o
+`appBuildVersion` do `eas build --wait --json` e passa `--build N`; só esse build é preso
+(`filter[version]`) — antes, um VALID mais antigo da mesma versão ia para a revisão no lugar dele.
+*Antes de compilar:* `ci.mjs preparar` expõe o estado da versão do app.json (inexistente,
+editável ou travada; a mesma regra do publicador, `versoes.mjs`) e a travada para a compilação e o
+envio do build; no completo, `publicar.mjs --conferir-envio` confere, só LENDO a Apple, tudo o que
+a revisão cobrará. *Servidor de demonstração* conferido pela API pública do sistema: `/health`, o
+login da conta demo com papel ADMIN, o código demo, a privacidade, a rota do leitor (404
+`NAO_ENCONTRADO` × 404 genérico de deploy velho) e a da exclusão da própria conta
+(`DELETE /usuarios/me` com corpo vazio: 422 no campo senha, a validação recusa antes da rota e
+nada é excluído); a sessão aberta é encerrada e a senha não sai em mensagem. Ele fica no ar
+depois da revisão: serve a política de privacidade da ficha. *Ficha fiel ao build:*
+`TELAS_CITADAS` (rótulo → arquivo do app que o mostra) para antes de falar com a Apple quando um
+texto cita tela que o commit não tem (a exclusão de conta é o ADR-45). *Idioma:* registro criado
+no site com outro idioma principal → pt-BR vira o principal e as localizações do outro idioma
+(versão e appInfo) são apagadas, ou travariam o envio vazias. *6,9" fora da rodada:* o conjunto
+velho da versão é apagado. *Preço:* só o ponto 0,00 da lista inteira (paginada); sem ele, nada é
+gravado e fica pendência. *Serviços externos* escritos a partir do código: dado e login só do
+servidor da loja; demonstração na Vercel com Neon e Vercel Blob; NFC-e opcional (Focus NFe),
+desligada na demonstração; e a biblioteca de rede do React Native (NetInfo), que no iPhone testa a
+conexão com um pedido vazio ao `generate_204` do Google — dito nas notas, para não afirmar
+"nenhum outro servidor". *Teste em iPhones reais* (experimental até a 1ª rodada real): perfil
+`teste-aparelhos` no `eas.json` (distribuição interna: o `.ipa` ad hoc que o BrowserStack instala e
+reassina; o da App Store não instala) e a caixa "aparelhos" no Actions — `ci.mjs aparelhos`
+pergunta à Apple pelos iPhones registrados (`GET /v1/devices`; o perfil ad hoc exige um) e
+registra o da entrada `udid_aparelho` (`POST /v1/devices`, UDID mascarado no log); sem nenhum,
+para dizendo como resolver; o eas compila com `--wait --json` e o link do `.ipa` vai para o resumo
+da execução. *Consequências:* o reenvio depois de uma recusa é um clique, sem site; a revisão só
+sai com o que a Apple pediu e com o servidor da demonstração conferido; mudar prints ou a lista de
+aparelhos pede refazer o guia (o CI acusa). A Apple de mentira ganhou um envio ativo por
+plataforma, o estado `UNRESOLVED_ISSUES`, anexos, aparelhos, localizações de outro idioma, pontos
+de preço paginados e builds antigos da mesma versão; `teste/demo-falso.mjs` faz o servidor de
+demonstração.
 *Capturas do app de verdade (nov/2026):* as 20 imagens saem de `mobile/publicar/capturas/gerar.sh`
 — banco local de teste com a loja da seed (`seed_demo.py`, "Loja Tria", roupas), a API e o export
 web do próprio app, fotografado cena a cena pelo Playwright numa tela de iPhone (áreas seguras

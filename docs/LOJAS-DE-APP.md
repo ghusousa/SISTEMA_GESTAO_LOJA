@@ -3,10 +3,14 @@
 Prontos para colar no Play Console e no App Store Connect.
 Gerados junto com a política de privacidade — se um mudar, confira os outros.
 
-As páginas legais são servidas pela própria API:
+As páginas legais são servidas pela própria API, em cada servidor da loja (`<servidor>/privacidade`
+e `<servidor>/exclusao-de-dados`). As fichas das lojas usam as do servidor de demonstração, que
+fica no ar depois da revisão justamente por isso (outro endereço permanente: `APPLE_URL_PRIVACIDADE`):
 
-- `https://sistemaobras.com.br/privacidade`
-- `https://sistemaobras.com.br/exclusao-de-dados`
+- `https://loja-tria.vercel.app/privacidade`
+- `https://loja-tria.vercel.app/exclusao-de-dados`
+
+(`sistemaobras.com.br` é o site do Sistema Obras, outro sistema: não cole esses endereços dele.)
 
 ## Exclusão de conta — o caminho que as duas lojas pedem (ADR-45)
 
@@ -259,9 +263,11 @@ Ainda na aba "Conteúdo do app", duas declarações vizinhas que derrubam envio 
 
 ## App Store
 
-**Quem preenche é o publicador** (`mobile/publicar/`, ADR-44): os textos abaixo são cópia de `mobile/publicar/ficha/` — mudou lá, mude aqui (e vice-versa). Conferidos contra o código do app (telas de `mobile/src/app/`, `components/`, `lib/`) e o grafo do projeto: cada função citada existe no app de hoje; o "leitor do computador" é o ADR-43. Servidor de demonstração do revisor: o da LOJA, `https://loja-tria.vercel.app` (Vercel, ADR-42) — `GET /api/v1/configuracao` responde com o nome da loja. O `sistemaobras.com.br` hoje é o site do Sistema Obras: notas que mandem o revisor para lá derrubam a revisão. No publicador, o endereço é o campo `url_servidor_demo` (no GitHub Actions, a variável `APPLE_SERVIDOR_DEMO`).
+**Quem preenche é o publicador** (`mobile/publicar/`, ADR-44): os textos abaixo são cópia de `mobile/publicar/ficha/` — mudou lá, mude aqui (e vice-versa). Conferidos contra o código do app (telas de `mobile/src/app/`, `components/`, `lib/`) e o grafo do projeto: cada função citada existe no app de hoje; o "leitor do computador" é o ADR-43 e a exclusão de conta, o ADR-45. O publicador **para antes de falar com a Apple** se um texto citar tela que o app daquele commit não tem (`TELAS_CITADAS` em `mobile/publicar/ficha.mjs`). Servidor de demonstração do revisor: o da LOJA, `https://loja-tria.vercel.app` (Vercel, ADR-42) — `GET /api/v1/configuracao` responde com o nome da loja; antes de enviar, o publicador confere lá o `/health`, o login da conta demo (dono), o código de barras, a privacidade, o leitor e a exclusão de conta. O `sistemaobras.com.br` hoje é o site do Sistema Obras: notas que mandem o revisor para lá derrubam a revisão. No publicador, o endereço é o campo `url_servidor_demo` (no GitHub Actions, a variável `APPLE_SERVIDOR_DEMO`).
 
 Limites contados como a Apple conta: caractere, não byte (`[...texto].length`). Nada de citar outra plataforma ou loja (diretriz 2.3.10) — o publicador recusa o texto antes de enviar.
+
+**Resposta à Guideline 2.1 (nov/2026).** A 1ª submissão voltou com "Information Needed": gravação de tela num iPhone físico, aparelhos testados, propósito e público, como acessar, serviços externos, regiões, setor regulado. As notas (§6) passaram a ser em **inglês**, com os sete itens; o guia `mobile/publicar/revisao/app-review-guide.pdf` os traz por extenso, com os prints, e sobe como anexo da revisão junto com o vídeo; a lista de aparelhos mora em `mobile/publicar/ficha/aparelhos-testados.txt`. O publicador reenvia o MESMO envio devolvido (`UNRESOLVED_ISSUES`) — passo a passo e roteiro da gravação em `mobile/publicar/README.md`.
 
 ---
 
@@ -298,7 +304,7 @@ controle,vendas,código,barras,leitor,crediário,condicional,roupas,boutique,var
 
 ---
 
-## 3. DESCRIÇÃO — 3.490 caracteres com os marcadores (limite 4.000)
+## 3. DESCRIÇÃO — 3.791 caracteres com os marcadores (limite 4.000)
 
 `{{EMAIL_SUPORTE}}` e `{{URL_PRIVACIDADE}}` o publicador troca pelo e-mail de suporte e pela política de privacidade do servidor de demonstração.
 
@@ -329,12 +335,14 @@ Do balcão ao resultado do mês, na palma da mão:
 CELULAR E COMPUTADOR JUNTOS
 
 • Tudo se atualiza na hora entre os aparelhos da loja: vendeu no balcão, o estoque do celular já mostra.
-• O celular vira o leitor de código de barras do computador: leia com o app o QR que aparece na tela do computador, e cada etiqueta que a câmera bipar entra na venda aberta lá.
+• O celular vira o leitor de código de barras do computador: no navegador, o botão "Celular como leitor" mostra um QR; no app, Mais > Leitor do computador > "Ler o QR do computador". Cada etiqueta bipada entra na venda aberta lá.
 • No computador, o mesmo sistema abre no navegador, com leitor USB e teclado.
 
 CADA UM VÊ O QUE É DO SEU CARGO
 
 Dono, gerente, supervisora e vendedora. A vendedora vende e consulta preço, mas não recebe custo, lucro nem despesa — quem recusa é o servidor, não a tela. A auditoria, que guarda o que cada login fez, é só do dono.
+
+Não há cadastro aberto: o dono cria as contas da equipe em Mais > Usuários. Cada pessoa exclui a própria conta no app, em Mais > Minha conta > Excluir minha conta; o dono exclui a de alguém da equipe em Mais > Usuários > (pessoa) > Excluir conta.
 
 SERVE A MAIS DE UM RAMO
 
@@ -416,56 +424,54 @@ Dois campos obrigatórios que precisam bater com esta ficha: **URL da Política 
 
 ---
 
-## 6. NOTAS PARA A REVISÃO (App Review Notes) — 3.717 caracteres com os marcadores (limite 4.000)
+## 6. NOTAS PARA A REVISÃO (App Review Notes) — 3.610 caracteres com os marcadores (limite 4.000)
 
-O publicador troca `{{SERVIDOR_DEMO}}`, `{{EMAIL_DEMO}}`, `{{SENHA_DEMO}}`, `{{CODIGO_DEMO}}` e `{{EMAIL_SUPORTE}}` pelos valores do config/Secrets, e `{{LINHA_ETIQUETAS}}` pela frase da folha de etiquetas (ou some, sem `url_etiquetas_demo`). Com endereços e e-mails longos o texto chega perto dos 4.000 — o publicador confere depois da troca e para, dizendo o tamanho, se passar.
+**Em inglês** (o revisor lê inglês), com os rótulos das telas entre aspas em português, como aparecem no app, e os sete itens que a Apple pediu na Guideline 2.1. O publicador troca `{{SERVIDOR_DEMO}}`, `{{EMAIL_DEMO}}`, `{{SENHA_DEMO}}`, `{{CODIGO_DEMO}}` e `{{EMAIL_SUPORTE}}` pelos valores do config/Secrets; `{{APARELHOS_TESTADOS}}` e `{{APARELHO_DO_VIDEO}}` pela lista de `mobile/publicar/ficha/aparelhos-testados.txt` (a 1ª linha é o aparelho da gravação); `{{VIDEO}}` pelo nome do vídeo anexado; e `{{LINHA_ETIQUETAS}}` pela frase da folha de etiquetas (ou some, sem `url_etiquetas_demo`). Sem lista ou sem vídeo, os marcadores viram "(pending)": a ficha sobe, mas o `--enviar` é recusado. Com endereços, e-mails e sete aparelhos de nomes longos o texto chega perto dos 4.000 — o publicador confere depois da troca e para, dizendo o tamanho, se passar (o teste mede o pior caso).
+
+Os serviços externos (item 5) são o que o código faz: dado e login só do servidor da loja; a demonstração na Vercel com Neon e Vercel Blob; NFC-e opcional pela Focus NFe, desligada na demonstração; nada de pagamento, IA, login de terceiros, analytics ou anúncio. A única outra chamada é a da biblioteca de rede do React Native (NetInfo), que, no iPhone, testa a conexão com um pedido vazio ao `generate_204` do Google — sem dado nenhum; as notas dizem isso para não afirmar "nenhum outro servidor".
 
 ```
-APP DE USO PROFISSIONAL (B2B) QUE EXIGE UM SERVIDOR — POR FAVOR, LEIA ANTES DE TESTAR
+B2B APP FOR SHOP STAFF; IT NEEDS THE SHOP'S SERVER. Answers to Guideline 2.1 below; the attached "app-review-guide.pdf" has them in full, with screenshots.
 
-1) O QUE É
-Gestão para lojas de balcão (varejo físico): estoque por código de barras, PDV, devolução, crediário, condicional, despesas, relatórios, caixa e auditoria. Não é app de consumidor final e não vende nada dentro do app.
+DEMO SERVER (stays online after the review; it also serves our privacy policy)
+Server: {{SERVIDOR_DEMO}}
+E-mail: {{EMAIL_DEMO}}
+Password: {{SENHA_DEMO}}
+Barcode to type: {{CODIGO_DEMO}}
+Shop OWNER account: every screen is visible. Test data: sell, cancel, return freely.
 
-2) POR QUE EXIGE SERVIDOR
-O sistema é auto-hospedado: cada loja instala o servidor e é dona dos próprios dados; o app é só o cliente. Por isso o endereço do servidor é DIGITADO NO APARELHO — um mesmo app serve várias lojas. Não há autocadastro: as contas são criadas pelo dono ou pelo gerente dentro do sistema.
+1) SCREEN RECORDING: attachment {{VIDEO}}, made on a physical {{APARELHO_DO_VIDEO}}. From app launch: server setup, sign-in, camera permission, a sale, creating a staff account, deleting accounts.
 
-3) SERVIDOR DE DEMONSTRAÇÃO PARA A REVISÃO
-Servidor completo, com dados de exemplo, só para esta revisão:
-  Endereço: {{SERVIDOR_DEMO}}   (HTTPS válido)
-  E-mail:   {{EMAIL_DEMO}}
-  Senha:    {{SENHA_DEMO}}
-A conta é de perfil "dono": todas as abas ficam visíveis. O banco é de teste: podem vender, cancelar e devolver à vontade.
+2) TESTED ON (physical devices): {{APARELHOS_TESTADOS}}. Minimum iOS 15.1; iPhone only, portrait.
 
-4) PASSO A PASSO (5 minutos)
-1. Abra o app. Aparece a tela de entrada.
-2. Toque na ENGRENAGEM no canto superior direito. Abre "Conectar à loja".
-3. Em "Endereço do servidor", digite exatamente, com o https://:
-     {{SERVIDOR_DEMO}}
-4. Toque em "Conectar". O app testa o endereço e volta para a tela de entrada.
-5. Informe {{EMAIL_DEMO}} e {{SENHA_DEMO}} e toque em "Entrar".
-6. Abre a aba "Vender" (o PDV), com o carrinho vazio.
-7. Para pôr uma peça no carrinho, use QUALQUER um dos três caminhos:
-   a) "Ler código de barras" — liga a câmera (o iOS pedirá permissão). Aponte para um código de barras.
+3) PURPOSE: point of sale and stock control for small physical shops in Brazil (clothing, shoes, auto parts), used by the owner and staff at the counter. It replaces notebooks and spreadsheets: barcode sales, cash/PIX/card/store credit, returns, consignment, stock by size and color, cash count, expenses, profit, reports. Not a consumer app.
+
+4) SET UP AND ACCESS
+1. On the sign-in screen tap the GEAR (top right): "Conectar à loja" opens.
+2. In "Endereço do servidor" type the server above, with https://, and tap "Conectar".
+3. Enter e-mail and password, tap "Entrar": the "Vender" tab (point of sale) opens.
+4. Add an item: "Ler código de barras" (camera), "Digitar código" (type the barcode above) or "Buscar" (part of a name, e.g. "cami").
 {{LINHA_ETIQUETAS}}
-   b) "Digitar código" — digite {{CODIGO_DEMO}} e confirme. Não precisa de câmera.
-   c) "Buscar" — digite parte do nome da peça (ex.: "cami") e escolha na lista.
-8. A peça entra no carrinho com preço e quantidade.
-9. Toque em "Cobrar".
-10. Toque em "Dinheiro" (quita o valor inteiro; digitando um valor antes, o pagamento vira parcial e dá para dividir entre formas).
-11. Toque em "Confirmar venda". Aparece o recibo, e o estoque baixa na hora.
-O resto está nas abas "Estoque" (entrada, inventário), "Financeiro" (caixa, despesas, relatórios) e "Mais" (devolução, condicional, crediário, usuários, auditoria).
+5. Tap "Cobrar", "Dinheiro", then "Confirmar venda". The completed sale opens; tap "Recibo para a cliente" to see the receipt.
+More in the "Produtos", "Estoque", "Financeiro" and "Mais" tabs.
+Phone as the computer's barcode reader: in a computer browser, sign in at the server address and click "Celular como leitor" (left bar) for a QR code; in the app: Mais > Leitor do computador > "Ler o QR do computador".
 
-5) PONTOS QUE COSTUMAM GERAR DÚVIDA
-• Nada é comprado no app. As vendas são de mercadoria física, paga no balcão (dinheiro, PIX, maquininha). O app só ANOTA forma e valor: não processa pagamento, não guarda cartão e não vende bem digital (3.1.1).
-• O recibo compartilhado pelo iPhone é comprovante da loja, não documento fiscal (está no rodapé). A NFC-e depende de um emissor fiscal que cada loja contrata e liga no servidor; sem ele, a tela da venda diz o que falta.
-• Sem autocadastro, a exclusão de conta (5.1.1(v)) é feita pelo administrador da loja em "Mais > Usuários" — e o dono pode apagar o servidor inteiro, que é dele.
-• Sem conteúdo público e sem contato entre usuários: fotos e textos ficam no servidor de uma única loja, visíveis só para a equipe dela. Não há feed, comentários, mensagens nem descoberta de usuários.
-• Câmera: só para ler códigos de barras (e o QR de "Mais > Leitor do computador", que liga o celular a uma venda aberta no navegador) e fotografar a peça. Galeria: só para a foto do produto. Nada vai para terceiros.
-• ATS: o app declara NSAllowsLocalNetworking porque muitas lojas rodam o servidor na rede local, em IP, sem certificado. Servidores na internet, como o da demonstração, usam HTTPS.
-• Sem analytics, sem SDK de rastreamento, sem publicidade e sem IDFA — por isso não há prompt de ATT.
+ACCOUNTS: no sign-up. The owner creates staff accounts in Mais > Usuários > "+" (bottom right).
+ACCOUNT DELETION (5.1.1(v)), inside the app:
+- Any user, own account: Mais > Minha conta > Excluir minha conta. It asks for the password, lists what is deleted and confirms; the sign-in screen then shows "Conta excluída".
+- Owner, a staff account: Mais > Usuários > (pessoa) > Excluir conta ("pessoa" is the person's card).
+The demo account is the shop's only owner, so it cannot delete itself. Please create a staff account and delete it either way.
 
-6) CONTATO DURANTE A REVISÃO
-{{EMAIL_SUPORTE}} — respondemos no mesmo dia útil. Se o servidor de demonstração não responder, avise por aqui antes de rejeitar: ele é nosso e religamos rápido.
+5) EXTERNAL SERVICES: data and sign-in come only from the shop's own server (FastAPI + PostgreSQL, installed by the shop). The demo server runs on Vercel, with Neon (PostgreSQL) and Vercel Blob (item photos). NFC-e (Brazilian e-receipt) is optional, via an accredited issuer (Focus NFe); off in the demo. No payments in the app (the card terminal is separate; the app only records the method), no AI, no third-party sign-in, no analytics or ad SDKs. The network library only checks connectivity (empty request to Google's generate_204).
+
+6) REGIONS: Brazil only, in Portuguese (Brazil); the same everywhere.
+
+7) REGULATION: not a regulated industry; no third-party protected content. The optional NFC-e is issued by the accredited issuer with the shop's own digital certificate.
+
+USER CONTENT: item names, photos and notes stay private to one shop's team. No publishing, feed or messaging between users, so nothing to report or block.
+PERMISSIONS: camera (barcode reader, item photo), photos (pick an item photo), local network (only when the server is on the shop's network).
+IN-APP PURCHASES: none; goods are paid at the counter.
+Contact: {{EMAIL_SUPORTE}}
 ```
 
 ---
@@ -513,14 +519,19 @@ Quem faz as imagens é `mobile/publicar/capturas/gerar.sh`: o app rodando com os
 
 ## Antes de enviar — o que ainda falta, e onde
 
-- **Registro do app** (uma vez, no site) e **Privacidade do App** (uma vez, na tela, §5): as duas coisas sem API.
-- **Leitor do computador (ADR-43)**: a descrição, o texto promocional e as notas citam a tela "Mais > Leitor do computador". Publique de um commit que já tenha o leitor, com o servidor de demonstração na mesma versão — senão a ficha promete o que o build não tem (diretriz 2.3, metadados fiéis ao app).
-- `{{EMAIL_DEMO}}`, `{{SENHA_DEMO}}`: conta de perfil **dono** no servidor de demonstração (a Apple exige conta de demonstração sempre que o login não é público) — variável `APPLE_EMAIL_DEMO` e segredo `APPLE_DEMO_PASSWORD`.
-- `{{CODIGO_DEMO}}`: um código de barras que exista no banco de demonstração (`APPLE_CODIGO_DEMO`) — é o caminho sem câmera, e é o que salva a revisão feita em simulador.
-- `{{URL_ETIQUETAS_DEMO}}` (opcional): página com códigos de barras de exemplo para bipar da tela; sem ela, a frase some e os caminhos (b) e (c) bastam.
+O `--enviar` do publicador (caixa "revisao" no GitHub) confere tudo o que é conferível e, faltando algo, para ANTES de mexer na Apple, com uma pendência por item.
+
+- **Registro do app** (uma vez, no site, com Idioma principal "Português (Brasil)") e **Privacidade do App** (uma vez, na tela, §5): as duas coisas sem API.
+- **Gravação de tela** num iPhone FÍSICO, iOS mais novo, desde a abertura do app (roteiro em `mobile/publicar/README.md`): anexo da revisão pela API (`/v1/appStoreReviewAttachments`) — `--video-revisao <arquivo ou https://...>`, no GitHub a entrada `video_revisao_url`. Sem ela (nem já anexada à versão), a revisão não sai.
+- **Aparelhos testados**: `mobile/publicar/ficha/aparelhos-testados.txt`, uma linha por iPhone em que o teste rodou de verdade (`iPhone 17 — iOS 26.1`; a 1ª é a da gravação). Vazia, a revisão não sai. Mudou? Refaça o guia PDF (`node publicar/revisao/gerar-guia.mjs`) e faça commit.
+- **Telas citadas** — leitor do computador (ADR-43) e exclusão de conta (ADR-45): a descrição e as notas citam "Mais > Leitor do computador" e "Mais > Minha conta > Excluir minha conta". O publicador recusa a ficha de um commit cujo app não tenha essas telas, e confere no servidor de demonstração as rotas das duas — publique com o servidor na mesma versão.
+- `{{EMAIL_DEMO}}`, `{{SENHA_DEMO}}`: conta de perfil **dono** no servidor de demonstração (a Apple exige conta de demonstração sempre que o login não é público) — variável `APPLE_EMAIL_DEMO` e segredo `APPLE_DEMO_PASSWORD`. O publicador entra com ela antes de enviar e recusa se não for dona.
+- `{{CODIGO_DEMO}}`: um código de barras que exista no banco de demonstração (`APPLE_CODIGO_DEMO`) — é o caminho sem câmera. O publicador o procura lá antes de enviar.
+- `{{URL_ETIQUETAS_DEMO}}` (opcional): página com códigos de barras de exemplo para bipar da tela; sem ela, a frase some e "Digitar código" e "Buscar" bastam.
 - `{{EMAIL_SUPORTE}}`: o e-mail de suporte (`APPLE_EMAIL_SUPORTE`). O `privacidade@sistemaobras.com.br` da política de privacidade precisa existir e ser lido.
-- Vídeo de demonstração (opcional, mas ajuda quando o app depende de servidor): um screencast de 40 s do passo a passo, anexado como App Review Attachment — sem API, é na tela.
+- **Servidor de demonstração no ar depois da revisão**: ele serve a política de privacidade da ficha (`<servidor>/privacidade`). Desligá-lo derrubaria o link da App Store (5.1.1(i)); outro endereço permanente vai em `APPLE_URL_PRIVACIDADE`.
+- Resposta na Central de Resolução: opcional (não tem API, e o reenvio já leva notas e anexos novos). Texto pronto, em inglês: `mobile/publicar/revisao/resposta-ao-app-review.txt`.
 
 ## Um achado do código que afeta a revisão
 
-`mobile/src/api/servidor.ts` → `normalizarEndereco()` prefixa **`http://`** quando a pessoa digita só o host (`if (!/^https?:\/\//i.test(texto)) texto = \`http://${texto}\``). Em iOS, o ATS bloqueia cleartext para domínio público — `NSAllowsLocalNetworking` só libera rede local —, então um revisor que digitasse `sistemaobras.com.br` sem o esquema levaria "Não foi possível alcançar esse endereço" e provavelmente uma rejeição. Confirmei que `http://sistemaobras.com.br/health` responde **308 → https**, o que salva o Android (cleartext liberado no build) mas não o iPhone, porque o bloqueio acontece antes do redirecionamento. Por isso o passo 3 das notas manda digitar `https://` explicitamente. Vale corrigir no app: quando o host não for IP nem nome local, prefixar `https://` — e, se falhar, só então tentar `http://`.
+`mobile/src/api/servidor.ts` → `normalizarEndereco()` prefixa **`http://`** quando a pessoa digita só o host (`if (!/^https?:\/\//i.test(texto)) texto = \`http://${texto}\``). Em iOS, o ATS bloqueia cleartext para domínio público — `NSAllowsLocalNetworking` só libera rede local —, então um revisor que digitasse `loja-tria.vercel.app` sem o esquema levaria "Não foi possível alcançar esse endereço" e provavelmente uma rejeição. Um servidor na internet costuma responder **308 → https** ao `http://`, o que salva o Android (cleartext liberado no build) mas não o iPhone, porque o bloqueio acontece antes do redirecionamento. Por isso o passo 2 das notas manda digitar `https://` explicitamente. Vale corrigir no app: quando o host não for IP nem nome local, prefixar `https://` — e, se falhar, só então tentar `http://`.
