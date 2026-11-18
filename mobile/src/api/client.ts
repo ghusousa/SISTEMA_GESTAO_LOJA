@@ -122,6 +122,11 @@ export function mensagemDoErro(erro: unknown, padrao = 'Não foi possível concl
   return padrao;
 }
 
+/** O status HTTP da resposta, ou 0 quando o servidor nem respondeu (rede caída, tempo). */
+export function statusDoErro(erro: unknown): number {
+  return axios.isAxiosError(erro) ? (erro.response?.status ?? 0) : 0;
+}
+
 export function codigoDoErro(erro: unknown): string | null {
   return axios.isAxiosError<ErroApi>(erro) ? (erro.response?.data?.code ?? null) : null;
 }

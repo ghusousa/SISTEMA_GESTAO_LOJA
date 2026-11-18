@@ -130,6 +130,20 @@ export const usuarios = {
   async trocarMinhaSenha(senha_atual: string, nova_senha: string) {
     await api.patch('/usuarios/me/senha', { senha_atual, nova_senha });
   },
+  /**
+   * Quem administra a equipe exclui a conta de outra pessoa (204). A própria conta não se
+   * exclui por aqui (409): é `excluirMinhaConta`, com a senha (ADR-45).
+   */
+  async excluir(id: number) {
+    await api.delete(`/usuarios/${id}`);
+  },
+  /**
+   * Exclui a própria conta (204). A senha vai no corpo do DELETE; errada, é 422
+   * `SENHA_INCORRETA` — nunca 401, que faria o interceptor tentar renovar e deslogar.
+   */
+  async excluirMinhaConta(senha: string) {
+    await api.delete('/usuarios/me', { data: { senha } });
+  },
 };
 
 // ------------------------------------------------------------------ catálogo

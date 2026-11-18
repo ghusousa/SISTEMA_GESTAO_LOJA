@@ -8,6 +8,32 @@ As páginas legais são servidas pela própria API:
 - `https://sistemaobras.com.br/privacidade`
 - `https://sistemaobras.com.br/exclusao-de-dados`
 
+## Exclusão de conta — o caminho que as duas lojas pedem (ADR-45)
+
+A Apple (5.1.1(v)) exige que quem tem conta consiga **iniciar a exclusão da própria conta dentro
+do app** — desativar não vale, "peça ao administrador" também não. O Google pede o mesmo, mais uma
+URL pública. Os caminhos, com os rótulos exatos que a pessoa vê (as notas da revisão citam assim):
+
+- **Qualquer pessoa, a própria conta:** `Mais > Minha conta > Excluir minha conta` (no
+  computador, `Minha conta`). A tela diz o que some e o que fica, pede a senha e confirma ("Excluir
+  a sua conta?" → "Excluir conta"). Deu certo, o app volta à entrada com "Conta excluída". Senha
+  errada não derruba a sessão: a tela só pede de novo.
+- **O dono, a conta de alguém da equipe:** `Mais > Usuários > (pessoa) > Excluir conta`, com
+  confirmação. O gerente faz o mesmo com quem não é dono. Para um afastamento, existe o
+  `Desativar`, que se desfaz.
+- **O único dono não se exclui:** a tela responde "Você é o único dono da loja. Passe o papel de
+  dono a outra pessoa em Usuários antes de excluir a sua conta." Na demonstração, a conta de
+  revisão é a única dona — o revisor testa a exclusão numa conta de funcionário criada por ele
+  (`Mais > Usuários > +`): entra com ela e usa `Mais > Minha conta > Excluir minha conta`, ou a
+  exclui pela conta de dono em `Mais > Usuários > (pessoa) > Excluir conta`.
+- **Sem acesso ao app** (saiu da loja, perdeu a senha): a página pública
+  `<servidor>/exclusao-de-dados` explica o pedido por e-mail — é a URL do formulário do Google.
+
+O que some: e-mail, senha, sessões em todos os aparelhos, o celular ligado como leitor e o e-mail
+no diário (vira máscara). O que fica: as vendas, devoluções, caixas e o diário que a pessoa fez,
+com o nome de quem fez — são a contabilidade da loja. Quem já vendeu também consegue excluir: a
+conta sai do mesmo jeito e só o nome fica preso às vendas.
+
 ---
 
 ## Google Play
@@ -116,7 +142,7 @@ Android 7.0 ou superior; conexão com o servidor da loja (rede local ou internet
 | Seu app coleta ou compartilha algum dos tipos de dados exigidos? | **Sim** (o app transmite dados do aparelho para o servidor da loja — para o Google isso é "coleta", mesmo o servidor sendo da própria loja) |
 | Todos os dados coletados são criptografados em trânsito? | **Sim** — porém só depois do ajuste descrito em 4.4. Hoje a resposta honesta seria "não". **Leia antes de marcar.** |
 | Você oferece uma forma de o usuário pedir a exclusão dos dados? | **Sim — "os usuários podem solicitar a exclusão dos dados"** |
-| O app permite criar conta? | **Não** (contas são criadas pelo dono/gerente dentro do sistema — logo não se aplica a exigência de URL de exclusão de conta; ainda assim, publique a página de solicitação) |
+| O app permite criar conta? | **Sim** — não há autocadastro, mas o dono/gerente cria as contas da equipe dentro do app (Mais › Usuários). A exclusão existe no app (Mais › Minha conta › Excluir minha conta; o dono em Mais › Usuários › Excluir conta) e fora dele: a URL de exclusão é `<servidor>/exclusao-de-dados` (ADR-45) |
 | O app tem anúncios? | **Não** |
 | Passou por revisão de segurança independente? | **Não** (opcional; não marque) |
 
@@ -165,9 +191,12 @@ As contas de funcionário e os cadastros de clientes deste aplicativo ficam no s
 da loja que usa o sistema — é a loja que decide o que guardar e por quanto tempo
 (controladora dos dados, na LGPD). O fornecedor do software não hospeda esses dados.
 
-Para excluir: peça ao dono ou ao gerente da sua loja, que faz a exclusão dentro do
-próprio sistema (equipe, clientes e cadastros). Se preferir, escreva para
-privacidade@sistemaobras.com.br e encaminhamos o pedido ao responsável pela loja.
+Para excluir a sua conta: no aplicativo, toque em Mais > Minha conta > Excluir minha
+conta, confirme com a sua senha, e pronto (no computador, Minha conta). O dono ou o
+gerente da loja também excluem a conta de alguém da equipe em Mais > Usuários > Excluir
+conta. Sem acesso ao aplicativo, escreva para privacidade@sistemaobras.com.br e
+encaminhamos o pedido ao responsável pela loja. Cadastros de clientes do crediário são
+excluídos pela própria loja.
 
 Registros de auditoria e de tentativas de login são mantidos como exigência legal e de
 segurança e podem ser preservados mesmo após a exclusão dos demais dados.

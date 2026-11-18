@@ -433,6 +433,14 @@ a {
   font-weight: 400;
 }
 
+/* O erro de UM campo, embaixo dele (a senha errada do "Excluir minha conta"). Com `.campo`
+   na frente: o `.campo > span` do rótulo, mais específico, pintaria o erro de cinza. */
+.campo .campo__erro {
+  font-size: 13px;
+  color: var(--perigo);
+  font-weight: 600;
+}
+
 input,
 select,
 textarea {
@@ -866,6 +874,23 @@ tfoot td {
   padding: 10px 12px;
   font-size: 14px;
   margin-bottom: 14px;
+}
+
+/* Recado que fica na tela até a pessoa agir: "Conta excluída" na entrada, a recusa do
+   dono único em Minha conta. O aviso que some sozinho é o `.aviso`. */
+.recado {
+  border-radius: var(--raio-sm);
+  padding: 10px 12px;
+  font-size: 14px;
+  margin-bottom: 14px;
+}
+.recado--ok {
+  background: var(--sucesso-fraco);
+  color: var(--acao-escura);
+}
+.recado--erro {
+  background: var(--perigo-fraco);
+  color: var(--perigo);
 }
 
 /* -------------------------------------------------------------------------- PDV */

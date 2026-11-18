@@ -172,7 +172,8 @@ export const api = {
   post: (caminho, corpo) => pedir('POST', caminho, { corpo }),
   patch: (caminho, corpo) => pedir('PATCH', caminho, { corpo }),
   put: (caminho, corpo) => pedir('PUT', caminho, { corpo }),
-  delete: (caminho) => pedir('DELETE', caminho),
+  // Corpo só quando a rota pede (a senha do "Excluir minha conta"); o resto vai sem.
+  delete: (caminho, corpo) => pedir('DELETE', caminho, { corpo }),
   upload: (caminho, formData) => pedir('PUT', caminho, { formData }),
 };
 
@@ -192,6 +193,17 @@ export async function sair() {
   } catch {
     // Servidor fora do ar não pode prender ninguém dentro do sistema: cai a sessão local.
   }
+  accessToken = null;
+  sessao.set({ usuario: null, carregando: false });
+}
+
+/**
+ * Encerra a sessão só deste lado, sem falar com o servidor: a própria conta acabou de ser
+ * excluída e o servidor já derrubou tudo (e apagou o cookie). Chamar `/auth/logout` agora
+ * daria 401, a renovação também, e a pessoa leria "Sua sessão expirou" logo depois de
+ * excluir a conta de propósito.
+ */
+export function encerrarSessaoLocal() {
   accessToken = null;
   sessao.set({ usuario: null, carregando: false });
 }

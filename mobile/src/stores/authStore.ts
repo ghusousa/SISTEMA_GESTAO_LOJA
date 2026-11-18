@@ -16,16 +16,24 @@ import {
   salvarSessao,
 } from '@/api/sessao';
 import type { Usuario } from '@/api/tipos';
+import { AVISO_CONTA_EXCLUIDA } from '@/lib/exclusaoDeConta';
 import { pode, type Capacidade } from '@/lib/permissoes';
 import { conectarTempoReal, desconectarTempoReal } from '@/lib/tempoReal';
 
 interface AuthState {
   usuario: Usuario | null;
   carregando: boolean;
+  /** Recado da tela de entrada sobre como a sessão acabou ("Conta excluída"). */
+  avisoDaEntrada: string | null;
   entrar: (email: string, senha: string) => Promise<void>;
   sair: () => Promise<void>;
   restaurar: () => Promise<void>;
   encerrarPorTokenInvalido: () => void;
+  /**
+   * A própria conta acabou de ser excluída (ADR-45): fecha a sessão só deste lado — o
+   * servidor já derrubou tudo — e a entrada diz o que aconteceu.
+   */
+  encerrarPorContaExcluida: () => Promise<void>;
   /** Pergunta por capacidade, nunca por cargo — ver `lib/permissoes.ts`. */
   podeFazer: (capacidade: Capacidade) => boolean;
 }
@@ -50,11 +58,12 @@ const ESPERA_DESLIGAR_LEITOR_MS = 4000;
 export const useAuthStore = create<AuthState>((set, get) => ({
   usuario: null,
   carregando: true,
+  avisoDaEntrada: null,
 
   async entrar(email, senha) {
     const tokens = await auth.login(email.trim().toLowerCase(), senha);
     await salvarSessao(tokens.access_token, tokens.refresh_token, tokens.usuario);
-    set({ usuario: tokens.usuario, carregando: false });
+    set({ usuario: tokens.usuario, carregando: false, avisoDaEntrada: null });
     conectarTempoReal();
   },
 
@@ -100,6 +109,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     desconectarTempoReal();
     limparEstadoDaSessao();
     set({ usuario: null, carregando: false });
+  },
+
+  async encerrarPorContaExcluida() {
+    // Sem `auth.logout` nem desligar o leitor no servidor: a exclusão já revogou as sessões
+    // e levou o pareamento junto. Chamar agora daria 401, o interceptor tentaria renovar e
+    // a pessoa sairia por "sessão expirada" — e o cofre ficaria com os tokens mortos.
+    desconectarTempoReal();
+    await limparSessao();
+    limparEstadoDaSessao();
+    set({ usuario: null, carregando: false, avisoDaEntrada: AVISO_CONTA_EXCLUIDA });
   },
 
   podeFazer(capacidade) {

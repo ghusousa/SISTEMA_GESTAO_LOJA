@@ -75,6 +75,20 @@ class Validacao(AppError):
     message = "Dados inválidos."
 
 
+class SenhaIncorreta(AppError):
+    """A senha que confirma um ato de quem JÁ está logado (excluir a própria conta) não
+    confere.
+
+    É 422, nunca 401: o cliente lê 401 como "sessão vencida", tenta renovar e, recusada a
+    renovação, desloga — errar a senha na confirmação derrubaria a sessão que ela devia só
+    confirmar. É o mesmo cuidado do `senha_atual` do backup (ADR-28).
+    """
+
+    code = "SENHA_INCORRETA"
+    http_status = status.HTTP_422_UNPROCESSABLE_CONTENT
+    message = "Senha incorreta. A conta continua como estava."
+
+
 class MuitasTentativas(AppError):
     """Bloqueio de força bruta: erros de senha demais no mesmo e-mail ou IP.
 

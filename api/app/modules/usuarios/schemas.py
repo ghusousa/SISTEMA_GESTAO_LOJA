@@ -60,3 +60,10 @@ class SenhaTroca(BaseModel):
 
     senha_atual: str = Field(min_length=1, max_length=72)
     nova_senha: str = Field(min_length=SENHA_MIN, max_length=72)
+
+
+class ExclusaoDaPropriaConta(BaseModel):
+    """Excluir a própria conta: a senha confirma que é a própria pessoa, e não um celular
+    destravado na mão de outra. Errada, é 422 `SENHA_INCORRETA` — nunca 401 (ADR-45)."""
+
+    senha: str = Field(min_length=1, max_length=72)

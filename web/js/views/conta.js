@@ -1,9 +1,15 @@
-/** Minha conta: quem sou eu neste sistema e a troca da própria senha. */
+/**
+ * Minha conta: quem sou eu neste sistema, a troca da própria senha e a exclusão da própria
+ * conta (ADR-45 — as lojas de app exigem que quem tem conta consiga excluí-la sozinho).
+ */
 
-import { api } from '../api.js';
-import { sessao } from '../store.js';
+import { api, encerrarSessaoLocal } from '../api.js';
+import { recusaDaExclusao, textosDaExclusao } from '../exclusao-de-conta.js';
+import { pararLeitorCelular } from '../leitor-celular.js';
+import { ir } from '../router.js';
+import { limparTudoDaSessao, sessao } from '../store.js';
 import { resumoDoPapel, titulo } from '../permissoes.js';
-import { ajuda, aviso, avisarErro, cru, diaNaLoja, etiqueta, html } from '../ui.js';
+import { ajuda, aviso, avisarErro, cru, diaNaLoja, etiqueta, html, modal } from '../ui.js';
 
 export async function render(raiz) {
   const usuario = sessao.get().usuario;
@@ -68,6 +74,26 @@ export async function render(raiz) {
             </form>
           </div>
         </div>
+
+        <div class="cartao">
+          <div class="cartao__topo"><h2>Excluir minha conta</h2></div>
+          <div class="cartao__corpo">
+            <p class="texto-suave">
+              Apaga o seu acesso a este sistema, em todos os aparelhos. Antes de confirmar, você vê
+              o que some e o que fica, e digita a sua senha.
+            </p>
+            ${usuario.papel === 'ADMIN'
+              ? html`<p class="texto-fraco">
+                  A loja não fica sem dono: se você é o único, passe antes o papel de dono a outra
+                  pessoa em Usuários.
+                </p>`
+              : ''}
+            <div class="recado recado--erro" data-recusa hidden></div>
+            <button class="botao botao--perigo botao--largo" type="button" data-excluir>
+              Excluir minha conta
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   `;
@@ -103,5 +129,94 @@ export async function render(raiz) {
       botao.disabled = false;
       botao.textContent = 'Trocar senha';
     }
+  });
+
+  const caixaRecusa = raiz.querySelector('[data-recusa]');
+  raiz.querySelector('[data-excluir]').addEventListener('click', async () => {
+    caixaRecusa.hidden = true;
+    const resultado = await pedirExclusao();
+    if (resultado === 'excluida') {
+      // A mesma limpeza do Sair, sem falar com o servidor: ele já derrubou tudo, e um
+      // logout agora daria 401 e o aviso de "sessão expirada". Carrinho e conferência não
+      // sobram para quem entrar depois neste navegador, nem o leitor desta aba.
+      limparTudoDaSessao();
+      pararLeitorCelular();
+      encerrarSessaoLocal();
+      ir('/entrar?conta=excluida', true);
+    } else if (resultado?.recusa) {
+      caixaRecusa.textContent = resultado.recusa;
+      caixaRecusa.hidden = false;
+    }
+  });
+}
+
+/**
+ * O que some, o que fica, a senha e o botão — um passo só, no modal. Resolve `'excluida'`,
+ * `{ recusa }` (o dono único, a rede caída) ou `undefined` (cancelou). A senha errada fica
+ * no próprio modal, embaixo do campo: é 422, e a sessão segue.
+ */
+function pedirExclusao() {
+  const t = textosDaExclusao({ propria: true });
+  return modal({
+    titulo: 'Excluir minha conta',
+    largura: '500px',
+    render: () => html`
+      <form data-form novalidate>
+        <p class="texto-suave" style="margin:0 0 4px"><strong>O que some</strong></p>
+        <ul class="texto-suave" style="margin:0 0 12px;padding-left:18px">
+          ${t.some.map((linha) => html`<li>${linha}</li>`)}
+        </ul>
+        <p class="texto-suave" style="margin:0 0 4px"><strong>O que fica</strong></p>
+        <ul class="texto-suave" style="margin:0 0 12px;padding-left:18px">
+          ${t.fica.map((linha) => html`<li>${linha}</li>`)}
+        </ul>
+        <p class="texto-suave">${t.fim}</p>
+        <label class="campo">
+          <span>Sua senha <span class="campo__dica">confirma que é você</span></span>
+          <input type="password" name="senha" autocomplete="current-password" required />
+          <span class="campo__erro" data-erro hidden></span>
+        </label>
+        <div class="modal__acoes">
+          <button type="button" class="botao botao--neutro" data-nao>Cancelar</button>
+          <button type="submit" class="botao botao--perigo" data-sim>Excluir minha conta</button>
+        </div>
+      </form>
+    `,
+    aoAbrir: (corpo, fechar) => {
+      const form = corpo.querySelector('[data-form]');
+      const campo = form.querySelector('[name=senha]');
+      const erro = corpo.querySelector('[data-erro]');
+      const botao = corpo.querySelector('[data-sim]');
+      const mostrarErro = (texto) => {
+        erro.textContent = texto;
+        erro.hidden = false;
+        campo.value = '';
+        campo.focus();
+      };
+      corpo.querySelector('[data-nao]').addEventListener('click', () => fechar(undefined));
+      form.addEventListener('submit', async (evento) => {
+        evento.preventDefault();
+        if (!campo.value) {
+          mostrarErro('Digite a sua senha para confirmar.');
+          return;
+        }
+        erro.hidden = true;
+        botao.disabled = true;
+        botao.innerHTML = cru('<span class="giro" aria-hidden="true"></span> Excluindo…');
+        try {
+          await api.delete('/usuarios/me', { senha: campo.value });
+          fechar('excluida');
+        } catch (falha) {
+          const recusa = recusaDaExclusao(falha);
+          if (recusa.onde === 'senha') mostrarErro(recusa.texto);
+          else fechar({ recusa: recusa.texto });
+        } finally {
+          botao.disabled = false;
+          botao.textContent = 'Excluir minha conta';
+        }
+      });
+      // O foco vai para a senha, não para o botão de perigo: Enter sem querer não exclui.
+      campo.focus();
+    },
   });
 }
