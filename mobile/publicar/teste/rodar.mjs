@@ -621,6 +621,44 @@ if (!REAIS) {
     }
   });
 
+  await cenario('Só a chave no GitHub (o resto do padroes.json): a ficha sobe sem senha da demo nem telefone; o --enviar pede os dois', async ({ conferir, guardar }) => {
+    // O config.json que o ci.mjs grava quando o GitHub só tem ASC_KEY_ID + ASC_KEY_P8.
+    const soChave = join(PASTA_CONFIG, 'config-so-chave.json');
+    writeFileSync(
+      soChave,
+      JSON.stringify({ key_id: 'TESTE123', issuer_id: '', arquivo_p8: 'chave-apple.p8', senha_demo: '', telefone_contato: '', url_privacidade: '' }),
+    );
+    const padroes = JSON.parse(readFileSync(join(MOBILE, 'publicar', 'padroes.json'), 'utf8'));
+    const mock = await subirMock();
+    const antesDaDemo = DEMO.chamadas.length;
+    const ficha = await publicar([], { porta: mock.porta, capturas: baseSintetica, env: { PUBLICAR_CONFIG: soChave } });
+    guardar(ficha.saida);
+    const rev = mock.estado.revisoes.VER1?.atributos ?? {};
+    const versao = mock.estado.versoes.find((v) => v.id === 'VER1');
+    conferir(ficha.codigo === 0, 'a ficha subiu só com a chave');
+    conferir((rev.notes ?? '').includes('Password: (pending)'), 'as notas marcam a senha da demo como "(pending)"');
+    conferir(!('demoAccountPassword' in rev) && !('contactPhone' in rev), 'senha e telefone vazios não vão à Apple (ela guarda o que tinha)');
+    conferir(rev.demoAccountName === padroes.email_demo && rev.contactEmail === padroes.email_suporte, 'conta demo e e-mail de contato do padroes.json');
+    conferir(versao?.copyright?.includes(padroes.titular_copyright), 'copyright do padroes.json');
+    conferir(mock.estado.envios.length === 0, 'nada enviado para revisão');
+
+    const envio = await publicar(['--enviar', ...COM_VIDEO], { porta: mock.porta, capturas: baseSintetica, env: { PUBLICAR_CONFIG: soChave } });
+    guardar(envio.saida);
+    conferir(envio.codigo === 1 && envio.saida.includes('--enviar recusado'), '--enviar recusado');
+    conferir(envio.saida.includes('APPLE_DEMO_PASSWORD') && envio.saida.includes('DEMO_ADMIN_SENHA'), 'pede a senha da demo e diz onde ela está');
+    conferir(envio.saida.includes('APPLE_TELEFONE_CONTATO'), 'pede o telefone de contato');
+    conferir(!chamadasDaDemo(antesDaDemo).includes('POST /api/v1/auth/login'), 'sem a senha, nem tenta entrar na demo');
+    conferir(mock.estado.envios.length === 0, 'continua sem envio para revisão');
+
+    // O telefone que a Apple já tem (de um envio anterior) basta: só a senha falta.
+    mock.estado.revisoes.VER1.atributos.contactPhone = '+55 11 98888-7777';
+    const comTelefone = await publicar(['--enviar', ...COM_VIDEO], { porta: mock.porta, capturas: baseSintetica, env: { PUBLICAR_CONFIG: soChave } });
+    guardar(comTelefone.saida);
+    conferir(comTelefone.codigo === 1 && !comTelefone.saida.includes('APPLE_TELEFONE_CONTATO'), 'telefone já na Apple: não é pedido de novo');
+    conferir(comTelefone.saida.includes('APPLE_DEMO_PASSWORD'), 'a senha da demo continua pedida');
+    await mock.fechar();
+  });
+
   await cenario('--conferir-envio (o modo completo, antes de compilar): confere tudo e não escreve nada na Apple', async ({ conferir, guardar }) => {
     const mock = await subirMock();
     const antesDaDemo = DEMO.chamadas.length;

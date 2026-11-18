@@ -20,6 +20,7 @@ import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 
 import { comAscAppId, montar, normalizarP8, SERVIDOR_DEMO_PADRAO, UDID } from '../ci.mjs';
+import { lerPadroes } from '../ficha.mjs';
 import { subirMock } from './mock-asc.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
@@ -60,7 +61,9 @@ test('montar: diz quais nomes faltam e nunca põe a ficha sem a chave', () => {
   const soChave = montar({ ...CHAVE });
   assert.equal(soChave.temChave, true);
   assert.equal(soChave.temFicha, false);
-  assert.ok(soChave.faltandoFicha.includes('APPLE_DEMO_PASSWORD'));
+  // Senha da demo e telefone: só a revisão exige — nunca seguram a ficha.
+  assert.ok(!soChave.faltandoFicha.includes('APPLE_DEMO_PASSWORD'));
+  assert.deepEqual(soChave.faltandoRevisao, ['APPLE_TELEFONE_CONTATO', 'APPLE_DEMO_PASSWORD']);
 
   const quebrada = montar({ ...CHAVE, ASC_KEY_P8: 'não é chave' });
   assert.equal(quebrada.temChave, false);
@@ -71,6 +74,62 @@ test('montar: diz quais nomes faltam e nunca põe a ficha sem a chave', () => {
   assert.equal(tudo.config.url_servidor_demo, SERVIDOR_DEMO_PADRAO);
   assert.equal(tudo.config.senha_demo, FICHA.APPLE_DEMO_PASSWORD);
   assert.equal(montar({ ...CHAVE, ...FICHA, APPLE_SERVIDOR_DEMO: ' https://outra.dev ' }).config.url_servidor_demo, 'https://outra.dev');
+});
+
+const PADROES_DO_REPO = join(MOBILE, 'publicar', 'padroes.json');
+
+/** EAN-13 com o dígito verificador certo (o leitor e a tela de etiquetas recusam o errado). */
+const ean13Valido = (codigo) => {
+  if (!/^\d{13}$/.test(codigo)) return false;
+  const soma = [...codigo.slice(0, 12)].reduce((s, d, i) => s + Number(d) * (i % 2 ? 3 : 1), 0);
+  return (10 - (soma % 10)) % 10 === Number(codigo[12]);
+};
+
+test('padroes.json: nada secreto, e a ficha sobe só com ASC_KEY_ID + ASC_KEY_P8', () => {
+  const bruto = readFileSync(PADROES_DO_REPO, 'utf8');
+  const padroes = lerPadroes(PADROES_DO_REPO);
+  const PERMITIDOS = new Set([
+    'issuer_id', 'apple_team_id', 'apple_team_type', 'nome_contato', 'titular_copyright', 'email_suporte',
+    'url_suporte', 'email_demo', 'codigo_demo', 'url_servidor_demo', 'url_privacidade', 'url_etiquetas_demo',
+  ]);
+  for (const chave of Object.keys(padroes)) assert.ok(PERMITIDOS.has(chave), `padroes.json não guarda "${chave}"`);
+  assert.ok(!/PRIVATE KEY|senha_demo|password|token|key_id|telefone/i.test(JSON.stringify(padroes)), 'segredo no padroes.json');
+  assert.ok(!('_leia' in padroes), 'comentário ("_…") não vira padrão');
+  assert.match(bruto, /"_leia"/);
+  assert.match(padroes.issuer_id, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  assert.match(padroes.apple_team_id, /^[A-Z0-9]{10}$/);
+  assert.ok(['INDIVIDUAL', 'COMPANY_OR_ORGANIZATION'].includes(padroes.apple_team_type));
+  assert.ok(ean13Valido(padroes.codigo_demo), `codigo_demo ${padroes.codigo_demo} não é um EAN-13 válido`);
+  assert.match(padroes.url_suporte, /^https:\/\//);
+
+  const so = montar({ ASC_KEY_ID: 'TESTE123', ASC_KEY_P8: P8 }, padroes);
+  assert.equal(so.temChave, true, 'o issuer vem do padroes.json');
+  assert.deepEqual(so.faltandoChave, []);
+  assert.equal(so.temFicha, true);
+  assert.deepEqual(so.faltandoFicha, []);
+  assert.deepEqual(so.faltandoRevisao, ['APPLE_TELEFONE_CONTATO', 'APPLE_DEMO_PASSWORD']);
+  assert.equal(so.config.issuer_id, padroes.issuer_id);
+  assert.equal(so.config.email_demo, padroes.email_demo);
+  assert.equal(so.config.senha_demo, '');
+  assert.deepEqual(so.time, { id: padroes.apple_team_id, tipo: padroes.apple_team_type });
+
+  // Secret/Variable vence o padrão.
+  const outro = montar(
+    {
+      ASC_KEY_ID: 'TESTE123',
+      ASC_KEY_P8: P8,
+      ASC_ISSUER_ID: '11111111-2222-3333-4444-555555555555',
+      APPLE_URL_SUPORTE: 'https://suporte.outro.dev',
+      APPLE_TEAM_ID: 'ABCDE12345',
+      APPLE_TEAM_TYPE: 'COMPANY_OR_ORGANIZATION',
+      ...{ APPLE_DEMO_PASSWORD: FICHA.APPLE_DEMO_PASSWORD, APPLE_TELEFONE_CONTATO: FICHA.APPLE_TELEFONE_CONTATO },
+    },
+    padroes,
+  );
+  assert.equal(outro.config.issuer_id, '11111111-2222-3333-4444-555555555555');
+  assert.equal(outro.config.url_suporte, 'https://suporte.outro.dev');
+  assert.deepEqual(outro.time, { id: 'ABCDE12345', tipo: 'COMPANY_OR_ORGANIZATION' });
+  assert.deepEqual(outro.faltandoRevisao, []);
 });
 
 test('ascAppId vai só para o perfil "ci", e o production fica intocado', () => {
@@ -84,11 +143,14 @@ test('ascAppId vai só para o perfil "ci", e o production fica intocado', () => 
   assert.throws(() => comAscAppId({ submit: {} }, 1), /perfil de envio "ci"/);
 });
 
+/** Sem padroes.json: os testes de "faltou peça" olham só o ambiente (o de padrões tem o seu). */
+const SEM_PADROES = join(mkdtempSync(join(tmpdir(), 'ci-sem-padroes-')), 'nao-existe.json');
+
 function rodarPreparar(env, comando = 'preparar') {
   return new Promise((resolver) => {
     const filho = spawn(process.execPath, [join(MOBILE, 'publicar', 'ci.mjs'), comando], {
       cwd: MOBILE,
-      env: { PATH: process.env.PATH, ...env },
+      env: { PATH: process.env.PATH, PUBLICAR_PADROES: SEM_PADROES, ...env },
     });
     let saida = '';
     filho.stdout.on('data', (p) => (saida += p));
@@ -138,6 +200,53 @@ test('preparar de ponta a ponta: arquivos 600 fora do repo, app achado, segredo 
   } finally {
     fechar();
   }
+});
+
+test('preparar só com ASC_KEY_ID + ASC_KEY_P8: o resto vem do padroes.json, e a revisão diz o que ainda pede', async () => {
+  const { porta, fechar } = await subirMock();
+  try {
+    const pasta = mkdtempSync(join(tmpdir(), 'ci-apple-padroes-'));
+    const eas = join(pasta, 'eas.json');
+    copyFileSync(join(MOBILE, 'eas.json'), eas);
+    const github = join(pasta, 'github-output');
+    const padroes = lerPadroes(PADROES_DO_REPO);
+    const { codigo, saida } = await rodarPreparar({
+      ASC_KEY_ID: CHAVE.ASC_KEY_ID,
+      ASC_KEY_P8: P8,
+      PUBLICAR_PADROES: PADROES_DO_REPO,
+      ASC_BASE: `http://127.0.0.1:${porta}`,
+      PASTA_SAIDA: join(pasta, 'apple'),
+      EAS_JSON: eas,
+      GITHUB_OUTPUT: github,
+    });
+    assert.equal(codigo, 0, saida);
+    const s = lerSaidas(github);
+    assert.equal(s.tem_chave, 'sim');
+    assert.equal(s.tem_ficha, 'sim');
+    assert.equal(s.faltando_ficha, '');
+    assert.equal(s.faltando_revisao, 'APPLE_TELEFONE_CONTATO APPLE_DEMO_PASSWORD');
+    assert.equal(s.issuer_id, padroes.issuer_id, 'o eas recebe o issuer do padrão (secrets.ASC_ISSUER_ID || isto)');
+    assert.equal(s.team_id, padroes.apple_team_id);
+    assert.equal(s.team_type, padroes.apple_team_type);
+    assert.equal(s.app_id, 'APP1');
+    const config = JSON.parse(readFileSync(s.config, 'utf8'));
+    assert.equal(config.issuer_id, padroes.issuer_id);
+    assert.equal(config.codigo_demo, padroes.codigo_demo);
+    assert.equal(config.senha_demo, '');
+    assert.match(saida, /a REVISÃO ainda pede: APPLE_TELEFONE_CONTATO, APPLE_DEMO_PASSWORD/);
+    assert.ok(!saida.includes('PRIVATE KEY'), 'a chave apareceu no log');
+  } finally {
+    fechar();
+  }
+});
+
+test('workflow: o eas recebe o issuer e o time do padroes.json quando não há Secret/Variable', () => {
+  const depoisDoPreparar = WORKFLOW.slice(WORKFLOW.indexOf('run: node publicar/ci.mjs preparar'));
+  assert.ok(!/ASC_ISSUER_ID: \$\{\{ secrets\.ASC_ISSUER_ID \}\}/.test(depoisDoPreparar), 'passo do eas com o issuer só do Secret');
+  assert.ok(!/APPLE_TEAM_ID: \$\{\{ vars\.APPLE_TEAM_ID \}\}/.test(depoisDoPreparar), 'passo do eas com o time só da Variable');
+  assert.equal((depoisDoPreparar.match(/secrets\.ASC_ISSUER_ID \|\| steps\.apple\.outputs\.issuer_id/g) ?? []).length, 4);
+  assert.equal((depoisDoPreparar.match(/vars\.APPLE_TEAM_ID \|\| steps\.apple\.outputs\.team_id/g) ?? []).length, 2);
+  assert.equal((depoisDoPreparar.match(/vars\.APPLE_TEAM_TYPE \|\| steps\.apple\.outputs\.team_type/g) ?? []).length, 2);
 });
 
 test('preparar diz, ANTES de compilar, que a versão do app.json já foi enviada ou publicada', async () => {

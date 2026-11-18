@@ -166,7 +166,8 @@ do BrowserStack instalam um `.ipa` **ad hoc** (o da App Store não instala fora 
 esse `.ipa`. Sem o `adhoc`, o eas-cli em modo não interativo parava em "couldn't find any
 credentials suitable for internal distribution. Run this command again in interactive mode";
 com ele e com `--refresh-ad-hoc-provisioning-profile`, a Expo cria (ou refaz) o perfil com a
-chave da Apple — a caixa exige a chave (Secrets `ASC_*`) e `APPLE_TEAM_ID`.
+chave da Apple — a caixa exige a chave (Secrets `ASC_KEY_ID` e `ASC_KEY_P8`) e o time da Apple
+(`apple_team_id` do `padroes.json`, ou a Variable `APPLE_TEAM_ID`).
 
 **Uma vez só, antes da 1ª rodada:** a 1ª credencial ad hoc (o certificado ligado a esse perfil)
 o eas-cli só monta no modo interativo — no Actions ele para em "Credentials are not set up. Run
@@ -194,24 +195,37 @@ falhar, o passo diz isso.
 
 ### Uma vez só: segredos e variáveis do repositório
 
-Settings → Secrets and variables → Actions. **Os valores são os mesmos do Sistema Obras**
-(mesma conta da Expo, mesma chave da Apple): copie de lá.
+Settings → Secrets and variables → Actions → **Secrets** → "Novo segredo do repositório"
+(nunca em "Segredos do ambiente" nem em Variables). **Só três são exigidos**, e um quarto antes
+da revisão:
 
-| Onde | Nome | O quê |
+| Secret | O quê | Quando |
 |---|---|---|
-| Secret | `EXPO_TOKEN` | expo.dev → Account settings → Access tokens |
-| Secret | `ASC_KEY_ID`, `ASC_ISSUER_ID` | a chave da API da Apple (ver "Pelo seu computador") |
-| Secret | `ASC_KEY_P8` | o conteúdo INTEIRO do `.p8`, com as linhas BEGIN/END |
-| Secret | `APPLE_DEMO_PASSWORD` | senha da conta demo do revisor |
-| Variable | `APPLE_TEAM_ID` | developer.apple.com → Membership → Team ID |
-| Variable | `APPLE_TEAM_TYPE` | `INDIVIDUAL` (pessoa física) ou `COMPANY_OR_ORGANIZATION` |
-| Variable | `APPLE_EMAIL_SUPORTE`, `APPLE_URL_SUPORTE`, `APPLE_NOME_CONTATO`, `APPLE_TELEFONE_CONTATO`, `APPLE_COPYRIGHT` | contato e ficha |
-| Variable | `APPLE_EMAIL_DEMO`, `APPLE_CODIGO_DEMO` | conta demo (perfil **dono**) e um código de barras que exista nela |
-| Variable (opcional) | `APPLE_SERVIDOR_DEMO` | onde o revisor conecta; padrão `https://loja-tria.vercel.app` |
-| Variable (opcional) | `APPLE_URL_PRIVACIDADE`, `APPLE_URL_ETIQUETAS_DEMO` | padrão: `<servidor demo>/privacidade` |
+| `EXPO_TOKEN` | expo.dev → Account settings → Access tokens (o nome do token lá é livre; o do Secret, não) | compilar, enviar |
+| `ASC_KEY_ID` | App Store Connect → Usuários e acesso → Integrações → API → **Chaves da equipe** → coluna "ID da chave". Chave com acesso **Administrador** (Desenvolvedor não mexe na ficha nem envia para revisão) | ficha, enviar, revisão |
+| `ASC_KEY_P8` | o arquivo `AuthKey_<ID>.p8` dessa chave, INTEIRO (linhas BEGIN/END) — a Apple só deixa baixar uma vez | ficha, enviar, revisão |
+| `APPLE_DEMO_PASSWORD` | a senha da conta demo do revisor: a mesma de `DEMO_ADMIN_SENHA` na Vercel | só a revisão |
 
-Faltou alguma? O passo que precisa dela diz **quais nomes** faltam; os outros seguem. No modo
-completo, a falta aparece ANTES de compilar.
+**O que não é segredo já está no repositório**, em `publicar/padroes.json`: o Issuer ID da chave,
+o time da Apple (Team ID e tipo), nome e e-mail de contato, URL de suporte, copyright, conta
+demo e código de barras dela (o EAN da primeira camiseta do seed, `7890000000000`). Nunca ponha
+senha, chave ou token nesse arquivo — o teste do `ci.mjs` recusa. Para trocar um valor sem mexer
+no código, crie uma **Variable** (ou Secret) de mesmo assunto, que vence o padrão:
+
+| Variable (opcional) | Padrão (`padroes.json`) |
+|---|---|
+| `ASC_ISSUER_ID` (pode ser Secret) | `issuer_id` |
+| `APPLE_TEAM_ID`, `APPLE_TEAM_TYPE` | `apple_team_id`, `apple_team_type` |
+| `APPLE_EMAIL_SUPORTE`, `APPLE_URL_SUPORTE`, `APPLE_NOME_CONTATO`, `APPLE_COPYRIGHT` | contato, suporte e copyright |
+| `APPLE_EMAIL_DEMO`, `APPLE_CODIGO_DEMO` | conta demo (perfil **dono**) e um código de barras que exista nela |
+| `APPLE_SERVIDOR_DEMO` | `https://loja-tria.vercel.app` |
+| `APPLE_URL_PRIVACIDADE`, `APPLE_URL_ETIQUETAS_DEMO` | `<servidor demo>/privacidade` e nenhum |
+| `APPLE_TELEFONE_CONTATO` | nenhum: só a revisão pede, e só se a Apple ainda não tiver um telefone (de um envio anterior) |
+
+Sem a senha da demo e sem telefone a **ficha sobe** (as notas dizem "(pending)") e o
+`--enviar` para dizendo o que falta — sem mexer na Apple. Faltou outra peça? O passo que
+precisa dela diz **quais nomes** faltam; os outros seguem. No modo completo, a falta aparece
+ANTES de compilar.
 
 **A conta demo do revisor mora no servidor de demonstração DA LOJA** (`APPLE_SERVIDOR_DEMO`):
 crie lá um usuário de perfil dono só para a Apple. Esse servidor **fica no ar depois da
@@ -221,12 +235,11 @@ derrubaria o link da App Store (5.1.1(i)). Para morar noutro endereço permanent
 é o site do Sistema Obras — a revisão voltaria.
 
 **Primeira vez da loja na Apple:** o registro do app (lá em cima) tem de existir — se o primeiro
-build sair antes disso, ele fica na Expo: crie o app e rode com **enviar** marcado. Com
-`APPLE_TEAM_ID`/`APPLE_TEAM_TYPE` preenchidos, a Expo cria certificado e perfil sozinha; sem
-eles, faça o primeiro build à mão (`npx eas build -p ios --profile production`), que pergunta o
-Apple ID uma vez e guarda tudo na Expo. O projeto da Expo nasce no primeiro disparo
-(`eas init`); para fixá-lo, copie o projectId de expo.dev para `expo.extra.eas.projectId` no
-`mobile/app.json`.
+build sair antes disso, ele fica na Expo: crie o app e rode com **enviar** marcado. Com a chave
+da Apple e o time (`padroes.json`), a Expo cria certificado e perfil sozinha; sem a chave, usa o
+que já guardou (nesta loja, certificado e perfil do primeiro build, válidos até 2027). O
+`mobile/app.json` já guarda o `projectId` da Expo (`expo.extra.eas.projectId`), então o passo
+"Ligar o projeto à Expo" só confere; sem ele, o `eas init` liga pelo nome a cada disparo.
 
 Quem faz o quê: `publicar/ci.mjs preparar` monta chave e ficha dos Secrets/Variables numa pasta
 do runner fora do repositório (permissão 600), acha o app pelo bundle, diz em que pé está a

@@ -299,20 +299,41 @@ async function conferirAntesDeEnviar({ asc, app, versaoDoApp, situacao, args, ap
         'Rode node publicar/revisao/gerar-guia.mjs (precisa do Playwright) e faça commit.',
     ]);
   }
-  const base = process.env.PUBLICAR_DEMO_BASE || config.url_servidor_demo;
-  const privacidade = config.url_privacidade.startsWith(config.url_servidor_demo)
-    ? `${base}${config.url_privacidade.slice(config.url_servidor_demo.length)}`
-    : config.url_privacidade;
-  const demo = await conferirServidorDemo({
-    base,
-    servidor: config.url_servidor_demo,
-    email: config.email_demo,
-    senha: config.senha_demo,
-    codigo: config.codigo_demo,
-    urlPrivacidade: privacidade,
-  });
-  for (const c of demo.conferidos) relatorio.ok(c);
-  demo.problemas.forEach((p, i) => faltas.push([`demo-${i}`, p]));
+  // A ficha sobe sem eles (padroes.json não guarda segredo nem telefone); a revisão, não: a
+  // senha vai nas notas e no campo da conta demo, e a Apple exige um telefone de contato.
+  const telefone = config.telefone_contato || revisaoNaApple.detalhe?.attributes?.contactPhone;
+  if (!telefone) {
+    faltas.push([
+      'telefone',
+      'Falta o telefone de contato para a revisão (a Apple exige): Variable APPLE_TELEFONE_CONTATO do repositório, ' +
+        'com +55 e DDD — ex.: +55 11 91234-5678 (ou "telefone_contato" no config.json).',
+    ]);
+  } else if (!config.telefone_contato) {
+    relatorio.ok('telefone de contato: o que já estava na Apple');
+  }
+  if (!config.senha_demo) {
+    faltas.push([
+      'senha-demo',
+      'Falta a senha da conta de demonstração: Secret APPLE_DEMO_PASSWORD do repositório — a mesma de DEMO_ADMIN_SENHA ' +
+        'na Vercel (projeto da demo → Settings → Environment Variables). Sem ela o revisor não entra, e o servidor de ' +
+        'demonstração não foi conferido.',
+    ]);
+  } else {
+    const base = process.env.PUBLICAR_DEMO_BASE || config.url_servidor_demo;
+    const privacidade = config.url_privacidade.startsWith(config.url_servidor_demo)
+      ? `${base}${config.url_privacidade.slice(config.url_servidor_demo.length)}`
+      : config.url_privacidade;
+    const demo = await conferirServidorDemo({
+      base,
+      servidor: config.url_servidor_demo,
+      email: config.email_demo,
+      senha: config.senha_demo,
+      codigo: config.codigo_demo,
+      urlPrivacidade: privacidade,
+    });
+    for (const c of demo.conferidos) relatorio.ok(c);
+    demo.problemas.forEach((p, i) => faltas.push([`demo-${i}`, p]));
+  }
   if (faltas.length) {
     for (const [assunto, texto] of faltas) relatorio.pendente(texto, assunto);
     throw new Error(
@@ -581,14 +602,16 @@ async function capturas(asc, loc, lidos, intervaloMs) {
  */
 async function revisaoEAnexos(asc, versao, ficha, config, { guia, video, revisaoNaApple, esperaMs }) {
   relatorio.passo('Conta de demonstração, notas e anexos para o revisor');
-  const [nome, ...sobrenomes] = config.nome_contato.trim().split(/\s+/);
+  const [nome, ...sobrenomes] = String(config.nome_contato ?? '').trim().split(/\s+/).filter(Boolean);
+  // Campo sem valor NÃO vai: a Apple guarda o que já tinha (o telefone de um envio anterior,
+  // a senha da demo de uma rodada com o Secret). O --enviar confere que nada falta.
+  const seTiver = (campo, valor) => (valor ? { [campo]: valor } : {});
   const atributos = {
-    contactFirstName: nome,
-    contactLastName: sobrenomes.join(' ') || nome,
-    contactPhone: config.telefone_contato,
-    contactEmail: config.email_suporte,
+    ...(nome ? { contactFirstName: nome, contactLastName: sobrenomes.join(' ') || nome } : {}),
+    ...seTiver('contactPhone', config.telefone_contato),
+    ...seTiver('contactEmail', config.email_suporte),
     demoAccountName: config.email_demo,
-    demoAccountPassword: config.senha_demo,
+    ...seTiver('demoAccountPassword', config.senha_demo),
     demoAccountRequired: true,
     notes: ficha.notasRevisao,
   };
@@ -1019,7 +1042,7 @@ async function publicar() {
         // Versão editável com outro número (ex.: 1.0.0 recusada e o app.json já em 1.0.1):
         // o número acompanha o app.json, senão o build não casa com ela.
         ...(versao.attributes.versionString !== versaoDoApp ? { versionString: versaoDoApp } : {}),
-        copyright: `© ${new Date().getFullYear()} ${config.titular_copyright}`,
+        ...(config.titular_copyright ? { copyright: `© ${new Date().getFullYear()} ${config.titular_copyright}` } : {}),
         releaseType: 'AFTER_APPROVAL',
       },
     },

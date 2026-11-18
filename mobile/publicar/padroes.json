@@ -1,0 +1,12 @@
+{
+  "_leia": "Padroes desta loja para publicar na Apple. NADA aqui e segredo: chave .p8, Key ID e senha da demo ficam SO nos Secrets do repositorio. Secret ou Variable com o mesmo assunto vence o valor daqui (ex.: Variable APPLE_URL_SUPORTE). Com este arquivo, o GitHub so precisa de EXPO_TOKEN, ASC_KEY_ID e ASC_KEY_P8 para subir a ficha; a revisao pede ainda APPLE_DEMO_PASSWORD e o telefone de contato (se a Apple ja nao o tiver).",
+  "issuer_id": "e789df74-d2fd-47fe-b6f1-07e541a147b9",
+  "apple_team_id": "7C4RPFMC9G",
+  "apple_team_type": "INDIVIDUAL",
+  "nome_contato": "Gustavo Sousa",
+  "titular_copyright": "Gustavo Sousa",
+  "email_suporte": "privacidade@sistemaobras.com.br",
+  "url_suporte": "https://loja-tria.vercel.app/privacidade",
+  "email_demo": "dono@demo.com",
+  "codigo_demo": "7890000000000"
+}
