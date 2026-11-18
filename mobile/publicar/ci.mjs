@@ -33,6 +33,7 @@
  * travada) e versao_mensagem; no "aparelhos", aparelhos.
  */
 
+import { createPrivateKey } from 'node:crypto';
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -66,14 +67,41 @@ const ondeVai = (nome) =>
   nome === 'APPLE_DEMO_PASSWORD' ? `${nome} (Secret)` : nome === 'APPLE_TELEFONE_CONTATO' ? `${nome} (Variable ou Secret)` : nome;
 
 /**
- * O .p8 colado no Secret às vezes chega com "\n" literal (copiado de um JSON) ou com
- * \r\n do Windows. A Apple só aceita o PEM com quebras de verdade.
+ * O .p8 colado no Secret chega de muitos jeitos: com "\n" literal (copiado de um JSON), com
+ * \r\n do Windows, numa linha só (quem colou juntou as linhas), sem as linhas BEGIN/END ou
+ * entre aspas. Vale o CORPO: base64 que o Node aceita como chave PKCS#8 — e sai o PEM que a
+ * Apple quer (linhas de 64, BEGIN/END). Qualquer outra coisa → null.
  */
 export function normalizarP8(bruto) {
-  let texto = limpo(bruto).replace(/\r\n/g, '\n');
-  if (!texto.includes('\n') && texto.includes('\\n')) texto = texto.replace(/\\n/g, '\n');
-  if (!/^-----BEGIN PRIVATE KEY-----\n[\s\S]+\n-----END PRIVATE KEY-----$/.test(texto)) return null;
-  return `${texto}\n`;
+  const corpo = limpo(bruto)
+    .replace(/\\n/g, '\n')
+    .replace(/^["']+|["']+$/g, '')
+    .replace(/-----(BEGIN|END) PRIVATE KEY-----/g, '')
+    .replace(/\s+/g, '');
+  if (!corpo || !/^[A-Za-z0-9+/]+={0,2}$/.test(corpo)) return null;
+  try {
+    createPrivateKey({ key: Buffer.from(corpo, 'base64'), format: 'der', type: 'pkcs8' });
+  } catch {
+    return null;
+  }
+  return `-----BEGIN PRIVATE KEY-----\n${corpo.match(/.{1,64}/g).join('\n')}\n-----END PRIVATE KEY-----\n`;
+}
+
+/**
+ * Por que o ASC_KEY_P8 não serviu, sem mostrar NADA do que foi colado: só a forma (o tamanho
+ * e se parece o ID da chave, o Issuer ID ou o nome do arquivo). É o erro mais comum de quem
+ * cola o Secret pela primeira vez.
+ */
+export function porQueNaoEhP8(bruto) {
+  const texto = limpo(bruto);
+  const comoFazer = 'abra o arquivo AuthKey_….p8 no Bloco de Notas, Ctrl+A, Ctrl+C e cole o texto INTEIRO, com as linhas BEGIN/END';
+  if (/^[A-Z0-9]{10}$/.test(texto)) return `parece o ID da chave (10 letras e números), não o arquivo: ${comoFazer}`;
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(texto)) return `parece o Issuer ID, não o arquivo: ${comoFazer}`;
+  if ((/AuthKey_|\.p8\b/i.test(texto) || texto.includes('\\')) && texto.length < 300 && !/BEGIN/.test(texto)) {
+    return `parece o NOME ou o caminho do arquivo, não o conteúdo: ${comoFazer}`;
+  }
+  if (/BEGIN/.test(texto)) return `tem a linha BEGIN, mas a chave não está inteira ou está estragada (${texto.length} caracteres): ${comoFazer}`;
+  return `não é uma chave .p8 (${texto.length} caracteres; o arquivo tem uns 250): ${comoFazer}`;
 }
 
 /**
@@ -89,7 +117,7 @@ export function montar(env, padroes = {}) {
   const faltandoChave = [
     !limpo(env.ASC_KEY_ID) && 'ASC_KEY_ID',
     !issuer && 'ASC_ISSUER_ID',
-    !p8 && (limpo(env.ASC_KEY_P8) ? 'ASC_KEY_P8 (não parece um .p8: copie o arquivo INTEIRO, com as linhas BEGIN/END)' : 'ASC_KEY_P8'),
+    !p8 && (limpo(env.ASC_KEY_P8) ? `ASC_KEY_P8 (${porQueNaoEhP8(env.ASC_KEY_P8)})` : 'ASC_KEY_P8'),
   ].filter(Boolean);
 
   const faltam = (soDaRevisao) =>
