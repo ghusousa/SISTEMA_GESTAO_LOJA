@@ -75,6 +75,7 @@ export default function AjusteEstoque() {
       <Modal visible animationType="none">
         <Scanner
           modo="unico"
+          encosta="em-cima-e-embaixo"
           controle={controle}
           dica="Bipe a peça que precisa de ajuste"
           aoLer={(codigo) => void buscar(codigo)}

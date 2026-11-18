@@ -15,11 +15,12 @@ import { Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native'
 import { mensagemDoErro } from '@/api/client';
 import { condicionais } from '@/api/endpoints';
 import type { Condicional, FiltroCondicionais } from '@/api/tipos';
-import { Botao, Carregando, ErroEstado, Etiqueta, Vazio } from '@/components/ui';
+import { Botao, Carregando, ErroEstado, Etiqueta, useRespiroDeBaixo, Vazio } from '@/components/ui';
 import { textoDoPrazo } from '@/lib/condicional';
 import { formatar, paraCentavos } from '@/lib/money';
 import { chaves } from '@/lib/queryClient';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
+import { plural } from '@/lib/texto';
 
 const ABAS: { rotulo: string; filtro: FiltroCondicionais }[] = [
   { rotulo: 'Abertas', filtro: 'abertas' },
@@ -30,6 +31,7 @@ const ABAS: { rotulo: string; filtro: FiltroCondicionais }[] = [
 export default function Condicionais() {
   const router = useRouter();
   const [filtro, setFiltro] = useState<FiltroCondicionais>('abertas');
+  const respiroDeBaixo = useRespiroDeBaixo();
 
   const consulta = useInfiniteQuery({
     queryKey: [...chaves.condicionais, filtro],
@@ -90,7 +92,7 @@ export default function Condicionais() {
         />
       )}
 
-      <View style={s.rodape}>
+      <View style={[s.rodape, { paddingBottom: respiroDeBaixo }]}>
         <Botao titulo="Nova condicional" variante="acao" grande onPress={() => router.push('/condicional/nova')} />
       </View>
     </View>
@@ -106,7 +108,7 @@ function LinhaCondicional({ condicional: c, aoAbrir }: { condicional: Condiciona
           #{c.id} · {c.cliente}
         </Text>
         <Text style={s.detalhe}>
-          {c.total_pecas} peça(s) · {formatar(paraCentavos(c.valor_pecas))}
+          {plural(c.total_pecas, 'peça', 'peças')} · {formatar(paraCentavos(c.valor_pecas))}
           {c.cliente_telefone ? ` · ${c.cliente_telefone}` : ''}
         </Text>
         <Text style={s.detalhe}>atendida por {c.vendedora}</Text>

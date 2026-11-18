@@ -17,7 +17,7 @@ import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { leitor } from '@/api/endpoints';
 import type { Pareamento } from '@/api/tipos';
 import { Scanner, type ScannerRef } from '@/components/Scanner';
-import { Botao, Cartao } from '@/components/ui';
+import { Botao, Cartao, useRespiroDeBaixo } from '@/components/ui';
 import { useLoja } from '@/hooks/useLoja';
 import { chaves } from '@/lib/queryClient';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
@@ -99,6 +99,8 @@ export function LeitorPareado({ pareamento, visivel }: Props) {
   const desligar = useLeitorStore((e) => e.desligar);
   const alerta = useLeitorStore((e) => e.alerta);
   const scanner = useRef<ScannerRef | null>(null);
+  // "Desligar" é o fim da lista, que vai até a base da tela: acima do indicador de início.
+  const respiroDeBaixo = useRespiroDeBaixo();
   const [desligando, setDesligando] = useState(false);
   // Em estado da TELA, não só na pausa de dentro do Scanner: o celular que bloqueia com o
   // diálogo aberto desmonta a câmera, e a que volta nasceria lendo por baixo dele.
@@ -181,7 +183,7 @@ export function LeitorPareado({ pareamento, visivel }: Props) {
         )}
       </View>
 
-      <ScrollView contentContainerStyle={s.conteudo}>
+      <ScrollView contentContainerStyle={[s.conteudo, { paddingBottom: respiroDeBaixo }]}>
         {!!alerta && (
           <Cartao estilo={s.alerta}>
             <Text style={s.alertaTexto}>{alerta}</Text>

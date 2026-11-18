@@ -247,6 +247,14 @@ publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com o app de ve
   (401/403): logout; rede/timeout/5xx: falha a requisição e MANTÉM a sessão e o carrinho (`lib/renovacao.ts`).
 - Endereço do servidor é do APARELHO (`api/servidor.ts`), não do build: um `.apk` serve para todas
   as lojas e trocar de IP não exige reinstalar. `baseAtual()` resolve a base a cada requisição.
+- **Área segura (do SE ao Pro Max)**: nada de altura ou padding fixo no que encosta na borda da
+  tela. Barra de abas: `medidasDaBarraDeAbas` (`lib/areaSegura.ts`, com teste — `height` fixa faz
+  o React Navigation esquecer o indicador de início). Rodapé, botão flutuante e pé de Modal de
+  tela cheia: `useRespiroDeBaixo()`; topo de Modal de tela cheia: `useRespiroDeCima()`
+  (`components/ui.tsx`). O export web não tem recorte: a auditoria emula a área segura pelo
+  DevTools (`Emulation.setSafeAreaInsetsOverride`).
+- Frase nunca leva `textTransform: 'capitalize'` (vira "Novembro De 2026"): `primeiraMaiuscula`
+  e `plural` de `lib/texto.ts`, no lugar do "peça(s)".
 
 ## Testes
 

@@ -19,7 +19,15 @@ import { condicionais } from '@/api/endpoints';
 import type { FormaPagamento } from '@/api/tipos';
 import { ModalParcelas, type CreditoEscolhido } from '@/components/PagarCredito';
 import { ModalVale } from '@/components/PagarValeFiado';
-import { Botao, Carregando, Cartao, ErroEstado, Etiqueta, Linha } from '@/components/ui';
+import {
+  Botao,
+  Carregando,
+  Cartao,
+  ErroEstado,
+  Etiqueta,
+  Linha,
+  useRespiroDeBaixo,
+} from '@/components/ui';
 import { rotuloPagamento } from '@/lib/cartao';
 import { itensDoFechamento, resumirFechamento, textoDoPrazo } from '@/lib/condicional';
 import { formatar, paraCentavos, paraDecimalString, somar, type Centavos } from '@/lib/money';
@@ -45,6 +53,9 @@ export default function CondicionalDetalhe() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const podeFiado = pode(useAuthStore((e) => e.usuario?.papel), PODE.GERIR_CREDIARIO);
+  // "Fechar condicional" é a última coisa da lista: rolada até o fim, fica acima do
+  // indicador de início, não em cima dele.
+  const respiroDeBaixo = useRespiroDeBaixo(espaco.xxl);
   const [devolvidas, setDevolvidas] = useState<Map<number, number>>(new Map());
   const [pagamentos, setPagamentos] = useState<Pagamento[]>([]);
   const [desconto, setDesconto] = useState<Centavos>(0);
@@ -125,7 +136,10 @@ export default function CondicionalDetalhe() {
   }
 
   return (
-    <ScrollView contentContainerStyle={s.conteudo} keyboardShouldPersistTaps="handled">
+    <ScrollView
+      contentContainerStyle={[s.conteudo, { paddingBottom: respiroDeBaixo }]}
+      keyboardShouldPersistTaps="handled"
+    >
       <Cartao>
         <Text style={s.titulo}>#{c.id} · {c.cliente}</Text>
         <Text style={s.detalhe}>{c.cliente_telefone ?? 'sem telefone'} · atendida por {c.vendedora}</Text>

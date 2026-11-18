@@ -1910,8 +1910,10 @@ da loja) + fechamento existente, se houver.
 Com `?inicio=&fim=` (≤ 366 dias), exceto `estoque-baixo`, `estoque-parado`, `valor-do-estoque` e
 `meu-dia` (sem período — são fotografia do agora).
 
-- `/relatorios/resumo` → faturamento, CMV, lucro bruto, despesas, `taxas_cartao`, resultado, nº de
-  vendas, ticket médio.
+- `/relatorios/resumo` → faturamento, `devolucoes`, `faturamento_liquido`, CMV, `cmv_devolvido`,
+  lucro bruto, despesas, `taxas_cartao`, resultado, nº de vendas, ticket médio. As telas mostram
+  CADA parcela (o Financeiro do app em `mobile/src/lib/resumoFinanceiro.ts`, com teste; o web com
+  o cartão Devoluções em `relatorios-resumo.js`): quem soma a tela chega no lucro bruto.
   `lucro_bruto = faturamento_liquido − (CMV − CMV devolvido)` e `margem_bruta_pct = lucro_bruto /
   faturamento_liquido` — as duas pontas líquidas de devolução; sobre o bruto, a margem encolheria
   na proporção do que voltou. `resultado = lucro_bruto − despesas − taxas_cartao`, com
@@ -2066,6 +2068,23 @@ caixa do dia, sem o resumo do mês. Guarda por capacidade no `_layout`.
   entre tentativas e o destino de cada falha. O modo leitor (`(app)/mais/leitor.tsx`,
   `components/LeitorPareado.tsx`) transforma a câmera no leitor de um computador pareado; a fila
   de envio é `stores/leitorStore.ts`, com o laço em `lib/filaDoLeitor.ts` (com teste) (ADR-43).
+
+- `lib/areaSegura.ts` (com teste): a área segura de cada iPhone (iOS 15.1+, do SE de 4,7" ao Pro
+  Max de 6,9"). A barra de abas tira altura e respiro de baixo de `medidasDaBarraDeAbas(insets
+  .bottom)` — com `height` fixa o React Navigation deixa de somar o indicador de início, e os
+  rótulos encostavam nele. Rodapé de botões, botão flutuante e o fim de Modal de tela cheia usam
+  `useRespiroDeBaixo()` (o MAIOR entre o respiro e a área, nunca a soma: no SE fica como era);
+  Modal de tela cheia (a busca de peça, o "Receber pagamento") desce da barra de status com
+  `useRespiroDeCima()`. Os dois ganchos moram em `components/ui.tsx`; o `Scanner` recebe
+  `encosta` quando ocupa a tela até a borda. Rodapé que fica EM CIMA da barra de abas (o PDV)
+  não soma nada: quem respeita o indicador é a barra.
+- `lib/resumoFinanceiro.ts` (com teste): as linhas do cartão "Resultado do mês" — faturamento,
+  devoluções, custo das peças vendidas, custo das que voltaram ao estoque, lucro bruto, despesas e
+  taxas — e a fórmula impressa (`Lucro bruto − despesas − taxas de cartão`). Espelho da conta de
+  `RelatorioService.resumo`; o teste soma as linhas com os números da demonstração.
+- `lib/texto.ts` (com teste): `primeiraMaiuscula` e `plural` (espelho do `plural` de
+  `web/js/ui.js`). `textTransform: 'capitalize'` não entra em frase: põe maiúscula em toda
+  palavra ("Novembro De 2026").
 
 Fluxo do PDV: bipar → item no carrinho → (qtd/desconto) → cobrar → formas de pagamento (misto,
 com ajuste do centavo na última parcela) → confirma → `POST /vendas` com `client_uuid` → limpa

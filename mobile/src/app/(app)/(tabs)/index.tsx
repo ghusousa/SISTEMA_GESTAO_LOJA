@@ -24,6 +24,7 @@ import { Botao } from '@/components/ui';
 import { useConexao } from '@/components/BannerConexao';
 import { formatar, paraCentavos } from '@/lib/money';
 import { ALVO_TOQUE, cores, espaco, fonte, raio } from '@/lib/tema';
+import { plural } from '@/lib/texto';
 import { useCartStore } from '@/stores/cartStore';
 
 export default function Pdv() {
@@ -200,8 +201,8 @@ export default function Pdv() {
 
       <View style={s.carrinho}>
         <View style={s.carrinhoCabecalho}>
-          <Text style={s.carrinhoTitulo}>
-            {pecas === 0 ? 'Carrinho vazio' : `${pecas} ${pecas === 1 ? 'peça' : 'peças'}`}
+          <Text style={s.carrinhoTitulo} numberOfLines={1}>
+            {pecas === 0 ? 'Carrinho vazio' : plural(pecas, 'peça', 'peças')}
           </Text>
           <View style={s.carrinhoAcoes}>
             {/* Etiqueta rasgada ou desbotada é rotina: sem esta saída a peça não vende. */}
@@ -262,12 +263,17 @@ export default function Pdv() {
             {itens.map((item) => (
               <View key={item.varianteId} style={s.item}>
                 <View style={s.itemInfo}>
-                  <Text style={s.itemNome} numberOfLines={1}>
+                  {/* Duas linhas: no SE, uma só cortava "Vestido Longo Festa" em "Vestido Long…". */}
+                  <Text style={s.itemNome} numberOfLines={2}>
                     {item.produto}
                   </Text>
                   <Text style={s.itemDetalhe}>
-                    {item.tamanho} · {item.cor} · {formatar(item.precoUnitario)}
+                    {item.tamanho} · {item.cor}
                   </Text>
+                  {/* Com uma peça o preço já está ao lado, no total da linha. */}
+                  {item.quantidade > 1 && (
+                    <Text style={s.itemDetalhe}>{formatar(item.precoUnitario)} cada</Text>
+                  )}
                 </View>
 
                 <View style={s.contador}>
@@ -306,7 +312,9 @@ export default function Pdv() {
         )}
       </View>
 
-      <View style={[s.rodape, { paddingBottom: espaco.md + insets.bottom / 2 }]}>
+      {/* Sem área segura aqui: o rodapé fica em cima da barra de abas, e é ela que respeita
+          o indicador de início (lib/areaSegura.ts). Somar de novo era espaço jogado fora. */}
+      <View style={s.rodape}>
         {desconto > 0 && (
           <View style={s.linhaDesconto}>
             <Text style={s.descontoTexto}>Subtotal {formatar(subtotal)}</Text>
@@ -360,19 +368,35 @@ const s = StyleSheet.create({
   avisoTexto: { color: '#7A5A00', fontSize: fonte.base, fontWeight: '600' },
 
   carrinho: { flex: 1 },
+  // Quebra em vez de espremer: no SE, "3 peças" virava "3" e "peças" em duas linhas. Se as
+  // ações não couberem ao lado do título, descem inteiras para a linha de baixo.
   carrinhoCabecalho: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'space-between',
     alignItems: 'center',
+    columnGap: espaco.sm,
+    rowGap: espaco.xs,
     paddingHorizontal: espaco.lg,
     paddingTop: espaco.md,
     paddingBottom: espaco.sm,
   },
   carrinhoTitulo: { fontSize: fonte.base, fontWeight: '700', color: cores.textoSuave },
-  carrinhoAcoes: { flexDirection: 'row', alignItems: 'center', gap: espaco.lg },
+  carrinhoAcoes: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: espaco.md,
+    marginLeft: 'auto',
+  },
   limpar: { color: cores.perigo, fontWeight: '700', fontSize: fonte.pequena },
 
-  vazio: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: espaco.sm },
+  vazio: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: espaco.sm,
+    paddingHorizontal: espaco.xl,
+  },
   vazioTexto: { color: cores.textoFraco, fontSize: fonte.base, textAlign: 'center' },
 
   lista: { paddingHorizontal: espaco.md, paddingBottom: espaco.md },

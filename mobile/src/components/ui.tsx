@@ -16,8 +16,28 @@ import {
   View,
   type ViewStyle,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { respiroDeBaixo, respiroDeCima } from '@/lib/areaSegura';
 import { ALVO_TOQUE, cores, espaco, fonte, raio, sombra } from '@/lib/tema';
+
+// ------------------------------------------------------------------ Área segura
+/**
+ * Respiro de baixo para o que encosta na base da tela: rodapé de botões, botão flutuante,
+ * o pé de um Modal de tela cheia. No iPhone de Face ID vira a área do indicador de início;
+ * no SE, o respiro de sempre. A conta (e o teste) mora em `lib/areaSegura.ts`.
+ */
+export function useRespiroDeBaixo(minimo: number = espaco.lg): number {
+  return respiroDeBaixo(useSafeAreaInsets().bottom, minimo);
+}
+
+/**
+ * Respiro de cima para o que começa no topo da tela SEM cabeçalho: o Modal de tela cheia
+ * desenha a partir do zero, debaixo da barra de status e da ilha.
+ */
+export function useRespiroDeCima(folga: number = espaco.md): number {
+  return respiroDeCima(useSafeAreaInsets().top, folga);
+}
 
 // ------------------------------------------------------------------ Botão
 type Variante = 'primario' | 'acao' | 'secundario' | 'perigo' | 'texto';

@@ -22,7 +22,7 @@ import { Alert, Share, StyleSheet, Text, View, ScrollView } from 'react-native';
 import { mensagemDoErro } from '@/api/client';
 import { fiscal, vendas } from '@/api/endpoints';
 import type { ConfiguracaoLoja, FormaPagamento, Venda } from '@/api/tipos';
-import { Botao, Carregando, ErroEstado } from '@/components/ui';
+import { Botao, Carregando, ErroEstado, useRespiroDeBaixo } from '@/components/ui';
 import { rotuloPagamento } from '@/lib/cartao';
 import { linhaDoRecibo } from '@/lib/fiscal';
 import { formatar, formatarSemSimbolo, paraCentavos } from '@/lib/money';
@@ -96,6 +96,8 @@ export default function Recibo() {
   const loja = useDadosDaLoja();
   const { id } = useLocalSearchParams<{ id: string }>();
   const vendaId = Number(id);
+  // "Enviar recibo" encosta na base da tela: no Face ID, acima do indicador de início.
+  const respiroDeBaixo = useRespiroDeBaixo();
 
   const consulta = useQuery({
     queryKey: chaves.venda(vendaId),
@@ -202,7 +204,7 @@ export default function Recibo() {
         </View>
       </ScrollView>
 
-      <View style={s.acoes}>
+      <View style={[s.acoes, { paddingBottom: respiroDeBaixo }]}>
         <Botao titulo="Enviar recibo" grande onPress={() => void enviar()} />
       </View>
     </View>

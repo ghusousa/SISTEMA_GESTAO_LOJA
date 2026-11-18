@@ -23,6 +23,7 @@ import { BuscarPeca } from '@/components/BuscarPeca';
 import { CodigoManual } from '@/components/CodigoManual';
 import { Botao, Cartao, Etiqueta } from '@/components/ui';
 import { Scanner } from '@/components/Scanner';
+import { NOMES_DAS_FORMAS } from '@/lib/cartao';
 import { formatar, paraCentavos } from '@/lib/money';
 import { chaves, invalidarAposDevolucao } from '@/lib/queryClient';
 import { gerarUuid } from '@/lib/uuid';
@@ -105,7 +106,7 @@ export default function DevolucaoTela() {
           <Text style={s.valorGrande}>{formatar(paraCentavos(devolvidos.total))}</Text>
           {devolvidos.pagamentos.map((p, i) => (
             <View key={i} style={s.linha}>
-              <Text style={s.rotulo}>{p.forma.toLowerCase()}</Text>
+              <Text style={s.rotulo}>{NOMES_DAS_FORMAS[p.forma] ?? p.forma}</Text>
               <Text style={s.valor}>{formatar(paraCentavos(p.valor))}</Text>
             </View>
           ))}
@@ -326,7 +327,7 @@ const s = StyleSheet.create({
   voltaTexto: { flex: 1, fontSize: fonte.pequena, color: cores.textoSuave },
 
   linha: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 },
-  rotulo: { color: cores.textoSuave, fontSize: fonte.base, textTransform: 'capitalize' },
+  rotulo: { color: cores.textoSuave, fontSize: fonte.base },
   valor: { color: cores.texto, fontSize: fonte.base, fontWeight: '700' },
 
   itemNome: { fontSize: fonte.base, fontWeight: '700', color: cores.texto },

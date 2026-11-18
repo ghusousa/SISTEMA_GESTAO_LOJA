@@ -27,7 +27,7 @@ import { mensagemDoErro } from '@/api/client';
 import { catalogo, estoque, type VariantePayload } from '@/api/endpoints';
 import { Scanner } from '@/components/Scanner';
 import { gerarUuid } from '@/lib/uuid';
-import { Botao, Campo, Carregando, Etiqueta } from '@/components/ui';
+import { Botao, Campo, Carregando, Etiqueta, useRespiroDeBaixo } from '@/components/ui';
 import { formatarSemSimbolo, paraCentavos, paraDecimalString } from '@/lib/money';
 import { chaves, invalidarAposMovimentoEstoque, queryClient } from '@/lib/queryClient';
 import { useAuthStore } from '@/stores/authStore';
@@ -57,6 +57,7 @@ export default function NovoProduto() {
   // recusaria para sempre e o cadastro não teria saída nenhuma.
   const [eixo1Digitado, setEixo1Digitado] = useState('');
   const router = useRouter();
+  const respiroDeBaixo = useRespiroDeBaixo();
   const params = useLocalSearchParams<{ codigo?: string; retorno?: string }>();
   const veioDoPdv = params.retorno === 'pdv';
   // A SPEC diz que o vendedor não vê preço de custo. Ele cadastra a peça; o custo é
@@ -442,7 +443,7 @@ export default function NovoProduto() {
         {!!erro && <Text style={s.erro}>{erro}</Text>}
       </ScrollView>
 
-      <View style={s.rodape}>
+      <View style={[s.rodape, { paddingBottom: respiroDeBaixo }]}>
         <Botao
           titulo="Salvar peça"
           grande
@@ -454,6 +455,7 @@ export default function NovoProduto() {
       <Modal visible={!!bipandoPara} animationType="slide" onRequestClose={() => setBipandoPara(null)}>
         <Scanner
           modo="unico"
+          encosta="em-cima-e-embaixo"
           dica="Bipe a etiqueta desta peça"
           aoLer={(codigo) => {
             setGrade((linhas) =>

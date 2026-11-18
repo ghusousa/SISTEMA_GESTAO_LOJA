@@ -17,7 +17,7 @@ import { ModalClienteDaVenda } from '@/components/ClienteDaVenda';
 import { ModalParcelas, type CreditoEscolhido } from '@/components/PagarCredito';
 import { ModalCliente, ModalVale, type ValeEscolhido } from '@/components/PagarValeFiado';
 import { TecladoNumerico } from '@/components/TecladoNumerico';
-import { Botao } from '@/components/ui';
+import { Botao, useRespiroDeBaixo } from '@/components/ui';
 import {
   formatar,
   paraCentavos,
@@ -58,6 +58,9 @@ type Etapa = 'desconto' | 'pagamento';
 
 export default function Pagamento() {
   const router = useRouter();
+  // O rodapé encosta na base da folha: no iPhone de Face ID, "Confirmar venda" ficava em
+  // cima do indicador de início.
+  const respiroDeBaixo = useRespiroDeBaixo();
 
   const clientUuid = useCartStore((e) => e.clientUuid);
   const itens = useCartStore((e) => e.itens);
@@ -280,7 +283,7 @@ export default function Pagamento() {
           />
         </ScrollView>
 
-        <View style={s.rodape}>
+        <View style={[s.rodape, { paddingBottom: respiroDeBaixo }]}>
           <Botao
             titulo="Voltar"
             variante="secundario"
@@ -405,7 +408,7 @@ export default function Pagamento() {
         )}
       </ScrollView>
 
-      <View style={s.rodape}>
+      <View style={[s.rodape, { paddingBottom: respiroDeBaixo }]}>
         <Botao
           titulo="Desconto"
           variante="secundario"

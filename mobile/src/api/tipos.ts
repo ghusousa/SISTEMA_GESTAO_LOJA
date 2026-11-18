@@ -312,6 +312,16 @@ export interface ResumoFinanceiro {
    * servidor sem o cálculo de taxas não manda o campo, e a linha some da tela.
    */
   taxas_cartao?: string;
+  /**
+   * Devoluções do período, pelo dia em que a peça voltou (ADR-19). O `lucro_bruto` já vem
+   * sem elas: `faturamento − devolucoes − (custo_mercadoria_vendida − cmv_devolvido)`.
+   * Opcionais pelo mesmo motivo das taxas — sem o campo, a linha some e vale zero.
+   */
+  devolucoes?: string;
+  faturamento_liquido?: string;
+  /** Custo das peças devolvidas que voltaram ao estoque: deixa de contar como custo. */
+  cmv_devolvido?: string;
+  pecas_devolvidas?: number;
 }
 
 export interface DiaVenda {
