@@ -134,7 +134,7 @@
 
 <ul>
   <li><strong>Suporte técnico</strong>: se a loja pedir ajuda, um técnico do fornecedor pode acessar o servidor dela para resolver o problema, seguindo as instruções da loja e apenas pelo tempo necessário. É a atuação como operador descrita no início.</li>
-  <li><strong>Infraestrutura contratada pela loja</strong>: se a loja mantém o servidor em um provedor de hospedagem, esse provedor é um operador contratado por ela. Quem escolhe e responde por ele é a loja.</li>
+  <li><strong>Infraestrutura contratada pela loja</strong>: se a loja mantém o servidor em um provedor de hospedagem, esse provedor é um operador contratado por ela. Quem escolhe e responde por ele é a loja. É o caso do servidor de demonstração do aplicativo (dados de exemplo, para teste e para a revisão das lojas de aplicativos): ele roda na Vercel, com o banco no Neon e as fotos das peças no Vercel Blob.</li>
   <li><strong>Ordem legal</strong>: cumprimento de determinação de autoridade judicial ou administrativa competente.</li>
 </ul>
 
@@ -145,7 +145,7 @@
 <ul>
   <li><strong>Câmera</strong> — para ler o código de barras das etiquetas e para fotografar peças do catálogo. A permissão é pedida na primeira vez que você abre o leitor ou tira uma foto, e pode ser negada: nesse caso, dá para digitar o código à mão e cadastrar a peça sem imagem.</li>
   <li><strong>Fotos e mídia</strong> — para escolher uma imagem já existente no aparelho como foto de uma peça. O app acessa apenas o arquivo que você selecionar, não a sua galeria inteira.</li>
-  <li><strong>Internet / rede</strong> — para conversar com o servidor da sua loja. É a única conexão que o app faz; ele não fala com nenhum outro endereço.</li>
+  <li><strong>Internet / rede</strong> — para conversar com o servidor da sua loja, que é para onde vão todos os dados. Fora ele, o app só faz um teste de conexão para saber se o aparelho está on-line: um pedido vazio ao endereço <em>generate_204</em> do Google, feito pela biblioteca de rede do React Native (NetInfo), sem nenhum dado seu ou da loja.</li>
 </ul>
 
 <p>Você pode revogar qualquer permissão a qualquer momento nas configurações do sistema operacional do aparelho.</p>
@@ -171,10 +171,10 @@
 <p>Quem define os prazos é a loja. Como referência do que o sistema faz:</p>
 
 <ul>
-  <li><strong>Contas de funcionários</strong>: ficam enquanto a pessoa trabalha na loja, ou até ela mesma (ou a loja) excluir a conta. Excluída, a conta perde na hora e-mail, senha e sessões; o nome de quem fez cada venda continua só nos registros da loja, para o histórico seguir coerente. A loja também pode apenas desativar a conta de quem se afasta, o que se desfaz depois.</li>
+  <li><strong>Contas de funcionários</strong>: ficam enquanto a pessoa trabalha na loja, ou até ela mesma (ou a loja) excluir a conta. Excluída, a conta perde na hora e-mail, senha, sessões, comissão, meta e as tentativas de login guardadas com o e-mail; o nome de quem fez cada venda continua só nos registros da loja, para o histórico seguir coerente. A loja também pode apenas desativar a conta de quem se afasta, o que se desfaz depois.</li>
   <li><strong>Clientes do crediário</strong>: enquanto houver relação de compra a prazo e pelo prazo necessário à cobrança e à prescrição das dívidas.</li>
   <li><strong>Vendas, pagamentos, devoluções e despesas</strong>: pelos prazos fiscais e contábeis aplicáveis, em regra 5 anos, podendo ser maiores conforme a legislação.</li>
-  <li><strong>Tentativas de login</strong>: usadas em janela de 15 minutos para a trava de segurança; os registros mais antigos deixam de ter função e podem ser expurgados pela loja.</li>
+  <li><strong>Tentativas de login</strong>: usadas em janela de 15 minutos para a trava de segurança; o sistema apaga sozinho as que passaram de um dia, e as de uma conta excluída saem junto com ela.</li>
   <li><strong>Auditoria</strong>: mantida pelo período que a loja definir como necessário para prestação de contas e apuração de incidentes. Por natureza, linhas de auditoria não são editadas — é isso que as torna confiáveis.</li>
 </ul>
 
@@ -235,7 +235,7 @@
   <li><strong>Autoridade Nacional de Proteção de Dados (ANPD)</strong>: canais oficiais disponíveis em gov.br/anpd.</li>
 </ul>
 
-<p><strong>Vigência desta versão: 24 de agosto de 2026.</strong></p>
+<p><strong>Vigência desta versão: 18 de novembro de 2026.</strong></p>
   <footer>
     <p>Dúvidas sobre seus dados: <a href="mailto:privacidade@sistemaobras.com.br">privacidade@sistemaobras.com.br</a></p>
     <p><a href="/privacidade">Política de privacidade</a> · <a href="/exclusao-de-dados">Exclusão de conta e de dados</a></p>

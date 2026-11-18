@@ -229,3 +229,15 @@ test('guia PDF: o commitado é o das entradas de agora (texto, aparelhos e print
   assert.deepEqual(diferencas(gravada, semALista), [`${chave} saiu`]);
   assert.deepEqual(diferencas({}, atual).length, Object.keys(atual).length);
 });
+
+test('política de privacidade (a URL da ficha) e notas contam os mesmos serviços externos', () => {
+  // O revisor lê o item 5 das notas e abre a política pelo link da ficha: um documento não pode
+  // desmentir o outro. A política dizia "não fala com nenhum outro endereço" enquanto as notas
+  // contavam a checagem de conexão do NetInfo e as fotos da demo no Vercel Blob.
+  const notas = readFileSync(join(MOBILE, 'publicar', 'ficha', 'notas-revisao.txt'), 'utf8');
+  const politica = readFileSync(join(MOBILE, '..', 'web', 'legal', 'privacidade.html'), 'utf8');
+  for (const servico of ['generate_204', 'Vercel Blob', 'Neon']) {
+    if (notas.includes(servico)) assert.ok(politica.includes(servico), `as notas citam ${servico} e a política não`);
+  }
+  assert.ok(!/não fala com nenhum outro endereço|única conexão que o app faz/i.test(politica), 'a política ainda nega qualquer outra conexão');
+});
