@@ -97,7 +97,9 @@ async def test_outro_dono_nao_exclui_rebaixa_desativa_nem_troca_a_senha_da_demo(
         await client.patch(f"{alvo}/senha", headers=auth, json={"nova_senha": "outra-senha-1"})
     )
     # O que não tira o acesso continua: nome e "papel" igual ao de hoje.
-    renomear = await client.patch(alvo, headers=auth, json={"nome": "Dona da Demo", "papel": "ADMIN"})
+    renomear = await client.patch(
+        alvo, headers=auth, json={"nome": "Dona da Demo", "papel": "ADMIN"}
+    )
     assert renomear.status_code == 200, renomear.text
     await _existe_e_entra(client, session, na_vercel)
 

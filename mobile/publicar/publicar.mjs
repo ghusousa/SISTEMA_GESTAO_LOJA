@@ -234,7 +234,12 @@ async function conferirAntesDeEnviar({ asc, app, versaoDoApp, situacao, args, ap
   const faltas = [];
 
   // Item 6 das notas: "Brazil only". Disponibilidade feita no site com outros países desmente.
-  const disponivel = await lerDisponibilidade(asc, app);
+  let disponivel = null;
+  try {
+    disponivel = await lerDisponibilidade(asc, app);
+  } catch (erro) {
+    relatorio.avisar(`Não deu para ler a disponibilidade (${erro.message}): confira na tela que o app é vendido só no Brasil.`);
+  }
   const fora = (disponivel?.territorios ?? []).filter((t) => t !== TERRITORIO);
   if (fora.length) {
     faltas.push([

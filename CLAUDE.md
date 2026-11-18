@@ -61,7 +61,8 @@ publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com as telas do
 # GitHub → Actions → "Publicar iOS na App Store": build na Expo + envio + ficha, sem Mac; caixa "completo"
 #   (ou etiqueta ios-v<versão>) faz tudo numa rodada, até a revisão; "video_revisao_url" anexa a gravação
 #   (baixada UMA vez, no começo); "revisao" com "compilar"/"enviar" só no completo; caixa "aparelhos"
-#   (experimental) gera o .ipa ad hoc — 1ª vez: "npx eas-cli device:create" (mobile/publicar/README.md)
+#   (experimental) gera o .ipa ad hoc — 1ª vez, interativo num computador: "npx eas-cli build --platform ios
+#   --profile teste-aparelhos" (credencial ad hoc e iPhone no cadastro da Expo; mobile/publicar/README.md)
 ```
 
 ## Convenções da API

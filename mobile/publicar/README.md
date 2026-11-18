@@ -168,10 +168,16 @@ credentials suitable for internal distribution. Run this command again in intera
 com ele e com `--refresh-ad-hoc-provisioning-profile`, a Expo cria (ou refaz) o perfil com a
 chave da Apple — a caixa exige a chave (Secrets `ASC_*`) e `APPLE_TEAM_ID`.
 
-**Uma vez só, antes da 1ª rodada:** a Expo monta o perfil com os iPhones do cadastro DELA, não
-os da Apple. Num computador com Node, `npx eas-cli device:create` (logado na conta da Expo) →
-"Developer Portal" (importa os iPhones registrados na Apple) ou "Input" (o UDID, o mesmo de
-`udid_aparelho`). Sem isso, o build para em "No devices are registered for this Apple team".
+**Uma vez só, antes da 1ª rodada:** a 1ª credencial ad hoc (o certificado ligado a esse perfil)
+o eas-cli só monta no modo interativo — no Actions ele para em "Credentials are not set up. Run
+this command again in interactive mode" — e a Expo monta o perfil com os iPhones do cadastro
+DELA, não os da Apple ("No devices are registered for this Apple team"). Num computador com
+Node, dentro de `mobile/` e logado na conta da Expo: `npx eas-cli build --platform ios --profile
+teste-aparelhos`. Ele entra na Apple, oferece registrar o iPhone na Expo (ou rode antes
+`npx eas-cli device:create` → "Developer Portal", que importa os da Apple, ou "Input", com o
+UDID) e monta a credencial; o `.ipa` desse build já serve para o BrowserStack. Daí em diante a
+caixa refaz o perfil sozinha (`--refresh-ad-hoc-provisioning-profile`). Se o build da caixa
+falhar, o passo diz isso.
 
 1. Marque só **aparelhos** (as outras caixas ficam de fora nesta rodada; com "completo" junto,
    a rodada recusa). Na 1ª vez, preencha **udid_aparelho** com o UDID de um iPhone qualquer da

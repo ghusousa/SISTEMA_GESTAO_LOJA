@@ -1840,8 +1840,11 @@ registra o da entrada `udid_aparelho` (`POST /v1/devices`, UDID mascarado no log
 para dizendo como resolver; o eas compila com `--wait --json` e o link do `.ipa` vai para o resumo
 da execução. O perfil é ad hoc de propósito (`enterpriseProvisioning: "adhoc"`) e o build leva
 `--refresh-ad-hoc-provisioning-profile` com a chave da Apple: sem eles, o eas-cli em modo não
-interativo parava pedindo o modo interativo. A Expo monta o perfil com os iPhones do cadastro
-DELA (não os da Apple): na 1ª vez, `npx eas-cli device:create` num computador, uma vez.
+interativo parava pedindo o modo interativo. Mas a 1ª credencial ad hoc (o certificado ligado ao
+perfil) o eas-cli só monta no modo interativo, e a Expo monta o perfil com os iPhones do cadastro
+DELA (não os da Apple): na 1ª vez, `npx eas-cli build --platform ios --profile teste-aparelhos`
+num computador; daí em diante, a caixa refaz o perfil sozinha. O ci.mjs não diz mais que o
+iPhone registrado na Apple basta.
 *Consequências:* o reenvio depois de uma recusa é um clique, sem site; a revisão só sai com o que
 a Apple pediu e com o servidor da demonstração conferido; mudar prints ou a lista de aparelhos
 pede refazer o guia (o CI acusa). A Apple de mentira ganhou um envio ativo por

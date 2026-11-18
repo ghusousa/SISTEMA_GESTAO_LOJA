@@ -253,13 +253,13 @@ async function aparelhos() {
     process.stdout.write(`✔ O iPhone ${mascararUdid(limpo(process.env.UDID_APARELHO))} já estava registrado ("${registrado.nome}").\n`);
   }
   // Registrar na Apple é a metade: a Expo monta o perfil ad hoc com os iPhones que ELA conhece
-  // (o cadastro dela, não o da Apple). Sem nenhum lá, o build para em "No devices are registered
-  // for this Apple team" — e isso só se resolve, uma vez, pelo eas-cli num computador.
+  // (o cadastro dela, não o da Apple), e a 1ª credencial ad hoc o eas-cli só monta no modo
+  // interativo ("Credentials are not set up", "No devices are registered for this Apple team").
   process.stdout.write(
-    `✔ ${lista.length} iPhone(s) registrado(s) na conta da Apple. A Expo monta o perfil ad hoc com os iPhones do cadastro ` +
-      'DELA: se o build parar em "No devices are registered for this Apple team", rode uma vez num computador ' +
-      '"npx eas-cli device:create" (opção "Developer Portal", que importa os da Apple, ou "Input", com o mesmo UDID) e ' +
-      'dispare de novo.\n',
+    `✔ ${lista.length} iPhone(s) registrado(s) na conta da Apple. Isso não basta para o perfil ad hoc: a Expo usa o ` +
+      'cadastro DELA, e a 1ª credencial ad hoc só sai no modo interativo. Na 1ª vez, num computador (dentro de mobile/): ' +
+      '"npx eas-cli build --platform ios --profile teste-aparelhos" — registra o iPhone na Expo (ou "npx eas-cli ' +
+      'device:create" antes) e monta a credencial; depois, a caixa "aparelhos" roda sozinha.\n',
   );
   saida('aparelhos', lista.length);
 }

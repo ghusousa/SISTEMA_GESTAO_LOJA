@@ -398,8 +398,9 @@ jobs:
       # Experimental até a 1ª rodada real: o .ipa ad hoc que o BrowserStack instala (o da App
       # Store não instala fora dela). O perfil ad hoc só é assinado com um iPhone registrado na
       # conta da Apple: o ci.mjs confere (e registra o da entrada "udid_aparelho") antes de
-      # gastar a compilação. A EXPO monta o perfil com os iPhones que ELA conhece: na 1ª vez,
-      # "npx eas-cli device:create" uma vez num computador (README do publicador).
+      # gastar a compilação. A EXPO monta o perfil com os iPhones que ELA conhece, e a 1ª
+      # credencial ad hoc só sai no modo interativo: na 1ª vez, um build desse perfil num
+      # computador (README do publicador); depois, esta caixa roda sozinha.
       - name: Conferir os iPhones registrados na Apple (perfil de teste)
         if: ${{ steps.modo.outputs.aparelhos == 'true' }}
         env:
@@ -429,8 +430,13 @@ jobs:
           fi
           export EXPO_ASC_API_KEY_PATH="$CHAVE" EXPO_ASC_KEY_ID="$ASC_KEY_ID" EXPO_ASC_ISSUER_ID="$ASC_ISSUER_ID"
           export EXPO_APPLE_TEAM_ID="$APPLE_TEAM_ID" EXPO_APPLE_TEAM_TYPE="${APPLE_TEAM_TYPE:-INDIVIDUAL}"
-          npx --yes eas-cli build --platform ios --profile teste-aparelhos \
-            --non-interactive --refresh-ad-hoc-provisioning-profile --wait --json > "$RUNNER_TEMP/build-teste.json"
+          if ! npx --yes eas-cli build --platform ios --profile teste-aparelhos \
+            --non-interactive --refresh-ad-hoc-provisioning-profile --wait --json > "$RUNNER_TEMP/build-teste.json"; then
+            # A 1ª credencial ad hoc (certificado ligado ao perfil, iPhone no cadastro da Expo)
+            # o eas-cli só monta no modo interativo — uma vez, num computador.
+            echo "::error::O .ipa de teste não compilou. Na 1ª vez, num computador (dentro de mobile/): npx eas-cli build --platform ios --profile teste-aparelhos — interativo, registra o iPhone na Expo e monta a credencial ad hoc; o .ipa dele já serve. Depois, esta caixa roda sozinha (mobile/publicar/README.md)."
+            exit 1
+          fi
           node -e '
             const fs = require("fs");
             const b = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
