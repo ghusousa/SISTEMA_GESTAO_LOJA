@@ -18,6 +18,7 @@ import { camposDoContado } from '@/lib/caixa';
 import { formatar, paraCentavos, paraDecimalString } from '@/lib/money';
 import { chaves, queryClient } from '@/lib/queryClient';
 import { cores, espaco, fonte } from '@/lib/tema';
+import { plural, primeiraMaiuscula } from '@/lib/texto';
 
 const ROTULOS: Record<FormaPagamento, string> = {
   DINHEIRO: 'Dinheiro na gaveta',
@@ -113,13 +114,15 @@ export default function Caixa() {
     <ScrollView contentContainerStyle={s.conteudo} keyboardShouldPersistTaps="handled">
       <Cartao>
         <Text style={s.data}>
-          {format(new Date(`${hoje}T12:00:00`), "EEEE, dd 'de' MMMM", { locale: ptBR })}
+          {primeiraMaiuscula(
+            format(new Date(`${hoje}T12:00:00`), "EEEE, dd 'de' MMMM", { locale: ptBR }),
+          )}
         </Text>
         <Text style={s.esperado}>{formatar(totalEsperado)}</Text>
         <Text style={s.ajuda}>
-          {dia.data.quantidade_vendas} venda(s) concluída(s)
+          {plural(dia.data.quantidade_vendas, 'venda concluída', 'vendas concluídas')}
           {dia.data.quantidade_canceladas > 0
-            ? ` · ${dia.data.quantidade_canceladas} cancelada(s)`
+            ? ` · ${plural(dia.data.quantidade_canceladas, 'cancelada', 'canceladas')}`
             : ''}
         </Text>
         {dia.data.fechado && (
@@ -193,7 +196,6 @@ const s = StyleSheet.create({
     fontSize: fonte.pequena,
     color: cores.textoSuave,
     fontWeight: '700',
-    textTransform: 'capitalize',
   },
   esperado: { fontSize: fonte.destaque, fontWeight: '800', color: cores.texto, marginTop: 2 },
   ajuda: { fontSize: fonte.pequena, color: cores.textoSuave, marginTop: espaco.xs },

@@ -27,6 +27,7 @@ import { Botao, Carregando, Cartao, ErroEstado, Etiqueta } from '@/components/ui
 import { formatar, formatarPercentual, paraCentavos } from '@/lib/money';
 import { chaves } from '@/lib/queryClient';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
+import { plural, primeiraMaiuscula } from '@/lib/texto';
 
 type Periodo = '7d' | '30d' | 'mes';
 
@@ -36,7 +37,7 @@ function intervalo(periodo: Periodo): { inicio: string; fim: string; rotulo: str
     return {
       inicio: format(startOfMonth(hoje), 'yyyy-MM-dd'),
       fim: format(endOfMonth(hoje), 'yyyy-MM-dd'),
-      rotulo: format(hoje, "MMMM 'de' yyyy", { locale: ptBR }),
+      rotulo: primeiraMaiuscula(format(hoje, "MMMM 'de' yyyy", { locale: ptBR })),
     };
   }
   const dias = periodo === '7d' ? 6 : 29;
@@ -192,7 +193,7 @@ export default function Relatorios() {
         <Text style={s.titulo}>Hora de repor</Text>
         {totalParaRepor > 0 && (
           <Text style={s.legenda}>
-            {totalParaRepor} peça(s) no mínimo · mostrando {pecasParaRepor.length}
+            {plural(totalParaRepor, 'peça', 'peças')} no mínimo · mostrando {pecasParaRepor.length}
           </Text>
         )}
         {pecasParaRepor.length === 0 ? (
@@ -254,7 +255,6 @@ const s = StyleSheet.create({
   subtitulo: {
     fontSize: fonte.pequena,
     color: cores.textoSuave,
-    textTransform: 'capitalize',
     marginBottom: espaco.md,
   },
   vazio: { fontSize: fonte.base, color: cores.textoFraco, marginTop: espaco.sm },

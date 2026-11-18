@@ -27,7 +27,16 @@ import { clientes } from '@/api/endpoints';
 import { FORMAS_DE_GAVETA, type FormaPagamento } from '@/api/tipos';
 import { ComprasDaCliente } from '@/components/ComprasDaCliente';
 import { TecladoNumerico } from '@/components/TecladoNumerico';
-import { Botao, Carregando, Cartao, ErroEstado, Etiqueta, Separador } from '@/components/ui';
+import {
+  Botao,
+  Carregando,
+  Cartao,
+  ErroEstado,
+  Etiqueta,
+  Separador,
+  useRespiroDeBaixo,
+  useRespiroDeCima,
+} from '@/components/ui';
 import { dataBR } from '@/lib/aniversario';
 import { formatar, paraCentavos, paraDecimalString, type Centavos } from '@/lib/money';
 import { PODE, pode } from '@/lib/permissoes';
@@ -51,6 +60,8 @@ export default function ClienteDetalhe() {
   const clienteId = Number(id);
   const podeReceber = pode(useAuthStore((e) => e.usuario?.papel), PODE.GERIR_CREDIARIO);
   const [recebendo, setRecebendo] = useState(false);
+  // "Receber pagamento" encosta na base da tela: no Face ID, acima do indicador de início.
+  const respiroDeBaixo = useRespiroDeBaixo();
 
   // LGPD: excluir a pedido da cliente. O servidor anonimiza e mantém as vendas; a frase do
   // diálogo diz exatamente isso, que é o que a página pública de exclusão promete.
@@ -213,7 +224,7 @@ export default function ClienteDetalhe() {
       </ScrollView>
 
       {podeReceber && deve > 0 && (
-        <View style={s.rodape}>
+        <View style={[s.rodape, { paddingBottom: respiroDeBaixo }]}>
           <Botao titulo="Receber pagamento" grande onPress={() => setRecebendo(true)} />
         </View>
       )}
@@ -268,6 +279,10 @@ function ModalReceber({
   // UUID por abertura do diálogo: o retry de um toque duplo é a mesma cobrança; um novo
   // recebimento, aberto de novo, é outra.
   const [uuid, setUuid] = useState(() => gerarUuid());
+  // Modal de tela cheia desenha a partir do zero: o painel desce da barra de status (e da
+  // ilha) e os botões sobem do indicador de início.
+  const respiroDeCima = useRespiroDeCima(espaco.lg);
+  const respiroDeBaixo = useRespiroDeBaixo();
 
   const receber = useMutation({
     mutationFn: () =>
@@ -298,7 +313,7 @@ function ModalReceber({
       onShow={abrirDoZero}
     >
       <View style={s.tela}>
-        <View style={s.painel}>
+        <View style={[s.painel, { paddingTop: respiroDeCima }]}>
           <Text style={s.painelRotulo}>Recebendo de {nome}</Text>
           <Text style={s.painelValor}>{formatar(valor)}</Text>
           <Text style={s.painelAjuda}>Deve {formatar(deve)}</Text>
@@ -331,7 +346,7 @@ function ModalReceber({
           />
         </ScrollView>
 
-        <View style={s.rodapeDuplo}>
+        <View style={[s.rodapeDuplo, { paddingBottom: respiroDeBaixo }]}>
           <Botao titulo="Cancelar" variante="secundario" estilo={s.metade} onPress={aoFechar} />
           <Botao
             titulo="Registrar"

@@ -9,9 +9,11 @@
 import { CameraView, useCameraPermissions, type BarcodeType } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
 import { useCallback, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Botao } from '@/components/ui';
+import { respiroDeBaixo, respiroDeCima } from '@/lib/areaSegura';
 import { decidirLeitura } from '@/lib/leitura';
 import { ALVO_TOQUE, cores, espaco, fonte, raio } from '@/lib/tema';
 
@@ -63,6 +65,13 @@ interface Props {
    * módulo (como `SO_QR`): array novo a cada render reconfiguraria a câmera.
    */
   tipos?: BarcodeType[];
+  /**
+   * Bordas da TELA em que o leitor encosta. Num Modal de tela cheia são as duas: a lanterna
+   * desce da barra de status e os botões do rodapé sobem do indicador de início. Abaixo de um
+   * cabeçalho, até o fim da tela, só a de baixo. Sem nada, o leitor vive no meio da tela (o
+   * PDV, a entrada, o inventário) e quem cuida da área segura é a tela em volta.
+   */
+  encosta?: 'embaixo' | 'em-cima-e-embaixo';
 }
 
 export function Scanner({
@@ -74,7 +83,11 @@ export function Scanner({
   dica = 'Aponte para o código de barras da peça',
   controle,
   tipos = TIPOS,
+  encosta,
 }: Props) {
+  const insets = useSafeAreaInsets();
+  const emCima = encosta === 'em-cima-e-embaixo' ? respiroDeCima(insets.top, 0) : 0;
+  const embaixo = encosta ? respiroDeBaixo(insets.bottom, 0) : 0;
   const [permissao, pedirPermissao] = useCameraPermissions();
   const [lanterna, setLanterna] = useState(false);
   const [ultimoLido, setUltimoLido] = useState<string | null>(null);
@@ -159,7 +172,15 @@ export function Scanner({
 
   if (!permissao.granted) {
     return (
-      <View style={s.aviso}>
+      // Rola em vez de cortar: na faixa de câmera do SE (28% da tela na condicional) o aviso
+      // inteiro não cabe, e centralizado ele perdia o título em cima e o botão embaixo.
+      <ScrollView
+        style={s.avisoRolagem}
+        contentContainerStyle={[
+          s.aviso,
+          { paddingTop: espaco.xl + emCima, paddingBottom: espaco.xl + embaixo },
+        ]}
+      >
         <Text style={s.avisoTitulo}>A câmera precisa de permissão</Text>
         <Text style={s.avisoTexto}>
           É com ela que o app lê o código de barras das peças. Sem a câmera, use
@@ -171,7 +192,7 @@ export function Scanner({
             um Modal sem cabeçalho) virava beco sem saída para quem negasse a câmera: nem
             digitava o código, nem saía. */}
         <View style={s.avisoRodape}>{rodape}</View>
-      </View>
+      </ScrollView>
     );
   }
 
@@ -186,7 +207,7 @@ export function Scanner({
       />
 
       <View style={s.sobreposicao} pointerEvents="box-none">
-        <View style={s.topo} pointerEvents="box-none">
+        <View style={[s.topo, { paddingTop: espaco.md + emCima }]} pointerEvents="box-none">
           <Pressable
             onPress={() => setLanterna((l) => !l)}
             style={[s.lanterna, lanterna && s.lanternaAtiva]}
@@ -201,7 +222,10 @@ export function Scanner({
           <View style={s.miraLinha} />
         </View>
 
-        <View style={s.base} pointerEvents="box-none">
+        <View
+          style={[s.base, encosta && { paddingBottom: respiroDeBaixo(insets.bottom, espaco.lg) }]}
+          pointerEvents="box-none"
+        >
           <Text style={s.dica}>{dica}</Text>
           {!!ultimoLido && <Text style={s.ultimo}>Último: {ultimoLido}</Text>}
           {rodape}
@@ -247,13 +271,14 @@ const s = StyleSheet.create({
   dica: { color: '#FFF', fontSize: fonte.base, textAlign: 'center', fontWeight: '600' },
   ultimo: { color: '#C9D3DE', fontSize: fonte.pequena, textAlign: 'center' },
 
+  avisoRolagem: { flex: 1, backgroundColor: cores.fundo },
+  // `flexGrow` no conteúdo da rolagem: centraliza quando cabe, rola quando não cabe.
   aviso: {
-    flex: 1,
+    flexGrow: 1,
     alignItems: 'center',
     justifyContent: 'center',
     padding: espaco.xl,
     gap: espaco.md,
-    backgroundColor: cores.fundo,
   },
   avisoRodape: { alignSelf: 'stretch', gap: espaco.sm, marginTop: espaco.sm },
   avisoTitulo: { fontSize: fonte.media, fontWeight: '700', color: cores.texto },

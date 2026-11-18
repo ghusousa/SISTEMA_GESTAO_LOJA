@@ -19,7 +19,9 @@ import { Carregando, Cartao, ErroEstado } from '@/components/ui';
 import { formatar, formatarPercentual, paraCentavos } from '@/lib/money';
 import { chaves } from '@/lib/queryClient';
 import { PODE, pode } from '@/lib/permissoes';
+import { contasDoResumo, type LinhaDoResumo } from '@/lib/resumoFinanceiro';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
+import { plural, primeiraMaiuscula } from '@/lib/texto';
 import { useAuthStore } from '@/stores/authStore';
 
 const ATALHOS = [
@@ -79,9 +81,9 @@ export default function Financeiro() {
   const r = resumo.data;
   const resultado = paraCentavos(r.resultado);
   const noVermelho = resultado < 0;
-  // Taxa da maquininha: o servidor que a calcula manda o campo e já a desconta do
-  // resultado. Servidor sem o cálculo não manda, e a linha some — nada de "R$ 0,00" mentindo.
-  const temTaxas = r.taxas_cartao !== undefined && r.taxas_cartao !== null;
+  // Uma linha para cada parcela da conta do servidor — devolução e custo que voltou ao
+  // estoque inclusive: quem soma a tela chega no lucro bruto e no resultado que ela mostra.
+  const conta = contasDoResumo(r);
 
   return (
     <ScrollView
@@ -96,23 +98,20 @@ export default function Financeiro() {
         />
       }
     >
-      <Text style={s.periodo}>{format(hoje, "MMMM 'de' yyyy", { locale: ptBR })}</Text>
+      <Text style={s.periodo}>
+        {primeiraMaiuscula(format(hoje, "MMMM 'de' yyyy", { locale: ptBR }))}
+      </Text>
 
       <View style={[s.destaque, noVermelho && s.destaqueVermelho]}>
         <Text style={s.destaqueRotulo}>Resultado do mês</Text>
         <Text style={s.destaqueValor}>{formatar(resultado)}</Text>
-        <Text style={s.destaqueAjuda}>
-          Faturamento − custo das peças vendidas − despesas
-          {temTaxas ? ' − taxas de cartão' : ''}
-        </Text>
+        <Text style={s.destaqueAjuda}>{conta.formula}</Text>
       </View>
 
       <Cartao>
-        <Bloco rotulo="Faturamento" valor={r.faturamento} />
-        <Bloco rotulo="Custo das peças vendidas" valor={r.custo_mercadoria_vendida} negativo />
-        <Bloco rotulo="Lucro bruto" valor={r.lucro_bruto} forte />
-        <Bloco rotulo="Despesas" valor={r.despesas} negativo />
-        {temTaxas && <Bloco rotulo="Taxas de cartão" valor={r.taxas_cartao!} negativo />}
+        {conta.linhas.map((linha) => (
+          <Bloco key={linha.rotulo} linha={linha} />
+        ))}
         <View style={s.separador} />
         <View style={s.indicadores}>
           <Indicador rotulo="Vendas" valor={String(r.quantidade_vendas)} />
@@ -127,7 +126,7 @@ export default function Financeiro() {
           <View style={s.alerta}>
             <MaterialCommunityIcons name="alert-circle" size={22} color="#7A5A00" />
             <Text style={s.alertaTexto}>
-              {pecasNoMinimo} peça(s) no estoque mínimo — hora de repor
+              {plural(pecasNoMinimo, 'peça', 'peças')} no estoque mínimo — hora de repor
             </Text>
           </View>
         </Pressable>
@@ -139,8 +138,8 @@ export default function Financeiro() {
             <MaterialCommunityIcons name="calendar-alert" size={22} color="#7A5A00" />
             <Text style={s.alertaTexto}>
               {contas.data.vencidas.quantidade > 0
-                ? `${contas.data.vencidas.quantidade} conta(s) de fornecedor vencida(s)`
-                : `${aPagarNaSemana} conta(s) de fornecedor nos próximos 7 dias`}{' '}
+                ? plural(contas.data.vencidas.quantidade, 'conta de fornecedor vencida', 'contas de fornecedor vencidas')
+                : `${plural(aPagarNaSemana, 'conta de fornecedor', 'contas de fornecedor')} nos próximos 7 dias`}{' '}
               — {formatar(
                 paraCentavos(contas.data.vencidas.valor) + paraCentavos(contas.data.proximos_7_dias.valor),
               )}
@@ -199,29 +198,19 @@ function SoCaixa({
   );
 }
 
-function Bloco({
-  rotulo,
-  valor,
-  negativo,
-  forte,
-}: {
-  rotulo: string;
-  valor: string;
-  negativo?: boolean;
-  forte?: boolean;
-}) {
+function Bloco({ linha }: { linha: LinhaDoResumo }) {
   return (
-    <View style={s.bloco}>
-      <Text style={s.blocoRotulo}>{rotulo}</Text>
+    <View style={[s.bloco, linha.subtotal && s.blocoSubtotal]}>
+      <Text style={[s.blocoRotulo, linha.subtotal && s.blocoRotuloSubtotal]}>{linha.rotulo}</Text>
       <Text
         style={[
           s.blocoValor,
-          negativo && s.blocoNegativo,
-          forte && s.blocoForte,
+          linha.sinal === '−' && s.blocoNegativo,
+          linha.subtotal && s.blocoForte,
         ]}
       >
-        {negativo ? '− ' : ''}
-        {formatar(paraCentavos(valor))}
+        {linha.sinal ? `${linha.sinal} ` : ''}
+        {formatar(linha.valor)}
       </Text>
     </View>
   );
@@ -249,7 +238,6 @@ const s = StyleSheet.create({
     fontSize: fonte.pequena,
     color: cores.textoSuave,
     fontWeight: '700',
-    textTransform: 'capitalize',
     marginBottom: espaco.sm,
   },
 
@@ -273,9 +261,14 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    gap: espaco.sm,
     paddingVertical: espaco.sm,
   },
-  blocoRotulo: { fontSize: fonte.base, color: cores.textoSuave },
+  // O traço da soma: o lucro bruto fecha as linhas de cima.
+  blocoSubtotal: { borderTopWidth: 1, borderTopColor: cores.borda, marginTop: espaco.xs },
+  // `flex: 1`: rótulo comprido quebra em duas linhas em vez de empurrar o valor para fora.
+  blocoRotulo: { flex: 1, fontSize: fonte.base, color: cores.textoSuave },
+  blocoRotuloSubtotal: { color: cores.texto, fontWeight: '700' },
   blocoValor: { fontSize: fonte.media, fontWeight: '700', color: cores.texto },
   blocoNegativo: { color: cores.perigo },
   blocoForte: { fontSize: fonte.grande, fontWeight: '800', color: cores.acaoEscura },

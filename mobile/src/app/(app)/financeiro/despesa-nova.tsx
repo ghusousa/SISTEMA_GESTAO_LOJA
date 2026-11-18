@@ -16,13 +16,14 @@ import {
 
 import { mensagemDoErro } from '@/api/client';
 import { despesas } from '@/api/endpoints';
-import { Botao, Campo, Carregando } from '@/components/ui';
+import { Botao, Campo, Carregando, useRespiroDeBaixo } from '@/components/ui';
 import { paraCentavos, paraDecimalString } from '@/lib/money';
 import { chaves, invalidarAposDespesa, queryClient } from '@/lib/queryClient';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
 
 export default function NovaDespesa() {
   const router = useRouter();
+  const respiroDeBaixo = useRespiroDeBaixo();
   const [categoriaId, setCategoriaId] = useState<number | null>(null);
   const [descricao, setDescricao] = useState('');
   const [valor, setValor] = useState('');
@@ -157,7 +158,7 @@ export default function NovaDespesa() {
         {!!erro && <Text style={s.erro}>{erro}</Text>}
       </ScrollView>
 
-      <View style={s.rodape}>
+      <View style={[s.rodape, { paddingBottom: respiroDeBaixo }]}>
         <Botao
           titulo="Lançar despesa"
           grande

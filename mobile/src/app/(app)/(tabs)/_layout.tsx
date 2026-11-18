@@ -1,7 +1,9 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
 import type { ColorValue } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { medidasDaBarraDeAbas } from '@/lib/areaSegura';
 import { PODE, pode } from '@/lib/permissoes';
 import { cores, fonte } from '@/lib/tema';
 import { useAuthStore } from '@/stores/authStore';
@@ -19,6 +21,11 @@ export default function TabsLayout() {
   // o resumo do mês e os atalhos de despesa e relatório continuam pedindo VER_DINHEIRO,
   // então a supervisora entra e encontra só o caixa do dia.
   const temFinanceiro = useAuthStore((e) => pode(e.usuario?.papel, PODE.FECHAR_CAIXA));
+  // Altura e respiro de baixo saem da área segura do aparelho: com altura fixa, o React
+  // Navigation deixa de somar o indicador de início, e no iPhone de Face ID os rótulos
+  // encostavam nele. No SE (botão de início, área zero) o respiro de baixo é o de sempre.
+  const insets = useSafeAreaInsets();
+  const barra = medidasDaBarraDeAbas(insets.bottom);
 
   return (
     <Tabs
@@ -28,8 +35,12 @@ export default function TabsLayout() {
         headerTitleStyle: { fontWeight: '700' },
         tabBarActiveTintColor: cores.primaria,
         tabBarInactiveTintColor: cores.textoFraco,
-        tabBarLabelStyle: { fontSize: fonte.micro, fontWeight: '600' },
-        tabBarStyle: { height: 62, paddingBottom: 8, paddingTop: 6 },
+        tabBarLabelStyle: { fontSize: fonte.micro, lineHeight: barra.lineHeight, fontWeight: '600' },
+        tabBarStyle: {
+          height: barra.height,
+          paddingTop: barra.paddingTop,
+          paddingBottom: barra.paddingBottom,
+        },
       }}
     >
       {/* Vender é a primeira aba: abrir o app cai direto no scanner. */}

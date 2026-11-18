@@ -12,6 +12,7 @@ import type { FotoEscolhida } from '@/lib/foto';
 import { chaves, queryClient } from '@/lib/queryClient';
 import { PODE, pode } from '@/lib/permissoes';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
+import { plural } from '@/lib/texto';
 import { useAuthStore } from '@/stores/authStore';
 
 export default function DetalheProduto() {
@@ -67,7 +68,7 @@ export default function DetalheProduto() {
         {!!produto.descricao && <Text style={s.descricao}>{produto.descricao}</Text>}
         <View style={s.resumo}>
           <Etiqueta
-            texto={`${produto.saldo_total} peça(s) em estoque`}
+            texto={`${plural(produto.saldo_total, 'peça', 'peças')} em estoque`}
             cor={produto.saldo_total === 0 ? cores.perigoFraco : cores.sucessoFraco}
             corTexto={produto.saldo_total === 0 ? cores.perigo : cores.acaoEscura}
           />

@@ -17,9 +17,10 @@ import { catalogo, estoque } from '@/api/endpoints';
 import { BuscarPeca } from '@/components/BuscarPeca';
 import { CodigoManual } from '@/components/CodigoManual';
 import { Scanner } from '@/components/Scanner';
-import { Botao, Etiqueta } from '@/components/ui';
+import { Botao, Etiqueta, useRespiroDeBaixo } from '@/components/ui';
 import { invalidarAposMovimentoEstoque } from '@/lib/queryClient';
 import { ALVO_TOQUE, cores, espaco, fonte, raio } from '@/lib/tema';
+import { plural } from '@/lib/texto';
 
 interface Contagem {
   varianteId: number;
@@ -32,6 +33,7 @@ interface Contagem {
 
 export default function Inventario() {
   const router = useRouter();
+  const respiroDeBaixo = useRespiroDeBaixo();
   const [contagens, setContagens] = useState<Contagem[]>([]);
 
   /**
@@ -221,9 +223,9 @@ export default function Inventario() {
         )}
       </ScrollView>
 
-      <View style={s.rodape}>
+      <View style={[s.rodape, { paddingBottom: respiroDeBaixo }]}>
         <Text style={s.resumo}>
-          {contagens.length} peça(s) contada(s)
+          {plural(contagens.length, 'peça contada', 'peças contadas')}
           {comDiferenca > 0 ? ` · ${comDiferenca} com diferença` : ''}
         </Text>
         <Botao

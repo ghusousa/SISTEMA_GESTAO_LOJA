@@ -78,7 +78,10 @@ const s = StyleSheet.create({
     backgroundColor: cores.primariaFraca,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: espaco.md,
+    // Respiro curto: o `flexGrow` já estica o atalho até encher a linha. Com 12 pt de cada
+    // lado, "Limpar · Metade R$ 319,85 · Tudo R$ 639,70" não cabia nos 343 pt do SE e o
+    // terceiro descia sozinho para uma linha inteira.
+    paddingHorizontal: espaco.sm,
   },
   atalhoTexto: { color: cores.primaria, fontWeight: '700', fontSize: fonte.pequena },
 

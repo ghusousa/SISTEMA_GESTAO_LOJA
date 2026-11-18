@@ -23,7 +23,7 @@ import { BuscarPeca } from '@/components/BuscarPeca';
 import { NOTA_VAZIA, NotaFornecedor, notaParaApi, type EstadoNota } from '@/components/NotaFornecedor';
 import { CodigoManual } from '@/components/CodigoManual';
 import { Scanner } from '@/components/Scanner';
-import { Botao, Campo } from '@/components/ui';
+import { Botao, Campo, useRespiroDeBaixo } from '@/components/ui';
 import { type ItemGravado, type NotaGravada, notaDepoisDoDuplicado, tirarOQueJaEntrou } from '@/lib/entrada';
 import { gerarUuid } from '@/lib/uuid';
 import { PODE, pode } from '@/lib/permissoes';
@@ -42,6 +42,7 @@ interface ItemBipado {
 
 export default function EntradaEstoque() {
   const router = useRouter();
+  const respiroDeBaixo = useRespiroDeBaixo();
   const [itens, setItens] = useState<ItemBipado[]>([]);
   const [fornecedor, setFornecedor] = useState('');
   const [aviso, setAviso] = useState<string | null>(null);
@@ -254,7 +255,7 @@ export default function EntradaEstoque() {
         )}
       </ScrollView>
 
-      <View style={s.rodape}>
+      <View style={[s.rodape, { paddingBottom: respiroDeBaixo }]}>
         <Text style={s.total}>
           {totalPecas} peça{totalPecas === 1 ? '' : 's'} para entrar
         </Text>

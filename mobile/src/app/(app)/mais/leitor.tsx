@@ -158,6 +158,7 @@ function SemPareamento({ visivel }: { visivel: boolean }) {
             aoLer={aoLerQr}
             modo="continuo"
             tipos={SO_QR}
+            encosta="embaixo"
             controle={scanner}
             ocupado={aceitar.isPending}
             dica={aceitar.isPending ? 'Ligando…' : 'Aponte para o QR na tela do computador'}

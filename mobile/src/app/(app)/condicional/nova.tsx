@@ -20,11 +20,12 @@ import type { ClienteDoBalcao } from '@/api/tipos';
 import { BuscarPeca } from '@/components/BuscarPeca';
 import { CodigoManual } from '@/components/CodigoManual';
 import { Scanner } from '@/components/Scanner';
-import { Botao, Campo } from '@/components/ui';
+import { Botao, Campo, useRespiroDeBaixo } from '@/components/ui';
 import { formatar, paraCentavos, somar as somarCentavos } from '@/lib/money';
 import { somarDias } from '@/lib/parcelas';
 import { invalidarAposCondicional } from '@/lib/queryClient';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
+import { plural } from '@/lib/texto';
 import { gerarUuid } from '@/lib/uuid';
 
 interface Peca {
@@ -40,6 +41,7 @@ const PRAZOS = [1, 2, 3, 5, 7];
 
 export default function NovaCondicional() {
   const router = useRouter();
+  const respiroDeBaixo = useRespiroDeBaixo();
   const [pecas, setPecas] = useState<Peca[]>([]);
   const [cliente, setCliente] = useState<ClienteDoBalcao | null>(null);
   const [busca, setBusca] = useState('');
@@ -193,8 +195,10 @@ export default function NovaCondicional() {
         ))}
       </ScrollView>
 
-      <View style={s.rodape}>
-        <Text style={s.detalhe}>{qtd} peça(s) · {formatar(total)}</Text>
+      <View style={[s.rodape, { paddingBottom: respiroDeBaixo }]}>
+        <Text style={s.detalhe}>
+          {plural(qtd, 'peça', 'peças')} · {formatar(total)}
+        </Text>
         <Botao
           titulo="Registrar condicional"
           variante="acao"
