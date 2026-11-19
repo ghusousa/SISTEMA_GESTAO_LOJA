@@ -39,7 +39,7 @@ from scripts import vercel_build, vercel_instalar
 RAIZ = PASTA_API.parent
 VERCEL_JSON = json.loads((PASTA_API / "vercel.json").read_text(encoding="utf-8"))
 PYPROJECT = tomllib.loads((PASTA_API / "pyproject.toml").read_text(encoding="utf-8"))
-CADDYFILE = (RAIZ / "docker" / "Caddyfile").read_text(encoding="utf-8")
+CADDYFILE = (RAIZ / "docker" / "caddy" / "Caddyfile").read_text(encoding="utf-8")
 
 
 def _diretivas(csp: str) -> dict[str, set[str]]:
@@ -226,16 +226,23 @@ def test_conta_invalida_da_demonstracao_para_antes_de_gravar() -> None:
     sorteada = vercel_build.contas_da_demonstracao(certo)[1]["senha"]
     assert len(sorteada) >= 8 and sorteada != vercel_build.contas_da_demonstracao(certo)[1]["senha"]
 
-    for errado, variavel in (
-        ({**certo, "DEMO_VENDEDORA_SENHA": "Zq7!x"}, "DEMO_VENDEDORA_SENHA"),
-        ({**certo, "DEMO_ADMIN_SENHA": "Zq7!x"}, "DEMO_ADMIN_SENHA"),
-        ({**certo, "DEMO_ADMIN_EMAIL": "Zq7!x-sem-arroba"}, "DEMO_ADMIN_EMAIL"),
+    # 42 caracteres (o cadastro aceita até 72) e 78 BYTES: o bcrypt recusa no meio da carga.
+    longa_em_bytes = "Zq7!x-" + "ç" * 36
+    for errado, variavel, valor in (
+        ({**certo, "DEMO_VENDEDORA_SENHA": "Zq7!x"}, "DEMO_VENDEDORA_SENHA", "Zq7!x"),
+        ({**certo, "DEMO_ADMIN_SENHA": "Zq7!x"}, "DEMO_ADMIN_SENHA", "Zq7!x"),
+        ({**certo, "DEMO_ADMIN_EMAIL": "Zq7!x-sem-arroba"}, "DEMO_ADMIN_EMAIL", "Zq7!x"),
+        ({**certo, "DEMO_ADMIN_SENHA": longa_em_bytes}, "DEMO_ADMIN_SENHA", longa_em_bytes),
+        ({**certo, "DEMO_VENDEDORA_SENHA": longa_em_bytes}, "DEMO_VENDEDORA_SENHA",
+         longa_em_bytes),
+        # O e-mail da vendedora que a carga cria, com outra caixa e espaços em volta.
+        ({**certo, "DEMO_ADMIN_EMAIL": "  Ana@LOJA.com "}, "DEMO_ADMIN_EMAIL", "Ana@LOJA"),
     ):
         with pytest.raises(SystemExit) as parou:
             vercel_build.contas_da_demonstracao(errado)
         mensagem = str(parou.value)
         assert variavel in mensagem and "nada foi gravado" in mensagem
-        assert "Zq7!x" not in mensagem
+        assert valor not in mensagem
 
 
 def test_estado_da_demonstracao_vem_dos_marcos_e_do_movimento() -> None:
@@ -281,8 +288,10 @@ SENHA_DO_DONO = "Senha-Do-Dono-123"
 
 #: O banco da Vercel tem dono próprio (como o `neondb_owner` do Neon), com uma senha que só
 #: existe aqui: é ela que o teste procura no log. A do banco de teste ("postgres") aparece em
-#: todo lugar e não provaria nada.
-PAPEL_DO_BANCO = "loja_vercel_teste"
+#: todo lugar e não provaria nada. O nome deriva do banco de teste: papel é do servidor
+#: inteiro, e duas suítes lado a lado (bancos diferentes, um Postgres só) apagavam uma os
+#: bancos da outra — a faxina leva TODO banco deste papel.
+PAPEL_DO_BANCO = f"{make_url(settings.database_url).database}_vercel_papel"
 SENHA_DO_BANCO = f"Senha-Do-Banco-{secrets.token_hex(6)}"
 
 
@@ -373,7 +382,8 @@ def _rodar_build(
         chave: valor
         for chave, valor in os.environ.items()
         if not chave.startswith(("VERCEL", "DATABASE_URL", "DEMO_", "SEED_"))
-        and chave not in {"AMBIENTE", "CORS_ORIGINS", "DEBUG", "MEDIA_DIR", "WEB_DIR", "JWT_SECRET"}
+        and chave not in {"AMBIENTE", "CORS_ORIGINS", "DEBUG", "MEDIA_DIR", "WEB_DIR", "JWT_SECRET",
+                          "LOJA_DEMONSTRACAO", "PREFIXO"}
     }
     limpo.update(
         JWT_SECRET="j" * 48,

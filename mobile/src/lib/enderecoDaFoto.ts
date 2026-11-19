@@ -4,7 +4,8 @@
  * A API devolve `foto_url` de duas formas, conforme onde a foto mora:
  * - no disco da loja: caminho RELATIVO ("/media/produtos/x.jpg"), de propósito — montar a URL
  *   a partir do header Host deixaria um atacante gravar o próprio domínio no banco. Quem
- *   exibe completa com o servidor do APARELHO (`baseAtual()`);
+ *   exibe completa com o servidor do APARELHO (`baseAtual()`), caminho incluído: na
+ *   demonstração (ADR-46) a foto é `https://loja.x.com.br/demo/media/...`;
  * - no Vercel Blob: URL ABSOLUTA ("https://<store>.public.blob.vercel-storage.com/..."), que
  *   já é o endereço da foto e passa como está.
  */

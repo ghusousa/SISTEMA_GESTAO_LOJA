@@ -5,6 +5,7 @@ import { api } from '../api.js';
 import { formatar, paraCentavos } from '../dinheiro.js';
 import { ir, trocarConsulta } from '../router.js';
 import { PODE, pode } from '../permissoes.js';
+import { enderecoDaFoto } from '../raiz.js';
 import {
   ajuda,
   carregando,
@@ -144,7 +145,7 @@ export async function render(raiz, _params, consulta) {
         <td>
           <span style="display:flex;gap:10px;align-items:center">
             ${produto.foto_url
-              ? cru(html`<img class="foto-peca" src="${produto.foto_url}" alt="" loading="lazy" />`)
+              ? cru(html`<img class="foto-peca" src="${enderecoDaFoto(produto.foto_url)}" alt="" loading="lazy" />`)
               : ''}
             <span>
               <span class="celula-principal">${produto.nome}</span>

@@ -11,8 +11,10 @@ Como colocar a API no ar num VPS Ubuntu e o app na mão da equipe.
 >
 > O que o instalador já entrega e aqui é por sua conta: a **cópia diária ligada** (com a cópia de
 > fora **cifrada**), o **vigia** que avisa no celular quando a loja cai, o disco enche ou o backup
-> atrasa, a **atualização que só sobe commit de CI verde** e a recusa de instalar pelo **IP
-> público** em HTTP puro. Os scripts (`backup.sh`, `vigia.sh`, `notificar.sh`, `atualizar.sh`)
+> atrasa, a **atualização que só sobe commit de CI verde**, a recusa de instalar pelo **IP
+> público** em HTTP puro, a **conferência do DNS** do domínio antes de pedir o certificado e a
+> **demonstração em `/demo`** (veja [abaixo](#a-demonstração-em-demo-só-com-o-instalador)) — esta
+> não tem caminho manual. Os scripts (`backup.sh`, `vigia.sh`, `notificar.sh`, `atualizar.sh`)
 > supõem o Docker; o raciocínio de cada um está no [README](../README.md#backup-automático-todo-dia)
 > e no [ARQUITETURA.md](ARQUITETURA.md) (ADR-18, ADR-22, ADR-28 e seguintes).
 
@@ -24,10 +26,56 @@ claro, e com `AMBIENTE` diferente de `producao` a API ainda abre o `/docs` e o C
 origem. Sem domínio próprio, `SEU.IP.sslip.io` (gratuito) aponta para o IP e o certificado sai do
 mesmo jeito. O `./instalar.sh` recusa o IP público pelo mesmo motivo.
 
+## A demonstração em /demo (só com o instalador)
+
+O `./instalar.sh` sobe, ao lado da loja, uma **segunda loja só com dados fictícios** em
+`https://<domínio>/demo`, com a conta de dono pronta (`dono@demo.example`, senha sorteada): é a
+que a revisão da App Store usa, e a que se mostra a quem quer conhecer o sistema. Ela não tem
+caminho manual: depende do compose — o serviço `demo-banco` cria no MESMO Postgres um banco e um
+usuário próprios (`loja_demo`, sem acesso nenhum ao banco da loja), a `api-demo` é a mesma imagem
+com outro banco, outro segredo de login e outras fotos, e o proxy manda `/demo/*` para ela. O porquê
+de cada separação está na ADR-46 de [ARQUITETURA.md](ARQUITETURA.md).
+
+- **DNS: um registro só.** A demonstração mora no mesmo domínio da loja, então não pede registro
+  nem certificado a mais. O instalador confere o DNS **antes** de subir — o Let's Encrypt limita as
+  tentativas que falham — e, se faltar, mostra o registro exato para o painel do domínio:
+
+  ```
+  ! Crie no painel do domínio:   Tipo A  ·  Nome loja — o registro completo é loja.minhaloja.com.br  ·  Valor 203.0.113.10
+  ```
+
+  (no campo Nome, só o `loja`, ou `@`; o nome completo é para conferir — no `.br` o domínio
+  registrado sempre leva a categoria, `minhaloja.com.br`, `minhaloja.tec.br`...) e manda apagar um
+  **AAAA** que leve a outra máquina (o Let's Encrypt tenta o IPv6 primeiro). Pergunta ao DNS, não
+  ao `/etc/hosts` da máquina — pelo `resolvectl query --synthesize=no` quando o `/etc/resolv.conf`
+  aponta para o systemd-resolved (`127.0.0.53`, o padrão do Ubuntu, que responde pelo `/etc/hosts`
+  mesmo a um `getent -s dns`), e pelo `getent -A -s dns` nas outras — e vê o AAAA mesmo sem IPv6 na
+  máquina. Com um `getent` antigo, sem o `-A`, pergunta com o `-s dns` e, numa máquina sem IPv6
+  (onde ele esconde o AAAA), diz que o AAAA não foi conferido; o `/etc/hosts` só ainda conta com um
+  `resolvectl` que não aceite o `--synthesize=no` ou com um `getent` sem o `-s`. Tudo isso antes de
+  gravar o `.env`: sair no meio da espera não deixa meia instalação. No terminal, ele espera
+  conferindo a cada 15 s (Enter segue sem esperar); com `--sim`, não espera e repete a pendência no
+  resumo do fim.
+- **O endereço.** A loja fica em `https://<domínio>/app/` e a demonstração em
+  `https://<domínio>/demo` — no navegador e no app (o endereço do servidor no app é o da loja com o
+  `/demo` no fim). Numa instalação local, `http://localhost/demo`, só para testar na rede: a Apple
+  só alcança https.
+- **A senha.** O resumo da instalação mostra a senha da conta da demonstração uma vez, quando ela
+  nasce; depois, `./demo.sh --mostrar` mostra endereço, conta, senha e o que levar ao GitHub para a
+  revisão da Apple.
+- **Memória.** A demonstração é uma segunda API no servidor, com teto de **512 MB**
+  (`DEMO_MEMORIA` no `.env`): numa máquina apertada ela é a primeira a ceder, nunca a loja. Conte
+  com essa memória a mais; numa VPS pequena demais para as duas, instale com `--sem-demo` (e ligue
+  depois com `./demo.sh --ligar`, se a máquina crescer).
+- **Todo dia, de novo.** Às 04:30 (no fuso da loja) os dados da demonstração voltam ao começo, com
+  as datas de hoje (`./demo.sh --renovar` faz o mesmo na hora). Ela não entra no backup da loja e
+  nunca derruba a loja: se não subir na instalação ou na atualização, só avisa.
+
 ## Parte 1 — API em VPS Ubuntu
 
-Serve qualquer VPS pequeno (1 vCPU e 2 GB dão conta de uma loja). O caminho abaixo assume Ubuntu
-22.04 ou 24.04 e um domínio já apontando para o IP do servidor.
+Serve qualquer VPS pequeno (1 vCPU e 2 GB dão conta de uma loja; a demonstração do instalador
+soma uma segunda API, de até 512 MB). O caminho abaixo assume Ubuntu 22.04 ou 24.04 e um domínio
+já apontando para o IP do servidor.
 
 ### 1. Servidor e acesso
 
@@ -145,11 +193,45 @@ server {
     listen 80;
     server_name api.sualoja.com.br;
 
-    client_max_body_size 6M;          # fotos de produto
+    # Teto do corpo POR ROTA, como o Caddy do instalador põe, e nunca sem teto (0): as rotas de
+    # JSON leem o corpo inteiro ANTES de conferir o login, e o teto vale por pedido (N conexões
+    # seguram N vezes ele). 2M neste bloco, que é o JSON; a foto tem o `location` dela, abaixo.
+    client_max_body_size 2M;
     gzip on;
-    gzip_types application/json application/javascript text/css text/html;
+    # Sem text/html: o Nginx já o comprime sempre, e repetido o `nginx -t` avisa.
+    gzip_types application/json application/javascript text/css;
 
     location / {
+        proxy_pass http://unix:/run/loja/api.sock;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # O tempo real (WebSocket em /api/v1/tempo-real). Sem este bloco, o Nginx fala HTTP/1.0
+    # com a API e não repassa o Upgrade: o socket não sobe, e as telas ficam sem o aviso de
+    # mudança. A conexão fica aberta enquanto a tela estiver ligada: o ping da API (a cada 25 s)
+    # já cabe nos 60 s padrão do Nginx, e o `proxy_read_timeout` longo é a folga para um ping
+    # que atrase não derrubar o socket.
+    location = /api/v1/tempo-real {
+        proxy_pass http://unix:/run/loja/api.sock;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 1h;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # O envio da foto da peça (PUT .../produtos/<id>/foto), o único arquivo: 6M, a foto que a
+    # API aceita (até 5 MiB) mais o envelope do multipart. Ela confere o login antes de ler o
+    # corpo, mas, com login, lê o envio inteiro antes de recusar a foto grande. O Nginx não
+    # separa por método, e neste caminho só existe o PUT.
+    location ~ ^/api/v1/produtos/[0-9]+/foto$ {
+        client_max_body_size 6M;
         proxy_pass http://unix:/run/loja/api.sock;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -292,11 +374,13 @@ Se quiser adiantar o preenchimento, defina `EXPO_PUBLIC_API_URL` no build: o end
 sugerido na tela, e a pessoa só confirma.
 
 > **Servidor sem HTTPS.** O `app.json` libera tráfego `http://` no Android (plugin
-> `expo-build-properties`, chave `usesCleartextTraffic`) e no iOS (`NSAllowsArbitraryLoads`),
-> porque a loja costuma começar com um IP e sem domínio. É o que faz o app conseguir falar com
-> `http://192.168.0.10`. Quando você apontar um domínio para o servidor, o instalador emite o
-> certificado sozinho e passa a valer `https://` — aí vale tirar essas duas permissões e gerar
-> um build novo, porque em HTTP a senha do vendedor trafega em texto claro na rede.
+> `expo-build-properties`, chave `usesCleartextTraffic`) e, no iOS, **só na rede local**
+> (`NSAllowsLocalNetworking`): é o que faz o app conseguir falar com `http://192.168.0.10` ou um
+> nome `.local`. Endereço na internet tem de ser `https://` — o iPhone recusa o resto, inclusive a
+> demonstração em `/demo` (por isso, sem esquema, o app põe `https://` num nome de domínio e
+> `http://` só em IP, `localhost` e nomes `.local`). Quando você apontar um domínio para o servidor, o instalador
+> emite o certificado sozinho e passa a valer `https://` — aí vale tirar a permissão do Android e
+> gerar um build novo, porque em HTTP a senha do vendedor trafega em texto claro na rede.
 
 ### Gerar o APK
 
@@ -324,7 +408,8 @@ Antes do primeiro build, ajuste em `mobile/app.json` o que identifica o seu app:
 2. Abra o arquivo. O Android vai avisar que é de "fonte desconhecida": autorize só desta vez.
 3. O app abre no login. Se o endereço do servidor ainda não estiver gravado, o rodapé avisa:
    toque na **engrenagem** no canto superior direito e informe o mesmo endereço que aparece no
-   navegador do computador do balcão — pode colar inteiro, o app aproveita só o que interessa.
+   navegador do computador do balcão — pode colar inteiro, o app aproveita só o que interessa
+   (a barra do navegador da demonstração mostra `/demo/app/...`: o app guarda o `/demo`).
    Definindo `EXPO_PUBLIC_API_URL` no build, ele já vem preenchido e ninguém digita nada.
 4. O vendedor entra com o e-mail e a senha que você criou em **Usuários**.
 5. Na primeira leitura o Android pede permissão de câmera. Autorize.

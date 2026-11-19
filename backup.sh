@@ -119,11 +119,13 @@ preparar_destino() {
 # — levava o banco inteiro: CPF e telefone das clientes, hashes de senha, o diário com IPs, e
 # o próprio rclone_token, que mora numa coluna do banco e vai junto no dump.
 #
-# A senha nasce AQUI e mora só aqui: backups/.chave-do-backup, 600, numa pasta 700. Não vai
-# para o banco (iria dentro do dump que ela protege), nem para o .env (o `instalar.sh
-# --forcar` o reescreve), nem para docker/estado/ (montado no contêiner da API, que nunca vê
-# credencial — ADR-28). Sem ela a cópia de fora não abre: por isso é mostrada uma vez, ao
-# nascer, com a ordem de guardar FORA da máquina, e o `--mostrar-chave` a mostra de novo.
+# A senha nasce AQUI e mora só aqui: backups/.chave-do-backup, 600, numa pasta 700, e só este
+# script a lê. Não vai para o banco (iria dentro do dump que ela protege), nem para o .env (que
+# o docker compose, o instalador e os outros scripts leem, que se abre para editar e que vai
+# junto quando a configuração é copiada para outra pasta ou máquina), nem para docker/estado/
+# (montado no contêiner da API, que nunca vê credencial — ADR-28). Sem ela a cópia de fora não
+# abre: por isso é mostrada uma vez, ao nascer, com a ordem de guardar FORA da máquina, e o
+# `--mostrar-chave` a mostra de novo.
 CHAVE="$DESTINO/.chave-do-backup"
 
 # Quem digita a chave no papel erra maiúscula, espaço e hífen; nada disso conta.
@@ -536,14 +538,29 @@ copiar_para_nuvem() {
     ok "cópia gerada ($(du -h "$arquivo" | cut -f1)) — e ela abre"
 
     # ---------------------------------------------------------------- para o Drive
-    if ! rclone --config "$CONF_RCLONE" copyto "$arquivo" "loja:$pasta/loja-$carimbo.dump" \
-            2>/tmp/rclone.err; then
-        local motivo; motivo="$(tail -2 /tmp/rclone.err 2>/dev/null | tr '\n' ' ')"
+    # O motivo de uma falha do rclone vai para um temporário DESTE processo, que some na saída.
+    # Num caminho fixo (`/tmp/rclone.err`), o arquivo era de quem o criou primeiro: criado por
+    # outro usuário, o `2>` falhava, e a cópia saía "NÃO consegui enviar" com o rclone bom.
+    # E o temporário só diz o motivo, nunca impede o envio: TMPDIR que não existe tenta o /tmp,
+    # e sem nenhum dos dois a cópia sobe assim mesmo, com a frase genérica na tela se falhar. Vazio =
+    # sem temporário: aí o erro do rclone segue pela saída de erro do próprio script (o fd 3 é cópia
+    # dela), e o motivo fica ao menos no journal do timer.
+    ERROS_DO_RCLONE="$(mktemp "${TMPDIR:-/tmp}/loja-rclone.XXXXXX" 2>/dev/null)" \
+        || ERROS_DO_RCLONE="$(mktemp /tmp/loja-rclone.XXXXXX 2>/dev/null)" \
+        || ERROS_DO_RCLONE=""
+    [ -z "$ERROS_DO_RCLONE" ] || trap 'rm -f "$ERROS_DO_RCLONE"' EXIT
+    if [ -n "$ERROS_DO_RCLONE" ]; then exec 3>"$ERROS_DO_RCLONE"; else exec 3>&2; fi
+    if ! rclone --config "$CONF_RCLONE" copyto "$arquivo" "loja:$pasta/loja-$carimbo.dump" 2>&3; then
+        exec 3>&-
+        local motivo=""
+        [ -z "$ERROS_DO_RCLONE" ] \
+            || motivo="$(tail -2 "$ERROS_DO_RCLONE" 2>/dev/null | tr '\n' ' ')"
         anotar_backup false "$bytes" NULL "Não subiu para o Drive: ${motivo:-erro do rclone}"
         erro "NÃO consegui enviar para o Drive. A cópia só existe neste servidor."
         printf '  %s\n' "$motivo"
         exit 1
     fi
+    exec 3>&-
     if cifrar_copias_de_fora; then
         ok "enviada para o Drive, cifrada, em $pasta/"
     else

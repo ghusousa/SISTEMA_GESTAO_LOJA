@@ -217,13 +217,19 @@ jobs:
       - run: npm run bundle
 
   imagem:
-    name: Imagem Docker (build, sem publicar)
+    name: Imagem Docker e a pilha inteira (loja + demonstração)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       # O caminho que a loja usa (Dockerfile + requirements.lock) e que nenhum outro job
       # percorre: dependência que não instala na imagem só aparecia no servidor da loja.
-      - run: docker build --pull -t loja-api:ci .
+      - run: docker build --pull -t loja-api:local .
+      # A pilha DE VERDADE (ADR-46): o compose com o .env de uma loja antiga e o de uma nova, o
+      # Caddyfile nos dois modos, e a loja e a demonstração de pé lado a lado sem se enxergar
+      # (contas, tokens, cookies, banco). Os testes de script usam docker de mentira e não pegam
+      # interpolação, profile, proxy nem cookie por caminho.
+      - run: SEM_BUILD=1 testes/pilha/pilha.sh
 
   shell:
     name: Scripts de operação (shellcheck)
@@ -231,4 +237,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # São os scripts que mexem no banco e no servidor da loja sem ninguém olhando.
-      - run: shellcheck --version && shellcheck -S warning ./*.sh docker/*.sh
+      - run: shellcheck --version && shellcheck -S warning ./*.sh docker/*.sh testes/pilha/*.sh

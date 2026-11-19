@@ -53,7 +53,7 @@ iPhone o cabeçalho é o nativo (título centralizado, "‹ Voltar") e o Cobrar 
 | Novidades (4000) | só a partir da 2ª versão | `ficha/novidades.txt` |
 | Categoria | principal **Business**, secundária **Productivity** | fixo |
 | URL de privacidade | `https://loja-tria.vercel.app/privacidade` | a página que o próprio sistema serve |
-| URL de suporte | a do contato do dono (`APPLE_URL_SUPORTE`) | — |
+| URL de suporte | a mesma da privacidade (`<servidor demo>/privacidade`: troca junto com `APPLE_SERVIDOR_DEMO`) | outra página: `APPLE_URL_SUPORTE` |
 | Classificação etária | **4+**: "Não/Nenhum" nas 24 perguntas da API 4.6, inclusive as novas (conteúdo gerado por usuário, conversa, rede social, anúncios, verificação de idade, controle parental, caixa de recompensa, saúde, armas) | `mobile/publicar/classificacao.mjs` |
 | Direitos de conteúdo | **não usa conteúdo de terceiros** | fixo |
 | Disponibilidade | **só Brasil**, sem entrar sozinho em países novos — se a conta ainda não tiver; se tiver, fica como está | fixo |
@@ -84,8 +84,10 @@ infantil nem nos ajustes manuais de idade.
 ## O que o dono fornece (no GitHub, uma vez — não no site da Apple)
 
 As variáveis e segredos da tabela de `mobile/publicar/README.md`: a chave da API da Apple, o
-contato, e a **conta de demonstração** — um usuário de perfil **dono** criado no servidor de
-demonstração (`loja-tria.vercel.app`) só para a Apple, mais um **código de barras que exista**
+contato, e a **conta de demonstração** — um usuário de perfil **dono** no servidor de
+demonstração (hoje `loja-tria.vercel.app`; numa VPS, a demonstração que sobe com a loja em
+`<domínio>/demo` já traz essa conta, e `./demo.sh --mostrar` imprime endereço, e-mail e senha)
+só para a Apple, mais um **código de barras que exista**
 nele (é o caminho "Digitar código", que salva a revisão feita sem câmera). Antes de enviar, o
 publicador confere tudo isso no próprio servidor (no ar, login de dono, código, privacidade,
 leitor e exclusão de conta). O servidor de demonstração **fica no ar depois da revisão**: ele

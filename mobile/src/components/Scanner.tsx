@@ -13,6 +13,7 @@ import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-na
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Botao } from '@/components/ui';
+import { useAreaDaJanela } from '@/hooks/useAreaDaJanela';
 import { respiroDeBaixo, respiroDeCima } from '@/lib/areaSegura';
 import { decidirLeitura } from '@/lib/leitura';
 import { avisoDaCamera, situacaoDaCamera } from '@/lib/permissaoDaCamera';
@@ -87,7 +88,10 @@ export function Scanner({
   encosta,
 }: Props) {
   const insets = useSafeAreaInsets();
-  const emCima = encosta === 'em-cima-e-embaixo' ? respiroDeCima(insets.top, 0) : 0;
+  // Encostado em cima só no Modal de tela cheia, que cobre até as faixas do topo: a barra de
+  // status que conta é a da janela, não a da navegação (`hooks/useAreaDaJanela.ts`).
+  const janela = useAreaDaJanela();
+  const emCima = encosta === 'em-cima-e-embaixo' ? respiroDeCima(janela.top, 0) : 0;
   const embaixo = encosta ? respiroDeBaixo(insets.bottom, 0) : 0;
   const [permissao, pedirPermissao] = useCameraPermissions();
   // Na primeira abertura quem pergunta é o alerta do sistema, pedido aqui mesmo — sem tela do

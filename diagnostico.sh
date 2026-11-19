@@ -79,10 +79,13 @@ dk compose ps 2>/dev/null | sed 's/^/  /'
 
 printf '\n'
 for id in $(dk compose ps -aq 2>/dev/null); do
-    linha="$(dk inspect --format '{{.Name}}|{{.State.Status}}|{{.RestartCount}}|{{.State.OOMKilled}}|{{.State.ExitCode}}' "$id" 2>/dev/null)"
-    IFS='|' read -r nome estado reinicios oom saiu <<< "$linha"
+    linha="$(dk inspect --format '{{.Name}}|{{.State.Status}}|{{.RestartCount}}|{{.State.OOMKilled}}|{{.State.ExitCode}}|{{index .Config.Labels "com.docker.compose.service"}}' "$id" 2>/dev/null)"
+    IFS='|' read -r nome estado reinicios oom saiu servico <<< "$linha"
     if [ "$oom" = "true" ]; then
         mal "$nome foi MORTO POR FALTA DE MEMÓRIA (reinícios: $reinicios)"
+    elif [ "$servico" = "demo-banco" ] && [ "$estado" = "exited" ] && [ "${saiu:-1}" = "0" ]; then
+        # Não é queda: o demo-banco prepara o banco da demonstração a cada subida e sai.
+        ok "$nome: terminou bem (é o normal — prepara o banco da demonstração e sai)"
     elif [ "$estado" != "running" ]; then
         mal "$nome está '$estado', saiu com código $saiu (reinícios: $reinicios)"
     elif [ "${reinicios:-0}" -gt 3 ]; then
@@ -180,6 +183,39 @@ case "$DOMINIO" in
                 fi
             fi
         fi
+        ;;
+esac
+
+titulo "A demonstração (/demo)"
+# A vitrine da revisão da Apple (ADR-46): outro contêiner e outro banco. Ela fora não derruba
+# a loja, e o veredito lá embaixo continua sendo o da loja — mas fora, ninguém nota até a
+# Apple recusar.
+PERFIS="$(grep -E '^COMPOSE_PROFILES=' .env 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"')"
+case ",$PERFIS," in
+    *,demo,*)
+        if dk compose exec -T api-demo python -c \
+            'import urllib.request
+print(urllib.request.urlopen("http://127.0.0.1:8000/demo/health", timeout=5).read().decode())' 2>/dev/null; then
+            ok "a demonstração está viva dentro do contêiner"
+        else
+            mal "a demonstração NÃO responde dentro do contêiner (veja os erros dela abaixo)"
+        fi
+        DEMO_ALVO="${ALVO%/health}/demo/health"
+        DEMO_CODIGO="$(curl -s -o /dev/null -w '%{http_code}' -m 15 "$DEMO_ALVO" 2>/dev/null)"
+        case "$DEMO_CODIGO" in
+            200)             ok "$DEMO_ALVO → 200 (a demonstração abre)" ;;
+            301|302|307|308) ok "$DEMO_ALVO → $DEMO_CODIGO (manda para o HTTPS; é o esperado)" ;;
+            503)             mal "$DEMO_ALVO → 503: o proxy diz que a demonstração está fora ou começando" ;;
+            *)               nota "$DEMO_ALVO respondeu ${DEMO_CODIGO:-nada}" ;;
+        esac
+        ERROS_DEMO="$(dk compose logs --tail 200 api-demo 2>/dev/null | grep -iE "traceback|error|exception|critical|refused|killed" | tail -10)"
+        if [ -n "$ERROS_DEMO" ]; then
+            printf '  últimos erros da demonstração:\n'
+            printf '%s\n' "$ERROS_DEMO" | sed 's/^/    /'
+        fi
+        ;;
+    *)
+        nota "desligada — para ligar: ./demo.sh --ligar"
         ;;
 esac
 
@@ -283,16 +319,18 @@ if [ "${APLICACAO_OK:-0}" = "1" ] && [ "$CODIGO" = "200" ]; then
     printf '    · veja se o domínio ainda aponta para este servidor\n'
 else
     printf '  Tente nesta ordem, parando quando voltar:\n\n'
-    # Órfão de recriação interrompida: o Docker renomeia o contêiner antigo para
-    # `<hash>_loja-api-1` antes de trocá-lo, e se a troca morre no meio esse renomeado
-    # fica para trás e trava o `up -d` seguinte. Quando ele existe, removê-lo é o
-    # primeiro passo — e sem isso o "1." abaixo não resolve, o que faz a pessoa achar
-    # que o conselho não serve e partir para o `./instalar.sh` à toa.
-    ORFAOS="$(docker ps -a --filter 'name=_loja-api-1' --format '{{.Names}}' 2>/dev/null \
-        | grep -E '^[0-9a-f]{8,}_' || true)"
+    # Órfão de recriação interrompida: para trocar um contêiner, o Docker cria um de nome
+    # provisório `<hash>_loja-<serviço>-1`, e se a troca morre no meio ele fica para trás e
+    # trava o `up -d` seguinte — de QUALQUER serviço (api, proxy, a demonstração). Quando
+    # ele existe, removê-lo é o primeiro passo — e sem isso o "1." abaixo não resolve, o que
+    # faz a pessoa achar que o conselho não serve e partir para o `./instalar.sh` à toa.
+    # Pelo `dk`: com o Docker só por sudo, um `docker` puro não via órfão nenhum, calado.
+    ORFAOS="$(dk ps -a --filter 'name=_loja-' --format '{{.Names}}' 2>/dev/null \
+        | grep -E '^[0-9a-f]{8,}_loja-[A-Za-z0-9_.-]+-[0-9]+$' || true)"
     PASSO=1
     if [ -n "$ORFAOS" ]; then
-        printf '    %d. %sdocker rm -f %s%s\n' "$PASSO" "$FORTE" "$(printf '%s' "$ORFAOS" | tr '\n' ' ')" "$NORMAL"
+        printf '    %d. %s%sdocker rm -f %s%s\n' "$PASSO" "$FORTE" "${PREFIXO_DOCKER:+sudo }" \
+            "$(printf '%s' "$ORFAOS" | tr '\n' ' ')" "$NORMAL"
         printf '       remove o contêiner que sobrou de uma atualização interrompida\n'
         PASSO=$((PASSO + 1))
     fi

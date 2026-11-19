@@ -5,10 +5,21 @@ Gerados junto com a política de privacidade — se um mudar, confira os outros.
 
 As páginas legais são servidas pela própria API, em cada servidor da loja (`<servidor>/privacidade`
 e `<servidor>/exclusao-de-dados`). As fichas das lojas usam as do servidor de demonstração, que
-fica no ar depois da revisão justamente por isso (outro endereço permanente: `APPLE_URL_PRIVACIDADE`):
+fica no ar depois da revisão justamente por isso (outro endereço permanente: `APPLE_URL_PRIVACIDADE`,
+que o suporte segue; outra página de suporte: `APPLE_URL_SUPORTE`). Hoje, as da Vercel:
 
-- `https://loja-tria.vercel.app/privacidade`
+- `https://loja-tria.vercel.app/privacidade` (na App Store, também a URL de suporte)
 - `https://loja-tria.vercel.app/exclusao-de-dados`
+
+**Trocar de servidor** (da Vercel para a demonstração que sobe com a loja, `https://<domínio>/demo`,
+ADR-46): na App Store, a privacidade e a URL de suporte seguem `APPLE_SERVIDOR_DEMO` sozinhas, na
+próxima rodada da ficha (`mobile/publicar/README.md`) — mas as duas são campos da VERSÃO: a página
+da App Store só troca de link quando a versão com as URLs novas for **aprovada** e entrar no ar
+(com a versão em revisão, travada, só a próxima as leva). O Google Play não passa pelo publicador:
+troque no Play Console a URL da política de privacidade e a de exclusão de dados por
+`<servidor novo>/privacidade` e `<servidor novo>/exclusao-de-dados`. **Só desligue o servidor
+antigo depois das duas coisas** — a versão nova no ar na App Store e as URLs trocadas no Play —;
+desligado antes, as fichas ficam apontando para páginas fora do ar.
 
 (`sistemaobras.com.br` é o site do Sistema Obras, outro sistema: não cole esses endereços dele.)
 
@@ -250,7 +261,7 @@ Ainda na aba "Conteúdo do app", duas declarações vizinhas que derrubam envio 
   4. Vendas
   5. Faturamento e cobrança / Contas a receber
 - **E-mail de contato:** `privacidade@sistemaobras.com.br` (o mesmo pode servir de suporte, ou crie `suporte@`)
-- **Política de privacidade (URL obrigatória):** publique em endereço público, ex. `https://sistemaobras.com.br/privacidade`, e a página de exclusão em `https://sistemaobras.com.br/privacidade/exclusao`
+- **Política de privacidade (URL obrigatória):** a do servidor de demonstração, `<servidor>/privacidade`, e a página de exclusão de dados em `<servidor>/exclusao-de-dados` — as mesmas do começo deste documento (hoje, as da Vercel). Trocou de servidor? Troque as duas aqui antes de desligar o antigo.
 
 ---
 
@@ -265,7 +276,7 @@ Ainda na aba "Conteúdo do app", duas declarações vizinhas que derrubam envio 
 
 ## App Store
 
-**Quem preenche é o publicador** (`mobile/publicar/`, ADR-44): os textos abaixo são cópia de `mobile/publicar/ficha/` — mudou lá, mude aqui (e vice-versa). Conferidos contra o código do app (telas de `mobile/src/app/`, `components/`, `lib/`) e o grafo do projeto: cada função citada existe no app de hoje; o "leitor do computador" é o ADR-43 e a exclusão de conta, o ADR-45. O publicador **para antes de falar com a Apple** se um texto citar tela que o app daquele commit não tem (`TELAS_CITADAS` em `mobile/publicar/ficha.mjs`). Servidor de demonstração do revisor: o da LOJA, `https://loja-tria.vercel.app` (Vercel, ADR-42) — `GET /api/v1/configuracao` responde com o nome da loja; antes de enviar, o publicador confere lá o `/health`, o login da conta demo (dono), o código de barras, a privacidade, o leitor e a exclusão de conta. O `sistemaobras.com.br` hoje é o site do Sistema Obras: notas que mandem o revisor para lá derrubam a revisão. No publicador, o endereço é o campo `url_servidor_demo` (no GitHub Actions, a variável `APPLE_SERVIDOR_DEMO`).
+**Quem preenche é o publicador** (`mobile/publicar/`, ADR-44): os textos abaixo são cópia de `mobile/publicar/ficha/` — mudou lá, mude aqui (e vice-versa). Conferidos contra o código do app (telas de `mobile/src/app/`, `components/`, `lib/`) e o grafo do projeto: cada função citada existe no app de hoje; o "leitor do computador" é o ADR-43 e a exclusão de conta, o ADR-45. O publicador **para antes de falar com a Apple** se um texto citar tela que o app daquele commit não tem (`TELAS_CITADAS` em `mobile/publicar/ficha.mjs`). Servidor de demonstração do revisor: o da LOJA — hoje `https://loja-tria.vercel.app` (Vercel, ADR-42); com a loja instalada numa VPS, a demonstração que sobe com ela em `https://<domínio>/demo` (ADR-46, `./demo.sh --mostrar` imprime o que levar) — `GET /api/v1/configuracao` responde com o nome da loja; antes de enviar, o publicador confere lá o `/health`, o login da conta demo (dono), a conta demo protegida (uma senha aleatória recebe 409 `CONTA_DE_DEMONSTRACAO`, ADR-45: o revisor não a exclui nem lhe troca a senha), o código de barras, a privacidade e a URL de suporte quando é outra página (as duas pedidas como página, `Accept: text/html`; o suporte debaixo do servidor da demo segura o envio como a privacidade, e o de fora dele que não abre daqui vira só aviso, porque página de terceiro pode recusar robô), o leitor e a exclusão de conta. O `sistemaobras.com.br` hoje é o site do Sistema Obras: notas que mandem o revisor para lá derrubam a revisão. No publicador, o endereço é o campo `url_servidor_demo` (no GitHub Actions, a variável `APPLE_SERVIDOR_DEMO`).
 
 Limites contados como a Apple conta: caractere, não byte (`[...texto].length`). Nada de citar outra plataforma ou loja (diretriz 2.3.10) — o publicador recusa o texto antes de enviar.
 
@@ -426,11 +437,11 @@ Dois campos obrigatórios que precisam bater com esta ficha: **URL da Política 
 
 ---
 
-## 6. NOTAS PARA A REVISÃO (App Review Notes) — 3.610 caracteres com os marcadores (limite 4.000)
+## 6. NOTAS PARA A REVISÃO (App Review Notes) — 3.585 caracteres com os marcadores (limite 4.000)
 
 **Em inglês** (o revisor lê inglês), com os rótulos das telas entre aspas em português, como aparecem no app, e os sete itens que a Apple pediu na Guideline 2.1. O publicador troca `{{SERVIDOR_DEMO}}`, `{{EMAIL_DEMO}}`, `{{SENHA_DEMO}}`, `{{CODIGO_DEMO}}` e `{{EMAIL_SUPORTE}}` pelos valores do config/Secrets; `{{APARELHOS_TESTADOS}}` e `{{APARELHO_DO_VIDEO}}` pela lista de `mobile/publicar/ficha/aparelhos-testados.txt` (a 1ª linha é o aparelho da gravação); `{{VIDEO}}` pelo nome do vídeo anexado; e `{{LINHA_ETIQUETAS}}` pela frase da folha de etiquetas (ou some, sem `url_etiquetas_demo`). Sem lista ou sem vídeo, os marcadores viram "(pending)": a ficha sobe, mas o `--enviar` é recusado. Com endereços, e-mails e sete aparelhos de nomes longos o texto chega perto dos 4.000 — o publicador confere depois da troca e para, dizendo o tamanho, se passar (o teste mede o pior caso).
 
-Os serviços externos (item 5) são o que o código faz: dado e login só do servidor da loja; a demonstração na Vercel com Neon e Vercel Blob; NFC-e opcional pela Focus NFe, desligada na demonstração; nada de pagamento, IA, login de terceiros, analytics ou anúncio. A única outra chamada é a da biblioteca de rede do React Native (NetInfo), que, no iPhone, testa a conexão com um pedido vazio ao `generate_204` do Google — sem dado nenhum; as notas dizem isso para não afirmar "nenhum outro servidor".
+Os serviços externos (item 5) são o que o código faz: dado e login só do servidor da loja (a demonstração é uma loja como outra, sem provedor a citar: a da Vercel, com Neon e Vercel Blob, ou a que sobe com a loja em `<domínio>/demo`, ADR-46 — as notas não nomeiam nenhum); NFC-e opcional pela Focus NFe, desligada na demonstração; nada de pagamento, IA, login de terceiros, analytics ou anúncio. A única outra chamada é a da biblioteca de rede do React Native (NetInfo), que, no iPhone, testa a conexão com um pedido vazio ao `generate_204` do Google — sem dado nenhum; as notas dizem isso para não afirmar "nenhum outro servidor".
 
 ```
 B2B APP FOR SHOP STAFF; IT NEEDS THE SHOP'S SERVER. Answers to Guideline 2.1 below; the attached "app-review-guide.pdf" has them in full, with screenshots.
@@ -440,7 +451,7 @@ Server: {{SERVIDOR_DEMO}}
 E-mail: {{EMAIL_DEMO}}
 Password: {{SENHA_DEMO}}
 Barcode to type: {{CODIGO_DEMO}}
-Shop OWNER account: every screen is visible. Test data: sell, cancel, return freely.
+Shop OWNER account: every screen is visible. Fictitious data only, isolated from any real shop: sell, cancel, return freely.
 
 1) SCREEN RECORDING: attachment {{VIDEO}}, made on a physical {{APARELHO_DO_VIDEO}}. From app launch: server setup, sign-in, camera permission, a sale, creating a staff account, deleting accounts.
 
@@ -450,7 +461,7 @@ Shop OWNER account: every screen is visible. Test data: sell, cancel, return fre
 
 4) SET UP AND ACCESS
 1. On the sign-in screen tap the GEAR (top right): "Conectar à loja" opens.
-2. In "Endereço do servidor" type the server above, with https://, and tap "Conectar".
+2. In "Endereço do servidor" type the server above exactly as written (with https://), and tap "Conectar".
 3. Enter e-mail and password, tap "Entrar": the "Vender" tab (point of sale) opens.
 4. Add an item: "Ler código de barras" (camera), "Digitar código" (type the barcode above) or "Buscar" (part of a name, e.g. "cami").
 {{LINHA_ETIQUETAS}}
@@ -464,7 +475,7 @@ ACCOUNT DELETION (5.1.1(v)), inside the app:
 - Owner, a staff account: Mais > Usuários > (pessoa) > Excluir conta ("pessoa" is the person's card).
 The demo account is protected (can't be deleted) for the next reviewer: please create a staff account and delete it either way.
 
-5) EXTERNAL SERVICES: data and sign-in come only from the shop's own server (FastAPI + PostgreSQL, installed by the shop). The demo server runs on Vercel, with Neon (PostgreSQL) and Vercel Blob (item photos). NFC-e (Brazilian e-receipt) is optional, via an accredited issuer (Focus NFe); off in the demo. No payments in the app (the card terminal is separate; the app only records the method), no AI, no third-party sign-in, no analytics or ad SDKs. The network library only checks connectivity (empty request to Google's generate_204).
+5) EXTERNAL SERVICES: data and sign-in come only from the shop's own server (FastAPI + PostgreSQL, installed by the shop). NFC-e (Brazilian e-receipt) is optional, via an accredited issuer (Focus NFe); off in the demo. No payments in the app (the card terminal is separate; the app only records the method), no AI, no third-party sign-in, no analytics or ad SDKs. The network library only checks connectivity (empty request to Google's generate_204).
 
 6) REGIONS: Brazil only, in Portuguese (Brazil); the same everywhere.
 
@@ -531,7 +542,7 @@ O `--enviar` do publicador (caixa "revisao" no GitHub) confere tudo o que é con
 - `{{CODIGO_DEMO}}`: um código de barras que exista no banco de demonstração (`APPLE_CODIGO_DEMO`) — é o caminho sem câmera. O publicador o procura lá antes de enviar.
 - `{{URL_ETIQUETAS_DEMO}}` (opcional): página com códigos de barras de exemplo para bipar da tela; sem ela, a frase some e "Digitar código" e "Buscar" bastam.
 - `{{EMAIL_SUPORTE}}`: o e-mail de suporte (`APPLE_EMAIL_SUPORTE`). O `privacidade@sistemaobras.com.br` da política de privacidade precisa existir e ser lido.
-- **Servidor de demonstração no ar depois da revisão**: ele serve a política de privacidade da ficha (`<servidor>/privacidade`). Desligá-lo derrubaria o link da App Store (5.1.1(i)); outro endereço permanente vai em `APPLE_URL_PRIVACIDADE`.
+- **Servidor de demonstração no ar depois da revisão**: ele serve a política de privacidade da ficha (`<servidor>/privacidade`), que sem `APPLE_URL_SUPORTE` é também a URL de suporte. Desligá-lo derrubaria os links da App Store (5.1.1(i) e 1.5) e os do Play Console; outro endereço permanente vai em `APPLE_URL_PRIVACIDADE` (o suporte vai junto; outra página de suporte, `APPLE_URL_SUPORTE`), e o antigo só sai do ar depois que a versão com as URLs novas for aprovada.
 - Resposta na Central de Resolução: opcional (não tem API, e o reenvio já leva notas e anexos novos). Texto pronto, em inglês: `mobile/publicar/revisao/resposta-ao-app-review.txt`.
 
 ## Um achado do código que afeta a revisão

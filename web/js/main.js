@@ -12,6 +12,8 @@ import { PODE, pode, titulo } from './permissoes.js';
 import { conectarTempoReal, desconectarTempoReal } from './tempo-real.js';
 import { html, confirmar, cru, aviso } from './ui.js';
 import { carregarLoja, loja, aoMudarLoja } from './loja.js';
+import { ligarFaixaDaDemonstracao } from './faixa-demonstracao.js';
+import { naRaiz } from './raiz.js';
 import { desligarLeitorCelular, ligarLeitorCelular, pararLeitorCelular } from './leitor-celular.js';
 
 /* ------------------------------------------------------------------------- telas */
@@ -170,7 +172,7 @@ function molduraHtml(usuario) {
           <div class="lateral__versao" data-versao hidden></div>
           <a class="lateral__versao is-atencao" data-backup href="#/backup" style="text-decoration:none;color:inherit" hidden></a>
           <a class="lateral__versao is-atencao" data-contas href="#/contas-pagar" style="text-decoration:none;color:inherit" hidden></a>
-          <a class="lateral__privacidade" href="/privacidade" target="_blank" rel="noopener">Privacidade</a>
+          <a class="lateral__privacidade" href="${naRaiz('/privacidade')}" target="_blank" rel="noopener">Privacidade</a>
         </div>
       </nav>
       <main class="conteudo" id="conteudo"></main>
@@ -369,6 +371,8 @@ sessao.inscrever(({ usuario }) => {
 
 // O nome da loja é lido sem sessão: a tela de entrada já abre com ele. Não esperamos a
 // resposta para iniciar o roteador — a loja sem nome é um detalhe, a loja sem PDV não é.
+// Na mesma leitura vem se esta é a demonstração (ADR-46), que ganha a faixa no topo.
+ligarFaixaDaDemonstracao();
 carregarLoja();
 aoMudarLoja((config) => {
   document.querySelectorAll('[data-nome-loja]').forEach((el) => {

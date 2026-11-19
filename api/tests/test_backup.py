@@ -171,16 +171,33 @@ DOCKER_DE_MENTIRA = r"""#!/usr/bin/env bash
 echo "docker $*" >> "$FAKE_CTR/docker.log"
 case "$1" in
     info|rm) exit 0 ;;
-    ps) printf '%s\n' ${FAKE_PS:-}; exit 0 ;;
+    ps)  # $FAKE_PS são os contêineres da máquina; o --filter name= vale (por pedaço do nome)
+        filtro=""
+        while [ $# -gt 0 ]; do case "$1" in --filter) filtro="${2#name=}"; shift 2 ;; *) shift ;; esac; done
+        for nome in ${FAKE_PS:-}; do case "$nome" in *"$filtro"*) printf '%s\n' "$nome" ;; esac; done
+        exit 0 ;;
     image) echo "Total reclaimed space: 0B"; exit 0 ;;
     compose) shift ;;
     *) exit 0 ;;
 esac
+while [ "${1:-}" = --profile ]; do shift 2; done
 dentro() { printf '%s/%s' "$FAKE_CTR" "$(basename "$1")"; }
 case "$1" in
+    ps)  # `compose ps -q SERVIÇO`: o id do contêiner (o `up` troca o de quem está em $FAKE_RECRIA)
+        [ "${2:-}" = -q ] && [ -n "${3:-}" ] && { cat "$FAKE_CTR/id-$3" 2>/dev/null || echo "id-$3"; }
+        exit 0 ;;
+    up)  # falha se pedir um serviço de $FAKE_UP_FALHA; recria os de $FAKE_RECRIA
+        for svc in ${FAKE_UP_FALHA:-}; do case " $* " in *" $svc "*) exit 1 ;; esac; done
+        for svc in ${FAKE_RECRIA:-}; do
+            printf '%s+\n' "$(cat "$FAKE_CTR/id-$svc" 2>/dev/null || echo "id-$svc")" > "$FAKE_CTR/id-$svc"
+        done
+        exit 0 ;;
     exec)
         shift; [ "$1" = -T ] && shift; svc="$1"; shift; prog="$1"; shift
         if [ "$svc" = db ]; then
+            # O banco da demonstração NÃO existe no Postgres dos testes, que é de todos: o SQL
+            # dele (DROP DATABASE, DROP ROLE) só é anotado, nunca roda de verdade aqui.
+            case " $* " in *loja_demo*) exit 0 ;; esac
             args=(); com_d=0
             while [ $# -gt 0 ]; do
                 case "$1" in
@@ -199,6 +216,9 @@ case "$1" in
             esac
         fi
         [ "$svc" = api ] && exec bash -c "${FAKE_API:-exit 0}"
+        # A demonstração e o proxy recebem o comando: "$1 $2" = "python -c", "caddy validate"...
+        [ "$svc" = api-demo ] && exec bash -c "${FAKE_API_DEMO:-exit 0}" _ "$prog" "$@"
+        [ "$svc" = proxy ] && exec bash -c "${FAKE_PROXY:-exit 0}" _ "$prog" "$@"
         exit 0 ;;
     cp) case "$2" in
             db:*) cp "$(dentro "${2#db:}")" "$3" ;;
@@ -488,6 +508,132 @@ async def test_faxina_da_nuvem_so_apaga_as_copias_dela(
     assert set(guardar) <= ficaram
     assert not set(velha_da_nuvem) & ficaram
     assert any(n.startswith("loja-nuvem-") for n in ficaram)  # a de agora fica
+
+
+#: O rclone que não consegue enviar: anota para onde vai o stderr dele (o arquivo que o `2>`
+#: do backup.sh abriu) e falha como o Drive cheio falha. O resto é o rclone de mentira.
+MOTIVO_DO_DRIVE = "googleapi: Error 403: The user's Drive storage quota has been exceeded."
+RCLONE_QUE_NAO_ENVIA = rf"""#!/usr/bin/env bash
+if [ "$1" = --config ] && [ "$3" = copyto ]; then
+    readlink /proc/self/fd/2 > "$FAKE_CTR/stderr-do-rclone"
+    echo "ERROR : Attempt 3/3 failed with 1 errors" >&2
+    echo "Failed to copyto: {MOTIVO_DO_DRIVE}" >&2
+    exit 1
+fi
+exec "$(dirname "$0")/rclone-de-mentira" "$@"
+"""
+
+
+@precisa_da_maquina
+@pytest.mark.skipif(not Path("/proc/self/fd").is_dir(), reason="lê o stderr do rclone no /proc")
+async def test_envio_que_falha_diz_o_motivo_sem_caminho_fixo_no_tmp(
+    session: AsyncSession, tmp_path: Path
+) -> None:
+    """O motivo ia para `/tmp/rclone.err`, um caminho fixo e de todos: criado antes por outro
+    usuário (o root do timer, uma rodada dos testes), o `2>` falhava, e o script dizia "NÃO
+    consegui enviar para o Drive" com o rclone bom. O motivo vai a um temporário do próprio
+    processo, que some no fim — e continua chegando ao terminal e à tela."""
+    await _ligar_backup(session)
+    temporarios = tmp_path / "tmp"
+    temporarios.mkdir()
+    env = _maquina(tmp_path, TMPDIR=str(temporarios))
+    rclone = tmp_path / "bin" / "rclone"
+    rclone.rename(tmp_path / "bin" / "rclone-de-mentira")
+    rclone.write_text(RCLONE_QUE_NAO_ENVIA)
+    rclone.chmod(0o755)
+
+    r = _backup_sh(tmp_path, env, "--nuvem")
+
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "NÃO consegui enviar para o Drive" in r.stderr
+    assert MOTIVO_DO_DRIVE in r.stdout
+    destino = Path((tmp_path / "ctr" / "stderr-do-rclone").read_text().strip())
+    assert destino != Path("/tmp/rclone.err")
+    assert destino.parent == temporarios.resolve(), destino
+    assert not destino.exists()  # e não fica para trás
+    linha = (
+        await session.execute(text("SELECT ultimo_ok, ultimo_erro FROM backup_config"))
+    ).one()
+    assert linha.ultimo_ok is False
+    assert linha.ultimo_erro.startswith("Não subiu para o Drive: ")
+    assert MOTIVO_DO_DRIVE in linha.ultimo_erro
+
+
+#: O mktemp que não cria nada (pasta temporária cheia, sem permissão): o envio segue sem ele.
+MKTEMP_QUE_FALHA = (
+    '#!/bin/sh\necho "mktemp: failed to create file via template: No space left" >&2\nexit 1\n'
+)
+
+
+@precisa_da_maquina
+@pytest.mark.parametrize("sem", ["tmpdir_que_nao_existe", "mktemp_que_falha"])
+async def test_sem_temporario_para_o_motivo_a_copia_vai_ao_drive_mesmo_assim(
+    session: AsyncSession, tmp_path: Path, sem: str
+) -> None:
+    """O temporário do motivo do rclone nasceu para dizer por que o envio falhou, e não pode
+    impedir o envio: com um TMPDIR que não existe, o mktemp falhava, o `set -e` encerrava o
+    --nuvem depois do dump e antes do rclone, nada ia ao Drive e a tela ficava sem anotação
+    (`ultimo_em`, `ultimo_ok` e `ultimo_erro` nulos). Agora tenta o /tmp e, sem nenhum dos
+    dois, envia sem o motivo detalhado."""
+    await _ligar_backup(session)
+    env = _maquina(tmp_path, TMPDIR=str(tmp_path / "nao-existe"))
+    if sem == "mktemp_que_falha":
+        (tmp_path / "bin" / "mktemp").write_text(MKTEMP_QUE_FALHA)
+        (tmp_path / "bin" / "mktemp").chmod(0o755)
+
+    r = _backup_sh(tmp_path, env, "--nuvem")
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    no_drive = [p.name for p in (tmp_path / "drive" / "loja").iterdir()]
+    assert len(no_drive) == 1 and re.fullmatch(r"loja-\d{8}-\d{6}\.dump", no_drive[0])
+    linha = (
+        await session.execute(
+            text("SELECT ultimo_em, ultimo_ok, ultimo_erro, copias_na_nuvem FROM backup_config")
+        )
+    ).one()
+    assert linha.ultimo_em is not None
+    assert linha.ultimo_ok is True and linha.ultimo_erro is None
+    assert linha.copias_na_nuvem == 1
+
+
+@precisa_da_maquina
+@pytest.mark.skipif(not Path("/proc/self/fd").is_dir(), reason="lê o stderr do rclone no /proc")
+@pytest.mark.parametrize("sem", ["tmpdir_que_nao_existe", "mktemp_que_falha"])
+async def test_sem_temporario_o_envio_que_falha_ainda_e_anotado(
+    session: AsyncSession, tmp_path: Path, sem: str
+) -> None:
+    """Com o TMPDIR que não existe, o motivo vai a um temporário do /tmp (e some no fim); sem
+    temporário nenhum, a tela recebe a frase genérica e o motivo segue pela saída de erro do
+    script (o journal do timer) — nunca ao /dev/null, que o some, nem apagando o /dev/null na saída
+    do script (que roda como root no timer)."""
+    await _ligar_backup(session)
+    env = _maquina(tmp_path, TMPDIR=str(tmp_path / "nao-existe"))
+    rclone = tmp_path / "bin" / "rclone"
+    rclone.rename(tmp_path / "bin" / "rclone-de-mentira")
+    rclone.write_text(RCLONE_QUE_NAO_ENVIA)
+    rclone.chmod(0o755)
+    if sem == "mktemp_que_falha":
+        (tmp_path / "bin" / "mktemp").write_text(MKTEMP_QUE_FALHA)
+        (tmp_path / "bin" / "mktemp").chmod(0o755)
+
+    r = _backup_sh(tmp_path, env, "--nuvem")
+
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "NÃO consegui enviar para o Drive" in r.stderr
+    assert Path("/dev/null").is_char_device()
+    destino = Path((tmp_path / "ctr" / "stderr-do-rclone").read_text().strip())
+    linha = (
+        await session.execute(text("SELECT ultimo_em, ultimo_ok, ultimo_erro FROM backup_config"))
+    ).one()
+    assert linha.ultimo_em is not None and linha.ultimo_ok is False
+    if sem == "tmpdir_que_nao_existe":
+        assert destino.parent == Path("/tmp").resolve(), destino
+        assert not destino.exists()  # e não fica para trás
+        assert MOTIVO_DO_DRIVE in linha.ultimo_erro
+    else:
+        assert destino != Path("/dev/null")
+        assert MOTIVO_DO_DRIVE in r.stderr  # no journal, ao menos
+        assert linha.ultimo_erro == "Não subiu para o Drive: erro do rclone"
 
 
 @precisa_da_maquina

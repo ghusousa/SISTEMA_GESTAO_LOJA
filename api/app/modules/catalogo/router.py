@@ -1,7 +1,10 @@
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.exceptions import RequestValidationError
+from starlette.datastructures import FormData, UploadFile
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.permissoes import Pode, pode
 from app.core.deps import CurrentUser, ExigeEditarCatalogo, SessionDep
@@ -176,38 +179,116 @@ async def adicionar_variante(
     return await CatalogoService(session).adicionar_variante(produto_id, dados, usuario)
 
 
-@router.put("/produtos/{produto_id}/foto", response_model=None, summary="Envia foto")
+#: O corpo do envio, para a documentação: a rota lê o multipart ela mesma (depois do login,
+#: ver `enviar_foto`), e o FastAPI não o descobre sozinho. É o que o `File()` descrevia.
+_CORPO_DO_ENVIO_DE_FOTO = {
+    "requestBody": {
+        "required": True,
+        "content": {
+            "multipart/form-data": {
+                "schema": {
+                    "type": "object",
+                    "title": "Envio de foto",
+                    "required": ["arquivo"],
+                    "properties": {
+                        "arquivo": {
+                            "type": "string",
+                            "contentMediaType": "application/octet-stream",
+                            "title": "Arquivo",
+                            "description": "A foto (JPEG, PNG ou WebP): um arquivo só.",
+                        }
+                    },
+                }
+            }
+        },
+    }
+}
+#: Campos de texto aceitos ao lado da foto. O app e a web mandam só o arquivo; o resto é
+#: ignorado, como sempre foi, mas não sem teto.
+_CAMPOS_DE_TEXTO_DO_ENVIO = 4
+
+
+async def _ler_o_envio(request: Request) -> FormData:
+    """O multipart do envio, com UM arquivo. Multipart quebrado é o 400 do Starlette, com a
+    frase dele; outra falha ao ler, o 400 que o FastAPI dava quando lia o corpo sozinho."""
+    try:
+        return await request.form(max_files=1, max_fields=_CAMPOS_DE_TEXTO_DO_ENVIO)
+    except StarletteHTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 — o mesmo 400 de antes, para qualquer falha
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="There was an error parsing the body"
+        ) from exc
+
+
+def _o_arquivo(form: FormData) -> UploadFile:
+    """O campo `arquivo`, com as mesmas recusas (e o mesmo 422 VALIDACAO, pelo mesmo handler)
+    que o FastAPI dava ao validar `arquivo: UploadFile = File()`."""
+    valor = form.get("arquivo")
+    if isinstance(valor, UploadFile):
+        return valor
+    if valor is None or valor == "":
+        erro = {"type": "missing", "loc": ("body", "arquivo"), "msg": "Field required"}
+    else:
+        erro = {
+            "type": "value_error",
+            "loc": ("body", "arquivo"),
+            "msg": f"Value error, Expected UploadFile, received: {type(valor)}",
+        }
+    raise RequestValidationError([erro])
+
+
+@router.put(
+    "/produtos/{produto_id}/foto",
+    response_model=None,
+    summary="Envia foto",
+    openapi_extra=_CORPO_DO_ENVIO_DE_FOTO,
+)
 async def enviar_foto(
+    request: Request,
     session: SessionDep,
     usuario: CurrentUser,
     produto_id: int,
-    arquivo: Annotated[UploadFile, File(alias="arquivo")],
 ) -> ProdutoOut:
-    service = CatalogoService(session)
-    await service.obter_produto(produto_id, usuario)  # 404 antes de gravar qualquer byte
+    # O login ANTES do corpo. Com `arquivo: UploadFile = File()` o FastAPI lia o multipart
+    # inteiro antes de resolver as dependências (e o Starlette gravava o arquivo num
+    # temporário): um PUT de 10 MB sem login era gravado todo para só então dar 401. Sem corpo
+    # declarado, o crachá roda primeiro, e o corpo é lido aqui, só para quem entrou.
+    # A conferência do login abriu uma transação (o SELECT em `users`); ela termina antes da
+    # leitura, para o envio lento de um celular não segurar uma conexão do pool nem a trava
+    # de leitura de `users` — a mesma que o TRUNCATE da renovação da demo espera (ADR-46).
+    await session.commit()
+    form = await _ler_o_envio(request)
+    try:
+        arquivo = _o_arquivo(form)
+        service = CatalogoService(session)
+        await service.obter_produto(produto_id, usuario)  # 404 antes de gravar qualquer byte
 
-    extensao = Path(arquivo.filename or "").suffix.lower()
-    if extensao not in EXTENSOES_FOTO:
-        raise Validacao(
-            "Formato de imagem não aceito.", {"aceitos": sorted(EXTENSOES_FOTO)}
-        )
-
-    # Lê em blocos e aborta ao passar do limite: `await arquivo.read()` traria o arquivo
-    # inteiro para a memória antes de qualquer checagem, e um envio de vários GB derrubaria
-    # o servidor da loja no meio do expediente.
-    # Na Vercel o teto é menor: a função recusa corpo acima de 4,5 MB antes da API (ADR-42).
-    limite = limite_do_envio()
-    partes: list[bytes] = []
-    lidos = 0
-    while bloco := await arquivo.read(64 * 1024):
-        lidos += len(bloco)
-        if lidos > limite:
+        extensao = Path(arquivo.filename or "").suffix.lower()
+        if extensao not in EXTENSOES_FOTO:
             raise Validacao(
-                "Imagem muito grande.",
-                {"limite_mb": round(limite / 1024 / 1024, 1)},
+                "Formato de imagem não aceito.", {"aceitos": sorted(EXTENSOES_FOTO)}
             )
-        partes.append(bloco)
-    conteudo = b"".join(partes)
+
+        # Lê em blocos e aborta ao passar do limite: `await arquivo.read()` traria o arquivo
+        # inteiro para a memória antes de qualquer checagem, e um envio de vários GB
+        # derrubaria o servidor da loja no meio do expediente.
+        # Na Vercel o teto é menor: a função recusa corpo acima de 4,5 MB antes da API
+        # (ADR-42).
+        limite = limite_do_envio()
+        partes: list[bytes] = []
+        lidos = 0
+        while bloco := await arquivo.read(64 * 1024):
+            lidos += len(bloco)
+            if lidos > limite:
+                raise Validacao(
+                    "Imagem muito grande.",
+                    {"limite_mb": round(limite / 1024 / 1024, 1)},
+                )
+            partes.append(bloco)
+        conteudo = b"".join(partes)
+    finally:
+        await form.close()
 
     # A extensão do nome é escolhida por quem envia e não prova nada: vale a assinatura.
     tipo = tipo_da_imagem(conteudo)

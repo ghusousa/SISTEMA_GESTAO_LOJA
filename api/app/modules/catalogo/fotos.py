@@ -16,6 +16,9 @@ Três casas, escolhidas só pelo ambiente — a tela e o banco não sabem qual e
   se monta e o envio responde 503 dizendo o que conectar. Quem decide é a variável de sistema
   `VERCEL`, nunca a falha do `mkdir`: o `/tmp` não falha.
 
+Na demonstração que sobe com a loja (`LOJA_DEMONSTRACAO=1`, ADR-46) o disco ganha teto
+(`FotosDaDemonstracao`): o volume dela mora no mesmo disco do banco da loja.
+
 O cliente do Blob é `httpx` direto, nas duas chamadas de que a loja precisa (enviar e apagar),
 espelhando o que o SDK Python oficial (`vercel-blob` 0.5.1, `_internal/api_client.py`) manda:
 o SDK puxaria quatro pacotes novos (`vercel-blob`, `vercel-internal-core`, `vercel-oidc`,
@@ -23,7 +26,9 @@ o SDK puxaria quatro pacotes novos (`vercel-blob`, `vercel-internal-core`, `verc
 todos 0.x, e roda sobre `httpx2` — onde o `httpx.MockTransport` dos testes não entra.
 """
 
+import asyncio
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Protocol
@@ -58,6 +63,19 @@ class FotoNaoGuardada(AppError):
     code = "FOTO_NAO_GUARDADA"
     http_status = status.HTTP_503_SERVICE_UNAVAILABLE
     message = "Não deu para guardar a foto agora. Tente de novo em instantes."
+
+
+class DemonstracaoSemEspaco(AppError):
+    """A demonstração chegou ao teto de fotos (ADR-46). 409, como a outra recusa que só existe
+    na demo (CONTA_DE_DEMONSTRACAO): não é falha do servidor, e tentar de novo não adianta
+    até a renovação da madrugada."""
+
+    code = "DEMONSTRACAO_SEM_ESPACO"
+    http_status = status.HTTP_409_CONFLICT
+    message = (
+        "A demonstração chegou ao limite de espaço para fotos. Ela recomeça toda madrugada, "
+        "e aí as fotos voltam a caber."
+    )
 
 
 # ------------------------------------------------------------------ o que é imagem
@@ -98,6 +116,17 @@ class Armazenamento(Protocol):
         ...
 
 
+def _disco_nao_grava(pasta: Path, exc: OSError) -> FotoNaoGuardada:
+    """A pasta de fotos que não grava (disco cheio, permissão do volume), dita à tela."""
+    # O errno é para quem cuida do servidor: log.
+    log.error("Foto não gravada em %s: [errno %s] %s", pasta, exc.errno, exc)
+    return FotoNaoGuardada(
+        "A pasta de fotos do servidor (MEDIA_DIR) está sem espaço ou sem permissão "
+        "de escrita. A foto de antes continua.",
+        {"motivo": "disco"},
+    )
+
+
 class FotosNoDisco:
     """A loja de sempre: arquivo em `MEDIA_DIR/produtos`, servido em `/media`."""
 
@@ -110,13 +139,7 @@ class FotosNoDisco:
             # Gravação é I/O bloqueante: fora da thread do event loop, senão a foto trava o PDV.
             await run_in_threadpool((self._pasta / nome).write_bytes, conteudo)
         except OSError as exc:
-            # O errno (disco cheio, permissão do volume) é para quem cuida do servidor: log.
-            log.error("Foto não gravada em %s: [errno %s] %s", self._pasta, exc.errno, exc)
-            raise FotoNaoGuardada(
-                "A pasta de fotos do servidor (MEDIA_DIR) está sem espaço ou sem permissão "
-                "de escrita. A foto de antes continua.",
-                {"motivo": "disco"},
-            ) from exc
+            raise _disco_nao_grava(self._pasta, exc) from exc
         # Caminho relativo, nunca derivado do header Host: uma requisição com
         # `Host: atacante.com` gravaria essa URL no banco e todo mundo passaria a buscar a
         # imagem no servidor do atacante.
@@ -127,6 +150,87 @@ class FotosNoDisco:
         # fotos são cópias separadas: restaurar o banco da semana passada volta a apontar
         # para a foto de antes, e ela tem de estar lá.
         return None
+
+
+#: Uma foto da demonstração por vez, no processo inteiro: medir a pasta e gravar viram um
+#: passo só. Sem a fila, envios juntos mediriam a mesma pasta, todos caberiam e o teto
+#: passaria. A `api-demo` é UM processo (o CMD do Dockerfile não pede `--workers`); com N,
+#: cada um teria a sua fila e o teto passaria de no máximo N-1 fotos de MAX_UPLOAD_BYTES —
+#: excesso limitado, nunca o disco. A loja não passa por aqui: grava como sempre.
+_UMA_FOTO_DA_DEMONSTRACAO_POR_VEZ = asyncio.Lock()
+
+
+class FotosDaDemonstracao(FotosNoDisco):
+    """A demonstração que sobe com a loja (ADR-46): o disco de sempre, com teto.
+
+    O volume dela (`fotos-da-demo`) mora no mesmo disco do banco da loja, e a senha da demo
+    vai para quem o dono mostra o sistema e para a Apple. Sem teto, envios repetidos de 5 MB
+    encheriam o disco e parariam o Postgres DA LOJA — e apagar a foto trocada não limitaria
+    nada, porque criar produto é livre. Antes de gravar, mede a pasta: a foto que a faria
+    passar de `DEMO_FOTOS_MAX_BYTES` é recusada. A renovação da madrugada a esvazia
+    (`esvaziar`), e o teto volta a zero todo dia.
+    """
+
+    def __init__(self, pasta_media: str | Path, *, teto: int) -> None:
+        super().__init__(pasta_media)
+        self._teto = teto
+
+    def _ocupado(self) -> int:
+        """Bytes que as fotos da pasta OCUPAM no disco (sem a pasta ainda, nada).
+
+        O bloco, não só o tamanho: "foto" de 9 bytes (só a assinatura do PNG) ocupa um bloco
+        inteiro (4 KB), e contadas pelo tamanho milhões delas passariam pelo teto enchendo o
+        disco (e os inodes) do mesmo jeito.
+        """
+        try:
+            itens = os.scandir(self._pasta)
+        except FileNotFoundError:
+            return 0
+        total = 0
+        with itens:
+            for item in itens:
+                try:
+                    if not item.is_file(follow_symlinks=False):
+                        continue
+                    info = item.stat(follow_symlinks=False)
+                except FileNotFoundError:  # a renovação apagou no meio da conta
+                    continue
+                total += max(info.st_size, getattr(info, "st_blocks", 0) * 512)
+        return total
+
+    async def gravar(self, nome: str, conteudo: bytes, tipo: str) -> str:
+        async with _UMA_FOTO_DA_DEMONSTRACAO_POR_VEZ:
+            try:
+                ocupado = await run_in_threadpool(self._ocupado)
+            except OSError as exc:
+                raise _disco_nao_grava(self._pasta, exc) from exc
+            if ocupado + len(conteudo) > self._teto:
+                log.warning(
+                    "Demonstração no teto de fotos (%s de %s bytes): foto recusada.",
+                    ocupado,
+                    self._teto,
+                )
+                raise DemonstracaoSemEspaco(
+                    detail={"limite_mb": round(self._teto / 1024 / 1024, 1)}
+                )
+            return await super().gravar(nome, conteudo, tipo)
+
+    def esvaziar(self) -> int:
+        """Apaga as fotos da pasta e diz quantas. Só os arquivos: a pasta fica, e a `media`
+        acima dela — onde o volume da demo está montado — também.
+
+        Quem chama é a renovação, logo depois do TRUNCATE (as duas chaves já conferidas):
+        nenhum produto aponta mais para elas, e sem isto ficariam no volume para sempre,
+        públicas para quem guardou o endereço.
+        """
+        try:
+            with os.scandir(self._pasta) as itens:
+                fotos = [Path(i.path) for i in itens if i.is_file(follow_symlinks=False)]
+        except FileNotFoundError:
+            return 0
+        for foto in fotos:
+            foto.unlink(missing_ok=True)
+        return len(fotos)
 
 
 class FotosSemLugar:
@@ -268,6 +372,8 @@ def _fabricar(config: Settings = settings) -> Armazenamento:
         )
     if config.vercel:
         return FotosSemLugar()
+    if config.demonstracao:
+        return FotosDaDemonstracao(config.media_dir, teto=config.demo_fotos_max_bytes)
     return FotosNoDisco(config.media_dir)
 
 

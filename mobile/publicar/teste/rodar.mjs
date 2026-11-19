@@ -18,7 +18,7 @@ import { createHash, generateKeyPairSync } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { deflateSync } from 'node:zlib';
 import { NAO_SAO_PERGUNTAS, RESPOSTAS } from '../classificacao.mjs';
 import { TELAS_CITADAS, telasQueFaltam } from '../ficha.mjs';
@@ -169,7 +169,8 @@ writeFileSync(
     issuer_id: '00000000-0000-0000-0000-000000000000',
     arquivo_p8: 'chave-apple.p8',
     email_suporte: 'suporte@teste.dev',
-    url_suporte: 'https://demo-da-loja.teste.dev',
+    // Outra página que não a privacidade (APPLE_URL_SUPORTE): a conferência abre as duas.
+    url_suporte: 'https://demo-da-loja.teste.dev/suporte',
     nome_contato: 'Dona Teste',
     telefone_contato: '+55 11 91234-5678',
     titular_copyright: 'Loja Teste',
@@ -186,15 +187,16 @@ const DEMO = await subirDemoFalso();
 /**
  * Roda publicar.mjs com o ambiente limpo (nada de GITHUB_*, PUBLICAR_* ou ASC_* herdado:
  * rodando dentro do Actions, o teste não pode escrever no resumo da execução de verdade).
+ * `node` vai antes do publicar.mjs (o `--import` de um gancho de teste).
  */
-function publicar(args, { porta, capturas, env = {} }) {
+function publicar(args, { porta, capturas, env = {}, node = [] }) {
   const limpo = Object.fromEntries(
     Object.entries(process.env).filter(([k]) => !/^(GITHUB_|PUBLICAR_|ASC_|RUNNER_)/.test(k)),
   );
   return new Promise((resolver) => {
     // spawn assíncrono, nunca spawnSync: o mock roda NESTE processo, e o síncrono congelaria
     // o loop — o publicador perguntaria e ninguém responderia.
-    const filho = spawn(process.execPath, [join(MOBILE, 'publicar', 'publicar.mjs'), ...args], {
+    const filho = spawn(process.execPath, [...node, join(MOBILE, 'publicar', 'publicar.mjs'), ...args], {
       env: {
         ...limpo,
         ASC_BASE: `http://127.0.0.1:${porta ?? 9}`,
@@ -337,6 +339,7 @@ await cenario(
     const loc = Object.values(e.versaoLocs).find((l) => l.versao === 'VER1')?.atributos ?? {};
     conferir([...(loc.description ?? '')].length > 1000 && !loc.description.includes('{{'), 'descrição inteira, sem marcador sobrando');
     conferir(loc.description?.includes('suporte@teste.dev') && loc.description?.includes('https://demo-da-loja.teste.dev/privacidade'), 'descrição com o e-mail de suporte e a política de privacidade');
+    conferir(loc.supportUrl === 'https://demo-da-loja.teste.dev/suporte', 'URL de suporte do config.json (outra página que não a privacidade)');
     conferir(loc.keywords === lerFicha('palavras-chave.txt') && [...loc.keywords].length <= 100, 'palavras-chave (até 100)');
     conferir(loc.promotionalText === lerFicha('texto-promocional.txt') && [...loc.promotionalText].length <= 170, 'texto promocional (até 170)');
     conferir(loc.whatsNew === undefined, 'sem "Novidades" na primeira versão');
@@ -360,9 +363,10 @@ await cenario(
     conferirAnexo(conferir, e, 'screen-recording.mp4', readFileSync(VIDEO));
     const demo = chamadasDaDemo(antesDaDemo);
     conferir(
-      ['GET /health', 'POST /api/v1/auth/login', 'GET /api/v1/variantes/codigo-barras/7890000000000', 'GET /api/v1/leitor/pareamentos/0', 'DELETE /api/v1/usuarios/me', 'POST /api/v1/auth/logout', 'GET /privacidade'].every((c) => demo.includes(c)),
-      'servidor de demonstração conferido: no ar, login de dono, código, leitor, exclusão, privacidade (e a sessão encerrada)',
+      ['GET /health', 'POST /api/v1/auth/login', 'GET /api/v1/variantes/codigo-barras/7890000000000', 'GET /api/v1/leitor/pareamentos/0', 'DELETE /api/v1/usuarios/me', 'POST /api/v1/auth/logout', 'GET /privacidade', 'GET /suporte'].every((c) => demo.includes(c)),
+      'servidor de demonstração conferido: no ar, login de dono, código, leitor, exclusão, privacidade, suporte (e a sessão encerrada)',
     );
+    conferir(/✔ Pronto para a revisão: .*privacidade e suporte,/.test(saida), 'o "Pronto para a revisão" dá o suporte por conferido: a página abriu');
     const exclusoes = DEMO.chamadas.slice(antesDaDemo).filter((c) => c.metodo === 'DELETE' && c.caminho === '/api/v1/usuarios/me');
     conferir(
       exclusoes.some((c) => typeof c.corpo?.senha === 'string') && saida.includes('é protegida lá'),
@@ -602,10 +606,10 @@ if (!REAIS) {
 
   await cenario('Servidor de demonstração fora do combinado: --enviar recusado, com cada problema', async ({ conferir, guardar }) => {
     const casos = [
-      [{ papel: 'GERENTE', codigos: [], semLeitor: true, semExclusao: true, privacidade: 404 }, ['não de dono', 'não existe no servidor de demonstração', 'não tem o leitor pelo celular', 'não tem a exclusão da própria conta', 'política de privacidade da ficha não abre'], 'conta não-dono, código, leitor, exclusão e privacidade'],
-      [{ senha: 'outra-senha' }, ['não entra no servidor de demonstração', 'APPLE_DEMO_PASSWORD', 'Redeploy da demo a recria'], 'senha da demo errada (ou conta excluída lá)'],
-      [{ protegida: false }, ['não está protegida no servidor de demonstração', 'DEMO_ADMIN_EMAIL'], 'conta demo sem a proteção'],
-      [{ saldo: 2 }, ['tem 2 peça(s) em estoque', 'Reponha pela Entrada'], 'código demo quase sem estoque'],
+      [{ papel: 'GERENTE', codigos: [], semLeitor: true, semExclusao: true, privacidade: 404, suporte: 404 }, ['não de dono', 'não existe no servidor de demonstração', 'não tem o leitor pelo celular', 'não tem a exclusão da própria conta', 'política de privacidade da ficha não abre', 'URL de suporte da ficha não abre'], 'conta não-dono, código, leitor, exclusão, privacidade e suporte'],
+      [{ senha: 'outra-senha' }, ['não entra no servidor de demonstração', 'APPLE_DEMO_PASSWORD', './demo.sh --mostrar', 'Redeploy da demo a recria'], 'senha da demo errada (ou conta excluída lá)'],
+      [{ protegida: false }, ['não está protegida no servidor de demonstração', 'DEMO_ADMIN_EMAIL', './demo.sh --mostrar', './atualizar.sh'], 'conta demo sem a proteção'],
+      [{ saldo: 2 }, ['tem 2 peça(s) em estoque', 'Reponha pela Entrada', './demo.sh --renovar'], 'código demo quase sem estoque'],
       [{ fora: true }, ['não respondeu ao /health'], 'servidor fora do ar'],
     ];
     for (const [opcoes, frases, rotulo] of casos) {
@@ -621,6 +625,93 @@ if (!REAIS) {
       conferir(!saida.includes(SENHA_DEMO), `${rotulo}: a senha não aparece`);
       conferir(!demo.chamadas.some((c) => c.metodo === 'EXCLUIU A CONTA'), `${rotulo}: nenhuma conta excluída na demo`);
     }
+  });
+
+  await cenario('Demonstração que sobe com a loja, em <domínio>/demo: o caminho chega à ficha, às notas e a toda conferência', async ({ conferir, guardar }) => {
+    // O que o ./demo.sh --mostrar manda levar ao GitHub (ADR-46): o endereço COM o /demo. A
+    // loja de verdade mora na raiz do mesmo domínio — o servidor de mentira responde como ela
+    // fora do /demo, e qualquer chamada que perder o caminho cai lá.
+    const comCaminho = join(PASTA_CONFIG, 'config-demo-da-loja.json');
+    const config = JSON.parse(readFileSync(join(PASTA_CONFIG, 'config.json'), 'utf8'));
+    // Sem APPLE_URL_SUPORTE: o suporte sai do servidor novo, como a privacidade.
+    writeFileSync(comCaminho, JSON.stringify({ ...config, url_suporte: '', url_servidor_demo: 'https://loja.teste.dev/demo/' }));
+    const demo = await subirDemoFalso({ prefixo: '/demo' });
+    const mock = await subirMock();
+    const { codigo, saida } = await publicar(['--enviar', ...COM_VIDEO], {
+      porta: mock.porta,
+      capturas: baseSintetica,
+      env: { PUBLICAR_CONFIG: comCaminho, PUBLICAR_DEMO_BASE: `${demo.base}/demo` },
+    });
+    guardar(saida);
+    const e = mock.estado;
+    await mock.fechar();
+    await demo.fechar();
+    conferir(codigo === 0 && e.envios.length === 1, 'enviado para revisão: a demo em /demo passou na conferência');
+    conferir(infoPt(e, 'INFO1')?.privacyPolicyUrl === 'https://loja.teste.dev/demo/privacidade', 'a URL de privacidade da ficha é a da DEMO (com o /demo)');
+    const loc = Object.values(e.versaoLocs).find((l) => l.versao === 'VER1')?.atributos ?? {};
+    conferir(loc.description?.includes('https://loja.teste.dev/demo/privacidade'), 'a descrição leva a privacidade com o /demo');
+    conferir(loc.supportUrl === 'https://loja.teste.dev/demo/privacidade', 'a URL de suporte da ficha segue o servidor (a da demo, com o /demo — não a da Vercel)');
+    const notas = e.revisoes.VER1?.atributos.notes ?? '';
+    conferir(notas.includes('Server: https://loja.teste.dev/demo\n'), 'as notas mandam o revisor ao endereço com o /demo (sem a barra do fim)');
+    const feitas = demo.chamadas.map((c) => `${c.metodo} ${c.cheio}`);
+    conferir(
+      ['GET /demo/health', 'POST /demo/api/v1/auth/login', 'GET /demo/api/v1/variantes/codigo-barras/7890000000000', 'GET /demo/api/v1/leitor/pareamentos/0', 'DELETE /demo/api/v1/usuarios/me', 'POST /demo/api/v1/auth/logout', 'GET /demo/privacidade'].every((c) => feitas.includes(c)),
+      'conferiu tudo debaixo do /demo: no ar, login, código, leitor, exclusão, privacidade e a sessão encerrada',
+    );
+    const naLoja = demo.chamadas.filter((c) => c.naLoja).map((c) => `${c.metodo} ${c.cheio}`);
+    conferir(naLoja.length === 0, `nenhuma chamada foi à loja de verdade, na raiz${naLoja.length ? ` (${naLoja.join(', ')})` : ''}`);
+    conferir(!saida.includes(SENHA_DEMO), 'a senha da demo não aparece');
+  });
+
+  await cenario('URL de suporte FORA do servidor da demo que não abre daqui: aviso no resumo, e a revisão sai', async ({ conferir, guardar }) => {
+    // A página de contato do dono, noutro endereço (APPLE_URL_SUPORTE), que daqui não responde.
+    // Página de terceiro pode recusar robô: quem confere é o dono, no navegador, e o envio segue.
+    const suporteDeFora = join(PASTA_CONFIG, 'config-suporte-de-fora.json');
+    const config = JSON.parse(readFileSync(join(PASTA_CONFIG, 'config.json'), 'utf8'));
+    writeFileSync(suporteDeFora, JSON.stringify({ ...config, url_suporte: 'https://127.0.0.1:1/contato' }));
+    const mock = await subirMock();
+    const { codigo, saida } = await publicar(['--enviar', ...COM_VIDEO], {
+      porta: mock.porta,
+      capturas: baseSintetica,
+      env: { PUBLICAR_CONFIG: suporteDeFora },
+    });
+    guardar(saida);
+    const e = mock.estado;
+    await mock.fechar();
+    conferir(codigo === 0 && e.envios.length === 1, 'enviado para revisão: o suporte de fora não segurou o envio');
+    conferir(/⚠ A URL de suporte da ficha \(https:\/\/127\.0\.0\.1:1\/contato\) não abriu daqui/.test(saida), 'o aviso diz qual página não abriu');
+    conferir(/Avisos \(\d+\):\n(?: {2}⚠ .*\n)*? {2}⚠ A URL de suporte da ficha/.test(saida), 'e vai ao resumo, entre os avisos (não às pendências)');
+    // O "Pronto" diz só o que foi conferido: o suporte que ficou no aviso não sai como conferido.
+    const pronto = saida.split('\n').filter((linha) => linha.includes('Pronto para a revisão'));
+    conferir(
+      pronto.length > 0 && pronto.every((linha) => !linha.includes('privacidade e suporte') && linha.includes('privacidade (suporte: ver o aviso)')),
+      'o "Pronto para a revisão" não dá o suporte por conferido: manda ver o aviso',
+    );
+    const loc = Object.values(e.versaoLocs).find((l) => l.versao === 'VER1')?.atributos ?? {};
+    conferir(loc.supportUrl === 'https://127.0.0.1:1/contato', 'a ficha leva a página do dono');
+  });
+
+  await cenario('Outro aviso da conferência do servidor, que não é do suporte: o "Pronto" segue dando o suporte por conferido', async ({ conferir, guardar }) => {
+    // Hoje o único aviso da conferência é o do suporte de fora; um aviso novo ali não pode virar
+    // "suporte: ver o aviso" com a página de suporte no ar. O gancho (teste/aviso-a-mais.mjs) põe
+    // um aviso a mais na volta da conferência, e o resumo tem de ler o campo do suporte.
+    const mock = await subirMock();
+    const { codigo, saida } = await publicar(['--enviar', ...COM_VIDEO], {
+      porta: mock.porta,
+      capturas: baseSintetica,
+      node: ['--import', pathToFileURL(join(MOBILE, 'publicar', 'teste', 'aviso-a-mais.mjs')).href],
+    });
+    guardar(saida);
+    const e = mock.estado;
+    await mock.fechar();
+    conferir(codigo === 0 && e.envios.length === 1, 'enviado para revisão: o aviso a mais não segurou o envio');
+    conferir(/ {2}⚠ Aviso a mais da conferência do servidor de demonstração/.test(saida), 'o aviso a mais saiu (o gancho entrou)');
+    conferir(/ {2}✔ a página de suporte abre\n/.test(saida), 'a página de suporte (outra que não a privacidade) abriu');
+    const pronto = saida.split('\n').filter((linha) => linha.includes('Pronto para a revisão'));
+    conferir(
+      pronto.length > 0 && pronto.every((linha) => linha.includes('privacidade e suporte,') && !linha.includes('ver o aviso')),
+      'o "Pronto para a revisão" dá o suporte por conferido: o aviso a mais não é dele',
+    );
   });
 
   await cenario('Só a chave no GitHub (o resto do padroes.json): a ficha sobe sem senha da demo nem telefone; o --enviar pede os dois', async ({ conferir, guardar }) => {
@@ -642,12 +733,17 @@ if (!REAIS) {
     conferir(!('demoAccountPassword' in rev) && !('contactPhone' in rev), 'senha e telefone vazios não vão à Apple (ela guarda o que tinha)');
     conferir(rev.demoAccountName === padroes.email_demo && rev.contactEmail === padroes.email_suporte, 'conta demo e e-mail de contato do padroes.json');
     conferir(versao?.copyright?.includes(padroes.titular_copyright), 'copyright do padroes.json');
+    const textos = Object.values(mock.estado.versaoLocs).find((l) => l.versao === 'VER1')?.atributos ?? {};
+    conferir(textos.supportUrl === 'https://loja-tria.vercel.app/privacidade', 'URL de suporte: a privacidade da demo da Vercel, a mesma de antes');
     conferir(mock.estado.envios.length === 0, 'nada enviado para revisão');
 
     const envio = await publicar(['--enviar', ...COM_VIDEO], { porta: mock.porta, capturas: baseSintetica, env: { PUBLICAR_CONFIG: soChave } });
     guardar(envio.saida);
     conferir(envio.codigo === 1 && envio.saida.includes('--enviar recusado'), '--enviar recusado');
-    conferir(envio.saida.includes('APPLE_DEMO_PASSWORD') && envio.saida.includes('DEMO_ADMIN_SENHA'), 'pede a senha da demo e diz onde ela está');
+    conferir(
+      envio.saida.includes('APPLE_DEMO_PASSWORD') && envio.saida.includes('./demo.sh --mostrar') && envio.saida.includes('DEMO_ADMIN_SENHA'),
+      'pede a senha da demo e diz onde ela está (na demo da loja e na da Vercel)',
+    );
     conferir(envio.saida.includes('APPLE_TELEFONE_CONTATO'), 'pede o telefone de contato');
     conferir(!chamadasDaDemo(antesDaDemo).includes('POST /api/v1/auth/login'), 'sem a senha, nem tenta entrar na demo');
     conferir(mock.estado.envios.length === 0, 'continua sem envio para revisão');

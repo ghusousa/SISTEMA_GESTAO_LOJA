@@ -51,7 +51,6 @@ export { SERVIDOR_DEMO_PADRAO };
  */
 export const CAMPOS_DA_FICHA = [
   ['APPLE_EMAIL_SUPORTE', 'email_suporte'],
-  ['APPLE_URL_SUPORTE', 'url_suporte'],
   ['APPLE_NOME_CONTATO', 'nome_contato'],
   ['APPLE_TELEFONE_CONTATO', 'telefone_contato'],
   ['APPLE_COPYRIGHT', 'titular_copyright'],
@@ -129,7 +128,12 @@ export function montar(env, padroes = {}) {
     arquivo_p8: 'chave-apple.p8',
     url_etiquetas_demo: valor('APPLE_URL_ETIQUETAS_DEMO', 'url_etiquetas_demo'),
     url_servidor_demo: valor('APPLE_SERVIDOR_DEMO', 'url_servidor_demo') || SERVIDOR_DEMO_PADRAO,
+    // Vazia, a privacidade vira <servidor>/privacidade no lerConfig (ficha.mjs, na hora de
+    // publicar), depois de o endereço do servidor ser conferido — e troca junto com
+    // APPLE_SERVIDOR_DEMO. O suporte vazio segue a privacidade: a preenchida em
+    // APPLE_URL_PRIVACIDADE, se houver (o endereço permanente do dono), ou essa do servidor.
     url_privacidade: valor('APPLE_URL_PRIVACIDADE', 'url_privacidade'),
+    url_suporte: valor('APPLE_URL_SUPORTE', 'url_suporte'),
   };
   for (const [variavel, campo] of CAMPOS_DA_FICHA) config[campo] = valor(variavel, campo);
   // O time da Apple (para a Expo montar certificado e perfil sozinha): nada secreto.
@@ -370,7 +374,12 @@ export async function gravarSenhaDemo(cliente, { appId, versaoDoApp, email, senh
 
 async function senhaDemo() {
   const senha = limpo(process.env.SENHA_DEMO);
-  if (!senha) throw new Error('Senha vazia: preencha a entrada "senha" do workflow (a DEMO_ADMIN_SENHA da Vercel).');
+  if (!senha) {
+    throw new Error(
+      'Senha vazia: preencha a entrada "senha" do workflow com a senha da conta demo (na demo que sobe com a loja, ' +
+        './demo.sh --mostrar, na máquina dela; na Vercel, a DEMO_ADMIN_SENHA).',
+    );
+  }
   const r = montar(process.env, lerPadroes());
   if (!r.temChave) throw new Error(`Chave da Apple incompleta — faltam os Secrets: ${r.faltandoChave.join(', ')}.`);
   const appJson = JSON.parse(readFileSync(join(MOBILE, 'app.json'), 'utf8'));

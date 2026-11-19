@@ -13,6 +13,7 @@ import { useServidorStore } from '@/stores/servidorStore';
 import { useLoja } from '@/hooks/useLoja';
 import { ROTULOS, type Segmento } from '@/lib/segmento';
 import { backupPrecisaDeAtencao, CHAVE_BACKUP } from '@/lib/backup';
+import { urlDaPrivacidade } from '@/lib/enderecoDoServidor';
 
 interface Opcao {
   rotulo: string;
@@ -246,13 +247,11 @@ export default function Mais() {
       ))}
 
       {/* As duas lojas de app exigem que a política de privacidade seja alcançável de
-          dentro do aplicativo. Abre no navegador do aparelho, no servidor da própria loja. */}
+          dentro do aplicativo. Abre no navegador do aparelho, no servidor da própria loja
+          (na demonstração, a de `<domínio>/demo/privacidade`). */}
       <Pressable
         style={s.opcao}
-        onPress={() => {
-          const base = baseAtual().replace(/\/api\/v1\/?$/, '');
-          void Linking.openURL(`${base}/privacidade`);
-        }}
+        onPress={() => void Linking.openURL(urlDaPrivacidade(baseAtual()))}
       >
         <MaterialCommunityIcons name="shield-lock-outline" size={24} color={cores.primaria} />
         <View style={s.opcaoTexto}>

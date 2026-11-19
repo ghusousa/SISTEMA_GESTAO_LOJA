@@ -20,6 +20,12 @@ export const cores = {
   alerta: '#E8A317',
   alertaFraco: '#FFF6E0',
   sucessoFraco: '#E6F4EA',
+  /**
+   * Faixa da loja de demonstração (ADR-46). Ela fica debaixo da barra de status, que é clara
+   * nas telas de cabeçalho azul e escura nas de fundo claro: este tom deixa as duas legíveis
+   * (hora branca 5:1, preta 4,2:1) e o texto branco da faixa também.
+   */
+  demonstracao: '#B45309',
 
   texto: '#16202C',
   textoSuave: '#5A6572',

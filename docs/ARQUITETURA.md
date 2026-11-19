@@ -33,9 +33,16 @@ Módulos e ordem de implementação (dependências primeiro):
 `url_do_banco.py` (a URL do Neon em formato asyncpg, ADR-42), `security.py` (bcrypt + JWT),
 `exceptions.py` (AppError + handler), `pagination.py`, `deps.py`.
 
-Duas formas de rodar o mesmo código: a **loja** (Docker + Caddy na máquina dela, a de
-verdade) e a **Vercel** (demonstração, Neon como banco), ligada só por variáveis que a Vercel
+Três formas de rodar o mesmo código: a **loja** (Docker + Caddy na máquina dela, a de
+verdade); a **demonstração que sobe com ela**, no mesmo domínio, em `<domínio>/demo` — outra
+API, outro banco, outra conta, só dados fictícios, ligada por `COMPOSE_PROFILES=demo` no `.env`
+(ADR-46); e a **Vercel** (demonstração, Neon como banco), ligada só por variáveis que a Vercel
 põe — sem elas nada muda (ADR-42).
+
+```
+navegador / app ──HTTPS──▶ proxy (Caddy) ─┬─ /demo/*  ──▶ api-demo ──▶ banco loja_demo (role loja_demo)
+                                          └─ o resto  ──▶ api      ──▶ banco loja      (o mesmo Postgres)
+```
 
 ---
 
@@ -147,7 +154,21 @@ contrato de `PUT /produtos/{id}/foto` são os mesmos em todos os casos.
   ligado), no máximo 4 MB: a função recusa corpo acima de 4,5 MB com o 413
   `FUNCTION_PAYLOAD_TOO_LARGE` dela, sem o JSON da API (doc: *functions/limitations*, "Request
   body size"); os 0,5 MB que sobram são o envelope do multipart. O `limite_mb` do 422 diz o teto
-  que vale. A web e o app já encolhem a foto para 100 a 300 KB antes de subir.
+  que vale. A web e o app já encolhem a foto para 100 a 300 KB antes de subir. Na demo da
+  instalação, 409 `DEMONSTRACAO_SEM_ESPACO` acima do teto: o da pasta de fotos inteira
+  (`DEMO_FOTOS_MAX_BYTES`, 200 MB por padrão, ajustável no `.env`), que a renovação esvazia
+  (ADR-46).
+- **Login antes do corpo**: a rota não declara o arquivo (`File()`). Com ele, o FastAPI lia o
+  multipart inteiro — e o Starlette gravava o arquivo num temporário — ANTES de resolver as
+  dependências: um envio sem login era gravado todo para só então dar 401. O crachá
+  (`CurrentUser`) roda primeiro, a transação da conferência termina (o envio lento de um celular
+  não segura conexão do pool nem a trava de leitura de `users`), e só então a rota lê o corpo
+  (`request.form`). O contrato: campo `arquivo`, 422 `VALIDACAO` com `detail.campos` quando ele
+  falta; um arquivo e até 4 campos de texto ao lado (o app e a web mandam só o arquivo) — mais
+  que isso, 400, como o multipart quebrado. Esses 400 saem no formato e na frase do Starlette, em
+  inglês (`{"detail": "Too many fields. Maximum number of fields is 4."}`), e não no `{code,
+  message, detail}` da API — como saíam quando o FastAPI lia o corpo sozinho. O corpo continua na
+  documentação (`openapi_extra`).
 - **Cliente do Blob**: `httpx` direto, nas duas chamadas de que a loja precisa — `PUT
   {VERCEL_BLOB_API_URL}?pathname=produtos/<ambiente>/<nome>` (`x-vercel-blob-access: public`,
   `x-content-type` pela assinatura do arquivo, sem sufixo aleatório nem sobrescrita) e `POST
@@ -158,9 +179,10 @@ contrato de `PUT /produtos/{id}/foto` são os mesmos em todos os casos.
   sozinho puxa mais quatro pacotes 0.x e roda sobre `httpx2`, onde o `httpx.MockTransport` dos
   testes não entra. A validação do envio (extensão, teto, assinatura) roda antes de qualquer
   byte sair, igual em todos os modos — só o teto muda na Vercel.
-- **Quem mostra aceita as duas formas**: a web põe `foto_url` direto no `src` (relativo resolve
-  na origem da página, absoluto passa); o app passa por `lib/enderecoDaFoto.ts` (relativo ganha
-  o servidor do aparelho, `http(s)://` passa como está). CSP: o `docker/Caddyfile` não muda —
+- **Quem mostra aceita as duas formas**: a web passa por `enderecoDaFoto()` (`web/js/raiz.js`),
+  que põe a raiz da página no caminho relativo (`/demo/media/...` na demonstração, ADR-46) e
+  deixa passar a URL absoluta do Blob; o app passa por `lib/enderecoDaFoto.ts` (relativo ganha
+  o servidor do aparelho, `http(s)://` passa como está). CSP: o `docker/caddy/Caddyfile` não muda —
   na loja a foto é `'self'`; na Vercel quem libera `https://*.public.blob.vercel-storage.com` no
   `img-src` é o `vercel.json`.
 
@@ -594,7 +616,9 @@ tela. Em produção o Nginx pode servir a mesma pasta direto, e nada quebra se n
 O celular tem `expo-secure-store`; o navegador não tem equivalente, e refresh token em
 `localStorage` é lido por qualquer script que entre na página. Então `POST /auth/login` grava o
 refresh num cookie `httpOnly`, `SameSite=strict`, com `path=/api/v1/auth` e `Secure` fora de
-desenvolvimento — o JavaScript da página nunca o enxerga. O access token vive só em memória, e
+desenvolvimento — o JavaScript da página nunca o enxerga. (Na demonstração em `/demo`, o mesmo
+cookie vale em `/demo/api/v1/auth`: é o caminho que separa as duas sessões no mesmo domínio,
+ADR-46.) O access token vive só em memória, e
 recarregar a página reergue a sessão chamando `/auth/refresh` sem corpo nenhum: o cookie viaja
 sozinho. `/auth/refresh` e `/auth/logout` aceitam o token **no corpo ou no cookie**, então o app do
 celular continua funcionando sem alteração. Um 401 dispara uma renovação compartilhada por todas as
@@ -609,7 +633,8 @@ com sessão própria sem disparar o alarme.
 O caminho óbvio seria assar `EXPO_PUBLIC_API_URL` no build, e ele quebra na primeira mudança de
 IP: seria preciso gerar um instalador novo e reinstalar em cada celular da equipe — justamente no
 dia em que o sistema está fora do ar. Então o endereço fica no aparelho, no `SecureStore`
-(`api/servidor.ts`), e o cliente HTTP resolve a base a cada requisição (`baseAtual()`), e não
+(`api/servidor.ts`) — a base inteira, com o caminho se houver (`https://loja.x.com.br/demo`, a
+demonstração da ADR-46) —, e o cliente HTTP resolve a base a cada requisição (`baseAtual()`), e não
 na criação do axios — assim trocar de servidor com o app aberto funciona. A tela que edita o
 endereço abre pela **engrenagem do login**, e não como pedágio antes da senha: quem recebe o
 `.apk` quase sempre já tem o endereço certo (do build ou de instalação anterior), e obrigar
@@ -962,6 +987,20 @@ falha de login também entra no diário de auditoria (ADR-23) como `LOGIN_FALHOU
 `user_id` e o nome da conta quando ela existe, com o e-mail mascarado quando não existe. A
 consulta que descobre qual dos dois é feita nos dois casos, então o tempo da resposta não muda,
 e a resposta HTTP continua idêntica — a diferença só existe no diário, que só o dono lê. As mesmas contas de tentativa são a matéria-prima do pentest (`scripts/pentest.py`).
+*Emenda (ADR-46): a conta da demonstração da instalação não trava pelo e-mail.* Na demonstração
+que sobe com a loja (`/demo`: `settings.demonstracao` e `settings.conta_demo_protegida`), o e-mail
+da conta das notas da Apple conta **só as falhas por IP** (`segundos_de_bloqueio(...,
+por_email=False)`). O e-mail dela está nas notas da revisão e o endereço da demo vai na ficha
+pública da App Store: dez senhas erradas a cada 15 min — uma por liberação, guiadas pelo
+`Retry-After` — trancavam o revisor do lado de fora para sempre, de um IP só, sem nunca chegar ao
+teto de 30 por IP. A trava por IP continua segurando a força bruta de uma origem, e a senha dela
+não é de gente (20 caracteres sorteados pelo instalador). **Na Vercel, não**: lá a
+`DEMO_ADMIN_SENHA` é escolhida por gente, no painel, e sem a trava por e-mail um chute distribuído
+(um IP por tentativa) contra um e-mail conhecido não teria teto nenhum — então lá vale a regra de
+sempre, e a proteção da ADR-45 (outra coisa) continua. Não vaza quem existe: a exceção é UM e-mail
+conhecido de antemão (está na config e nas notas, não na resposta), e qualquer outro e-mail, exista
+a conta ou não, segue com a resposta idêntica. Na loja de verdade `conta_demo_protegida` é vazia, e
+a regra é a de sempre.
 
 **ADR-25 — Em produção, a API não conta de si o que ajuda quem ataca.**
 `settings.producao` é verdadeiro em qualquer ambiente que não seja `dev`/`test`/`local`. Nele,
@@ -970,17 +1009,37 @@ da loja), e toda resposta sai com `X-Content-Type-Options: nosniff`, `X-Frame-Op
 `Referrer-Policy: strict-origin-when-cross-origin`. Não é segurança de verdade — é não entregar
 de graça o que o atacante teria de descobrir sozinho. A checagem é uma propriedade só
 (`config.py`), para "estamos em produção?" ter uma resposta e não várias.
-CSP, HSTS e `Permissions-Policy` moram no **proxy** (`docker/Caddyfile`), que é quem fala com o
+CSP, HSTS e `Permissions-Policy` moram no **proxy** (`docker/caddy/Caddyfile`), que é quem fala com o
 navegador. A CSP é a segunda barreira contra XSS (o access token mora em memória): `script-src
 'self'` sem `'unsafe-inline'` — o único atributo de evento que existia (`onclick` do
 `erroBloco`) virou delegação em `ui.js` —, `style-src 'self' 'unsafe-inline'` (estilo inline
 existe nas telas e no recibo impresso), `img-src 'self' data: blob:` (ícone e prévia da foto),
 `connect-src 'self'` mais o WebSocket da mesma origem, `frame-ancestors 'none'`. `/docs` e
 `/redoc` ficam fora dela: o Swagger vem de CDN e só existe fora de produção. HSTS vai sempre
-(o navegador o ignora em HTTP), por um ano e sem `includeSubDomains`. `scripts/pentest.py`
-confere os três no Caddy quando `PENTEST_PROXY` aponta para ele, e no `docker/Caddyfile` quando
-não aponta. Rota nova que precise de origem de fora tem de entrar na CSP, ou o navegador a
-bloqueia calado.
+(o navegador o ignora em HTTP), por um ano e sem `includeSubDomains`. O proxy também põe **teto
+no corpo do pedido, por rota** (`request_body`, na loja e na demo, ADR-46): as rotas de JSON leem
+o corpo inteiro, na memória, ANTES de conferir o login; a da foto confere o login antes de ler
+(§2.2) — sem conferir o login antes, o arquivo ia num temporário sem teto, e um `PUT .../foto`
+de 40 MB sem login ocupava 39 MB de disco até sair o 401 —, mas, com login, o envio inteiro ainda
+vai ao temporário antes de a API recusar a foto grande. E o teto vale por pedido:
+N conexões abertas, segurando o último byte, seguram N vezes ele (com 10 MB em toda rota, 20 JSON
+no login sem conta levaram a API da loja de 91 para 290 MiB). Por isso cada rota tem o menor que
+lhe cabe: **6 MB** no `PUT .../produtos/{id}/foto`, o único arquivo — a API recusa a foto acima
+de 5 MiB com a frase dela (422), e as duas pontas a encolhem para 100–300 KB antes —, e **2 MB**
+em todo o resto, que é JSON: o maior legítimo, a contagem do Inventário ou a Entrada de uma nota,
+leva de 50 a 70 bytes por peça (venda e condicional a API limita a 200 e 100 itens). Os dois
+`request_body` têm matchers que se excluem (empilhados, o menor valeria para a foto); rota nova
+que receba arquivo precisa do seu, ou fica com os 2 MB. Acima do teto, o Caddy responde 413 e a
+API nunca recebe mais que ele — o 413 é do **Caddy 2.7** em diante: o 2.6 responde 502 ao mesmo
+corpo com `Content-Length`, e o `handle_errors` da demo exclui esse erro pela mensagem (`request
+body too large`) para não chamá-lo de "demonstração desligada". O WebSocket do tempo real não
+sente o teto: depois do upgrade, o Caddy liga as duas pontas sem ler corpo (e ele não oferece
+WebSocket por HTTP/2, onde o socket seria o corpo). Na Vercel o teto é o da plataforma (4,5 MB,
+ADR-42). `scripts/pentest.py` confere tudo isso no Caddy quando `PENTEST_PROXY` aponta para ele,
+e no `docker/caddy/Caddyfile` quando não aponta — lido como o Caddy lê: comentário não conta,
+`request_body` aninhado num `handle` não cobre o site, e o tamanho vem nas unidades do
+go-humanize (`1.5MB`, `10Mi`). Rota nova que precise de origem de fora tem de entrar na CSP, ou o
+navegador a bloqueia calado.
 
 **ADR-26 — Nome e ramo da loja no banco, e o ramo troca palavras, não dados.**
 O sistema nasceu para uma loja de roupas e o vocabulário foi junto ("peça", "tamanho", "cor").
@@ -1053,7 +1112,9 @@ cuida do servidor). `filename_encryption = off`: no Drive o arquivo é
 `loja-AAAAMMDD-HHMMSS.dump.bin`, o nome mostra a data e a rotação por nome continua igual; o
 conteúdo é que não abre. A chave nasce na máquina (`backups/.chave-do-backup`, 600, 24 letras
 sem as que se confundem no papel) e **não** vai para o banco (iria dentro do dump que protege),
-nem para o `.env` (o `instalar.sh --forcar` o reescreve), nem para `docker/estado/` (montado na
+nem para o `.env` (que o docker compose, o instalador e os outros scripts leem, que se abre para
+editar e que vai junto quando a configuração é copiada para outra pasta ou máquina — a chave mora
+só naquele arquivo, que só o `backup.sh` lê), nem para `docker/estado/` (montado na
 API, que nunca vê credencial). Sem ela a cópia não abre, então ela é mostrada UMA vez ao nascer
 com alguém no terminal (o instalador), nunca no journal (pelo timer sai só o recado, também no
 celular), e `--mostrar-chave` a mostra de novo. `--restaurar` reconhece a cópia cifrada pelo
@@ -1549,6 +1610,12 @@ existe no build, e o build reprova dizendo isso); o HSTS, que a Vercel pode já 
 principal — o `atualizar.sh` exige TODAS verdes (ADR-34), e aí um deploy vermelho da
 demonstração seguraria a atualização das lojas (a integração costuma publicar *commit status*,
 que ele não lê; conferir no primeiro deploy em `GET /repos/.../commits/<sha>/check-runs`).
+*Emenda (ADR-46):* o preparo da demonstração saiu do `scripts/vercel_build.py` para
+`app/demonstracao.py`, que serve também à demonstração que sobe com a loja. Na Vercel nada muda:
+autor "Build da Vercel" nos marcos, o nome da loja fica o que estiver, a senha do dono nunca é
+trocada e a faixa "dados fictícios" não aparece (`settings.demonstracao` é falso lá; quem a
+Vercel liga é `settings.vercel`). A Vercel deixa de ser a única demonstração; continua sendo a
+única forma de rodar sem Docker.
 
 **ADR-43 — O celular como leitor de código de barras do computador.**
 *Contexto:* no balcão, o leitor USB é um teclado (`web/js/leitor.js`) — e nem toda loja tem um,
@@ -1631,7 +1698,8 @@ QR* (espelho `web/js/leitor-remoto.js` ↔ `mobile/src/lib/leitorRemoto.ts`, com
 pontas): `gestaoloja://leitor?v=1&c=<CODIGO>&api=<base da API, encodeURIComponent>`; o leitor
 do app aceita o convite ou o código digitado solto e recusa o resto (o código de barras de uma
 peça lido por engano, uma URL de outro esquema); `mesmoServidor` compara host:porta (porta padrão
-normalizada, sem diferenciar maiúsculas) e confia no servidor quando o convite vem de loopback.
+normalizada, sem diferenciar maiúsculas) e o caminho da base — a demonstração mora em `/demo` no
+MESMO host da loja (ADR-46) — e confia no host quando o convite vem de loopback.
 *As duas pontas:* **web** — o botão "📱 Celular como leitor" mora no rodapé da lateral, em
 toda tela e para todo papel (`leitor-celular.js`). Ele gera o código e abre o modal
 (`leitor-celular-janela.js`) com o QR — SVG montado pelo DOM (`vendor/qrcode.js` + `qr.js`),
@@ -1736,7 +1804,7 @@ app inexistente vira aviso com o passo do site e o build sai mesmo assim. O perf
 três campos); o `ascAppId` entra só na cópia do runner. Com o time da Apple (Team ID e tipo),
 o build recebe `EXPO_ASC_*`/`EXPO_APPLE_*` e a Expo cria ou conserta certificado e perfil sem
 perguntar. **O que não é segredo mora em `mobile/publicar/padroes.json`** (Issuer ID da chave,
-time, contato, URL de suporte, copyright, conta e código de barras da demo): o GitHub só precisa
+time, contato, copyright, conta e código de barras da demo): o GitHub só precisa
 de `EXPO_TOKEN`, `ASC_KEY_ID` e `ASC_KEY_P8` para subir a ficha, e Variable de mesmo nome vence o
 padrão (`ASC_ISSUER_ID` e o telefone também como Secret: o passo "Preparar" lê os dois contextos). Pedir nove Variables a quem só quer publicar era o que travava a
 primeira rodada; segredo de verdade (chave, senha da demo) nunca entra nesse arquivo, e o
@@ -1750,7 +1818,15 @@ e não pode criar Secret (um agente, por exemplo) publica assim. O issuer e o ti
 `ci.mjs`), nunca por saída que contenha Secret. O `app.json` guarda o `projectId` da Expo; sem
 `owner`, porque do SDK 53 em diante o eas-cli não o exige nem com token de robô. O endereço que o revisor usa é
 `url_servidor_demo` (padrão `https://loja-tria.vercel.app`, ADR-42) e a política de
-privacidade sai de `<servidor>/privacidade`, que o próprio sistema serve. Entrada do formulário
+privacidade sai de `<servidor>/privacidade`, que o próprio sistema serve; a URL de suporte, sem
+`APPLE_URL_SUPORTE`, é a mesma da privacidade — sai também de `<servidor>/privacidade` e troca
+junto com `APPLE_SERVIDOR_DEMO` (fixa no `padroes.json`, ficava no servidor antigo), ou segue a
+`APPLE_URL_PRIVACIDADE` do dono. O endereço pode ter
+CAMINHO — a demonstração que sobe com a loja mora em `https://<domínio>/demo` (ADR-46) —, então
+toda junção (rotas da conferência, privacidade, notas) é por texto sobre a base inteira, nunca
+`new URL('/x', base)`, que apagaria o `/demo` e conferiria a loja de verdade no lugar da demo;
+`servidorDemo()` (`ficha.mjs`) recusa o que não é base (http, `?`, `#`, `@`, `//`, `/app`,
+`/api`) antes de ele chegar às notas. Entrada do formulário
 vai por `env`, nunca colada no script (`${{ }}` no `run:` viraria comando num runner com
 token). *Consequências:* publicar é um clique por rodada (build; depois, revisão), sem Mac;
 os segredos são os mesmos do Obras e moram no GitHub, nunca no repositório nem no log
@@ -1832,19 +1908,27 @@ editável ou travada; a mesma regra do publicador, `versoes.mjs`) e a travada pa
 envio do build; no completo, `publicar.mjs --conferir-envio` confere, só LENDO a Apple, tudo o que
 a revisão cobrará. *Servidor de demonstração* conferido pela API pública do sistema: `/health`, o
 login da conta demo com papel ADMIN, o código demo com ao menos 3 peças em estoque, a
-privacidade, a rota do leitor (404 `NAO_ENCONTRADO` × 404 genérico de deploy velho), a da exclusão
+privacidade e a URL de suporte (quando é outra página; sem `APPLE_URL_SUPORTE`, é a mesma), a
+rota do leitor (404 `NAO_ENCONTRADO` × 404 genérico de deploy velho), a da exclusão
 da própria conta (`DELETE /usuarios/me` com corpo vazio: 422 no campo senha, a validação recusa
 antes da rota e nada é excluído) e a proteção da conta demo (uma senha aleatória recebe 409
 `CONTA_DE_DEMONSTRACAO`, que vem antes de conferir a senha — ADR-45); a sessão aberta é encerrada
-e a senha da demo não sai em mensagem. Ele fica no ar
-depois da revisão: serve a política de privacidade da ficha. *Ficha fiel ao build:*
+e a senha da demo não sai em mensagem. Privacidade e suporte são pedidos como página
+(`Accept: text/html`, como o navegador do revisor). O suporte debaixo do servidor da demo é página
+do sistema e segura o envio como a privacidade; o de fora dele (a página de contato do dono, de
+terceiro) que não abre daqui vira só aviso — página de terceiro pode recusar robô, e o "não abre"
+seria falso —, e o resumo não o dá por conferido: quem confere é o dono, no navegador. O servidor
+de demonstração fica no ar depois da revisão: serve a política de privacidade da ficha.
+*Ficha fiel ao build:*
 `TELAS_CITADAS` (rótulo → arquivo do app que o mostra) para antes de falar com a Apple quando um
 texto cita tela que o commit não tem (a exclusão de conta é o ADR-45). *Idioma:* registro criado
 no site com outro idioma principal → pt-BR vira o principal e as localizações do outro idioma
 (versão e appInfo) são apagadas, ou travariam o envio vazias. *6,9" fora da rodada:* o conjunto
 velho da versão é apagado. *Preço:* só o ponto 0,00 da lista inteira (paginada); sem ele, nada é
 gravado e fica pendência. *Serviços externos* escritos a partir do código: dado e login só do
-servidor da loja; demonstração na Vercel com Neon e Vercel Blob; NFC-e opcional (Focus NFe),
+servidor da loja; a demonstração é uma loja só de dados fictícios, isolada de qualquer loja de
+verdade (as notas e o guia não amarram um provedor: ela pode ser a da instalação, ADR-46, ou a da
+Vercel, ADR-42, e quem cita os provedores é a política de privacidade); NFC-e opcional (Focus NFe),
 desligada na demonstração; e a biblioteca de rede do React Native (NetInfo), que no iPhone testa a
 conexão com um pedido vazio ao `generate_204` do Google — dito nas notas, para não afirmar
 "nenhum outro servidor". *Teste em iPhones reais* (experimental até a 1ª rodada real): perfil
@@ -1865,7 +1949,8 @@ a Apple pediu e com o servidor da demonstração conferido; mudar prints ou a li
 pede refazer o guia (o CI acusa). A Apple de mentira ganhou um envio ativo por
 plataforma, o estado `UNRESOLVED_ISSUES`, anexos, aparelhos, localizações de outro idioma, pontos
 de preço paginados e builds antigos da mesma versão; `teste/demo-falso.mjs` faz o servidor de
-demonstração.
+demonstração (com `prefixo: '/demo'`, a demo debaixo do caminho e a loja de verdade na raiz: o
+cenário de `rodar.mjs` e o `servidor-demo.test.mjs` provam que nenhuma chamada perde o caminho).
 *Capturas do app de verdade (nov/2026):* as 20 imagens saem de `mobile/publicar/capturas/gerar.sh`
 — banco local de teste com a loja da seed (`seed_demo.py`, "Loja Tria", roupas), a API e o export
 web do próprio app, fotografado cena a cena pelo Playwright numa tela de iPhone (áreas seguras
@@ -1960,10 +2045,276 @@ isso, o revisor que criasse outro dono e voltasse em "Excluir minha conta" apaga
 notas no meio da revisão. O publicador confere a trava com uma senha aleatória (que nunca confere
 e não exclui nada) e recusa o envio sem ela; e o Redeploy recria o dono se uma demo de antes da
 trava o perdeu (`_garantir_dono_da_demonstracao`, idempotente).
+*Emenda (ADR-46): a proteção vale fora da Vercel.* Ela liga em qualquer demonstração — a Vercel ou
+a que sobe com a loja em `/demo` — por `settings.conta_demo_protegida` (`(vercel or demonstracao)
+and DEMO_ADMIN_EMAIL`, o e-mail minúsculo); na loja de verdade a mesma variável, se existir por
+engano, não protege nada (o dono de uma loja real sai como qualquer um). A recusa continua antes
+da senha, e, na demo da instalação, a conta das notas também não trava pelo e-mail no login
+(emenda da ADR-24; na Vercel, trava como qualquer uma). Quem
+recria a conta é quem sobe a demonstração: na Vercel, o Redeploy; na instalação, cada subida da
+`api-demo` CONVERGE a conta (existe, é dona, está ativa e tem a senha de `DEMO_ADMIN_SENHA` — o
+hash é refeito se não bater, e as sessões dela caem), e a renovação da madrugada a refaz do zero.
+
+**ADR-46 — A demonstração sobe com a loja, em `<domínio>/demo`.**
+*Contexto:* a revisão da Apple pede um servidor de demonstração no ar — conta de dono, dados de
+mentira e a política de privacidade servida por ele (ADR-44, ADR-45) —, e ele só existia na Vercel
+(ADR-42), montado à mão; numa loja instalada, o README ensinava a semear o PRÓPRIO banco com o
+`seed_demo.py` ("não rode no banco da loja de verdade"). O dono pediu, com estas palavras: "a conta
+demo já vai vir pronta" ao rodar o `./instalar.sh` numa VPS; "dados fictícios, nada de real; esse
+usuário só pode fazer tudo no demo, e no real nada" — "praticamente dois sistemas rodando juntos";
+o domínio configurado na própria instalação; a loja em `loja.seudominio.com.br` e a demonstração em
+`loja.seudominio.com.br/demo`. A Vercel fica como está: nada muda no comportamento dela.
+*Decisão:* uma segunda loja inteira ao lado da de verdade, na mesma máquina e no mesmo domínio,
+separada camada por camada — porque o caminho, ao contrário de um subdomínio, não separa nada no
+navegador: as duas dividem a mesma origem.
+- **Topologia.** O `docker-compose.yml` ganha, no profile `demo`, o one-shot `demo-banco` e a
+  `api-demo` (a MESMA imagem da `api`, `pull_policy: never`); banco e proxy são os de sempre. Quem
+  liga é `COMPOSE_PROFILES=demo` no `.env`, que vale para todo `docker compose` da pasta. O proxy é
+  um site só (`docker/caddy/Caddyfile`): `/demo` redireciona para `/demo/`, `/demo/*` vai à
+  `api-demo` **sem tirar o prefixo** e o resto vai à `api`. Com a demo desligada ou ainda subindo,
+  `/demo/api/*` recebe do próprio Caddy um 503 `DEMONSTRACAO_FORA_DO_AR` em JSON, e o resto de
+  `/demo/*` uma página com a mesma frase — nunca a loja de verdade no lugar, e nunca um 502 vazio:
+  com a frase, o app e a tela dizem que a demonstração está desligada ou começando, em vez de um
+  erro que faria a pessoa redigitar um endereço certo. Só o erro de não alcançar a `api-demo` (502
+  a 504) vira a frase: o 413 do teto do corpo (o mesmo da loja, por rota: 6 MB na foto e 2 MB no
+  resto, ADR-25) também é erro do Caddy, e passa como é — "desligada" seria mentira para quem
+  mandou um corpo grande demais. O 413 é do Caddy 2.7 em diante; no 2.6 o mesmo corpo sai 502
+  (`request body too large`), e por isso os matchers da frase excluem esse erro pela mensagem: na
+  demo ele sai 502 vazio, como na loja, e nunca "desligada ou começando".
+- **Banco e role próprios, sem CONNECT no real.** No MESMO Postgres (um segundo servidor de banco
+  seria memória a mais numa VPS pequena), o `demo-banco` cria e converge, a cada `up`, a role
+  `loja_demo` — sem superusuário, sem criar banco nem role, `CONNECTION LIMIT 20` — dona só do banco
+  `loja_demo`, e faz `REVOKE CONNECT ON DATABASE loja FROM PUBLIC` (e do `postgres`). Dentro do
+  Postgres a demonstração só enxerga o que é dela: nem uma injeção de SQL na demo conectaria no banco
+  real, e o superusuário `loja`, cuja senha a `api-demo` não recebe, é só da loja e do backup. O
+  limite de conexões existe porque o `max_connections` é um só para os dois bancos: um robô
+  martelando a demo não toma as conexões do balcão. E o pool da `api-demo` cabe nele
+  (`DB_POOL_SIZE: "5"` e `DB_MAX_OVERFLOW: "8"` no compose): 13 no pico, mais 1 do LISTEN do tempo
+  real e as 2 ou 3 do preparar/renovar (por `exec` no mesmo contêiner) ficam abaixo de 20. Com o
+  padrão da loja (10 + 20), a 21ª conexão era recusada pelo Postgres e o pedido saía 500; dentro
+  do pool, o excesso espera a vez — até 30 s (o `pool_timeout` do SQLAlchemy). Passado isso, sai
+  500 também: uma rajada de logins na conta da demo, cada um segurando a conexão na fila da trava
+  por e-mail, chega lá (130 de uma vez deram 11). E o banco da demo leva um marco, `ALTER DATABASE
+  loja_demo SET loja.demonstracao = 'sim'`, que o real nunca tem: é a segunda chave de tudo que
+  APAGA dados (abaixo).
+- **Segredos próprios, escritos à mão.** O `.env` ganha `DEMO_SENHA_BANCO` (sorteada, 32
+  caracteres), `DEMO_JWT_SECRET` (sorteado, 64), `DEMO_ADMIN_EMAIL=dono@demo.example` (fixo:
+  `.example` é reservado pela RFC 2606, nunca será a caixa de alguém) e `DEMO_ADMIN_SENHA`
+  (sorteada, 20). Só o `instalar.sh` e o `demo.sh` escrevem neles, com o `.env` em 600, e o
+  `--forcar` MANTÉM os que já existem: a senha é a que está na Apple. **O segredo do login é outro
+  porque o access token só leva o id do usuário** (`sub`, sem emissor nem instância) e a API busca o
+  usuário por esse id no banco DELA: com o segredo da loja, o token do revisor (id 1 na demo) abriria
+  a conta de id 1 da loja — a do dono. O instalador sorteia de novo até os dois serem diferentes. A
+  lista de variáveis da `api-demo` é escrita à mão, nunca copiada da `api` nem por `env_file`:
+  `FOCUSNFE_TOKEN`, `SENHA_BANCO` e o `JWT_SECRET` da loja não chegam lá. As fotos ficam num volume
+  dela (`fotos-da-demo`), e a NFC-e é desligada pela própria config quando `settings.demonstracao`
+  está ligada, venha o que vier do ambiente: a venda de quem testa nunca sai como nota no CNPJ da
+  loja.
+- **As fotos da demo têm teto.** O volume `fotos-da-demo` mora no MESMO disco do banco da loja, e a
+  senha da demo vai para a Apple e para quem o dono mostra o sistema: sem teto, envios repetidos de
+  5 MB (criar produto é livre, então apagar a foto trocada não limitaria nada) encheriam o disco e
+  parariam o Postgres da loja. Com `settings.demonstracao` e a foto no disco, `fotos._fabricar` dá
+  o `FotosDaDemonstracao`: antes de gravar ele soma o que `MEDIA_DIR/produtos` OCUPA — o bloco
+  inteiro de cada arquivo, senão milhões de "fotos" de 9 bytes passariam pelo teto enchendo o disco
+  e os inodes — e recusa com 409 `DEMONSTRACAO_SEM_ESPACO` a foto que passaria de
+  `DEMO_FOTOS_MAX_BYTES` — 200 MB por padrão; o compose passa à `api-demo` o valor do `.env`
+  (`${DEMO_FOTOS_MAX_BYTES:-209715200}`: vazio não vira número e a demo não subiria), e o valor
+  novo vale depois de recriar a `api-demo` (`./demo.sh --ligar`). Medir e gravar são um passo só
+  (`asyncio.Lock` do processo; a `api-demo` é um processo só — com N, o teto passaria de no máximo
+  N-1 fotos). A renovação esvazia
+  a pasta (abaixo), e o teto volta a zero toda madrugada. Na loja e no Blob, nada disso.
+- **A API sob o prefixo.** `LOJA_DEMONSTRACAO=1` liga `settings.demonstracao`; `PREFIXO=/demo`
+  (vazio, ou `/[a-z0-9-]+` sem barra no fim — o resto é recusado no boot, nunca "consertado": um
+  prefixo que a API entendesse diferente do Caddy daria 404 em tudo, calado) faz o `app.main` expor
+  em `app` um envoltório Starlette com `Mount(prefixo, app=<a FastAPI>)` que repassa o lifespan; o
+  CMD `uvicorn app.main:app` não muda e, fora do prefixo, a resposta é 404. Tudo que gera caminho
+  absoluto lê o `root_path` que o `Mount` põe: o `/` leva a `/demo/app/` (um `/app/` seco levaria
+  quem testa para a loja), o cookie `loja_refresh` vale em `{root}/api/v1/auth` no set e no delete,
+  e a auditoria classifica o caminho sem o prefixo — lido cru, toda mutação da demo saía do diário,
+  calada. `GET /configuracao` e `/configuracao/completa` dizem `demonstracao`.
+- **No navegador: cookie por caminho, web relativa, faixa.** O cookie tem o MESMO nome nas duas, e
+  é o `Path` que as separa: o navegador não manda o refresh da loja para a demo nem o contrário, e
+  entrar ou sair de uma não derruba a sessão da outra. A web é a mesma pasta, servida em
+  `<raiz>/app/`, e descobre a raiz pelo próprio endereço (`web/js/raiz.js`: o que vem antes do
+  `/app` do fim; "" na loja, "/demo" na demo), sem build nem config: API e renovação em
+  `<raiz>/api/v1`, o WebSocket em `<raiz>/api/v1/tempo-real`, a foto relativa em `<raiz>/media/...`
+  (a URL absoluta do Blob passa direto) e as páginas legais com a raiz. Com o `/api/v1` absoluto de
+  antes, a página da demo entraria, venderia e abriria o tempo real NA LOJA. As chaves do
+  `sessionStorage`/`localStorage` e o `BroadcastChannel` ganham `@<raiz>` só fora da raiz vazia: na
+  loja os nomes ficam os de sempre e nada guardado se perde na atualização. E, porque as duas têm as
+  mesmas telas no mesmo domínio, a demo mostra uma **faixa fixa** no topo de toda tela, já na
+  entrada — "Loja de demonstração — os dados são fictícios." —: sem ela, quem tem as duas abas
+  abertas lança a venda de verdade na demo, e ela some na renovação da madrugada. Quem decide é o
+  servidor (`demonstracao`), não o caminho da página: a demo da Vercel mora na raiz do domínio dela,
+  e lá nada muda. O app faz o mesmo com o endereço do aparelho: `normalizarEndereco` guarda a base
+  COM o caminho (`https://loja.x.com.br/demo`; sem esquema, `https://` para nome de domínio e
+  `http://` só para IP, `localhost` e `*.local`, a rede local que o ATS do iOS libera), junta as
+  rotas por texto, compara a base INTEIRA no convite do leitor (ADR-43) e mostra a mesma faixa. O
+  publicador aceita `url_servidor_demo` com caminho e também junta por texto (ADR-44).
+- **A conta do revisor.** A proteção da ADR-45 vale por `settings.conta_demo_protegida`, que liga na
+  Vercel ou na demonstração e nunca na loja. A exceção da trava da ADR-24 (só o IP conta) vale SÓ na
+  demonstração da instalação (`settings.demonstracao`), cuja senha é sorteada; na Vercel a senha é
+  escolhida por gente, e a trava por e-mail continua a de sempre (as emendas estão nas duas ADRs).
+- **Carga, preparo e renovação: duas chaves.** O que era do build da Vercel virou
+  `app/demonstracao.py`, com duas origens (ADR-42 para a Vercel). Na instalação, o
+  `docker/entrada.sh` roda, depois do `alembic upgrade head`, `python -m app.cli
+  preparar-demonstracao` a cada subida da `api-demo` — o ÚNICO gatilho da carga: dois correriam
+  juntos e duplicariam o que não tem chave única —; se ele falhar, avisa e sobe o servidor assim
+  mesmo, sem laço de reinícios, e o próximo boot retoma de onde parou (a carga é retomável). Ali o
+  preparo assina os marcos como "Demonstração (instalação)", dá o nome "Loja de Demonstração" e o
+  ramo ROUPAS (o catálogo do seed é de roupa) e converge a conta do revisor. `renovar-demonstracao`
+  faz TRUNCATE de todas as tabelas do schema `public` menos `alembic_version` (`RESTART IDENTITY
+  CASCADE`), apaga os arquivos de `MEDIA_DIR/produtos` (a pasta e o `MEDIA_DIR`, onde o volume está
+  montado, ficam) e prepara de novo. O TRUNCATE disputa as travas das tabelas com a API que está
+  atendendo, e trava uma a uma. Em ordem alfabética, chegava a `users` quase no fim: a requisição
+  que já tinha passado pelo crachá (`get_current_user` lê `users` primeiro e segura a trava até o
+  fim) pedia `products`, que ele já tinha, e o Postgres derrubava um dos dois — às vezes a
+  requisição, com 500. Por isso ele trava antes as **portas da API**, na ordem em que ela as pega
+  (`PORTAS_DA_API`: `login_attempts`, que o login conta antes de ler a conta; `refresh_tokens`, que
+  a renovação da sessão trava antes de ler a conta; `users`), num `LOCK TABLE` — que trava na
+  ordem dada; a do TRUNCATE não é documentada —, e só então o resto: quem passou por uma porta e
+  depois só pede o que ele trava depois dela (o login, a renovação da sessão, a lista de produtos
+  depois do crachá) termina sem esbarrar nele, e quem chega depois espera na porta sem segurar nada.
+  Com três navegadores pedindo a lista de produtos sem parar, 8 renovações em 8 sem impasse, sem
+  repetição e sem 5xx (antes, repetição em 4 das 8 e 23 respostas 500). Nem todo caminho cabe nessa
+  ordem. O logout e as rotas que derrubam sessões (trocar a senha, desativar, excluir conta) pegam
+  `users` (o crachá) e DEPOIS `refresh_tokens` ou `login_attempts`, na ordem contrária à da
+  renovação da sessão — nenhuma ordem das portas serve às duas —, e fecham um impasse com o
+  TRUNCATE, que já tem `refresh_tokens` e espera em `users`. O Postgres derruba o primeiro dos dois
+  a completar 1 s parado (o `deadlock_timeout`) com o ciclo já fechado. Quando a rota pede
+  `refresh_tokens` logo depois do crachá (o logout, o desativar), cai o TRUNCATE (40P01), que já
+  esperava: perde a vez uma vez e repete, e a requisição termina em ~1 s — numa carga com logouts no
+  meio, 8 renovações em 8 e nenhum 5xx. Quando ela passa antes pelo bcrypt (as de senha e a exclusão
+  da própria conta: uns 0,25 s cada bcrypt na máquina dos testes) e ele termina entre 1 s e uns 4 s
+  depois de o TRUNCATE parar na porta, quem cai é a requisição, com 500 (medido: uma pausa de 1,5 s
+  ali dá 40P01 nela, e o TRUNCATE segue); passado isso, o prazo da trava (5 s) vence antes, e quem
+  perde a vez é o TRUNCATE (55P03). Quem entra sem passar por uma porta também pode tomar a vez — a
+  transação que a rota abre depois de um commit no meio da requisição: a da foto, depois do login, e
+  a releitura de uma mutação enquanto a auditoria grava o diário por outra conexão (a borda espera
+  `users` atrás do TRUNCATE, que espera a releitura: um ciclo que o Postgres não vê, desfeito pelo
+  prazo da trava; custa uma tentativa, com 55P03, e atrasa a resposta da mutação em até 5 s, sem
+  5xx). Para o TRUNCATE que perde a vez fica a repetição, como rede: cada trava espera no máximo 5 s
+  (`lock_timeout`) e, em impasse (40P01) ou espera vencida (55P03), a transação inteira volta — nada
+  foi zerado — e se repete, até 5 tentativas, com pausa que dobra (1, 2, 4, 8 s), avisando na saída.
+  `DEMO_RENOVAR_ESPERA_DA_TRAVA_MS` troca esse prazo, mas só os testes a usam (para encurtar ou
+  alongar a espera): na instalação ela não chega à `api-demo`. As fotos só saem depois de um
+  TRUNCATE que deu certo. Os dois comandos
+  exigem as DUAS chaves — o contêiner se diz
+  demonstração (`settings.demonstracao`) E o banco também (o marco `loja.demonstracao`) —, porque o
+  banco de uma loja recém-instalada está vazio, que é exatamente o "pode semear" da carga: uma
+  variável copiada por engano para o contêiner da loja não basta para tocar no banco dela. Sem as
+  duas, saem com código ≠ 0 e a frase de qual faltou, sem tocar em nada; nunca imprimem senha nem a
+  URL do banco. As contas (`DEMO_ADMIN_*`, `DEMO_VENDEDORA_SENHA`) são conferidas ANTES do TRUNCATE
+  e de qualquer escrita — a régua do cadastro (`UsuarioCreate`), mais a senha de até 72 BYTES (o
+  bcrypt; o cadastro conta caracteres) e o dono com e-mail diferente do da vendedora (`ana@loja.com`,
+  que a carga cria) —: inválidas, a renovação sai ≠ 0 sem tocar em nada e a demo de ontem segue no
+  ar, com a conta do revisor (o preparo também para sem gravar). Na instalação, preparo e renovação
+  esperam um pelo outro (`pg_advisory_lock` de sessão, numa conexão própria); na Vercel, não — uma
+  trava presa no Neon seguraria o próximo deploy.
+- **Renovação diária, porque o seed é relativo a hoje.** As vendas da carga se espalham pelos 25 dias
+  ANTES do dia em que ela rodou: semanas depois, o "hoje", a semana e o mês da demo estariam vazios,
+  e o que cada revisor vendeu, cancelou ou excluiu ficaria para o próximo — inclusive o saldo do
+  código das notas, que a conferência do publicador exige (ao menos 3 peças). O timer
+  `loja-demo-renovar` (04:30 no fuso da loja, com `OnFailure=loja-aviso@%N`, ADR-32) renova toda
+  madrugada; `./demo.sh --renovar` faz o mesmo na hora.
+- **A demo nunca derruba a loja.** Nenhum serviço da loja tem `depends_on` num da demo, e a
+  `api-demo` tem teto de memória (`mem_limit`, 512 MB por padrão, `DEMO_MEMORIA` no `.env`): numa
+  VPS pequena é ela que cede, nunca a loja. O instalador sobe a loja pelo nome, confere, e só depois
+  a demo, esperando com teto e só avisando se ela não ficou pronta. O `atualizar.sh` sobe em DUAS
+  fases: `up -d --build --remove-orphans db api proxy` decide sucesso ou volta atrás, como sempre; só
+  então, com a demo ligada, `up -d demo-banco api-demo`, cuja falha avisa (pelo `notificar.sh`) e não
+  desfaz nada. **A volta atrás não toca na demo:** toda volta atrás vem antes da segunda fase, e o
+  `up` que só nomeia `db api proxy` não recria serviço que não foi nomeado — a demo segue no
+  contêiner, na imagem e no banco de ANTES, sem nunca ter rodado a versão desfeita. Apagar o banco
+  dela e semear de novo (era o que se fazia, "um schema mais novo que o código não a deixaria
+  subir") não protegia nada: só a tirava do ar, com `/demo` em 503, e derrubava a sessão de quem
+  estava nela — o revisor da Apple inclusive. A exceção é a demo que sumiu: se a versão desfeita
+  tirou ou renomeou o serviço, o `--remove-orphans` da primeira fase levou o contêiner dela como
+  órfão, e nada o traria de volta até o próximo `./demo.sh --ligar`. Com a demo ligada e o
+  `compose ps -q api-demo` vazio, a volta atrás sobe `demo-banco api-demo` de novo — sem DROP, no
+  banco de antes —, espera o `/demo/health` como a segunda fase espera (o `up` que dá certo não
+  diz que ela responde) e, se ela não subir ou não responder, avisa pelo `notificar.sh`, como na
+  segunda fase. Backup e vigia continuam só da loja.
+- **A pasta do Caddyfile, montada inteira.** O `git reset --hard` da atualização troca o
+  `docker/caddy/Caddyfile` por um arquivo novo (inode novo), e um arquivo montado sozinho continua
+  mostrando o VELHO ao contêiner até ele ser recriado: o `caddy reload` "dava certo" sem mudar nada,
+  e o `/demo` (ou uma CSP nova) só chegaria no próximo reboot, numa hora que ninguém escolheu. Com a
+  pasta montada, o contêiner enxerga o arquivo novo na hora; quando o Caddyfile mudou e o proxy não
+  foi recriado, o `atualizar.sh` roda `caddy validate` e `caddy reload` por `exec` (o que não passa
+  desfaz a atualização) e confere a loja PELO PROXY antes de dizer "Atualizado" — a saúde de dentro
+  da API não enxerga um Caddyfile quebrado. O `limpar_orfaos` pega o `<hash>_loja-<serviço>-N` de
+  qualquer serviço, não só da `api`.
+- **Do Compose 2.3 ao 5.8, por regra e não por versão.** O instalador aproveita o Docker que a
+  máquina já tiver (do 2.3 do apt ao 5.8 do get.docker.com; o `name: loja` do compose já exige o
+  2.3), e nessa faixa quatro comportamentos mudam. Então: (R1) só `${X:-}` nos serviços da demo,
+  nunca `:?`, `?` nem `env_file` — `${X:?}` num serviço de profile desligado quebra a interpolação
+  do ARQUIVO INTEIRO, e com ela todo `docker compose` de uma loja antiga, inclusive o `pg_dump` do
+  backup e o `/health` do vigia; (R2) `pull_policy: never` na `api-demo` — até o 2.12, o pull de uma
+  imagem que só existe local derrubava o `up`; (R3) desligar e desinstalar NOMEIAM a demo (`rm -sf
+  api-demo demo-banco`, `down --profile demo`) — o `up --remove-orphans` nunca derruba serviço de
+  profile desligado, e o `down` sem o profile a deixa rodando (ou falha, abaixo do 2.18); (R4)
+  nenhum serviço sem profile depende de um da demo. Um `.env` antigo, sem as variáveis novas,
+  continua dando só `db`, `api` e `proxy`.
+- **Instalação e operação.** O `instalar.sh` liga a demo por padrão (`--sem-demo` a deixa de fora)
+  e confere o DNS do domínio ANTES de gravar o `.env` — e, com isso, antes do `up`: o certificado só
+  sai com o nome apontando para esta máquina, o Let's Encrypt limita as tentativas que falham, e uma
+  espera interrompida (o Ctrl+C de quem foi acertar o painel, o SSH que cai) não deixa um `.env`
+  que a rodada seguinte reaproveitaria sem criar o dono. A pergunta vai ao DNS, e não ao que a
+  máquina acha: pelo `resolvectl query --synthesize=no --cache=no` quando o `resolv.conf` aponta
+  para o stub do systemd-resolved (`127.0.0.53`, que responde pelo `/etc/hosts` mesmo a um
+  `getent -s dns`), e pelo `getent -A -s dns` nos outros — sem o `/etc/hosts` (um nome posto lá,
+  ou o 127.0.1.1 do hostname, decidiriam no lugar do registro) e sem o AI_ADDRCONFIG (numa máquina
+  sem IPv6 ele esconde o AAAA); o getent antigo, sem o `-A`, pergunta com o `-s dns` e, numa
+  máquina sem IPv6, diz que o AAAA não foi conferido. Mostra o registro exato a criar (Tipo A ·
+  Nome · Valor, com o IP público perguntado a serviços de eco) e o AAAA de outra máquina a apagar;
+  no interativo, espera conferindo a cada 15 s (Enter segue sem esperar), e com `--sim` não espera
+  e repete a pendência no resumo. O `--forcar` refaz o `.env` pelo modelo (domínio, portas, fuso,
+  o segredo do login de novo) e leva adiante o que o modelo não escreve, como estava — a NFC-e
+  (`FISCAL_*`, `FOCUSNFE_*`: só o `.env` a liga, ADR-41), o `DEMO_MEMORIA`, uma linha à mão, também
+  a `export CHAVE=valor` —, além das senhas da demo (a da conta é a que está na Apple) e do
+  `BACKUP_REMOTO` e do `NOTIFICAR_URL` quando a rodada não traz outros; a saída diz, pelo nome, o
+  que ficou. O `-Forcar` do Windows (`instalar.ps1`) ainda refaz só com o modelo, e o README diz o
+  que copiar de volta. O resumo final traz a URL da
+  demo, o e-mail e a senha — a senha só quando acabou de ser sorteada; depois, `./demo.sh
+  --mostrar`. O `atualizar.sh` nunca escreve no `.env`: a loja que já existia ganha a demo pelo
+  `./demo.sh --ligar` (ou rodando o `./instalar.sh` de novo, que respeita quem a desligou). O
+  `demo.sh` mostra (`--mostrar`: endereço, conta e o que levar ao GitHub e à Apple — e, com
+  domínio, as URLs de privacidade e de exclusão de dados que o Play Console tem de receber ANTES de
+  o servidor antigo, a Vercel, ser desligado: o Google Play não passa pelo publicador), liga, renova,
+  desliga (os dados ficam) e, com `--desligar --apagar`, apaga banco, role, fotos e as `DEMO_*` do
+  `.env`; `--automatico` liga o timer. O `desinstalar.sh` derruba a demo junto (`--profile demo`) e
+  desliga o timer; o `diagnostico.sh` a mostra (o `demo-banco` "exited (0)" é o normal de um
+  one-shot).
+- **Por que caminho e não subdomínio.** `demo.<domínio>` separaria a origem de graça — cookie,
+  storage e o resto — sem mexer em cliente nenhum. Mas o dono pediu `<domínio>/demo`, e o caminho
+  dispensa um segundo registro DNS e um segundo certificado: o domínio que a instalação já confere
+  serve às duas, e "vem pronta" continua verdade. O preço foi ensinar a API, a web, o app e o
+  publicador a morar debaixo de um caminho, cada um com teste.
+
+*Consequências:* toda instalação com domínio nasce com uma demonstração pública em
+`https://<domínio>/demo`; a local, em `http://localhost/demo`, serve para testar na rede — a Apple
+só alcança https. Para a revisão usar a demo da loja: Variables `APPLE_SERVIDOR_DEMO` (o endereço
+COM o `/demo`) e `APPLE_EMAIL_DEMO`, e a senha pelo workflow "Senha da conta demo na Apple" (o
+`./demo.sh --mostrar` diz os três); o `padroes.json` continua apontando para a Vercel até a VPS
+existir. O que se faz na demo dura até a madrugada, e o servidor carrega uma segunda API (até
+512 MB). **Risco aceito: a mesma origem.** O navegador não separa `/demo` de `/`: um script que
+rodasse na página da demo poderia chamar a API da loja, e o navegador mandaria junto o cookie da
+loja — o `Path` decide o que vai sozinho, não o que um script pode pedir. O risco é do navegador
+que tem as duas sessões, o do dono. As barreiras: a CSP `script-src 'self'` sem inline e o template
+que escapa tudo (ADR-25; as telas são as mesmas nas duas), o access token só em memória, o token da
+demo que não vale na loja (segredo próprio), a role da demo que nem conecta no banco real, e só dado
+fictício do lado de lá. Os testes provam o isolamento em cada ponta (§7), e o job `imagem` do CI sobe
+a pilha de verdade (`testes/pilha/pilha.sh`: compose com `.env` antigo e novo, o Caddyfile nos dois
+modos, e contas, tokens, cookies e bancos da loja e da demo sem se cruzar; o pool da demo em três
+rajadas de 60 pedidos; o teto do corpo por rota nas duas — 413 no login de 3 MB e na foto de 7 MB,
+com a foto de verdade passando, até a de 3 MB —; e o WebSocket do tempo real pelo proxy, com mais
+que o teto passando pelo socket).
 
 ## 4. Contratos de API
 
 Prefixo `/api/v1`. Auth: `Authorization: Bearer <access_token>`.
+Na demonstração que sobe com a loja, a API inteira mora sob `/demo` — `/demo/api/v1/...`,
+`/demo/health`, `/demo/app/` (ADR-46) — e, fora do prefixo, a `api-demo` responde 404.
 Listagens são paginadas: `?page=1&size=20` (size ≤ 100) → `{items, total, page, size}`.
 Erros: `{"code": "...", "message": "...", "detail": {...}}`.
 
@@ -1980,11 +2331,13 @@ Erros: `{"code": "...", "message": "...", "detail": {...}}`.
 | `VALIDACAO` | 422 | payload inválido |
 | `EMISSOR_NAO_CONFIGURADO` | 409 | NFC-e sem emissor ligado no `.env`; `detail.faltando` (ADR-41) |
 | `DADOS_FISCAIS_INCOMPLETOS` | 409 | NFC-e sem NCM, CNPJ, IE ou regime; `detail.faltando`, `detail.produtos_sem_ncm` |
-| `MUITAS_TENTATIVAS` | 429 | logins errados demais na janela; `detail.retry_after` em segundos, header `Retry-After` |
+| `MUITAS_TENTATIVAS` | 429 | logins errados demais na janela; `detail.retry_after` em segundos, header `Retry-After`. A conta da demonstração da instalação (`/demo`: `settings.demonstracao` e `conta_demo_protegida`) conta só o IP; na Vercel, a regra de sempre (ADR-24, ADR-46) |
 | `LEITOR_CODIGO_INVALIDO` | 404 | código do leitor pelo celular inexistente, vencido, já aceito por outro ou encerrado — a MESMA resposta (ADR-43) |
 | `LEITOR_DESLIGADO` | 409 | bipe num pareamento que não está ATIVO; `detail.status` diz qual (ADR-43) |
 | `LEITOR_FILA_CHEIA` | 409 | 100 bipes esperando o computador retirar (ADR-43) |
-| `CONTA_DE_DEMONSTRACAO` | 409 | na Vercel, excluir, rebaixar, desativar ou trocar a senha da conta `DEMO_ADMIN_EMAIL` (ADR-45) — antes de conferir a senha |
+| `DEMONSTRACAO_SEM_ESPACO` | 409 | só na demonstração da instalação (`settings.demonstracao`, foto no disco): a foto passaria do teto da pasta de fotos (`DEMO_FOTOS_MAX_BYTES`: 200 MB por padrão, ajustável no `.env`, vale depois de recriar a `api-demo`); `detail.limite_mb`. A foto de antes fica, e a renovação da madrugada esvazia a pasta (ADR-46) |
+| `CONTA_DE_DEMONSTRACAO` | 409 | numa demonstração — a Vercel ou a que sobe com a loja em `/demo` (`conta_demo_protegida`) —, excluir, rebaixar, desativar ou trocar a senha da conta `DEMO_ADMIN_EMAIL` (ADR-45, ADR-46) — antes de conferir a senha. Na loja de verdade, nunca |
+| `DEMONSTRACAO_FORA_DO_AR` | 503 | do PROXY, não da API: `/demo/api/*` com a demonstração desligada ou subindo. Corpo `{"code":"DEMONSTRACAO_FORA_DO_AR","message":"A demonstração está desligada ou começando. Tente de novo em um minuto.","detail":{}}`; o resto de `/demo/*` recebe a mesma frase numa página. Nunca a loja no lugar (ADR-46) |
 
 ### 4.1 `auth`
 | método | rota | papel | descrição |
@@ -2002,7 +2355,7 @@ Desativar = `PATCH {ativo:false}`. Bootstrap do primeiro admin: `python -m app.c
 
 | método | rota | papel | notas |
 |---|---|---|---|
-| DELETE | `/usuarios/me` | qualquer logado | `{senha}` → 204 e apaga o cookie do refresh. Exclui a PRÓPRIA conta (ADR-45). Senha errada → **422 `SENHA_INCORRETA`** (nunca 401: derrubaria a sessão; nada muda). Sem senha → 422 `VALIDACAO`. Único dono ativo → **409 `OPERACAO_INVALIDA`** "Você é o único dono da loja. Passe o papel de dono a outra pessoa em Usuários antes de excluir a sua conta." Na Vercel, a conta `DEMO_ADMIN_EMAIL` → **409 `CONTA_DE_DEMONSTRACAO`**, antes da senha. Diário: `USUARIO_EXCLUIU_PROPRIA_CONTA`, "Excluiu a própria conta", sem `user_id` e com nome/papel de antes |
+| DELETE | `/usuarios/me` | qualquer logado | `{senha}` → 204 e apaga o cookie do refresh. Exclui a PRÓPRIA conta (ADR-45). Senha errada → **422 `SENHA_INCORRETA`** (nunca 401: derrubaria a sessão; nada muda). Sem senha → 422 `VALIDACAO`. Único dono ativo → **409 `OPERACAO_INVALIDA`** "Você é o único dono da loja. Passe o papel de dono a outra pessoa em Usuários antes de excluir a sua conta." Numa demonstração (a Vercel ou a de `/demo`), a conta `DEMO_ADMIN_EMAIL` → **409 `CONTA_DE_DEMONSTRACAO`**, antes da senha. Diário: `USUARIO_EXCLUIU_PROPRIA_CONTA`, "Excluiu a própria conta", sem `user_id` e com nome/papel de antes |
 | DELETE | `/usuarios/{id}` | A | 204. Exclui a conta de OUTRA pessoa (a mesma limpeza). A própria → 409 (o caminho é `/usuarios/me`, com a senha); o último dono ativo → 409; gerente em dono → 403; conta já excluída → 404 |
 
 As duas exclusões fazem a mesma limpeza (`UsuarioService._apagar_conta`): sessões derrubadas,
@@ -2020,7 +2373,7 @@ com o valor atual. No `PATCH`, ausente = não mexe, `meta_diaria: null` tira a m
 | GET | `/produtos` | todos | `?q=&categoria_id=` · `q` acha por nome (sem acento, como `/variantes`) ou código da grade; custo só para quem tem VER_DINHEIRO |
 | POST | `/produtos` | A/V | produto + `variantes[]` (com `estoque_inicial?` → gera ENTRADA na mesma transação) |
 | GET/PATCH/DELETE | `/produtos/{id}` | A/V · A · A | detalhe traz variantes com saldo; DELETE só com saldo zero, conferido com grade e saldos travados (ADR-30) |
-| PUT | `/produtos/{id}/foto` | A/V | multipart; no disco salva em `media/produtos/` (caminho relativo), com `BLOB_READ_WRITE_TOKEN` no Vercel Blob público (URL absoluta, a antiga é apagada se for do mesmo ambiente). Teto 5 MB (4 MB na Vercel); 503 `FOTO_NAO_GUARDADA` se não guardou, inclusive na Vercel sem Blob (§2.2, ADR-42) |
+| PUT | `/produtos/{id}/foto` | A/V | multipart, campo `arquivo`: um arquivo e até 4 campos de texto ao lado; mais, 400 (`{"detail": ...}` com a frase do Starlette, em inglês, §2.2). Lido só DEPOIS do login (sem login, 401 sem ler o envio); no disco salva em `media/produtos/` (caminho relativo), com `BLOB_READ_WRITE_TOKEN` no Vercel Blob público (URL absoluta, a antiga é apagada se for do mesmo ambiente). Teto 5 MB (4 MB na Vercel); na demo da instalação, 409 `DEMONSTRACAO_SEM_ESPACO` acima do teto da pasta de fotos (`DEMO_FOTOS_MAX_BYTES`, ADR-46); 503 `FOTO_NAO_GUARDADA` se não guardou, inclusive na Vercel sem Blob (§2.2, ADR-42) |
 | POST | `/produtos/{id}/variantes` | A/V | adiciona variante a produto existente |
 | PATCH/DELETE | `/variantes/{id}` | A | DELETE só com saldo zero, conferido com peça e saldo travados (ADR-30) |
 | GET | `/versao` | A/V | commit instalado, quando foi conferido e se há versão nova; lê `docker/estado/versao.json` |
@@ -2166,12 +2519,16 @@ congelados (ADR-23). `inicio`/`fim` recortam pelo dia no fuso da loja. Nem o ger
 ### 4.11 `configuracao`
 | método | rota | papel | notas |
 |---|---|---|---|
-| GET | `/configuracao` | **aberto** | só a fachada: `nome`, `segmento`, `timezone` e o `vocabulario` já resolvido |
+| GET | `/configuracao` | **aberto** | só a fachada: `nome`, `segmento`, `timezone`, o `vocabulario` já resolvido e `demonstracao` |
 | GET | `/configuracao/completa` | qualquer logado | a fachada mais `documento`, `telefone` e `endereco` (o cabeçalho do recibo) e os fiscais `regime_tributario`, `inscricao_estadual`, `serie_nfce` (ADR-41) |
 | GET | `/configuracao/segmentos` | **aberto** | os ramos que o sistema conhece, para a tela montar o seletor |
 | PATCH | `/configuracao` | CONFIGURAR_LOJA | só o dono; campos opcionais (mudar o telefone não reenvia o nome) |
 
 `timezone` é o fuso da loja, que as telas usam para formatar hora (ADR-27).
+`demonstracao` (`bool`, também na `/completa`) diz se esta API é a demonstração que sobe com a
+loja (`LOJA_DEMONSTRACAO=1`): a web e o app põem a faixa "Loja de demonstração — os dados são
+fictícios." no topo de toda tela. Vem da config do contêiner, não do banco; na Vercel é `false`
+(ADR-46). Servidor antigo não manda o campo: falta = `false`.
 `vocabulario` traz `item`/`itens`/`artigo`, `eixo1`/`eixo2` (os rótulos das duas variações),
 `eixo1_rapidos` (atalhos do cadastro em grade, vazio quando o ramo não tem valores previsíveis),
 `icone` e `exemplo_produto`. Vem pronto do servidor para web e app não divergirem.
@@ -2365,4 +2722,18 @@ simultâneas grava uma linha, duas retiradas simultâneas pegam lotes disjuntos,
 120 s é descartado, e a retirada não gera aviso de tempo real · exclusão de conta (ADR-45): a
 própria conta sai com a senha certa e derruba as sessões; a errada é 422 e a sessão segue; o único
 dono leva 409 e dois donos saindo juntos deixam um; quem já vendeu também sai (a venda fica com o
-nome, o e-mail fica livre); o diário ganha a linha sem `user_id` e com o nome congelado.
+nome, o e-mail fica livre); o diário ganha a linha sem `user_id` e com o nome congelado ·
+demonstração ao lado da loja (ADR-46): token assinado com o segredo da demo é 401 na loja (acesso
+e renovação), a role `loja_demo` não conecta no banco `loja`, preparar e renovar sem as duas
+chaves (variável e marco do banco) saem com erro sem tocar em nada, a carga da instalação semeia e
+converge a conta do revisor, a renovação zera, apaga as fotos e semeia de novo (com a conta
+inválida no `.env`, para antes de zerar; o TRUNCATE trava antes as portas da API, e a requisição
+que passou pelo crachá e segue lendo, o login e a renovação da sessão terminam sem impasse com ele
+— o logout e as rotas que derrubam sessões, não (ADR-46); o que ainda perde a vez se repete; e o preparo espera a renovação que está rodando), as
+fotos da demo têm teto (envios juntos não o furam; a foto minúscula conta o bloco), a conta
+protegida da instalação não trava pelo e-mail (a da Vercel e as outras, sim; e o IP trava
+todas), o cookie da demo vive e morre em `/demo/api/v1/auth`, a auditoria classifica sob `/demo`, fora do
+prefixo é 404, e a web, o app e o publicador nunca perdem o `/demo` (varredura de endereço
+absoluto no web; `servidor-demo.test.mjs` e o cenário de `rodar.mjs` no publicador). No CI,
+`testes/pilha/pilha.sh` sobe a pilha de verdade: `.env` antigo dá só a loja, e contas, tokens,
+cookies e bancos das duas não se cruzam.

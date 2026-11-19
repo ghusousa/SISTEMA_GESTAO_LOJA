@@ -51,7 +51,8 @@ de ficar escondido na tela.
 ## Instalação
 
 **Um comando.** O instalador pergunta o endereço, os dados do dono e a senha do banco, sobe tudo
-em Docker e termina com o sistema **já rodando**.
+em Docker e termina com o sistema **já rodando** — no Linux e no Mac, com a demonstração em `/demo`
+ao lado.
 
 ### Pré-requisito: nenhum
 
@@ -143,9 +144,15 @@ Se preferir o terminal, abra o PowerShell na pasta e rode:
 | **Fuso horário** | Define o que é "hoje" no caixa e nos relatórios. |
 | **Avisos no celular** | Opcional. Um tópico do [ntfy](https://ntfy.sh) (app gratuito, Android e iPhone): instale, toque em **+** e assine o mesmo nome. Loja fora do ar, disco enchendo, backup parado ou atualização que falhou chegam ali. Escolha um nome difícil de adivinhar — quem souber o nome lê os avisos. Fica no `.env` como `NOTIFICAR_URL`. |
 
-No fim ele **liga a cópia diária do banco** (às 03:15; no Linux também o vigia de 5 em 5 minutos),
-mostra **uma vez** a chave das cópias de fora (veja [Backup](#backup-automático-todo-dia)) e
-imprime o endereço para abrir. **O sistema já está no ar** — não falta nenhum passo.
+Ele também sobe, ao lado da loja, a **demonstração** em `<endereço>/demo` — uma segunda loja só
+com dados fictícios e a conta de dono já pronta, para a revisão da App Store e para quem quer
+conhecer o sistema (veja [A demonstração em /demo](#a-demonstração-em-demo)). Não pergunta nada
+sobre ela; `--sem-demo` a deixa de fora.
+
+No fim ele **liga a cópia diária do banco** (às 03:15; no Linux também o vigia de 5 em 5 minutos e a
+renovação da demonstração, às 04:30), mostra **uma vez** a chave das cópias de fora (veja
+[Backup](#backup-automático-todo-dia)) e imprime os endereços para abrir. **O sistema já está no
+ar** — não falta nenhum passo.
 
 ```
 Pronto — o sistema está rodando
@@ -153,16 +160,52 @@ Pronto — o sistema está rodando
   Endereço:  https://loja.minhaloja.com.br/app/
   Modo:      domínio loja.minhaloja.com.br, com HTTPS automático
   Entrar:    dona@minhaloja.com.br
+
+  Demonstração (dados fictícios; a conta dela não entra na loja):
+    Endereço:  https://loja.minhaloja.com.br/demo
+    Entrar:    dono@demo.example
+    Senha:     ••••••••••••••••••••   (anote: é a que vai para a revisão da Apple)
 ```
+
+A senha da demonstração aparece aí **só quando acabou de ser sorteada**; rodando o instalador de
+novo, o resumo diz "veja com `./demo.sh --mostrar`".
 
 ### Com domínio: HTTPS sem trabalho
 
-Informando um domínio, o Caddy pede o certificado ao Let's Encrypt e o renova sozinho. Para isso
-funcionar, duas coisas precisam estar prontas **antes** de rodar o instalador:
+Informando um domínio, o Caddy pede o certificado ao Let's Encrypt e o renova sozinho (digitado com
+maiúsculas ou não, ele vai em minúsculas para o `.env`: nome de domínio não diferencia caixa, e o
+navegador manda a origem assim). Para isso funcionar, duas coisas precisam estar prontas:
 
 1. O **DNS do domínio aponta para o IP deste servidor** (registro `A`).
 2. As **portas 80 e 443 estão abertas** — é por elas que o Let's Encrypt confere que o domínio é
    mesmo seu.
+
+**O instalador confere o DNS antes de subir** (o Let's Encrypt limita as tentativas que falham, e
+subir antes da hora deixaria a loja sem HTTPS por uma hora). Ele descobre o IP público da máquina
+e, se o nome ainda não aponta para ela, diz exatamente o que criar no painel do domínio:
+
+```
+  ! Crie no painel do domínio:   Tipo A  ·  Nome loja — o registro completo é loja.minhaloja.com.br  ·  Valor 203.0.113.10
+  O certificado HTTPS só sai com o DNS certo. Conferindo de novo a cada 15 s —
+  tecle Enter para seguir sem esperar (o que faltar volta no fim).
+```
+
+No campo **Nome** vai só o pedaço antes do domínio registrado (`@` para ele mesmo); o nome
+completo ao lado é para conferir com o painel — posto no campo, muito painel o repete e cria
+`loja.minhaloja.com.br.minhaloja.com.br`.
+
+Se houver um registro **AAAA** (IPv6) levando a outra máquina, ele manda apagar — o Let's Encrypt
+tenta o IPv6 primeiro. A pergunta vai ao DNS, como a do Let's Encrypt, e não ao `/etc/hosts` da
+máquina: com o systemd-resolved (o `127.0.0.53` no `/etc/resolv.conf`, o padrão do Ubuntu), que
+responde pelo `/etc/hosts` mesmo a um `getent -s dns`, pelo `resolvectl query --synthesize=no`; nas
+outras máquinas, pelo `getent -A -s dns`. O AAAA aparece mesmo numa máquina sem IPv6. Só em dois
+casos não dá para ver tudo: um `getent` antigo, sem o `-A`, esconde o AAAA numa máquina sem IPv6 (aí
+o instalador diz que o AAAA não foi conferido, em vez do ✓); e, com um `resolvectl` que não conhece o
+`--synthesize=no` ou um `getent` sem o `-s`, um nome posto no `/etc/hosts` ainda conta. Com `--sim`
+ele não espera: a pendência volta no resumo do fim. A conferida vem antes de gravar a configuração:
+sair no meio da espera (Ctrl+C, a conexão que cai) não deixa nada gravado, e rodar o instalador de
+novo pergunta tudo outra vez. Um registro só serve às duas: a demonstração mora no **mesmo**
+domínio, em `/demo`, sem DNS a mais.
 
 Acompanhe a emissão com `docker compose logs -f proxy`. Sem domínio, o instalador usa HTTP puro e
 ajusta o resto sozinho — inclusive o cookie de sessão, que em HTTP não pode ser marcado `Secure`
@@ -177,7 +220,8 @@ e já aponta para o seu IP — o HTTPS sai sozinho do mesmo jeito:
 ./instalar.sh --dominio 203.0.113.10.sslip.io     # troque pelo IP do seu servidor
 ```
 
-Num servidor que já foi instalado pelo IP, acrescente `--forcar` (os dados do banco ficam).
+Num servidor que já foi instalado pelo IP, acrescente `--forcar` (os dados do banco ficam, e o
+que você pôs no `.env` à mão — a NFC-e, por exemplo — também).
 
 ### Sem perguntas (automação)
 
@@ -191,10 +235,27 @@ Num servidor que já foi instalado pelo IP, acrescente `--forcar` (os dados do b
     -Email dona@minhaloja.com.br -Senha "uma-senha-boa" -Sim
 ```
 
+Com `--sim` ele nunca pergunta: o que tem padrão vai no padrão (o nome da loja, o domínio
+`localhost`, o fuso...), e o que não tem (`--email`, `--senha`) ele diz qual faltou e para. Sem
+`--sim` e com a entrada fechada (`< /dev/null`, um agendador), também não fica esperando — a
+primeira pergunta sem resposta para e diz para rodar com `--sim` e os parâmetros.
+
 Outras opções: `--senha-banco`, `--fuso`, `--porta-http`, `--porta-https`, `--avisos TOPICO`
-(o tópico do ntfy), `--forcar` (refaz o `.env` do zero) e `--sem-docker` (não instala o Docker
+(o tópico do ntfy), `--forcar` (refaz o `.env` pelo modelo, com domínio, portas, fuso e o segredo
+do login de novo — e mantém o resto: as senhas da demonstração, porque a da conta dela é a que está
+na Apple; toda linha que o modelo não escreve, como a NFC-e (`FISCAL_*`, `FOCUSNFE_*`) e o
+`DEMO_MEMORIA`, como estava (também a escrita `export CHAVE=valor`); e a cópia de fora
+(`BACKUP_REMOTO`) e os avisos (`NOTIFICAR_URL`) quando a rodada não traz outros. A saída diz, pelo
+nome, o que ficou), `--sem-demo` (sem a demonstração) e `--sem-docker` (não instala o Docker
 automaticamente). Rodar o instalador de novo é seguro: sem `--forcar`, ele reaproveita a
 configuração e só religa o que estiver parado.
+
+**No Windows o `-Forcar` ainda não mantém nada disso.** O `instalar.bat -Forcar` (o
+`instalar.ps1`) refaz o `.env` só com o modelo — domínio, portas, senha do banco, segredo do login,
+ambiente, CORS e fuso — e o resto do `.env` de antes se perde: a NFC-e (`FISCAL_*`, `FOCUSNFE_*`),
+a cópia de fora (`BACKUP_REMOTO`), os avisos (`NOTIFICAR_URL`), o que for da demonstração
+(`DEMO_*`) e qualquer linha posta à mão. Antes do `-Forcar`, copie o `.env`; depois, traga essas
+linhas da cópia para o `.env` novo e rode o `instalar.bat` de novo, sem o `-Forcar`.
 
 ### O dia a dia
 
@@ -204,6 +265,7 @@ docker compose logs -f api   # o que está acontecendo
 docker compose restart       # reiniciar
 docker compose down          # desligar (os dados ficam guardados)
 ./instalar.sh                # religar
+./demo.sh --mostrar          # a demonstração: endereço, conta e senha
 ```
 
 O sistema sobe sozinho quando a máquina liga: os containers têm `restart: unless-stopped`. No
@@ -225,6 +287,16 @@ comando certo com fila no caixa.
 
 Rodar sem novidade nenhuma é seguro: ele confere, avisa que já está na versão mais nova e sai sem
 tocar em nada.
+
+**A demonstração vem depois, e nunca decide nada.** Primeiro a loja sobe e é conferida — por
+dentro e pelo endereço de verdade, passando pelo proxy (se o `Caddyfile` mudou, ele é conferido e
+recarregado antes). Só então, com a demonstração ligada, ela sobe; se não subir ou não responder,
+você recebe um aviso e a loja continua atualizada e no ar. Se a atualização for desfeita, a
+demonstração fica como estava: ela nunca rodou a versão desfeita, e nada dela é apagado. Se a
+versão desfeita a tirou do ar, a volta atrás a sobe de novo, com os mesmos dados, e espera que ela
+responda: se ela não subir ou não responder, você recebe o mesmo aviso. O
+`./atualizar.sh` nunca liga a demonstração numa loja que ainda não a tinha: para isso,
+`./demo.sh --ligar`.
 
 | Opção | Para quê |
 |---|---|
@@ -345,7 +417,8 @@ Na pasta do sistema:
 Ele **só lê** — não reinicia, não muda, não apaga nada; dá para rodar com a loja aberta. Confere
 memória, disco, cada contêiner, se a API responde por dentro, se o banco responde, se a porta
 responde de fora, e recorta do log só as linhas de erro. Termina dizendo o que tentar, na ordem, e
-salva tudo num `diagnostico-<data>.txt` para mandar por WhatsApp.
+salva tudo num `diagnostico-<data>.txt` para mandar por WhatsApp. A demonstração aparece junto; o
+`demo-banco` "exited (0)" é o normal dele (prepara o banco da demo e sai).
 
 Se você prefere ir direto ao ponto, a ordem que ele sugere é esta:
 
@@ -389,19 +462,44 @@ Para pôr o tópico depois da instalação, acrescente `NOTIFICAR_URL=https://nt
 `.env` e rode `./notificar.sh --testar`. O `./desinstalar.sh` desliga o vigia e as cópias junto,
 para o celular não receber "loja fora do ar" de quem acabou de desligá-la.
 
-### Dados de demonstração
+### A demonstração em /demo
 
-Para ver o sistema cheio antes de cadastrar o seu, informando a conta de administrador que você
-criou na instalação:
+A instalação já sobe, ao lado da loja, **uma segunda loja só com dados fictícios** em
+`https://<seu domínio>/demo` (ou `http://localhost/demo` numa instalação local): catálogo com
+grade, ~100 vendas dos últimos 25 dias, crediário, caixa, despesas — e uma conta de dono pronta,
+`dono@demo.example`, com senha sorteada. É ela que a revisão da App Store usa, e é por ela que se
+mostra o sistema a alguém **sem abrir a loja**. Toda tela traz no topo a faixa "Loja de
+demonstração — os dados são fictícios.", para ninguém lançar uma venda de verdade lá.
+
+São praticamente dois sistemas rodando juntos: outra API, outro banco (com um usuário do Postgres
+que nem conecta no banco da loja), outro segredo de login e outras fotos. A conta da demonstração
+**não entra na loja**, e a da loja não entra na demonstração. Ela não emite NFC-e e não entra no
+backup; toda madrugada (04:30, no fuso da loja) os dados voltam ao começo, com as datas de hoje.
 
 ```bash
-docker compose exec -e SEED_ADMIN_EMAIL=dona@minhaloja.com.br -e SEED_ADMIN_SENHA='sua-senha' \
-    api python scripts/seed_demo.py
+./demo.sh --mostrar                # endereço, e-mail, senha e o que levar ao GitHub/Apple
+./demo.sh --renovar                # volta os dados fictícios ao começo, agora
+./demo.sh --desligar               # desliga; o banco e a senha ficam guardados
+./demo.sh --ligar                  # liga (numa loja instalada antes dela, é assim que ela chega)
+./demo.sh --desligar --apagar      # desliga e apaga tudo dela: banco, fotos e senhas
+./demo.sh --automatico             # renovação diária (o instalador já ligou)
 ```
 
-Cria 10 produtos com grade, ~100 vendas espalhadas por 25 dias, despesas e uma vendedora de teste
-(`ana@loja.com` / `senha12345`). **Não rode no banco da loja de verdade** — é só para conhecer o
-sistema, e a vendedora de teste tem senha pública.
+Para a **revisão da Apple** usar esta demonstração, o `./demo.sh --mostrar` diz o que pôr no
+GitHub: as Variables `APPLE_SERVIDOR_DEMO` (o endereço **com** o `/demo`) e `APPLE_EMAIL_DEMO`, e
+a senha pelo workflow "Senha da conta demo na Apple" (detalhes em
+[mobile/publicar/README.md](mobile/publicar/README.md)). O app do celular conecta nela pelo mesmo
+endereço, com o `/demo`. Trocando a Vercel por esta demonstração, ele lembra também do Google Play,
+que não passa pelo publicador: **antes de desligar o servidor antigo**, troque no Play Console a URL
+da política de privacidade e a de exclusão de dados por `<endereço>/privacidade` e
+`<endereço>/exclusao-de-dados`. Na App Store, a URL de suporte segue a `APPLE_SERVIDOR_DEMO` sozinha
+(ou a `APPLE_URL_SUPORTE`), mas só vale lá quando a versão com ela estiver no ar.
+
+A demonstração é uma segunda API no servidor, com teto de **512 MB** de memória (`DEMO_MEMORIA` no
+`.env`): numa máquina apertada, ela é a primeira a ceder, nunca a loja. Ela vem com o
+`./instalar.sh` (Linux e Mac; o `instalar.bat` do Windows instala só a loja), e a renovação diária
+é do systemd (Linux) — no Mac, `./demo.sh --renovar` quando quiser. O porquê de cada separação
+está na ADR-46 de [docs/ARQUITETURA.md](docs/ARQUITETURA.md).
 
 ### Usar de outro computador ou do celular
 
@@ -416,7 +514,8 @@ New-NetFirewallRule -DisplayName "Sistema da Loja" -Direction Inbound `
 > `-Profile Private` de propósito: libera na rede da loja, não em Wi-Fi público.
 
 Para o **app do celular**, é esse mesmo endereço que o vendedor informa na primeira abertura —
-o app pergunta e guarda no aparelho.
+o app pergunta e guarda no aparelho. Para entrar na demonstração, o endereço é o da loja com o
+`/demo` no fim (`https://loja.minhaloja.com.br/demo`).
 
 ### App do celular — cada vendedor com o seu
 
@@ -462,7 +561,11 @@ cp .env.example .env                       # ajuste DATABASE_URL e JWT_SECRET
 ```
 
 O sistema web fica em <http://localhost:8000/app/> e a documentação da API em `/docs`.
-O app do celular: `cd mobile && npm install && npm start`.
+O app do celular: `cd mobile && npm install && npm start`. Para encher o banco de
+desenvolvimento com a loja de exemplo, com a API no ar: `.venv/bin/python scripts/seed_demo.py`
+(cria a dona `dona@loja.com` e a vendedora `ana@loja.com`, ambas com `senha12345` — senha
+pública: só em banco de desenvolvimento; numa loja instalada, quem tem dados de mentira é a
+[demonstração em /demo](#a-demonstração-em-demo)).
 
 ## Rodar o app no celular
 
@@ -627,6 +730,10 @@ npm run bundle             # empacota; pega erro de import que o typecheck não 
 
 No Windows são as mesmas, com traço único: `-ManterDados`, `-SemBackup`, `-ApagarImagens`, `-Sim`.
 
+A demonstração vai junto (os contêineres dela e a renovação diária); com `--manter-dados`, o banco
+dela também fica, no mesmo Postgres. Para tirar só a demonstração, sem mexer na loja:
+`./demo.sh --desligar --apagar`.
+
 ### Restaurar um backup
 
 O caminho normal é `./backup.sh --restaurar ARQUIVO` (ver **Backup automático, todo dia**) —
@@ -687,8 +794,10 @@ cd api && .venv/bin/python scripts/e2e.py
 **O CI** (`.github/workflows/ci.yml`) roda uma vez por commit — push no `main` e pull request —
 e cobre: pytest com as migrations subindo e descendo; a API no ar com o `e2e.py` e o
 `pentest.py` (reprova com qualquer achado); `npm test`, `tsc` e o bundle do app; a imagem
-Docker construída do jeito que a loja constrói; e `shellcheck` nos scripts de operação. É
-desse resultado que o `./atualizar.sh` das lojas depende para subir uma versão.
+Docker construída do jeito que a loja constrói, com a pilha subida de verdade (a loja e a
+demonstração lado a lado, sem cruzar contas, tokens, cookies nem bancos); e `shellcheck` nos
+scripts de operação. É desse resultado que o `./atualizar.sh` das lojas depende para subir uma
+versão.
 
 As dependências Python têm **versão exata** em `api/requirements.lock` (o que a imagem e o CI
 instalam) e `api/requirements-dev.lock` (só os testes). Subir uma biblioteca é mudar a trava,
@@ -699,7 +808,8 @@ rodar a suíte e deixar o CI confirmar — nunca mais "a versão do dia do build
 Para mostrar o sistema a quem ainda não o tem, sem máquina nenhuma: o mesmo código roda na
 Vercel, com o banco no Neon que ela mesma cria. **É demonstração, não loja**: backup no Drive,
 atualização e vigia são da instalação da loja e não rodam lá (o que muda e por quê está na
-ADR-42 de [docs/ARQUITETURA.md](docs/ARQUITETURA.md)). A instalação local continua igual.
+ADR-42 de [docs/ARQUITETURA.md](docs/ARQUITETURA.md)). A instalação local continua igual — e
+já traz a sua própria [demonstração em /demo](#a-demonstração-em-demo); esta é a outra forma.
 
 1. **Projeto.** Na Vercel, no time da loja: *Add New → Project → Import* deste repositório,
    com o nome `loja-tria`. Antes de clicar em Deploy:

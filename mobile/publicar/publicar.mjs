@@ -46,7 +46,7 @@
  * processamento das capturas e dos anexos; padrão 5); ASC_BASE e ASC_REPETIR_MS são do
  * asc.mjs. Só para o teste: PUBLICAR_APARELHOS (outra lista de aparelhos), PUBLICAR_TELAS
  * (outra raiz onde procurar as telas citadas) e PUBLICAR_DEMO_BASE (para onde vão as
- * conferências do servidor de demonstração).
+ * conferências do servidor de demonstração; com o caminho, se ele tiver — <servidor>/demo).
  */
 
 import { readFileSync } from 'node:fs';
@@ -59,7 +59,7 @@ import { DO_MODELO_ANTIGO, lerAparelhosTestados, lerConfig, lerFicha } from './f
 import { CONJUNTOS, lerConjunto, subirConjunto } from './imagens.mjs';
 import { criarRelatorio } from './relatorio.mjs';
 import { lerGuia } from './revisao/guia.mjs';
-import { conferirServidorDemo } from './servidor-demo.mjs';
+import { conferirServidorDemo, trocarBase } from './servidor-demo.mjs';
 import { estadoDaVersao, mensagemDaTravada, situacaoDaVersao } from './versoes.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
@@ -232,6 +232,8 @@ async function conferirAntesDeEnviar({ asc, app, versaoDoApp, situacao, args, ap
       'regiões, build e servidor de demonstração',
   );
   const faltas = [];
+  // O suporte de fora do servidor da demo que não abriu daqui: o resumo do fim não o dá por conferido.
+  let suporteSoNoAviso = false;
 
   // Item 6 das notas: "Brazil only". Disponibilidade feita no site com outros países desmente.
   let disponivel = null;
@@ -317,15 +319,17 @@ async function conferirAntesDeEnviar({ asc, app, versaoDoApp, situacao, args, ap
   if (!config.senha_demo) {
     faltas.push([
       'senha-demo',
-      'Falta a senha da conta de demonstração: Secret APPLE_DEMO_PASSWORD do repositório — a mesma de DEMO_ADMIN_SENHA ' +
-        'na Vercel (projeto da demo → Settings → Environment Variables). Sem ela o revisor não entra, e o servidor de ' +
-        'demonstração não foi conferido.',
+      'Falta a senha da conta de demonstração: Secret APPLE_DEMO_PASSWORD do repositório (ou o workflow "Senha da ' +
+        'conta demo na Apple", que a deixa guardada lá). É a senha da conta no servidor de demonstração: na demo que ' +
+        'sobe com a loja, ./demo.sh --mostrar, na máquina dela; na Vercel, a DEMO_ADMIN_SENHA (projeto da demo → ' +
+        'Settings → Environment Variables). Sem ela o revisor não entra, e o servidor de demonstração não foi conferido.',
     ]);
   } else {
-    const base = process.env.PUBLICAR_DEMO_BASE || config.url_servidor_demo;
-    const privacidade = config.url_privacidade.startsWith(config.url_servidor_demo)
-      ? `${base}${config.url_privacidade.slice(config.url_servidor_demo.length)}`
-      : config.url_privacidade;
+    // A base guarda o caminho (<domínio>/demo, ADR-46): a privacidade e o suporte que moram
+    // debaixo do servidor vão juntos para a base da conferência, e os de outro lugar (outra
+    // URL na ficha) são conferidos onde estão.
+    const base = (process.env.PUBLICAR_DEMO_BASE || config.url_servidor_demo).replace(/\/+$/, '');
+    const privacidade = trocarBase(config.url_privacidade, config.url_servidor_demo, base);
     const demo = await conferirServidorDemo({
       base,
       servidor: config.url_servidor_demo,
@@ -333,8 +337,13 @@ async function conferirAntesDeEnviar({ asc, app, versaoDoApp, situacao, args, ap
       senha: config.senha_demo,
       codigo: config.codigo_demo,
       urlPrivacidade: privacidade,
+      urlSuporte: trocarBase(config.url_suporte, config.url_servidor_demo, base),
     });
     for (const c of demo.conferidos) relatorio.ok(c);
+    // Aviso, não falta (hoje, o da página de suporte de fora do servidor da demo que não abriu
+    // daqui). O resumo sabe do suporte pelo campo dele: outro aviso não o tira do "conferido".
+    for (const a of demo.avisos) relatorio.avisar(a);
+    suporteSoNoAviso = demo.suporte === 'aviso';
     demo.problemas.forEach((p, i) => faltas.push([`demo-${i}`, p]));
   }
   if (faltas.length) {
@@ -347,9 +356,11 @@ async function conferirAntesDeEnviar({ asc, app, versaoDoApp, situacao, args, ap
             'Para subir só a ficha, rode sem --enviar (no GitHub, desmarque "revisão").',
     );
   }
+  // A frase diz só o que foi conferido: o suporte que ficou no aviso não entra como "conferido".
+  const paginas = suporteSoNoAviso ? 'privacidade (suporte: ver o aviso)' : 'privacidade e suporte';
   relatorio.feito(
     'Pronto para a revisão: aparelhos testados, gravação de tela, guia em dia, só Brasil, e servidor de demonstração ' +
-      'conferido (no ar, conta de dono e protegida, código de barras com estoque, privacidade, leitor e exclusão de conta)',
+      `conferido (no ar, conta de dono e protegida, código de barras com estoque, ${paginas}, leitor e exclusão de conta)`,
   );
 }
 

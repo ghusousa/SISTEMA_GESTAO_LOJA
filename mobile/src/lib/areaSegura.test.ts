@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import test from 'node:test';
 
-import { ABA, medidasDaBarraDeAbas, respiroDeBaixo, respiroDeCima } from './areaSegura';
+import {
+  ABA,
+  areaAbaixoDasFaixas,
+  deslocamentoDoTeclado,
+  medidasDaBarraDeAbas,
+  respiroDeBaixo,
+  respiroDeCima,
+} from './areaSegura';
 
 /**
  * A área segura de cada família de iPhone que o app atende (iOS 15.1+, retrato), em pt:
@@ -77,5 +86,75 @@ test('rodapé: o maior entre o respiro e a área — nunca a soma', () => {
 test('topo sem cabeçalho: a barra de status inteira e mais a folga', () => {
   for (const [aparelho, cima] of IPHONES) {
     assert.equal(respiroDeCima(cima, 12), cima + 12, aparelho);
+  }
+});
+
+test('com faixa no topo, a navegação de baixo não soma a barra de status de novo', () => {
+  for (const [aparelho, cima, baixo] of IPHONES) {
+    const janela = { top: cima, right: 0, bottom: baixo, left: 0 };
+    // A faixa cobriu a barra de status: o cabeçalho começa colado nela. A base é a do
+    // aparelho: a barra de abas e os rodapés seguem acima do indicador de início.
+    assert.deepEqual(areaAbaixoDasFaixas(janela, true), { top: 0, right: 0, bottom: baixo, left: 0 }, aparelho);
+  }
+});
+
+test('sem faixa, a área é a MESMA (o mesmo objeto): nada redesenha à toa', () => {
+  const janela = { top: 59, right: 0, bottom: 34, left: 0 };
+  assert.equal(areaAbaixoDasFaixas(janela, false), janela);
+  // Topo já zero (export web, aparelho sem recorte): nada a tirar.
+  const semTopo = { top: 0, right: 0, bottom: 0, left: 0 };
+  assert.equal(areaAbaixoDasFaixas(semTopo, true), semTopo);
+});
+
+test('teclado debaixo das faixas: o KeyboardAvoidingView desconta a altura delas (sem faixa, nada)', () => {
+  // A conta do KeyboardAvoidingView do RN 0.81 (behavior 'padding'): o KAV medido em relação
+  // ao PAI — que começa debaixo das faixas — e o topo do teclado medido na tela inteira.
+  const acolchoa = (kav: { y: number; altura: number }, topoDoTeclado: number, deslocamento: number) =>
+    Math.max(kav.y + kav.altura - (topoDoTeclado - deslocamento), 0);
+  const tela = 667; // iPhone SE
+  const teclado = 260; // com a barra de sugestões
+  const faixa = 45; // a da demonstração: barra de status (20) + respiro + frase + respiro
+  const entrada = { y: 0, altura: tela - faixa }; // a tela de entrada, debaixo da faixa
+  assert.equal(acolchoa(entrada, tela - teclado, 0), teclado - faixa, 'sem desconto, a altura da faixa fica atrás do teclado');
+  assert.equal(acolchoa(entrada, tela - teclado, deslocamentoDoTeclado(faixa)), teclado, 'com ele, o teclado inteiro');
+  // Sem faixa (a loja de verdade, com conexão), o KAV fica como sempre foi.
+  assert.equal(deslocamentoDoTeclado(0), 0);
+  assert.equal(acolchoa({ y: 0, altura: tela }, tela - teclado, deslocamentoDoTeclado(0)), teclado);
+  // Com o Texto Maior a frase quebra e a medida vem quebrada: para cima, nunca fica atrás.
+  assert.equal(deslocamentoDoTeclado(44.2), 45);
+  assert.equal(deslocamentoDoTeclado(Number.NaN), 0);
+  assert.equal(deslocamentoDoTeclado(-1), 0);
+});
+
+/** Cada abertura `<KeyboardAvoidingView ...>` do arquivo — até o `>` fora de `{...}` —, sem comentário. */
+function aberturasDoKav(fonte: string): string[] {
+  const aberturas: string[] = [];
+  for (let i = fonte.indexOf('<KeyboardAvoidingView'); i !== -1; i = fonte.indexOf('<KeyboardAvoidingView', i + 1)) {
+    let chaves = 0;
+    let fim = i;
+    for (; fim < fonte.length && !(fonte[fim] === '>' && chaves === 0); fim += 1) {
+      if (fonte[fim] === '{') chaves += 1;
+      else if (fonte[fim] === '}') chaves -= 1;
+    }
+    aberturas.push(fonte.slice(i, fim + 1).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, ''));
+  }
+  return aberturas;
+}
+
+test('a entrada liga o desconto: o KeyboardAvoidingView de (auth)/login.tsx passa a altura medida das faixas', () => {
+  // A conta de cima só vale se a tela a usar. Sem o offset na entrada, a demonstração volta a
+  // esconder atrás do teclado a altura da faixa — e o resto da suíte e o tsc seguem verdes.
+  // A tela "Conectar à loja" não entra: no iOS ela é folha modal nativa, fora das faixas.
+  const login = readFileSync(join(__dirname, '..', 'app', '(auth)', 'login.tsx'), 'utf8');
+  const kavs = aberturasDoKav(login);
+  assert.ok(kavs.length > 0, 'a entrada não tem mais KeyboardAvoidingView: a guarda não provaria nada');
+  for (const kav of kavs) {
+    const offset = /\bkeyboardVerticalOffset=\{\s*deslocamentoDoTeclado\(\s*([A-Za-z_$][\w$]*)\s*\)\s*\}/.exec(kav);
+    assert.ok(offset, `KeyboardAvoidingView da entrada sem keyboardVerticalOffset={deslocamentoDoTeclado(...)}:\n${kav}`);
+    assert.match(
+      login,
+      new RegExp(`\\bconst\\s+${offset[1].replaceAll('$', '\\$')}\\s*=\\s*useAlturaDasFaixas\\(\\s*\\)`),
+      `${offset[1]} não é a altura medida das faixas (useAlturaDasFaixas())`,
+    );
   }
 });

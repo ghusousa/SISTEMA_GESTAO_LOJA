@@ -8,11 +8,19 @@
  *
  * `EXPO_PUBLIC_API_URL` continua valendo como sugestão inicial — útil em desenvolvimento e
  * para quem gera um instalador já apontado para a própria loja.
+ *
+ * O endereço guardado é a BASE, com caminho quando houver (`https://loja.x.com.br/demo`, a
+ * demonstração da ADR-46). Como arrumar o que foi digitado e como juntar a base com cada
+ * rota mora em `lib/enderecoDoServidor.ts`, com teste.
  */
 
 import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import Constants from 'expo-constants';
+
+import { mensagemDoTesteRecusado, normalizarEndereco, urlDeSaude } from '../lib/enderecoDoServidor';
+
+export { normalizarEndereco };
 
 const CHAVE = 'loja.servidor';
 
@@ -45,36 +53,6 @@ const armazem = {
     }
   },
 };
-
-/**
- * Arruma o que a pessoa digitou.
- *
- * O caso mais comum não é digitar o endereço "certo": é ler o que está na barra do navegador
- * do computador do balcão e repetir — algo como `http://169.58.209.199/app/#/pdv`. Sem
- * limpar, o app tentaria falar com `/app/#/pdv/api/v1/...` e daria erro sem explicação.
- * Também aceita só o IP, e completa com `http://`.
- *
- * Devolve `null` quando não dá para aproveitar nada.
- */
-export function normalizarEndereco(bruto: string): string | null {
-  let texto = (bruto || '').trim();
-  if (!texto) return null;
-
-  // Sem esquema, assume http:// — a loja típica roda em IP na rede local, sem certificado.
-  if (!/^https?:\/\//i.test(texto)) texto = `http://${texto}`;
-
-  let url: URL;
-  try {
-    url = new URL(texto);
-  } catch {
-    return null;
-  }
-  if (!url.hostname) return null;
-
-  // Fora o host e a porta, nada mais interessa: o app monta os caminhos por conta própria.
-  const porta = url.port ? `:${url.port}` : '';
-  return `${url.protocol}//${url.hostname}${porta}`;
-}
 
 /** Sugestão inicial: o que veio no build, ou o host do Metro em desenvolvimento. */
 export function enderecoSugerido(): string {
@@ -121,9 +99,10 @@ export async function testarServidor(endereco: string): Promise<ResultadoDoTeste
   const controle = new AbortController();
   const relogio = setTimeout(() => controle.abort(), 8000);
   try {
-    const resposta = await fetch(`${endereco}/health`, { signal: controle.signal });
+    const resposta = await fetch(urlDeSaude(endereco), { signal: controle.signal });
     if (!resposta.ok) {
-      return { ok: false, mensagem: `O servidor respondeu com erro ${resposta.status}.` };
+      const corpo: unknown = await resposta.json().catch(() => null);
+      return { ok: false, mensagem: mensagemDoTesteRecusado(resposta.status, corpo) };
     }
     const dados = (await resposta.json()) as { status?: string };
     if (dados?.status !== 'ok') {

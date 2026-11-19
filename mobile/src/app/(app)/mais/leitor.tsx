@@ -23,6 +23,7 @@ import { LeitorPareado, ListaDeBipes } from '@/components/LeitorPareado';
 import { Scanner, SO_QR, type ScannerRef } from '@/components/Scanner';
 import { Botao, Campo, Cartao } from '@/components/ui';
 import { useTelaVisivel } from '@/hooks/useTelaVisivel';
+import { urlDaApi } from '@/lib/enderecoDoServidor';
 import {
   conviteDoLink,
   formatarCodigo,
@@ -49,9 +50,9 @@ const CONVITE_DE_OUTRA_VERSAO =
   'Este link do leitor é de outra versão do sistema. Leia o QR pela câmera do app ou digite o código.';
 
 
-/** A API do app no mesmo formato da do convite (`…/api/v1`). */
+/** A API do app no mesmo formato da do convite (`…/api/v1`, com a raiz: `…/demo/api/v1`). */
 function apiDoApp(): string {
-  return `${baseAtual()}/api/v1`;
+  return urlDaApi(baseAtual());
 }
 
 function SemPareamento({ visivel }: { visivel: boolean }) {

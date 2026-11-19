@@ -4,6 +4,9 @@ Nada aqui vai para a internet: `BlobFalso` faz o papel do Blob atrás de um
 `httpx.MockTransport` e guarda o que recebeu — o que foi enviado, com que cabeçalhos, e o
 que foi apagado. O invariante que importa: o store guarda exatamente a foto para a qual o
 banco aponta (nem órfã, nem apagada debaixo da tela).
+
+Na demonstração que sobe com a loja (ADR-46), o disco tem teto: o volume dela mora no disco do
+banco da loja, e quem tem a senha da demo não pode enchê-lo.
 """
 
 import asyncio
@@ -22,11 +25,17 @@ from fastapi import FastAPI
 from httpx import AsyncClient
 from pydantic import SecretStr
 from sqlalchemy import text
+from starlette import formparsers
 
 from app.core.config import Settings, settings
 from app.core.db import engine
 from app.modules.catalogo import fotos
-from app.modules.catalogo.fotos import FotosNoBlob, FotosNoDisco, FotosSemLugar
+from app.modules.catalogo.fotos import (
+    FotosDaDemonstracao,
+    FotosNoBlob,
+    FotosNoDisco,
+    FotosSemLugar,
+)
 
 TOKEN = "vercel_blob_rw_LOJA123_segredo"
 API = "https://blob.teste/api/blob"
@@ -35,6 +44,8 @@ PASTA_API = Path(__file__).resolve().parents[1]
 MB = 1024 * 1024
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+#: 64 KB cravados, múltiplo do bloco do disco: o que ocupa é o que mede.
+FOTO_64K = PNG + b"\x00" * (64 * 1024 - len(PNG))
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
 WEBP = b"RIFF\x00\x00\x00\x00WEBPVP8 " + b"\x00" * 64
 
@@ -121,6 +132,14 @@ def disco(monkeypatch: pytest.MonkeyPatch, tmp_path):
     monkeypatch.setattr(settings, "vercel", False)
     monkeypatch.setattr(settings, "media_dir", str(tmp_path))
     return tmp_path
+
+
+@pytest.fixture
+def demo(monkeypatch: pytest.MonkeyPatch, disco):
+    """A demonstração que sobe com a loja (ADR-46): o disco, com lugar para 3 fotos de 64 KB."""
+    monkeypatch.setattr(settings, "demonstracao", True)
+    monkeypatch.setattr(settings, "demo_fotos_max_bytes", 3 * len(FOTO_64K) + 1024)
+    return disco
 
 
 @pytest.fixture
@@ -242,6 +261,105 @@ async def test_na_loja_disco_cheio_responde_503_sem_falar_de_vercel_e_o_errno_va
     assert "Vercel" not in resp.text and "BLOB" not in resp.text
     assert "errno 28" in caplog.text
     assert await _foto_no_banco(produto["id"]) is None
+
+
+# ------------------------------------------------------------------ demonstração (ADR-46)
+def _fotos_na_pasta(media: Path) -> list[str]:
+    return sorted(f.name for f in (media / "produtos").iterdir())
+
+
+async def test_na_demonstracao_a_foto_que_passaria_do_teto_e_recusada(
+    client, auth_admin, produto, demo
+) -> None:
+    """Quem tem a senha da demo (a Apple, quem o dono leva para conhecer o sistema) não enche
+    o disco da loja: cabem três, a quarta é recusada com o código da demo e a de antes fica."""
+    aceitas = [await _enviar(client, auth_admin, produto["id"], FOTO_64K) for _ in range(3)]
+    assert [r.status_code for r in aceitas] == [200, 200, 200]
+    na_tela = aceitas[-1].json()["foto_url"]
+
+    resp = await _enviar(client, auth_admin, produto["id"], FOTO_64K)
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["code"] == "DEMONSTRACAO_SEM_ESPACO"
+    assert resp.json()["detail"] == {"limite_mb": 0.2}
+    assert "madrugada" in resp.json()["message"]
+    assert len(_fotos_na_pasta(demo)) == 3
+    assert await _foto_no_banco(produto["id"]) == na_tela
+
+
+async def test_na_demonstracao_envios_juntos_nao_furam_o_teto(
+    client, auth_admin, produto, demo
+) -> None:
+    """Medir a pasta e gravar são um passo só: cinco envios ao mesmo tempo, lugar para três."""
+    respostas = await asyncio.gather(
+        *(_enviar(client, auth_admin, produto["id"], FOTO_64K) for _ in range(5))
+    )
+    assert sorted(r.status_code for r in respostas) == [200, 200, 200, 409, 409]
+    assert len(_fotos_na_pasta(demo)) == 3
+
+
+async def test_na_demonstracao_a_foto_minuscula_conta_o_bloco_que_ocupa(
+    client, auth_admin, produto, demo, monkeypatch
+) -> None:
+    """Uma "foto" de 9 bytes (só a assinatura do PNG) ocupa um bloco inteiro: pelo tamanho,
+    milhões delas passariam pelo teto enchendo o disco (e os inodes) do mesmo jeito."""
+    minuscula = PNG[:8] + b"\x00"
+    sonda = demo / "sonda"
+    sonda.write_bytes(minuscula)
+    bloco = sonda.stat().st_blocks * 512
+    sonda.unlink()
+    if bloco <= len(minuscula):
+        pytest.skip("este disco guarda arquivo minúsculo sem bloco próprio")
+    monkeypatch.setattr(settings, "demo_fotos_max_bytes", 2 * bloco + 100)
+
+    codigos = [
+        (await _enviar(client, auth_admin, produto["id"], minuscula)).status_code
+        for _ in range(4)
+    ]
+    assert codigos == [200, 200, 200, 409]
+
+
+async def test_fora_da_demonstracao_a_pasta_de_fotos_nao_tem_teto(
+    client, auth_admin, produto, disco, monkeypatch
+) -> None:
+    """Na loja de verdade a variável, se vier, não vale: as fotos são da loja, e o disco dela
+    é o dono quem cuida (o vigia avisa a partir de 90%)."""
+    monkeypatch.setattr(settings, "demonstracao", False)
+    monkeypatch.setattr(settings, "demo_fotos_max_bytes", len(FOTO_64K))
+    respostas = [await _enviar(client, auth_admin, produto["id"], FOTO_64K) for _ in range(3)]
+    assert [r.status_code for r in respostas] == [200, 200, 200]
+    assert len(_fotos_na_pasta(disco)) == 3
+
+
+def test_na_demonstracao_a_fabrica_escolhe_o_disco_com_teto(monkeypatch) -> None:
+    for nome in ("BLOB_READ_WRITE_TOKEN", "VERCEL", "VERCEL_ENV", "DEMO_FOTOS_MAX_BYTES"):
+        monkeypatch.delenv(nome, raising=False)
+    monkeypatch.setenv("AMBIENTE", "test")
+    monkeypatch.setenv("LOJA_DEMONSTRACAO", "1")
+
+    def casa():
+        return fotos._fabricar(Settings(_env_file=None))
+
+    na_demo = casa()
+    assert isinstance(na_demo, FotosDaDemonstracao)
+    assert na_demo._teto == 200 * MB  # o padrão
+    monkeypatch.setenv("BLOB_READ_WRITE_TOKEN", TOKEN)
+    assert isinstance(casa(), FotosNoBlob)  # no Blob, nem teto nem pasta
+    monkeypatch.delenv("BLOB_READ_WRITE_TOKEN")
+    monkeypatch.delenv("LOJA_DEMONSTRACAO")
+    assert type(casa()) is FotosNoDisco  # a loja: o disco de sempre, sem teto
+
+
+def test_esvaziar_leva_as_fotos_e_deixa_as_pastas(tmp_path) -> None:
+    """O que a renovação chama: só os arquivos da pasta de fotos saem."""
+    casa = FotosDaDemonstracao(tmp_path, teto=MB)
+    assert casa.esvaziar() == 0  # nem a pasta existe ainda
+    (tmp_path / "produtos").mkdir()
+    for nome in ("1-a.jpg", "2-b.png"):
+        (tmp_path / "produtos" / nome).write_bytes(JPEG)
+    (tmp_path / "leia-me.txt").write_text("fica")
+    assert casa.esvaziar() == 2
+    assert list((tmp_path / "produtos").iterdir()) == []
+    assert (tmp_path / "leia-me.txt").read_text() == "fica"
 
 
 def _ambiente_limpo(**extra: str) -> dict[str, str]:
@@ -598,3 +716,196 @@ def test_url_do_blob_so_vale_https_no_dominio_de_entrega() -> None:
     assert not fotos.eh_url_do_blob("http://loja123.public.blob.vercel-storage.com/a.jpg")
     assert not fotos.eh_url_do_blob("https://blob.vercel-storage.com.atacante.com/a.jpg")
     assert not fotos.eh_url_do_blob(f"{LOJA}/")
+
+
+# ------------------------------------------------------------------ o login antes do corpo
+FRONTEIRA = "fronteira-do-envio"
+FIM_DO_ENVIO = f"\r\n--{FRONTEIRA}--\r\n".encode()
+
+
+def _comeco_do_envio(nome: str = "foto.png") -> bytes:
+    return (
+        f"--{FRONTEIRA}\r\n"
+        f'Content-Disposition: form-data; name="arquivo"; filename="{nome}"\r\n'
+        "Content-Type: image/png\r\n\r\n"
+    ).encode()
+
+
+def _pedido_de_foto(produto_id: int, partes: list[bytes], token: str | None = None) -> dict:
+    """O escopo ASGI de um PUT .../foto, como o uvicorn o monta (ASGI 2.3)."""
+    caminho = f"/api/v1/produtos/{produto_id}/foto"
+    cabecalhos = [
+        (b"host", b"test"),
+        (b"content-type", f"multipart/form-data; boundary={FRONTEIRA}".encode()),
+        (b"content-length", str(sum(map(len, partes))).encode()),
+    ]
+    if token:
+        cabecalhos.append((b"authorization", f"Bearer {token}".encode()))
+    return {
+        "type": "http", "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1", "method": "PUT", "scheme": "http", "path": caminho,
+        "raw_path": caminho.encode(), "root_path": "", "query_string": b"",
+        "headers": cabecalhos, "client": ("127.0.0.1", 50000), "server": ("test", 80),
+    }
+
+
+class _QuemEnvia:
+    """O outro lado da conexão: manda os cabeçalhos e só entrega o corpo depois de
+    `liberado` — o celular lento, ou quem segura o envio de propósito. Conta os pedaços que
+    a aplicação levou."""
+
+    def __init__(self, partes: list[bytes], *, liberado: bool = False) -> None:
+        self.partes = partes
+        self.entregues = 0
+        self.pediu = asyncio.Event()
+        self.liberado = asyncio.Event()
+        if liberado:
+            self.liberado.set()
+        self.mensagens: list[dict] = []
+
+    async def receive(self) -> dict:
+        self.pediu.set()
+        await self.liberado.wait()
+        if self.entregues < len(self.partes):
+            self.entregues += 1
+            return {
+                "type": "http.request",
+                "body": self.partes[self.entregues - 1],
+                "more_body": self.entregues < len(self.partes),
+            }
+        await asyncio.Event().wait()  # depois do corpo, só a desconexão — que não vem
+        raise AssertionError("inalcançável")
+
+    async def send(self, mensagem: dict) -> None:
+        self.mensagens.append(mensagem)
+
+    @property
+    def status(self) -> int | None:
+        inicio = [m for m in self.mensagens if m["type"] == "http.response.start"]
+        return inicio[0]["status"] if inicio else None
+
+    def json(self) -> dict:
+        corpo = b"".join(
+            m.get("body", b"") for m in self.mensagens if m["type"] == "http.response.body"
+        )
+        return json.loads(corpo)
+
+
+async def test_envio_sem_login_responde_401_sem_ler_o_corpo(monkeypatch) -> None:
+    """O FastAPI lia o multipart inteiro ANTES das dependências — e o Starlette gravava o
+    arquivo num temporário: um PUT de 10 MB sem login ocupava o disco até sair o 401, e um
+    envio segurado de propósito prendia a requisição esperando o resto. Agora o crachá vem
+    primeiro: o 401 sai sem esperar o corpo e sem montar o multipart."""
+    from app.main import app as aplicacao
+
+    temporarios: list[int] = []
+    original = formparsers.SpooledTemporaryFile
+
+    def contar_temporario(*args, **kwargs):
+        temporarios.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(formparsers, "SpooledTemporaryFile", contar_temporario)
+    partes = [_comeco_do_envio(), *[PNG + b"\x00" * (64 * 1024)] * 160, FIM_DO_ENVIO]  # ~10 MB
+
+    # Quem envia segura o corpo: o 401 sai assim mesmo, sem um pedaço lido.
+    segurando = _QuemEnvia(partes)
+    try:
+        await asyncio.wait_for(
+            aplicacao(_pedido_de_foto(1, partes), segurando.receive, segurando.send), timeout=10
+        )
+    except TimeoutError:
+        pytest.fail("a API ficou esperando o corpo do envio antes de conferir o login")
+    assert segurando.status == 401
+    assert segurando.json()["code"] == "TOKEN_INVALIDO"
+    assert segurando.entregues == 0
+
+    # O corpo inteiro à disposição: 401, e nenhum temporário — o multipart nem foi montado.
+    inteiro = _QuemEnvia(partes, liberado=True)
+    await asyncio.wait_for(
+        aplicacao(_pedido_de_foto(1, partes), inteiro.receive, inteiro.send), timeout=30
+    )
+    assert inteiro.status == 401
+    assert temporarios == []
+
+
+async def test_com_login_o_corpo_e_lido_depois_sem_conexao_presa(
+    client, auth_admin, produto, disco
+) -> None:
+    """Quem entrou envia normalmente. E, enquanto o celular manda a foto, a requisição não
+    segura conexão do pool nem a transação aberta pelo login (com a trava de leitura de
+    `users`, a que o TRUNCATE da renovação da demo espera)."""
+    from app.main import app as aplicacao
+
+    token = auth_admin["Authorization"].removeprefix("Bearer ")
+    partes = [_comeco_do_envio("peca.png"), PNG, FIM_DO_ENVIO]
+    quem = _QuemEnvia(partes)
+    pool = engine.sync_engine.pool
+    antes = pool.checkedout()
+    pedido = asyncio.create_task(
+        aplicacao(_pedido_de_foto(produto["id"], partes, token), quem.receive, quem.send)
+    )
+    try:
+        await asyncio.wait_for(quem.pediu.wait(), timeout=10)
+        assert quem.status is None  # passou do login e espera o corpo
+        assert pool.checkedout() == antes, "a leitura do envio segurou uma conexão do banco"
+        quem.liberado.set()
+        await asyncio.wait_for(pedido, timeout=30)
+    finally:
+        pedido.cancel()
+    assert quem.status == 200, quem.mensagens
+    assert quem.json()["foto_url"].startswith(f"/media/produtos/{produto['id']}-")
+    assert (await _foto_no_banco(produto["id"])) == quem.json()["foto_url"]
+
+    # E o caminho de sempre (httpx), com a validação de sempre.
+    assert (await _enviar(client, auth_admin, produto["id"], JPEG, "x.jpg")).status_code == 200
+    sem_arquivo = await client.put(
+        f"/produtos/{produto['id']}/foto", headers=auth_admin,
+        files={"foto": ("x.png", PNG, "image/png")},
+    )
+    assert sem_arquivo.status_code == 422
+    assert sem_arquivo.json()["detail"]["campos"] == [
+        {"campo": "arquivo", "erro": "Field required"}
+    ]
+
+
+async def test_envio_aceita_um_arquivo_e_ate_4_campos_de_texto(
+    client, auth_admin, produto, disco
+) -> None:
+    """O que a §2.2 e a tabela de rotas prometem: um arquivo e até 4 campos de texto ao lado
+    (o app e a web mandam só o arquivo); mais, 400 — no formato e com a frase do Starlette,
+    como todo multipart que a rota recusa, e não no `{code, message, detail}` da API."""
+    caminho = f"/produtos/{produto['id']}/foto"
+    arquivo = {"arquivo": ("x.png", PNG, "image/png")}
+
+    quatro = await client.put(
+        caminho, headers=auth_admin, files=arquivo, data={f"c{i}": "x" for i in range(4)}
+    )
+    assert quatro.status_code == 200, quatro.text
+
+    cinco = await client.put(
+        caminho, headers=auth_admin, files=arquivo, data={f"c{i}": "x" for i in range(5)}
+    )
+    assert cinco.status_code == 400
+    assert cinco.json() == {"detail": "Too many fields. Maximum number of fields is 4."}
+
+    dois = await client.put(caminho, headers=auth_admin, files=[
+        ("arquivo", ("a.png", PNG, "image/png")), ("arquivo", ("b.png", PNG, "image/png")),
+    ])
+    assert dois.status_code == 400
+    assert dois.json() == {"detail": "Too many files. Maximum number of files is 1."}
+
+
+def test_a_documentacao_do_envio_continua_com_o_campo_arquivo() -> None:
+    """A rota lê o multipart ela mesma (depois do login); a documentação continua dizendo o
+    que enviar."""
+    from app.main import app as aplicacao
+
+    esquema_todo = aplicacao.openapi()
+    corpo = esquema_todo["paths"]["/api/v1/produtos/{produto_id}/foto"]["put"]["requestBody"]
+    assert corpo["required"] is True
+    esquema = corpo["content"]["multipart/form-data"]["schema"]
+    if "$ref" in esquema:
+        esquema = esquema_todo["components"]["schemas"][esquema["$ref"].rsplit("/", 1)[1]]
+    assert esquema["required"] == ["arquivo"]
+    assert esquema["properties"]["arquivo"]["type"] == "string"

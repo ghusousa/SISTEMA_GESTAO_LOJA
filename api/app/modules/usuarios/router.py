@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Query, Request, Response, status
 from app.core.deps import CurrentUser, ExigeUsuarios, SessionDep
 from app.core.pagination import Pagina, Paginacao, paginacao
 from app.modules.auditoria.middleware import congelar_autor
-from app.modules.auth.router import COOKIE_REFRESH
+from app.modules.auth.router import apagar_refresh
 from app.modules.usuarios.models import Papel
 from app.modules.usuarios.schemas import (
     ExclusaoDaPropriaConta,
@@ -65,8 +65,9 @@ async def excluir_propria_conta(
     # nome e papel vão congelados daqui, e a linha sai sem user_id (o FK a derrubaria).
     congelar_autor(request, user)
     await UsuarioService(session).excluir_propria_conta(user, dados.senha)
-    # No navegador o refresh mora num cookie httpOnly: sai junto, como no logout.
-    resposta.delete_cookie(COOKIE_REFRESH, path="/api/v1/auth")
+    # No navegador o refresh mora num cookie httpOnly: sai junto, como no logout — no
+    # caminho desta API (a demonstração em /demo tem o dela, ADR-46).
+    apagar_refresh(resposta, request)
 
 
 @router.get("/{user_id}", response_model=UsuarioOut, summary="Detalhe de usuário")

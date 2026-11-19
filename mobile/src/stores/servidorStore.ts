@@ -9,6 +9,17 @@
 import { create } from 'zustand';
 
 import { esquecerServidor, lerServidor, salvarServidor } from '@/api/servidor';
+import { chaves, queryClient } from '@/lib/queryClient';
+
+/**
+ * O que o app sabe da loja (nome, ramo, se é a de demonstração) veio do servidor ANTIGO.
+ * Sem esquecer, quem troca da demonstração para a loja de verdade seguiria vendo a faixa de
+ * "dados fictícios" — e o nome da outra loja na entrada — até o cache envelhecer (10 min).
+ * O reset volta ao padrão e busca de novo, no endereço novo, o que estiver na tela.
+ */
+function esquecerALojaAnterior(): void {
+  void queryClient.resetQueries({ queryKey: chaves.configuracao });
+}
 
 interface ServidorState {
   endereco: string | null;
@@ -32,10 +43,12 @@ export const useServidorStore = create<ServidorState>((set) => ({
   async definir(endereco) {
     await salvarServidor(endereco);
     set({ endereco, carregando: false });
+    esquecerALojaAnterior();
   },
 
   async esquecer() {
     await esquecerServidor();
     set({ endereco: null, carregando: false });
+    esquecerALojaAnterior();
   },
 }));

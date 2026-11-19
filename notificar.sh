@@ -35,6 +35,8 @@ frase_da_unidade() {
         loja-backup)       echo "A cópia diária do banco falhou" ;;
         loja-backup-nuvem) echo "O backup para o Google Drive falhou" ;;
         loja-vigia)        echo "O vigia da loja falhou" ;;
+        # A loja segue no ar; quem ficou com os dados de ontem foi a vitrine (ADR-46).
+        loja-demo-renovar) echo "A renovação diária da demonstração falhou" ;;
         *)                 echo "$1 falhou" ;;
     esac
 }

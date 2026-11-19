@@ -1,4 +1,5 @@
-# A loja inteira em três containers. O arquivo .env ao lado é escrito pelo instalador.
+# A loja em três containers (db, api, proxy) e, com `COMPOSE_PROFILES=demo`, a demonstração
+# ao lado (demo-banco e api-demo, ADR-46). O arquivo .env ao lado é escrito pelo instalador.
 #
 #   ./instalar.sh          instala e sobe
 #   docker compose ps      ver o que está no ar
@@ -81,6 +82,99 @@ services:
       retries: 12
       start_period: 40s
 
+  # ---------------------------------------------------------------------------------------
+  # A DEMONSTRAÇÃO (ADR-46): outra loja rodando ao lado desta, em <domínio>/demo — dados
+  # fictícios e a conta do revisor da App Store, sem acesso nenhum à loja de verdade. Banco,
+  # role, segredo do login e fotos são DELA. Só existe com `COMPOSE_PROFILES=demo` no .env (o
+  # instalar.sh grava; numa loja antiga, `./demo.sh --ligar`).
+  #
+  # Três regras para isto valer do Compose 2.3 ao 5.x (o instalador aproveita o Docker que a
+  # máquina já tiver):
+  #   1. só `${X:-}` aqui — `${X:?}` num serviço de profile desligado quebra a interpolação do
+  #      ARQUIVO INTEIRO, e com ele todo `docker compose` da loja (backup, vigia, atualizar);
+  #   2. nenhum serviço da loja tem `depends_on` num serviço da demo: a demo cair não pode
+  #      derrubar nem atrasar a loja;
+  #   3. a api-demo nunca puxa imagem (`pull_policy: never`): é a mesma imagem que a `api`
+  #      constrói, e um Compose antigo tentaria o Docker Hub antes do build.
+  demo-banco:
+    image: postgres:16-alpine
+    profiles: ["demo"]
+    restart: "no"
+    logging: *log
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGUSER: loja
+      PGDATABASE: postgres
+      PGPASSWORD: ${SENHA_BANCO:-}
+      SENHA_DEMO: ${DEMO_SENHA_BANCO:-}
+    volumes:
+      - ./docker/demo-banco.sh:/usr/local/bin/demo-banco.sh:ro
+    entrypoint: ["/bin/sh", "/usr/local/bin/demo-banco.sh"]
+
+  api-demo:
+    image: loja-api:local
+    pull_policy: never
+    profiles: ["demo"]
+    restart: unless-stopped
+    stop_grace_period: 25s
+    logging: *log
+    depends_on:
+      db:
+        condition: service_healthy
+      demo-banco:
+        condition: service_completed_successfully
+    # Lista ESCRITA À MÃO, nunca copiada da `api` nem `env_file: .env`: o token do emissor de
+    # NFC-e, a senha do superusuário do banco e o segredo do login da loja não entram aqui.
+    environment:
+      DATABASE_URL: postgresql+asyncpg://loja_demo:${DEMO_SENHA_BANCO:-}@db:5432/loja_demo
+      # Pool que CABE no `CONNECTION LIMIT 20` da role loja_demo (docker/demo-banco.sh): 5 + 8
+      # no pico = 13, mais 1 do LISTEN do tempo real e os 2 ou 3 do preparar/renovar (que rodam
+      # por `exec` aqui dentro) — abaixo de 20. Com o padrão da loja (10 + 20), a 21ª conexão
+      # é recusada pelo Postgres e o pedido sai 500; dentro do pool, o excesso espera a vez —
+      # até 30 s (o `pool_timeout` do SQLAlchemy). Passado isso, sai 500 também.
+      DB_POOL_SIZE: "5"
+      DB_MAX_OVERFLOW: "8"
+      # Segredo PRÓPRIO: o access token só carrega o id do usuário, então com o segredo da
+      # loja o token do revisor (id 1 na demo) abriria a conta de id 1 da loja real. Vazio, a
+      # API se recusa a subir em produção — e só a demo fica de fora.
+      JWT_SECRET: ${DEMO_JWT_SECRET:-}
+      AMBIENTE: ${AMBIENTE:-producao}
+      DEBUG: "false"
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      TIMEZONE_LOJA: ${TIMEZONE_LOJA:-America/Sao_Paulo}
+      MEDIA_DIR: /srv/media
+      # Teto da pasta de fotos da demo (o volume mora no disco do banco da loja; ADR-46), que o
+      # .env pode trocar. Com o padrão escrito aqui (200 MiB, o mesmo do código): `${X:-}`
+      # vazio derrubaria a api-demo — o campo é um inteiro maior que zero.
+      DEMO_FOTOS_MAX_BYTES: ${DEMO_FOTOS_MAX_BYTES:-209715200}
+      ESTADO_DIR: /srv/estado
+      FISCAL_EMISSOR: desligado
+      FISCAL_EMITIR_AUTOMATICO: "0"
+      LOJA_DEMONSTRACAO: "1"
+      PREFIXO: /demo
+      DEMO_ADMIN_EMAIL: ${DEMO_ADMIN_EMAIL:-dono@demo.example}
+      DEMO_ADMIN_SENHA: ${DEMO_ADMIN_SENHA:-}
+      DEMO_ADMIN_NOME: Dona Maria
+    volumes:
+      - fotos-da-demo:/srv/media
+      - ./docker/estado:/srv/estado:ro
+    # Teto de memória: a demo é a primeira a ceder numa VPS pequena, nunca a loja.
+    mem_limit: ${DEMO_MEMORIA:-512m}
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:8000/demo/health')
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      # A primeira subida semeia a loja fictícia antes de abrir a porta.
+      start_period: 180s
+
   proxy:
     image: caddy:2-alpine
     restart: unless-stopped
@@ -93,7 +187,11 @@ services:
     environment:
       ENDERECO: ${ENDERECO_PROXY:-:80}
     volumes:
-      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      # A PASTA, não o arquivo: o `git reset --hard` da atualização troca o Caddyfile por um
+      # arquivo novo (inode novo), e um arquivo montado sozinho continua mostrando o VELHO ao
+      # contêiner até ele ser recriado — o `caddy reload` "dava certo" sem mudar nada. Com a
+      # pasta montada, o contêiner enxerga o arquivo novo na hora (ADR-46).
+      - ./docker/caddy:/etc/caddy:ro
       # Guardam o certificado: sem isso o Let's Encrypt seria pedido de novo a cada
       # reinício, e ele tem limite de emissões por semana.
       - certificados:/data
@@ -102,5 +200,6 @@ services:
 volumes:
   dados-do-banco:
   fotos-de-produto:
+  fotos-da-demo:
   certificados:
   config-do-proxy:

@@ -57,12 +57,14 @@
 #   ASC_KEY_ID, ASC_KEY_P8   chave da API da Apple, acesso Administrador (o .p8 inteiro, BEGIN/END)
 #   APPLE_DEMO_PASSWORD   só para a REVISÃO: senha da conta demo do revisor (memória do runner)
 # O que não é segredo tem padrão em mobile/publicar/padroes.json: issuer da chave, time da Apple,
-# contato, URL de suporte, copyright, conta e código de barras da demo. Variable de mesmo nome
-# vence o padrão (opcionais): APPLE_TEAM_ID, APPLE_TEAM_TYPE; APPLE_EMAIL_SUPORTE,
-# APPLE_URL_SUPORTE, APPLE_NOME_CONTATO, APPLE_COPYRIGHT, APPLE_EMAIL_DEMO, APPLE_CODIGO_DEMO,
-# APPLE_SERVIDOR_DEMO, APPLE_URL_PRIVACIDADE, APPLE_URL_ETIQUETAS_DEMO; ASC_ISSUER_ID pode ser
-# Variable ou Secret. O telefone de contato (APPLE_TELEFONE_CONTATO, Variable ou Secret — é dado
-# pessoal) só a revisão pede, e só se a Apple ainda não tiver um.
+# contato, copyright, conta e código de barras da demo. Variable de mesmo nome vence o padrão
+# (opcionais): APPLE_TEAM_ID, APPLE_TEAM_TYPE; APPLE_EMAIL_SUPORTE, APPLE_NOME_CONTATO,
+# APPLE_COPYRIGHT, APPLE_EMAIL_DEMO, APPLE_CODIGO_DEMO, APPLE_SERVIDOR_DEMO,
+# APPLE_URL_ETIQUETAS_DEMO; ASC_ISSUER_ID pode ser Variable ou Secret. As URLs da ficha não moram
+# no arquivo, para trocar junto com o servidor: vazia, APPLE_URL_PRIVACIDADE vale
+# <APPLE_SERVIDOR_DEMO>/privacidade, e APPLE_URL_SUPORTE, a mesma URL da privacidade. O telefone
+# de contato (APPLE_TELEFONE_CONTATO, Variable ou Secret — é dado pessoal) só a revisão pede, e só
+# se a Apple ainda não tiver um.
 # Faltou peça? O passo que depende dela diz QUAIS nomes faltam; os outros seguem.
 name: Publicar iOS na App Store
 

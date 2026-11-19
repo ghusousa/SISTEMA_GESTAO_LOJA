@@ -70,6 +70,12 @@ class ConfiguracaoPublicaOut(BaseModel):
     timezone: str
     #: Derivado do segmento — a tela nunca precisa saber traduzir sozinha.
     vocabulario: VocabularioOut
+    #: Esta é a demonstração que sobe com a loja (ADR-46)? As telas põem a faixa "dados
+    #: fictícios" no topo: a demo mora no mesmo domínio da loja, e uma venda de verdade
+    #: lançada nela por engano seria uma venda perdida. Vem da config da máquina, não do
+    #: banco: quem decide é o contêiner (LOJA_DEMONSTRACAO), não quem está logado. Na
+    #: Vercel é falso — lá nada muda (ADR-42).
+    demonstracao: bool = False
 
     @classmethod
     def de_modelo(cls, config) -> "ConfiguracaoPublicaOut":  # noqa: ANN001
@@ -78,6 +84,7 @@ class ConfiguracaoPublicaOut(BaseModel):
             segmento=config.segmento,
             timezone=settings.timezone_loja,
             vocabulario=_vocabulario_out(config.segmento),
+            demonstracao=settings.demonstracao,
         )
 
 
@@ -106,6 +113,7 @@ class ConfiguracaoOut(ConfiguracaoPublicaOut):
             inscricao_estadual=config.inscricao_estadual,
             serie_nfce=config.serie_nfce,
             vocabulario=_vocabulario_out(config.segmento),
+            demonstracao=settings.demonstracao,
         )
 
 

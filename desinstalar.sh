@@ -59,14 +59,18 @@ if [ "$MANTER_DADOS" -eq 1 ]; then
     echo "  Para voltar depois, rode ./instalar.sh — o banco estará como estava."
 else
     printf '  %sModo: apagar TUDO, inclusive o banco.%s\n' "$VERMELHO$FORTE" "$NORMAL"
-    echo "  Vai embora: histórico de vendas, estoque, despesas, usuários e fotos."
+    echo "  Vai embora: histórico de vendas, estoque, despesas, usuários e fotos —"
+    echo "  e a demonstração (/demo) junto, com a conta dela."
 fi
 
 # ------------------------------------------------------------------ backup
 
 if [ "$MANTER_DADOS" -eq 0 ] && [ "$FAZER_BACKUP" -eq 1 ]; then
     titulo "Backup antes de apagar"
-    if dk compose ps --status running --format '{{.Service}}' 2>/dev/null | grep -qx db; then
+    # `--services`, não `--format '{{.Service}}'`: o template só é aceito do Compose 2.21 em
+    # diante, e antes disso o erro calado virava "o banco não está no ar" — e o backup de
+    # antes de apagar tudo era pulado sem ninguém ver.
+    if dk compose ps --status running --services 2>/dev/null | grep -qx db; then
         ARQUIVO_BACKUP="loja-backup-$(date +%Y-%m-%d-%H%M).dump"
         # O dump é escrito DENTRO do container e depois copiado, em vez de vir pelo cano da
         # saída padrão. É um formato binário: qualquer shell no meio do caminho (o cmd do
@@ -144,7 +148,9 @@ desligar_rotinas() {
             fi
         done
     fi
-    for u in loja-vigia loja-backup loja-backup-nuvem loja-atualizar; do
+    # A renovação da demonstração não é anotada: o ./instalar.sh a liga sempre que a
+    # demonstração está ligada no .env.
+    for u in loja-vigia loja-backup loja-backup-nuvem loja-atualizar loja-demo-renovar; do
         [ -f "$dir/$u.timer" ] || continue
         como_root systemctl disable --now "$u.timer" >/dev/null 2>&1 || true
         como_root rm -f "$dir/$u.timer" "$dir/$u.service"
@@ -156,11 +162,15 @@ desligar_rotinas() {
 
 titulo "Removendo"
 desligar_rotinas
+# `--profile demo`: o `down` só alcança os serviços de perfil LIGADO. Com a demonstração
+# desligada no .env e um contêiner dela ainda de pé, o `down` deixava ela no ar (ou morria na
+# rede em uso, nos Compose antigos) e o `down -v` deixava o volume das fotos dela para trás.
+# A flag só liga o perfil, nunca tira outro: vale igual do Compose 2.3 ao de hoje.
 if [ "$MANTER_DADOS" -eq 1 ]; then
-    dk compose down
+    dk compose --profile demo down
     certo "containers removidos; volumes preservados"
 else
-    dk compose down -v
+    dk compose --profile demo down -v
     certo "containers e dados removidos"
     rm -f .env && certo ".env removido"
 fi

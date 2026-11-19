@@ -32,6 +32,21 @@ _PREFIXO = "/api/v1"
 _MUTACOES = {"POST", "PUT", "PATCH", "DELETE"}
 
 
+def _caminho_na_api(request: Request) -> str:
+    """O caminho como a API o enxerga, sem o prefixo em que ela foi montada.
+
+    A demonstração em `/demo` (ADR-46) recebe `/demo/api/v1/vendas`, com "/demo" no
+    `root_path`. Lido cru, nada começava com `/api/v1` e TODA mutação da demo saía do
+    diário, calada; e o caminho gravado tem de ser o mesmo nas duas, que o mapa de
+    `classificar.py` é um só.
+    """
+    caminho = request.url.path
+    raiz = request.scope.get("root_path", "")
+    if raiz and caminho.startswith(raiz):
+        caminho = caminho[len(raiz):] or "/"
+    return caminho
+
+
 def _ip(request: Request) -> str | None:
     encaminhado = request.headers.get("x-forwarded-for")
     if encaminhado:
@@ -81,7 +96,8 @@ class AuditoriaMiddleware(BaseHTTPMiddleware):
         try:
             if request.method not in _MUTACOES:
                 return resposta
-            if not request.url.path.startswith(_PREFIXO):
+            caminho_na_api = _caminho_na_api(request)
+            if not caminho_na_api.startswith(_PREFIXO):
                 return resposta
             # Só o que de fato aconteceu: 2xx/3xx. Um 4xx é uma tentativa barrada (o
             # 403 da vendedora, o 422 de dado inválido) — não é um ato consumado.
@@ -91,7 +107,7 @@ class AuditoriaMiddleware(BaseHTTPMiddleware):
             if getattr(request.state, "fora_do_diario", False):
                 return resposta
 
-            caminho = request.url.path[len(_PREFIXO):]
+            caminho = caminho_na_api[len(_PREFIXO):]
             ato = classificar(request.method, caminho)
             if ato is None:
                 return resposta

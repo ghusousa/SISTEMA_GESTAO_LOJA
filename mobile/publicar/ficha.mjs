@@ -34,8 +34,39 @@ const OUTRA_PLATAFORMA = /\b(android|google\s*play|play\s*store|apk|galaxy\s*sto
 /** O que vai no lugar de um dado que ainda não existe (a ficha sobe; a revisão, não). */
 export const PENDENTE = '(pending)';
 
-/** Onde o revisor conecta o app quando ninguém disser outro endereço (a demo na Vercel). */
+/**
+ * Onde o revisor conecta o app quando ninguém disser outro endereço: hoje, a demo da Vercel
+ * (ADR-42). A que sobe com a loja (ADR-46) mora em <domínio>/demo e entra pela Variable
+ * APPLE_SERVIDOR_DEMO — trocar o padrão aqui troca o servidor de toda revisão.
+ */
 export const SERVIDOR_DEMO_PADRAO = 'https://loja-tria.vercel.app';
+
+/**
+ * O endereço do servidor de demonstração do jeito que o revisor digita no app: https://, o
+ * host (com a porta, se houver) e, se houver, o CAMINHO — a demonstração que sobe com a loja
+ * mora em <domínio>/demo (ADR-46). Sai sem a barra do fim. Recusa o que não é base: sem
+ * HTTPS o iOS não conecta (ATS) e a revisão volta; consulta (?), âncora (#), credencial (@),
+ * espaço e trecho vazio (//) viram pedaço de toda rota, porque quem junta (o app, a
+ * conferência, a privacidade) junta por TEXTO; e /app ou /api é a página ou a API, não o
+ * servidor — o app cortaria esse pedaço, e a conferência bateria em <página>/health.
+ */
+export function servidorDemo(texto) {
+  const base = String(texto ?? '').trim().replace(/\/+$/, '');
+  if (!/^https:\/\/[^/\s?#@]+(\/[^/\s?#@]+)*$/i.test(base)) {
+    throw new Error(
+      `url_servidor_demo tem de ser https://endereço, com o caminho se houver (ex.: https://loja.seudominio.com.br/demo), ` +
+        `sem ?, # nem espaço: ${base}`,
+    );
+  }
+  const caminho = base.replace(/^https:\/\/[^/]+/i, '');
+  if (/(^|\/)(app|api)(\/|$)/i.test(caminho)) {
+    throw new Error(
+      `url_servidor_demo é a BASE do servidor (ex.: https://loja.seudominio.com.br/demo), não a página do sistema ` +
+        `(/app) nem a API (/api): ${base}`,
+    );
+  }
+  return base;
+}
 
 /**
  * Os padrões desta loja (publicar/padroes.json): issuer da chave, time da Apple, contato,
@@ -124,7 +155,6 @@ export function lerConfig() {
     'issuer_id',
     'arquivo_p8',
     'email_suporte',
-    'url_suporte',
     'nome_contato',
     'email_demo',
     'codigo_demo',
@@ -133,17 +163,21 @@ export function lerConfig() {
   ];
   const faltando = obrigatorios.filter((campo) => naoPreenchido(c[campo], campo));
   if (faltando.length) throw new Error(`Preencha no config.json: ${faltando.join(', ')}`);
-  // O revisor conecta o app NESTE endereço: sem HTTPS o iOS recusa a conexão (ATS) e a
-  // revisão volta. Antes ele vinha escrito nas notas e apontava para o site de outro
-  // sistema — o revisor entraria num servidor que não é o da loja.
-  c.url_servidor_demo = String(c.url_servidor_demo).trim().replace(/\/+$/, '');
-  if (!/^https:\/\/[^/\s]+$/i.test(c.url_servidor_demo)) {
-    throw new Error(`url_servidor_demo tem de ser só https://endereço (sem caminho): ${c.url_servidor_demo}`);
-  }
+  // O revisor conecta o app NESTE endereço (com o caminho: <domínio>/demo é a demonstração,
+  // <domínio> é a loja de verdade). Antes ele vinha escrito nas notas e apontava para o site
+  // de outro sistema — o revisor entraria num servidor que não é o da loja.
+  c.url_servidor_demo = servidorDemo(c.url_servidor_demo);
+  // Por texto, nunca new URL('/privacidade', base): a barra do começo apagaria o /demo e a
+  // ficha publicaria a política da LOJA no lugar da página da demonstração.
   c.url_privacidade = String(c.url_privacidade || `${c.url_servidor_demo}/privacidade`).trim();
   if (!/^https:\/\//i.test(c.url_privacidade)) throw new Error('url_privacidade tem de começar com https://');
+  // Sem outra página (APPLE_URL_SUPORTE), o suporte É a privacidade da ficha: a do servidor da
+  // demo, que troca junto com ele (fixo no padroes.json, ficava na Vercel depois da troca para
+  // <domínio>/demo, e desligá-la derrubava o link de suporte da App Store), ou a que o dono pôs
+  // em APPLE_URL_PRIVACIDADE — o endereço permanente dele vale para as duas, em vez de deixar
+  // o suporte preso a um servidor que pode ser desligado. Na Vercel e na /demo dá o mesmo.
+  c.url_suporte = String(c.url_suporte || c.url_privacidade).trim();
   // A Apple quer uma URL de verdade no suporte; "loja.com.br" sem esquema vira https://.
-  c.url_suporte = String(c.url_suporte).trim();
   if (!/^[a-z]+:\/\//i.test(c.url_suporte)) c.url_suporte = `https://${c.url_suporte}`;
   if (!/^https:\/\/[^\s]+$/i.test(c.url_suporte)) throw new Error(`url_suporte tem de ser https://...: ${c.url_suporte}`);
   const p8Caminho = resolve(dirname(caminho), c.arquivo_p8);

@@ -96,12 +96,15 @@ class AuthRepository:
             {"espaco": _ESPACO_TRAVA_LOGIN, "email": email.lower().strip()},
         )
 
-    async def segundos_de_bloqueio(self, email: str, ip: str | None) -> int:
+    async def segundos_de_bloqueio(
+        self, email: str, ip: str | None, *, por_email: bool = True
+    ) -> int:
         """Quantos segundos faltam até o login liberar. Zero = pode tentar.
 
         Conta as FALHAS na janela, por e-mail e por IP. Se qualquer um dos dois passou do
         teto, devolve o tempo até a falha mais antiga da janela sair — é quando o contador
-        cai abaixo do teto de novo.
+        cai abaixo do teto de novo. `por_email=False` conta só o IP (a conta pública da
+        demonstração da instalação, ver `AuthService._conta_publica_da_demonstracao`).
         """
         agora = datetime.now(UTC)
         inicio = agora - JANELA
@@ -128,7 +131,9 @@ class AuthRepository:
             return max(0, int((libera_em - agora).total_seconds()) + 1)
 
         return max(
-            await falhas(LoginAttempt.email, email.lower().strip(), MAX_FALHAS_EMAIL),
+            await falhas(LoginAttempt.email, email.lower().strip(), MAX_FALHAS_EMAIL)
+            if por_email
+            else 0,
             await falhas(LoginAttempt.ip, ip, MAX_FALHAS_IP),
         )
 

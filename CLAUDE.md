@@ -29,6 +29,9 @@ contratos, ADRs). Mudou algo? Atualize o doc no mesmo commit.**
 ./atualizar.sh --ignorar-ci                               # sobe sem CI verde (o --sim nunca sobe)
 ./vigia.sh / --automatico                                 # /health, disco e backup; avisa (5 em 5 min)
 ./notificar.sh --testar                                   # aviso de teste no ntfy (NOTIFICAR_URL)
+./demo.sh --mostrar                                       # a demonstração em <domínio>/demo: endereço, conta, senha, o que levar à Apple
+./demo.sh --ligar / --desligar [--apagar]                 # liga (completa o .env) / desliga (dados ficam; --apagar leva banco, fotos, senhas)
+./demo.sh --renovar / --automatico                        # dados fictícios de volta ao começo agora / toda madrugada (04:30, timer)
 
 # API (dentro de api/)
 .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0    # servidor
@@ -38,7 +41,7 @@ contratos, ADRs). Mudou algo? Atualize o doc no mesmo commit.**
 .venv/bin/python scripts/e2e.py                           # cenário de um dia de loja (API no ar)
 
 # Stack completa em Docker (raiz do repo)
-./instalar.sh                                             # instala e sobe tudo
+./instalar.sh                                             # instala e sobe tudo, com a demonstração em /demo (--sem-demo: sem ela)
 docker compose logs -f api                                # acompanhar
 docker compose exec api python -m app.cli create-admin ...  # novo admin
 ./desinstalar.sh --manter-dados                           # desligar preservando o banco
@@ -54,7 +57,7 @@ npm run bundle       # expo export: pega erro de import que o tsc não vê
 npm run publicar     # ficha inteira na App Store via API (mobile/publicar/; -- --enviar submete ou REENVIA, --aguardar-build 60 espera o build,
                      #   --video-revisao arquivo|https anexa a gravação de tela, --conferir-envio só confere sem escrever,
                      #   --mesmo-build reenvia o build que a Apple devolveu — sem ela nem --build, o reenvio dele é recusado)
-node --test publicar/teste/*.test.mjs  # testes do publicador (ci.mjs, notas em inglês, guia PDF em dia)
+node --test publicar/teste/*.test.mjs  # testes do publicador (ci.mjs, notas em inglês, guia PDF em dia, demo em <domínio>/demo)
 node publicar/teste/rodar.mjs  # o publicador contra a Apple de mentira (--reais: com as capturas de media/app-store)
 node publicar/revisao/gerar-guia.mjs  # refaz o guia PDF do revisor (mudou texto, prints ou ficha/aparelhos-testados.txt)
 publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com as telas do app (export web: cabeçalho do navegador) e o guia PDF (Postgres local + seed; --sem-build)
@@ -106,30 +109,56 @@ publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com as telas do
   meta), e as `login_attempts` do e-mail saem junto (`AuthService.esquecer_tentativas`). O domínio
   `excluida.example` da marca é recusado no cadastro. Autor que some no ato:
   `congelar_autor(request, user)`. `web/js/exclusao-de-conta.js` ↔ `mobile/src/lib/exclusaoDeConta.ts`.
-  Na Vercel, a conta `DEMO_ADMIN_EMAIL` (a das notas da Apple) não se exclui, não perde o papel, não
-  é desativada nem troca de senha — 409 `CONTA_DE_DEMONSTRACAO`, ANTES da senha (o publicador
-  confere com uma senha aleatória) —, e o Redeploy a recria se faltar. Sem resposta (status 0) a
-  tela não diz "não foi excluída": a próxima tentativa lê o 401 pela renovação (`depoisDaIncerta`).
+  Numa demonstração (Vercel ou `/demo`: `settings.conta_demo_protegida`), a conta `DEMO_ADMIN_EMAIL`
+  (a das notas da Apple) não se exclui, não perde o papel, não é desativada nem troca de senha — 409
+  `CONTA_DE_DEMONSTRACAO`, ANTES da senha (o publicador confere com uma senha aleatória) —, e quem
+  sobe a demo a recria (Redeploy; na instalação, cada subida da `api-demo` converge a conta). Sem
+  resposta (status 0) a tela não diz "não foi excluída": a próxima tentativa lê o 401 pela
+  renovação (`depoisDaIncerta`).
 - **Força bruta (ADR-24)**: o login conta as falhas recentes por e-mail e por IP
   (`login_attempts`, janela de 15 min) e responde 429 com `Retry-After` quando passa do teto.
   A resposta de e-mail real e falso é idêntica — a trava não vaza se a conta existe, nem pelo
-  tempo: e-mail inexistente confere contra `HASH_DE_MENTIRA`. A contagem é serializada por
+  tempo: e-mail inexistente confere contra `HASH_DE_MENTIRA`. A conta protegida da demonstração
+  da instalação (`/demo`, `settings.demonstracao`) conta só o IP (o e-mail dela é público nas
+  notas da Apple, e a senha é sorteada); na Vercel a senha é escolhida por gente e a trava por
+  e-mail continua. A contagem é serializada por
   e-mail (`pg_advisory_xact_lock`), senão uma rajada paralela fura o teto. bcrypt **nunca**
   direto numa rota async: `hash_senha_async`/`verificar_senha_async` (thread), ou o login
   congela a loja inteira.
 - **Fora de dev o app se blinda**: `settings.producao` esconde `/docs` e `/openapi.json`, e
   todo request leva `X-Content-Type-Options`, `X-Frame-Options` e `Referrer-Policy`.
   `api/scripts/pentest.py` roda a bateria de ataques contra a API no ar.
-  **CSP, HSTS e Permissions-Policy moram no Caddy** (`docker/Caddyfile`): `script-src 'self'`
+  **CSP, HSTS, Permissions-Policy e o teto do corpo POR ROTA (as rotas de JSON leem o corpo antes
+  do login; a da foto confere o login antes, mas o arquivo de quem entrou vai inteiro a um
+  temporário antes de a API medir; e N conexões seguram N vezes o teto: 6 MB no PUT da foto, 2 MB
+  no resto; rota nova com arquivo ganha matcher próprio; o 413 é do Caddy 2.7+) moram no Caddy**
+  (`docker/caddy/Caddyfile`):
+  `script-src 'self'`
   sem inline — atributo `onclick=""` em template é bloqueado; use delegação (`data-*`). Origem
   de fora nova (CDN, imagem) tem de entrar na CSP. O pentest confere no proxy com
   `PENTEST_PROXY=http://...`, ou no Caddyfile sem ele.
-- **Vercel (ADR-42)** é a 2ª forma de rodar, só demonstração (Root Directory `api/`, Neon): tudo atrás
+- **Vercel (ADR-42)** é a forma de rodar sem Docker, só demonstração (Root Directory `api/`, Neon): tudo atrás
   de `settings.vercel` (`VERCEL=1`, a Vercel põe) — sem ela nada muda. Lá, sem `JWT_SECRET`, o segredo
   do login é o HMAC da senha do banco do Neon (`segredo_derivado_do_banco`; senha fraca ou sem banco: não sobe). A CSP/HSTS de lá mora no
-  `api/vercel.json`: mudou o Caddyfile, mude ele (`test_vercel.py` compara). Build: `scripts/vercel_build.py`.
+  `api/vercel.json`: mudou o Caddyfile, mude ele (`test_vercel.py` compara). Build: `scripts/vercel_build.py`,
+  que chama o preparo compartilhado com a demo da instalação (`app/demonstracao.py`).
   A carga da demo é RETOMÁVEL (marcos `DEMONSTRACAO_*` no `audit_log`): passo novo no
   `seed_demo.popular()` usa `chave("rotulo")` fixa ou busca antes de criar, senão a retomada duplica.
+- **Demonstração em `/demo` (ADR-46)**: a `api-demo` é a mesma imagem com `LOJA_DEMONSTRACAO=1` e
+  `PREFIXO=/demo` (o `app.main` a monta sob o prefixo), banco/role `loja_demo` sem CONNECT no `loja` e
+  `DEMO_JWT_SECRET` próprio (o token só leva o id). Caminho absoluto gerado no servidor lê
+  `request.scope["root_path"]` (redirect, `Path` do cookie, auditoria); no app e no publicador, a
+  base junta por texto, nunca `new URL('/x', base)`. Semear ou zerar exige as DUAS chaves:
+  `settings.demonstracao` e o marco `loja.demonstracao = 'sim'` do banco. No compose, serviço da demo
+  só usa `${X:-}` (nunca `:?`), a `api-demo` tem `pull_policy: never` e nenhum serviço da loja
+  depende da demo: ela nunca derruba a loja (Compose 2.3 a 5.8). As fotos dela moram no disco do
+  banco da loja: teto `DEMO_FOTOS_MAX_BYTES` (200 MB; ajustável no `.env`, vale ao recriar a
+  `api-demo`; 409 `DEMONSTRACAO_SEM_ESPACO`, `FotosDaDemonstracao`)
+  e a renovação esvazia `MEDIA_DIR/produtos` — nunca o `MEDIA_DIR`, onde o volume está montado.
+  A renovação trava antes as portas da API (`PORTAS_DA_API`, na ordem em que a API entra no
+  banco); caminho novo que entra por outra tabela entra na lista, na ordem certa. O logout e as
+  rotas que derrubam sessões vão na ordem contrária à da renovação da sessão, e nenhuma ordem
+  serve às duas: não troque a ordem por eles (o impasse com eles está na ADR-46).
 - Tempo real: `WS /api/v1/tempo-real`. Quem avisa é o commit do SQLAlchemy
   (`core/eventos.py`), não os services — mudou tabela, sai aviso. O que trafega é o
   ASSUNTO ("estoque"), nunca o dado: a tela refaz a consulta pela rota REST, e o filtro
@@ -186,7 +215,7 @@ publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com as telas do
   `FiscalService.cancelar_nota_da_venda` depois das recusas da venda e antes dos estornos: emissor
   recusou → a venda NÃO cancela. Teste de emissor só com `httpx.MockTransport` — nunca internet.
   `web/js/nfce.js` + `web/js/campos-fiscais.js` e `mobile/src/lib/fiscal.ts` são espelhos.
-- **Fotos (ADR-42, "Fotos no Vercel Blob")**: `catalogo/fotos.py` escolhe pelo ambiente — disco (`/media`, caminho relativo, trocar NÃO apaga a antiga) ou, com `BLOB_READ_WRITE_TOKEN`, Blob público com URL absoluta em `produtos/<VERCEL_ENV>/`, sem `mkdir`/`/media`, e a antiga apagada só depois do commit e só se for do mesmo ambiente; na Vercel (`VERCEL`, nunca a falha do `mkdir`: o `/tmp` grava) sem token, 503 e nada de `/media`; lá o teto é 4 MB (a função corta em 4,5); quem mostra aceita as duas (`lib/enderecoDaFoto.ts`).
+- **Fotos (ADR-42, "Fotos no Vercel Blob")**: `catalogo/fotos.py` escolhe pelo ambiente — disco (`/media`, caminho relativo, trocar NÃO apaga a antiga) ou, com `BLOB_READ_WRITE_TOKEN`, Blob público com URL absoluta em `produtos/<VERCEL_ENV>/`, sem `mkdir`/`/media`, e a antiga apagada só depois do commit e só se for do mesmo ambiente; na Vercel (`VERCEL`, nunca a falha do `mkdir`: o `/tmp` grava) sem token, 503 e nada de `/media`; lá o teto é 4 MB (a função corta em 4,5); quem mostra aceita as duas (`lib/enderecoDaFoto.ts`). A rota lê o multipart só DEPOIS do login (`request.form` dentro dela, sem `File()`: com ele o FastAPI lê e grava o corpo antes das dependências, e o 401 sai depois do envio inteiro).
 - **Leitor pelo celular (ADR-43)**: o computador pareia um celular (`/leitor/pareamentos`, código de 6
   sem 0/O/1/I, 5 min; aceite vale 12 h fixas; status calculado, nunca coluna) e cada bipe da câmera
   entra em `leitor_bipes` (idempotente por `client_uuid`, conferido ANTES de tudo). O computador
@@ -251,6 +280,12 @@ publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com as telas do
 - Dinheiro em centavos (`js/dinheiro.js`, **espelho de `mobile/src/lib/money.ts` — mudou lá, mude aqui**).
 - Toda listagem pagina no servidor; filtros vão para a query da URL (`trocarConsulta`), para o F5 não perder.
 - Refresh token **só** em cookie httpOnly; access token só em memória. Nunca `localStorage`.
+- **Raiz da página (ADR-46)**: a mesma pasta serve a loja (`/app/`) e a demo (`/demo/app/`). Caminho
+  do servidor só por `naRaiz()`, foto por `enderecoDaFoto()`, chave de storage/canal por `nomeNaRaiz()`
+  (`js/raiz.js`); `testes/web/sem-endereco-absoluto.test.mjs` reprova `/api/v1` absoluto (também
+  o montado depois de um `${...}` que não seja a raiz nem rota `#/`), a chave do navegador que não
+  venha de `nomeNaRaiz` em CADA chamada (`?.`, apelido e `['x']` contam) e o `foto_url` que chegue
+  ao `src` (`.src =`, `setAttribute('src'`, `src=${}`) sem passar por `enderecoDaFoto()`.
 - Leitor USB é teclado (`js/leitor.js`): rajada de dígitos + Enter. Campo do PDV marcado `data-leitor`.
 - **Um campo, duas entradas**: o mesmo `data-leitor` aceita bipe E nome. Letras abrem a lista
   (`js/busca-peca.js`, espelho de `mobile/src/components/BuscarPeca.tsx`); com ela aberta o
@@ -268,8 +303,11 @@ publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com as telas do
   tela. Barra de abas: `medidasDaBarraDeAbas` (`lib/areaSegura.ts`, com teste — `height` fixa faz
   o React Navigation esquecer o indicador de início). Rodapé, botão flutuante e pé de Modal de
   tela cheia: `useRespiroDeBaixo()`; topo de Modal de tela cheia: `useRespiroDeCima()`
-  (`components/ui.tsx`). O export web não tem recorte: a auditoria emula a área segura pelo
-  DevTools (`Emulation.setSafeAreaInsetsOverride`).
+  (`components/ui.tsx`). `KeyboardAvoidingView` de tela debaixo das faixas do topo (a entrada):
+  `keyboardVerticalOffset={deslocamentoDoTeclado(alturaDasFaixas)}`, com a altura medida por
+  `useAlturaDasFaixas()` (a guarda em `lib/areaSegura.test.ts` lê a `login.tsx`); folha modal
+  nativa (a do servidor) e `<Modal>` de tela cheia não descontam. O export web não tem recorte:
+  a auditoria emula a área segura pelo DevTools (`Emulation.setSafeAreaInsetsOverride`).
 - Frase nunca leva `textTransform: 'capitalize'` (vira "Novembro De 2026"): `primeiraMaiuscula`
   e `plural` de `lib/texto.ts`, no lugar do "peça(s)".
 - **Barra de status**: a raiz é CLARA (texto branco sobre o cabeçalho azul). Tela clara sem

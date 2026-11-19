@@ -9,15 +9,24 @@
 #   0. só segue com commit de CI verde no GitHub, e que não tenha falhado aqui antes;
 #   1. backup do banco ANTES de qualquer coisa, conferido (é o que permite voltar atrás);
 #   2. baixa o código novo;
-#   3. reconstrói e sobe;
+#   3. reconstrói e sobe a LOJA (db, api, proxy);
 #   4. as migrations, quem aplica é o contêiner ao subir (docker/entrada.sh);
-#   5. confere que o sistema respondeu — e, se não respondeu, VOLTA sozinho para a
-#      versão anterior (com o banco do passo 1, se uma migration chegou a rodar).
+#   5. confere que o sistema respondeu — por dentro e pelo proxy, com o Caddyfile novo
+#      conferido e aplicado — e, se não respondeu, VOLTA sozinho para a versão anterior
+#      (com o banco do passo 1, se uma migration chegou a rodar);
+#   6. só então sobe a demonstração em /demo (ADR-46), se ela está ligada. Ela nunca desfaz
+#      a atualização da loja: se não subir, avisa.
 #
 # O passo 5 é o motivo de este script existir em vez de um `git pull && docker compose up`
 # escrito no papel: quem atualiza a loja às 8h50 de um sábado precisa que uma atualização
 # ruim se desfaça sozinha, e não que alguém descubra o `git reset` certo com a fila
 # esperando no caixa.
+#
+# Este script nunca escreve no .env: ligar e desligar a demonstração é do ./demo.sh e do
+# ./instalar.sh. E a atualização que traz um atualizar.sh novo roda o TEXTO VELHO (o `git
+# reset` troca o arquivo; o bash segue lendo o que abriu): nada que essa primeira rodada
+# precise pode depender do que se acrescenta aqui — por isso a demo chega desligada a quem já
+# tinha a loja, e só liga com o ./demo.sh --ligar (ou rodando o ./instalar.sh de novo).
 #
 # Opções:
 #   --sem-backup     pula o backup (mais rápido; só se você acabou de fazer um). Sem esta
@@ -33,6 +42,11 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# Se a demonstração sobe é o COMPOSE_PROFILES do .env que diz. Exportada no terminal, a
+# variável venceria o arquivo para o `docker compose` (e o `sudo docker` a jogaria fora): cada
+# execução valeria uma coisa. Aqui manda o .env.
+unset COMPOSE_PROFILES
+
 VERDE=$'\033[32m'; AMARELO=$'\033[33m'; VERMELHO=$'\033[31m'; AZUL=$'\033[36m'
 FORTE=$'\033[1m'; NORMAL=$'\033[0m'
 [ -t 1 ] || { VERDE=""; AMARELO=""; VERMELHO=""; AZUL=""; FORTE=""; NORMAL=""; }
@@ -41,6 +55,11 @@ titulo() { printf '\n%s%s%s\n' "$FORTE$AZUL" "$1" "$NORMAL"; }
 ok()     { printf '  %s✓%s %s\n' "$VERDE" "$NORMAL" "$1"; }
 aviso()  { printf '  %s!%s %s\n' "$AMARELO" "$NORMAL" "$1"; }
 erro()   { printf '\n%s✗ %s%s\n' "$VERMELHO" "$1" "$NORMAL" >&2; }
+
+valor_no_env() { grep -E "^$1=" .env 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"' || true; }
+
+# A demonstração (ADR-46) está ligada quando o perfil "demo" está no COMPOSE_PROFILES.
+demo_ligada() { case ",$(valor_no_env COMPOSE_PROFILES)," in *,demo,*) return 0 ;; *) return 1 ;; esac; }
 
 SEM_BACKUP=0
 FORCAR=0
@@ -59,7 +78,7 @@ while [ $# -gt 0 ]; do
             case "${2:-}" in [0-9]*) MINUTOS="$2"; shift ;; esac
             ;;
         --sem-automatico) AUTOMATICO="desligar" ;;
-        -h|--help)        sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help)        sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *)                erro "Opção desconhecida: $1"; exit 1 ;;
     esac
     shift
@@ -513,17 +532,18 @@ fi
 
 # ------------------------------------------------------------------ atualizar
 
-# Espera a API responder. Devolve a resposta do /health, ou vazio se desistiu.
+# Espera a API responder. Devolve a resposta do /health, ou vazio se desistiu. A da
+# demonstração responde debaixo do prefixo dela: esperar_saude 60 api-demo /demo/health.
 esperar_saude() {
-    local tentativas="${1:-30}"
+    local tentativas="${1:-30}" servico="${2:-api}" caminho="${3:-/health}"
     local resposta=""
     for _ in $(seq 1 "$tentativas"); do
-        if resposta="$(dk compose exec -T api python -c \
+        if resposta="$(dk compose exec -T "$servico" python -c \
             'import urllib.request, sys
 try:
-    print(urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=3).read().decode())
+    print(urllib.request.urlopen("http://127.0.0.1:8000" + sys.argv[1], timeout=3).read().decode())
 except Exception:
-    sys.exit(1)' 2>/dev/null)"; then
+    sys.exit(1)' "$caminho" 2>/dev/null)"; then
             printf '%s' "$resposta"
             return 0
         fi
@@ -534,17 +554,18 @@ except Exception:
 
 # Contêiner órfão de uma recriação interrompida.
 #
-# Quando o Docker vai substituir um contêiner, ele primeiro RENOMEIA o antigo para
-# `<hash>_loja-api-1`, para liberar o nome. Se a recriação morre no meio (build lento,
-# máquina ocupada, SIGKILL no desligamento), esse renomeado fica para trás em estado
-# `created` — e o `up -d` seguinte tropeça nele. O sintoma na loja é 502: o Caddy fica de
-# pé, mas não acha `api` no DNS interno, porque contêiner nenhum atende por esse nome.
+# Para trocar um contêiner, o Docker o substitui por um de nome provisório
+# `<hash>_loja-<serviço>-1` e só no fim o renomeia. Se a recriação morre no meio (build lento,
+# máquina ocupada, SIGKILL no desligamento), esse provisório fica para trás — e o `up -d`
+# seguinte tropeça nele. Com a api, o sintoma na loja é 502: o Caddy fica de pé, mas não acha
+# `api` no DNS interno; com o proxy, é a loja inteira fora, porta 80/443 fechada.
 #
-# Já aconteceu de verdade, e o dono só descobriu pelo diagnóstico.
+# Já aconteceu de verdade, e o dono só descobriu pelo diagnóstico. Vale para QUALQUER serviço
+# (a demonstração e o proxy também se recriam), e quem decide é o nome inteiro, aqui no grep.
 limpar_orfaos() {
     local orfaos
-    orfaos="$(dk ps -a --filter "name=_loja-api-1" --format '{{.Names}}' 2>/dev/null \
-        | grep -E '^[0-9a-f]{8,}_' || true)"
+    orfaos="$(dk ps -a --filter "name=_loja-" --format '{{.Names}}' 2>/dev/null \
+        | grep -E '^[0-9a-f]{8,}_loja-[A-Za-z0-9_.-]+-[0-9]+$' || true)"
     [ -z "$orfaos" ] && return 0
     aviso "Sobrou contêiner de uma atualização interrompida. Removendo:"
     printf '%s\n' "$orfaos" | while read -r nome; do
@@ -561,8 +582,110 @@ revisao_do_banco() {
         2>/dev/null | tr -d '\r' | head -1
 }
 
+# ------------------------------------------------------------------ o proxy
+#
+# O /health por dentro da API não diz se a loja ABRE: o Caddy pode estar caído, recarregado
+# com um Caddyfile quebrado, ou levando a outro lugar. A conferida que vale é a do navegador —
+# pela porta do proxy. Com domínio, pelo nome (o Caddy escolhe o site e o certificado por ele),
+# sem sair da máquina: o --resolve leva o nome a 127.0.0.1. O -k é de propósito: a pergunta é
+# "a loja chega até a API?", e um certificado vencendo não é culpa desta atualização.
+PELO_PROXY=(); URL_PELO_PROXY=""
+endereco_pelo_proxy() {
+    local endereco porta
+    endereco="$(valor_no_env ENDERECO_PROXY)"
+    case "${endereco:-:80}" in
+        :*)
+            porta="$(valor_no_env PORTA_HTTP)"
+            URL_PELO_PROXY="http://127.0.0.1:${porta:-80}/health"
+            PELO_PROXY=("$URL_PELO_PROXY") ;;
+        *)
+            porta="$(valor_no_env PORTA_HTTPS)"
+            URL_PELO_PROXY="https://$endereco:${porta:-443}/health"
+            PELO_PROXY=(--resolve "$endereco:${porta:-443}:127.0.0.1" "$URL_PELO_PROXY") ;;
+    esac
+}
+
+loja_abre_pelo_proxy() {  # loja_abre_pelo_proxy <tentativas>
+    local i
+    command -v curl >/dev/null 2>&1 || return 1
+    for i in $(seq 1 "$1"); do
+        if curl -fsS -k -o /dev/null --max-time 5 "${PELO_PROXY[@]}" >/dev/null 2>&1; then return 0; fi
+        if [ "$i" -lt "$1" ]; then sleep 2; fi
+    done
+    return 1
+}
+
+id_do_proxy() { dk compose ps -q proxy 2>/dev/null | head -1 || true; }
+
+# O que a atualização trocou na pasta do Caddyfile (montada inteira no proxy: docker/caddy/).
+caddyfile_mudou() { ! git diff --quiet "$1" "$2" -- docker/caddy 2>/dev/null; }
+
+# O proxy só lê o Caddyfile ao subir, e o `up` só o recria quando muda a configuração DELE no
+# compose: um Caddyfile novo (a CSP, o /demo) ficaria esperando o próximo reboot, numa hora que
+# ninguém escolheu. Antes de recarregar, confere: recarregado quebrado, o Caddy recusaria e
+# seguiria com o de antes — mas o arquivo quebrado ficaria no disco, esperando o próximo
+# reinício para derrubar a loja.
+recarregar_proxy() {
+    local saida
+    if ! saida="$(dk compose exec -T proxy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1)"; then
+        aviso "O Caddyfile não passou na conferência do proxy:"
+        printf '%s\n' "$saida" | tail -5 | sed 's/^/    /'
+        return 1
+    fi
+    if ! saida="$(dk compose exec -T proxy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1)"; then
+        aviso "O proxy não aceitou o Caddyfile novo:"
+        printf '%s\n' "$saida" | tail -5 | sed 's/^/    /'
+        return 1
+    fi
+    return 0
+}
+
+# ------------------------------------------------------------------ a demonstração
+
+# Avisa no terminal e no celular: a demonstração é a vitrine da revisão da Apple, e ela fora
+# do ar ninguém nota até a Apple recusar. Com "voltou", o aviso é o da volta atrás.
+avisar_demo() {  # avisar_demo <o que houve> [voltou]
+    local terminal="A loja está atualizada e no ar; ela não depende da demonstração."
+    local celular="A loja foi atualizada e está no ar, mas a demonstração (/demo) não:"
+    if [ "${2:-}" = voltou ]; then
+        terminal="A atualização voltou atrás; a loja não depende da demonstração."
+        celular="A atualização voltou atrás, e a demonstração (/demo) não voltou com ela:"
+    fi
+    aviso "$1"
+    aviso "$terminal"
+    printf '  Veja: %sdocker compose logs --tail 50 api-demo%s   e religue: %s./demo.sh --ligar%s\n' \
+        "$FORTE" "$NORMAL" "$FORTE" "$NORMAL"
+    if [ -x ./notificar.sh ]; then
+        ./notificar.sh --assunto demo-na-atualizacao "A demonstração não subiu" \
+            "$celular $1 Veja: docker compose logs --tail 50 api-demo" \
+            >/dev/null 2>&1 || true
+    fi
+}
+
+# A segunda fase: só os serviços da demonstração, pelo nome, depois de a loja estar de pé e
+# conferida. Nada daqui volta atrás: a demonstração é descartável, a loja não.
+DEMO_SITUACAO=""
+subir_demo() {
+    demo_ligada || return 0
+    titulo "Subindo a demonstração (/demo)"
+    if ! dk compose up -d demo-banco api-demo; then
+        DEMO_SITUACAO="não subiu"
+        avisar_demo "A demonstração não subiu."
+        return 0
+    fi
+    if esperar_saude 60 api-demo /demo/health >/dev/null; then
+        DEMO_SITUACAO="no ar"
+        ok "a demonstração respondeu"
+    else
+        DEMO_SITUACAO="não respondeu"
+        avisar_demo "A demonstração subiu, mas não respondeu ao /health."
+    fi
+}
+
+# ------------------------------------------------------------------ voltar atrás
+
 voltar_atras() {
-    local revisao_agora=""
+    local revisao_agora="" proxy_antes
     erro "A atualização falhou. Voltando para a versão anterior."
     # Antes de tudo: mesmo que a volta morra no meio, a próxima conferida já sabe que esta
     # versão não sobe aqui, e não derruba a loja de novo para descobrir outra vez.
@@ -573,7 +696,15 @@ voltar_atras() {
     # isso, senão ninguém descobre que a loja ficou para trás numa madrugada.
     anotar_versao false
     limpar_orfaos
-    dk compose up -d --build --remove-orphans 2>&1 | tail -3
+    proxy_antes="$(id_do_proxy)"
+    # `|| true`: subir a de antes que falha não pode calar o resto — a espera e o recado abaixo
+    # são o que diz à pessoa o que aconteceu.
+    dk compose up -d --build --remove-orphans db api proxy 2>&1 | tail -3 || true
+    # O proxy que não foi recriado agora ainda roda o Caddyfile da versão desfeita, se ela o
+    # tinha aplicado: volta para o de antes, que já estava no ar.
+    if caddyfile_mudou "$ANTES" "$DEPOIS" && [ "$(id_do_proxy)" = "$proxy_antes" ]; then
+        recarregar_proxy || aviso "o proxy não recarregou o Caddyfile de antes: docker compose restart proxy"
+    fi
 
     # Esperar aqui também, e não só no caminho feliz: dizer "voltou" enquanto o
     # contêiner ainda sobe faz a pessoa abrir o site, ver erro e achar que perdeu a loja.
@@ -603,6 +734,26 @@ voltar_atras() {
         printf '  Veja o que aconteceu com: %sdocker compose logs --tail 50 api%s\n' "$FORTE" "$NORMAL"
         [ -n "$ARQUIVO_BACKUP" ] && printf '  A cópia do banco de antes está em %s\n' "$ARQUIVO_BACKUP"
     fi
+    # A demonstração não é tocada: ela só passa para a versão nova na segunda fase (subir_demo),
+    # depois de a loja estar de pé e conferida, e toda volta atrás vem antes dela. O `up` da
+    # primeira fase e o daqui só nomeiam db, api e proxy, então ela segue na imagem e no banco
+    # de antes — apagá-la e semeá-la de novo só a tirava do ar e derrubava a sessão de quem
+    # estava nela (o revisor da Apple inclusive).
+    #
+    # A não ser que o contêiner dela tenha sumido: a versão desfeita tirou ou renomeou o serviço,
+    # e o --remove-orphans da primeira fase o levou como órfão. Aí ele sobe de novo, só ele, sem
+    # DROP (o banco dela é o de antes), com a mesma espera do /health da segunda fase — o `up`
+    # que dá certo não diz que ela responde —, e a falha avisa pela mesma via.
+    if demo_ligada && [ -z "$(dk compose ps -q api-demo 2>/dev/null || true)" ]; then
+        aviso "A demonstração saiu junto com a versão desfeita; subindo-a de novo."
+        if ! dk compose up -d demo-banco api-demo 2>&1 | tail -3; then
+            avisar_demo "A demonstração não subiu de novo na volta atrás." voltou
+        elif esperar_saude 60 api-demo /demo/health >/dev/null; then
+            ok "a demonstração voltou e respondeu"
+        else
+            avisar_demo "A demonstração subiu de novo, mas não respondeu ao /health." voltou
+        fi
+    fi
     printf '  A versão %s não será tentada de novo sozinha: a próxima é quando chegar um commit\n' \
         "$(git rev-parse --short "$DEPOIS")"
     printf '  novo no GitHub.\n'
@@ -616,6 +767,13 @@ titulo "Baixando a versão nova"
 # morrer no meio. No servidor que ainda não tinha registro, é esta linha que cria o primeiro.
 gravar_implantado "$ANTES"
 anotar_versao false "$ANTES"
+# Antes de mexer: a loja abre pelo proxy agora? Só uma loja que abria pode ter sido derrubada
+# por esta atualização. Se já não abria (sem curl, porta bloqueada, um problema de antes), a
+# conferida de depois não serve de juiz — senão toda atualização daqui para frente voltaria
+# atrás por um defeito que não é dela.
+endereco_pelo_proxy
+PROXY_RESPONDIA=0
+if loja_abre_pelo_proxy 1; then PROXY_RESPONDIA=1; fi
 git reset --hard --quiet "$DEPOIS"
 ok "código em $(git rev-parse --short HEAD)"
 
@@ -634,12 +792,15 @@ fi
 titulo "Reconstruindo e subindo"
 # `up -d --build` em vez de `restart`: dependência nova no requirements só entra na
 # imagem se ela for reconstruída, e uma imagem velha com código novo quebra de um jeito
-# difícil de entender.
+# difícil de entender. Só os serviços DA LOJA, pelo nome: a demonstração sobe depois, e o
+# que acontece com ela nunca decide se esta atualização fica ou volta.
 REVISAO_ANTES="$(revisao_do_banco || true)"
 limpar_orfaos
-if ! dk compose up -d --build --remove-orphans; then
+PROXY_ANTES="$(id_do_proxy)"
+if ! dk compose up -d --build --remove-orphans db api proxy; then
     voltar_atras
 fi
+PROXY_DEPOIS="$(id_do_proxy)"
 
 # ------------------------------------------------------------------ conferir
 
@@ -660,14 +821,46 @@ if ! SAUDE="$(esperar_saude 60)"; then
     voltar_atras
 fi
 ok "migrations aplicadas e a API respondeu: $SAUDE"
+
+# O Caddyfile novo, se veio um: recriado agora, o proxy já subiu com ele; senão, conferido e
+# recarregado. Que não passa na conferência é versão quebrada — volta atrás inteira, para o
+# arquivo ruim não ficar no disco esperando o próximo reinício do proxy.
+if caddyfile_mudou "$ANTES" "$DEPOIS"; then
+    if [ "$PROXY_DEPOIS" != "$PROXY_ANTES" ]; then
+        ok "Caddyfile novo: o proxy foi recriado e já subiu com ele"
+    elif recarregar_proxy; then
+        ok "Caddyfile novo conferido e aplicado ao proxy"
+    else
+        voltar_atras
+    fi
+fi
+
+if ! command -v curl >/dev/null 2>&1; then
+    aviso "Sem o curl nesta máquina, não deu para conferir a loja pelo proxy."
+elif [ "$PROXY_RESPONDIA" -eq 1 ]; then
+    if ! loja_abre_pelo_proxy 15; then
+        erro "A API responde por dentro, mas a loja não abre pelo proxy ($URL_PELO_PROXY)."
+        dk compose logs --tail 20 proxy 2>&1 | sed 's/^/    /' || true
+        voltar_atras
+    fi
+    ok "a loja abre pelo proxy ($URL_PELO_PROXY)"
+elif loja_abre_pelo_proxy 15; then
+    ok "a loja abre pelo proxy ($URL_PELO_PROXY)"
+else
+    aviso "A loja não abre pelo proxy ($URL_PELO_PROXY) — e já não abria antes desta atualização."
+    aviso "Veja o porquê com: ./diagnostico.sh"
+fi
 # Só agora a versão nova é a que está no ar.
 gravar_implantado "$DEPOIS"
 rm -f "$FALHOU"
 anotar_versao true
 
+subir_demo
+
 # Cada `--build` deixa a imagem antiga para trás, sem nome, ocupando disco. Vinte
 # atualizações depois são vários GB — e num servidor de loja o disco acaba antes.
 # `image prune -f` sem `-a` só apaga imagem órfã: nada em uso, nenhum dado, nada de volume.
+# Depois da demonstração: até ela ser recriada, a imagem antiga ainda era dela.
 LIXO="$(dk image prune -f 2>/dev/null | grep -i 'reclaimed' | sed 's/.*: *//')"
 [ -n "$LIXO" ] && [ "$LIXO" != "0B" ] && ok "disco liberado das imagens antigas: $LIXO"
 
@@ -695,6 +888,7 @@ printf '  De %s para %s (%s %s).\n' \
     "$(git rev-parse --short "$ANTES")" "$(git rev-parse --short "$DEPOIS")" \
     "$QUANTOS" "$([ "$QUANTOS" -eq 1 ] && echo mudança || echo mudanças)"
 printf '  Endereço: %s\n' "$URL_LOCAL"
+[ -n "$DEMO_SITUACAO" ] && printf '  Demonstração (/demo): %s\n' "$DEMO_SITUACAO"
 [ -n "$ARQUIVO_BACKUP" ] && printf '  Backup de antes: %s\n' "$ARQUIVO_BACKUP"
 printf '\n  %sNo celular:%s feche e abra o app para pegar a versão nova.\n' "$FORTE" "$NORMAL"
 printf '  %sNo balcão:%s aperte Ctrl+F5 no navegador.\n\n' "$FORTE" "$NORMAL"

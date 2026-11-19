@@ -18,6 +18,7 @@
 import { api } from '../api.js';
 import { svgEan13, ean13Valido } from '../codigo-barras.js';
 import { formatar, paraCentavos } from '../dinheiro.js';
+import { nomeNaRaiz } from '../raiz.js';
 import { conferencia } from '../store.js';
 import { ajuda, avisarErro, cru, html, plural } from '../ui.js';
 
@@ -77,8 +78,11 @@ const FORMATOS = {
   },
 };
 
-/** Lembrado no aparelho: a loja escolhe o formato uma vez e não toda vez que imprime. */
-const CHAVE_FORMATO = 'loja.etiqueta.formato';
+/**
+ * Lembrado no aparelho: a loja escolhe o formato uma vez e não toda vez que imprime. Com a
+ * raiz no nome (ADR-46): a escolha feita na demo não muda a impressora da loja.
+ */
+const CHAVE_FORMATO = nomeNaRaiz('loja.etiqueta.formato');
 const MAX_POR_PECA = 50;
 
 export async function render(raiz, params) {

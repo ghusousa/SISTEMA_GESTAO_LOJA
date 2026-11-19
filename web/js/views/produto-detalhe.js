@@ -14,6 +14,7 @@ import { TIPOS_ACEITOS, enviarFoto } from '../foto.js';
 import { formatar, paraCentavos, paraDecimalString } from '../dinheiro.js';
 import { ir } from '../router.js';
 import { PODE, pode } from '../permissoes.js';
+import { enderecoDaFoto } from '../raiz.js';
 import {
   ajuda,
   aviso,
@@ -57,7 +58,7 @@ export async function render(raiz, { id }) {
             <div class="foto-escolha" style="margin:8px 0">
               <div class="foto-escolha__quadro" data-foto-quadro title="Trocar a foto da peça">
                 ${produto.foto_url
-                  ? cru(html`<img class="foto-escolha__img" src="${produto.foto_url}" alt="Foto de ${produto.nome}" />`)
+                  ? cru(html`<img class="foto-escolha__img" src="${enderecoDaFoto(produto.foto_url)}" alt="Foto de ${produto.nome}" />`)
                   : cru('<span class="foto-escolha__vazio">sem foto</span>')}
               </div>
               <div>

@@ -1,11 +1,15 @@
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
+from starlette.applications import Starlette
+from starlette.routing import Mount
 
 from app.core.config import settings
 from app.core.eventos import registrar_avisos_automaticos
@@ -159,5 +163,49 @@ if _web.is_dir():
         app.get("/exclusao-de-dados", include_in_schema=False)(_pagina_legal("exclusao-de-dados.html"))
 
     @app.get("/", include_in_schema=False)
-    async def _abrir_sistema() -> RedirectResponse:
-        return RedirectResponse("/app/")
+    async def _abrir_sistema(request: Request) -> RedirectResponse:
+        # Com prefixo (a demonstração em /demo, ADR-46) o `/` é o `/demo/`: o sistema dela
+        # está em /demo/app/, e um "/app/" seco levaria quem testa para a loja de verdade.
+        return RedirectResponse(f"{request.scope.get('root_path', '')}/app/")
+
+
+def montar_no_prefixo(api: FastAPI, prefixo: str) -> Starlette:
+    """A API inteira servida sob `prefixo` — a demonstração em `<domínio>/demo` (ADR-46).
+
+    O proxy manda `/demo/...` SEM tirar o prefixo, e o `Mount` o põe no `root_path` de cada
+    requisição: as rotas casam como sempre, e o que gera caminho absoluto (o `/` → `/app/`,
+    o `Path` do cookie do refresh, o caminho que a auditoria grava) lê de lá. Fora do
+    prefixo é 404: esta API nunca responde pelo endereço da loja que mora no mesmo domínio.
+
+    O `Mount` não repassa o lifespan à API montada; este envoltório repassa, para que o que
+    a API um dia ligar na subida (e desligar na descida) rode igual com ou sem prefixo.
+    """
+
+    @asynccontextmanager
+    async def _vida(_: Starlette) -> AsyncIterator[object]:
+        async with api.router.lifespan_context(api) as estado:
+            yield estado
+
+    async def _fora_do_prefixo(_: Request, __: Exception) -> JSONResponse:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "code": "NAO_ENCONTRADO",
+                "message": f"Nada aqui: este servidor responde em {prefixo}/.",
+                "detail": {},
+            },
+        )
+
+    return Starlette(
+        routes=[Mount(prefixo, app=api)],
+        lifespan=_vida,
+        exception_handlers={404: _fora_do_prefixo},
+    )
+
+
+#: A API em si, sempre a FastAPI — com ou sem prefixo. É ela que os testes ajustam
+#: (`dependency_overrides`) e que a carga da demonstração chama dentro do processo.
+api = app
+if settings.prefixo:
+    # O CMD da imagem continua `uvicorn app.main:app`: o mesmo nome serve as duas.
+    app = montar_no_prefixo(api, settings.prefixo)

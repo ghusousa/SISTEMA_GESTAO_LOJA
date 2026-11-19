@@ -1,12 +1,11 @@
 {
-  "_leia": "Padroes desta loja para publicar na Apple. NADA aqui e segredo: chave .p8, Key ID e senha da demo ficam SO nos Secrets do repositorio. Variable de mesmo nome vence o valor daqui (ex.: Variable APPLE_URL_SUPORTE); ASC_ISSUER_ID pode ser Variable ou Secret. Com este arquivo, o GitHub so precisa de EXPO_TOKEN, ASC_KEY_ID e ASC_KEY_P8 para subir a ficha; a revisao pede ainda APPLE_DEMO_PASSWORD (Secret) e o telefone de contato (Variable ou Secret), se a Apple ja nao o tiver.",
+  "_leia": "Padroes desta loja para publicar na Apple. NADA aqui e segredo: chave .p8, Key ID e senha da demo ficam SO nos Secrets do repositorio. Variable de mesmo nome vence o valor daqui (ex.: Variable APPLE_EMAIL_SUPORTE); ASC_ISSUER_ID pode ser Variable ou Secret. URL de suporte e de privacidade NAO moram aqui: sem APPLE_URL_PRIVACIDADE, a privacidade e <servidor da demo>/privacidade e troca junto com APPLE_SERVIDOR_DEMO; sem APPLE_URL_SUPORTE, o suporte e a mesma URL da privacidade. Com este arquivo, o GitHub so precisa de EXPO_TOKEN, ASC_KEY_ID e ASC_KEY_P8 para subir a ficha; a revisao pede ainda APPLE_DEMO_PASSWORD (Secret) e o telefone de contato (Variable ou Secret), se a Apple ja nao o tiver.",
   "issuer_id": "e789df74-d2fd-47fe-b6f1-07e541a147b9",
   "apple_team_id": "7C4RPFMC9G",
   "apple_team_type": "INDIVIDUAL",
   "nome_contato": "Gustavo Sousa",
   "titular_copyright": "Gustavo Sousa",
   "email_suporte": "privacidade@sistemaobras.com.br",
-  "url_suporte": "https://loja-tria.vercel.app/privacidade",
   "email_demo": "dono@demo.com",
   "codigo_demo": "7890000000000"
 }

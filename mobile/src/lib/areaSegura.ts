@@ -77,3 +77,41 @@ export function medidasDaBarraDeAbas(areaSeguraDeBaixo: number): MedidasDaBarra 
     lineHeight: ABA.linhaDoRotulo,
   };
 }
+
+/** O que interessa da área segura aqui: as quatro bordas, em pt. */
+export interface Bordas {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
+/**
+ * A área segura que a NAVEGAÇÃO enxerga quando há faixa por cima dela — o aviso de sem
+ * conexão e a da loja de demonstração (`components/FaixasDoTopo.tsx`).
+ *
+ * A faixa fica no topo da tela e já cobre a barra de status. Se o cabeçalho azul de baixo
+ * somasse a área de cima de novo, ganharia uma tira vazia da altura da ilha — então o topo
+ * vira zero, e os lados e a base continuam os do aparelho. Sem faixa, devolve a MESMA área
+ * (o mesmo objeto): para quem não tem faixa, nada muda nem redesenha.
+ *
+ * O Modal de tela cheia desenha por cima de tudo, faixa inclusive, a partir do topo da TELA:
+ * ele lê a área da janela (`useAreaDaJanela`, pelo `useRespiroDeCima`), nunca esta.
+ */
+export function areaAbaixoDasFaixas<T extends Bordas>(janela: T, temFaixa: boolean): T {
+  return temFaixa && janela.top !== 0 ? { ...janela, top: 0 } : janela;
+}
+
+/**
+ * O `keyboardVerticalOffset` de um `KeyboardAvoidingView` de tela que mora DEBAIXO das faixas
+ * do topo: a altura delas, medida (`useAlturaDasFaixas`) — sem faixa, zero, e nada muda.
+ *
+ * O RN (0.81, `KeyboardAvoidingView.js`) mede o KAV em relação ao PAI, que começa debaixo das
+ * faixas, e compara com o topo do teclado medido na tela inteira. Sem o desconto ele acolchoa
+ * de menos justo a altura das faixas, e essa altura do fim do formulário fica atrás do teclado
+ * (na entrada da demonstração, o rodapé e, com o Texto Maior, o "Entrar"). Para cima, como as
+ * áreas acima: nunca fica atrás; medida inválida conta como sem faixa.
+ */
+export function deslocamentoDoTeclado(alturaDasFaixas: number): number {
+  return Number.isFinite(alturaDasFaixas) && alturaDasFaixas > 0 ? Math.ceil(alturaDasFaixas) : 0;
+}
