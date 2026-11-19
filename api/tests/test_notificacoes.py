@@ -943,6 +943,58 @@ async def test_testar_push_sem_aparelho_ou_sem_token_diz_o_que_fazer(
     assert expo.lotes == []
 
 
+@pytest.mark.parametrize("falha", ["ConnectError", "ConnectTimeout", "ProxyError", "teto"])
+async def test_testar_push_sem_rede_aponta_a_rede_deste_servidor(
+    client, admin, auth_admin, expo, capsys, monkeypatch, falha: str
+) -> None:
+    """O servidor nem alcançou a Expo (rede caída, proxy em porta morta, o teto de 4 s): a
+    primeira frase aponta a rede DESTE servidor. "A Expo recusou o aviso" mandaria o dono
+    atrás da chave da Apple, e a Expo não recusou nada."""
+    from app import cli
+
+    segredo = _token("iphone-sem-rede")
+    await _registrar(client, auth_admin, uuid.uuid4(), "ios", token=segredo)
+
+    async def falhar(_lote: list[dict]) -> httpx.Response:
+        if falha == "teto":
+            await asyncio.sleep(3)
+            return _resposta(OK)
+        raise getattr(httpx, falha)("sem rede")
+
+    if falha == "teto":
+        monkeypatch.setattr(push_da_expo, "TETO_DO_ENVIO_S", 0.2)
+    expo.responder = falhar
+    saida = await cli._testar_push(admin.email, espera_s=0, intervalo_s=0)
+    texto = capsys.readouterr().out
+    assert saida == 1
+    motivo = "TimeoutError" if falha == "teto" else falha
+    assert f"aparelho 1 (ios): este servidor não conseguiu falar com a Expo ({motivo})" in texto
+    assert "rede DESTE servidor" in texto
+    assert "recusou" not in texto, texto
+    assert "iphone-sem-rede" not in texto
+    # Rede caída não é token morto: o registro fica como estava.
+    assert (await _aparelhos())[0][3] == segredo
+
+
+async def test_testar_push_recusa_da_expo_continua_sendo_da_expo(
+    client, admin, auth_admin, expo, capsys
+) -> None:
+    """A outra metade: a Expo respondeu e disse não (aqui, o lote inteiro). Aí, sim, quem
+    recusou foi ela — e nada de mandar conferir a rede."""
+    from app import cli
+
+    await _registrar(client, auth_admin, uuid.uuid4(), "ios", token=_token("iphone"))
+
+    async def recusar(_lote: list[dict]) -> httpx.Response:
+        return httpx.Response(400, json={"errors": [{"code": "PUSH_TOO_MANY_EXPERIENCE_IDS"}]})
+
+    expo.responder = recusar
+    assert await cli._testar_push(admin.email, espera_s=0, intervalo_s=0) == 1
+    texto = capsys.readouterr().out
+    assert "a Expo recusou o aviso (HTTP 400 PUSH_TOO_MANY_EXPERIENCE_IDS)" in texto
+    assert "não conseguiu falar" not in texto and "rede DESTE servidor" not in texto
+
+
 def test_testar_push_no_terminal(monkeypatch) -> None:
     """O comando existe no `python -m app.cli` e leva o e-mail e a espera. (Sem `asyncio.run`
     de verdade: um loop novo aqui trocaria o do pytest-asyncio no meio da suíte.)"""
