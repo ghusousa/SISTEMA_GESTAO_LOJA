@@ -7,9 +7,11 @@ revisor seguinte não entrava (recusa 2.1). Na demonstração ela não se exclui
 papel de dono, não é desativada e não troca de senha — e a recusa vem antes da senha, que é
 como o publicador confere a trava sem risco.
 
-E ninguém a tranca de fora: o e-mail dela está nas notas, e 10 senhas erradas a cada 15 min
-(uma por liberação) deixavam o revisor do lado de fora para sempre. Para ela, a trava de
-força bruta conta só o IP (ADR-24); para qualquer outra conta, nada muda.
+E, na demo que sobe com a loja, ninguém a tranca de fora: o e-mail dela está nas notas, e 10
+senhas erradas a cada 15 min (uma por liberação) deixavam o revisor do lado de fora para
+sempre. Lá a senha é sorteada (20 caracteres), e para ela a trava de força bruta conta só o
+IP (ADR-24). Na Vercel a senha é escolhida por gente, e a trava por e-mail continua; para
+qualquer outra conta, nada muda.
 
 Na loja de verdade (sem Vercel e sem LOJA_DEMONSTRACAO), nada disso vale.
 """
@@ -173,18 +175,25 @@ async def _login(client: AsyncClient, email: str, ip: str, senha: str = SENHA):
     )
 
 
-async def test_falhas_no_email_da_demo_nao_trancam_o_revisor(
+async def test_a_trava_por_email_da_conta_da_demo_so_cai_na_instalacao(
     client: AsyncClient, na_demonstracao: User
 ) -> None:
-    """O ataque: uma senha errada por liberação, de onde for. O revisor, de outro lugar,
-    com a senha certa, entra — e um erro dele é 401, não o 429 de quem nunca chegou a
-    conferir a senha."""
+    """O ataque: uma senha errada por liberação, de onde for. Na demo da instalação (senha de
+    20 caracteres sorteados) o revisor, de outro lugar, com a senha certa, entra — e um erro
+    dele é 401, não o 429 de quem nunca chegou a conferir a senha. Na Vercel a senha é
+    escolhida por gente, no painel: sem a trava por e-mail, um chute distribuído (um IP por
+    tentativa) não teria teto, então lá ela continua como sempre foi (ADR-24)."""
     await _falhas(na_demonstracao.email, "198.51.100.7", MAX_FALHAS_EMAIL + 5)
 
     entrou = await _login(client, na_demonstracao.email, "203.0.113.20")
-    assert entrou.status_code == 200, entrou.text
-    errou = await _login(client, na_demonstracao.email, "203.0.113.20", "nao-e-a-senha-1")
-    assert errou.status_code == 401, errou.text
+    if settings.vercel:
+        # Sem o corpo na mensagem: se entrou, ele traz os tokens da sessão.
+        assert entrou.status_code == 429, f"na Vercel a trava caiu ({entrou.status_code})"
+        assert int(entrou.headers["retry-after"]) > 0
+    else:
+        assert entrou.status_code == 200, entrou.text
+        errou = await _login(client, na_demonstracao.email, "203.0.113.20", "nao-e-a-senha-1")
+        assert errou.status_code == 401, errou.text
 
 
 async def test_a_trava_por_ip_continua_valendo_para_a_conta_da_demo(

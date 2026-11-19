@@ -83,14 +83,20 @@ class AuthService:
 
     @staticmethod
     def _conta_publica_da_demonstracao(email: str) -> bool:
-        """É a conta das notas da Apple, numa demonstração? Ela não trava pelo e-mail.
+        """É a conta das notas da Apple, na demo que sobe com a loja? Ela não trava pelo e-mail.
 
         O e-mail dela está nas notas da revisão e o endereço da demo vai na ficha pública
         da App Store: qualquer um que mandasse 10 senhas erradas a cada 15 min (uma por
         liberação, guiado pelo `Retry-After`) deixava o revisor do lado de fora para
         sempre, sem nunca chegar ao teto do IP. Para ela vale só a trava por IP (30), que é
-        a que segura a força bruta de uma origem; e a senha dela não é de gente (na demo
-        que sobe com a loja, 20 caracteres sorteados pelo instalador, ADR-46).
+        a que segura a força bruta de uma origem — e isso basta porque a senha dela não é de
+        gente: 20 caracteres sorteados pelo instalador (ADR-46).
+
+        SÓ na demonstração da instalação (`settings.demonstracao`, em `/demo`). Na Vercel a
+        DEMO_ADMIN_SENHA é escolhida por gente, no painel: sem a trava por e-mail, um chute
+        distribuído (um IP por tentativa) contra um e-mail conhecido não teria teto nenhum.
+        Lá a regra é a de sempre (ADR-24) — a proteção da conta (`conta_demo_protegida`,
+        409 ao excluir, rebaixar ou trocar a senha, ADR-45) é outra coisa e continua.
 
         Não vaza se a conta existe (ADR-24): a exceção é UM e-mail, conhecido de antemão —
         está nas notas e na config, não na resposta —, e para qualquer outro e-mail, exista
@@ -98,7 +104,7 @@ class AuthService:
         (`conta_demo_protegida` é vazia), e a regra é a de sempre.
         """
         protegida = settings.conta_demo_protegida
-        return bool(protegida) and email.strip().lower() == protegida
+        return settings.demonstracao and bool(protegida) and email.strip().lower() == protegida
 
     async def esquecer_tentativas(self, email: str) -> int:
         """A conta deste e-mail foi excluída: as tentativas de login dela saem junto, na mesma

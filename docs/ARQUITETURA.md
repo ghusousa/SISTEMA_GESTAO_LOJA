@@ -972,16 +972,20 @@ falha de login também entra no diário de auditoria (ADR-23) como `LOGIN_FALHOU
 `user_id` e o nome da conta quando ela existe, com o e-mail mascarado quando não existe. A
 consulta que descobre qual dos dois é feita nos dois casos, então o tempo da resposta não muda,
 e a resposta HTTP continua idêntica — a diferença só existe no diário, que só o dono lê. As mesmas contas de tentativa são a matéria-prima do pentest (`scripts/pentest.py`).
-*Emenda (ADR-46): a conta da demonstração não trava pelo e-mail.* Numa demonstração (a Vercel ou a
-que sobe com a loja: `settings.conta_demo_protegida`), o e-mail da conta das notas da Apple conta
-**só as falhas por IP** (`segundos_de_bloqueio(..., por_email=False)`). O e-mail dela está nas
-notas da revisão e o endereço da demo vai na ficha pública da App Store: dez senhas erradas a cada
-15 min — uma por liberação, guiadas pelo `Retry-After` — trancavam o revisor do lado de fora para
-sempre, de um IP só, sem nunca chegar ao teto de 30 por IP. A trava por IP continua segurando a
-força bruta de uma origem, e a senha dela não é de gente (20 caracteres sorteados pelo instalador).
-Não vaza quem existe: a exceção é UM e-mail conhecido de antemão (está na config e nas notas, não
-na resposta), e qualquer outro e-mail, exista a conta ou não, segue com a resposta idêntica. Na loja
-de verdade `conta_demo_protegida` é vazia, e a regra é a de sempre.
+*Emenda (ADR-46): a conta da demonstração da instalação não trava pelo e-mail.* Na demonstração
+que sobe com a loja (`/demo`: `settings.demonstracao` e `settings.conta_demo_protegida`), o e-mail
+da conta das notas da Apple conta **só as falhas por IP** (`segundos_de_bloqueio(...,
+por_email=False)`). O e-mail dela está nas notas da revisão e o endereço da demo vai na ficha
+pública da App Store: dez senhas erradas a cada 15 min — uma por liberação, guiadas pelo
+`Retry-After` — trancavam o revisor do lado de fora para sempre, de um IP só, sem nunca chegar ao
+teto de 30 por IP. A trava por IP continua segurando a força bruta de uma origem, e a senha dela
+não é de gente (20 caracteres sorteados pelo instalador). **Na Vercel, não**: lá a
+`DEMO_ADMIN_SENHA` é escolhida por gente, no painel, e sem a trava por e-mail um chute distribuído
+(um IP por tentativa) contra um e-mail conhecido não teria teto nenhum — então lá vale a regra de
+sempre, e a proteção da ADR-45 (outra coisa) continua. Não vaza quem existe: a exceção é UM e-mail
+conhecido de antemão (está na config e nas notas, não na resposta), e qualquer outro e-mail, exista
+a conta ou não, segue com a resposta idêntica. Na loja de verdade `conta_demo_protegida` é vazia, e
+a regra é a de sempre.
 
 **ADR-25 — Em produção, a API não conta de si o que ajuda quem ataca.**
 `settings.producao` é verdadeiro em qualquer ambiente que não seja `dev`/`test`/`local`. Nele,
@@ -1999,7 +2003,8 @@ trava o perdeu (`_garantir_dono_da_demonstracao`, idempotente).
 a que sobe com a loja em `/demo` — por `settings.conta_demo_protegida` (`(vercel or demonstracao)
 and DEMO_ADMIN_EMAIL`, o e-mail minúsculo); na loja de verdade a mesma variável, se existir por
 engano, não protege nada (o dono de uma loja real sai como qualquer um). A recusa continua antes
-da senha, e a conta das notas também não trava pelo e-mail no login (emenda da ADR-24). Quem
+da senha, e, na demo da instalação, a conta das notas também não trava pelo e-mail no login
+(emenda da ADR-24; na Vercel, trava como qualquer uma). Quem
 recria a conta é quem sobe a demonstração: na Vercel, o Redeploy; na instalação, cada subida da
 `api-demo` CONVERGE a conta (existe, é dona, está ativa e tem a senha de `DEMO_ADMIN_SENHA` — o
 hash é refeito se não bater, e as sessões dela caem), e a renovação da madrugada a refaz do zero.
@@ -2086,9 +2091,10 @@ navegador: as duas dividem a mesma origem.
   `http://` só para IP, `localhost` e `*.local`, a rede local que o ATS do iOS libera), junta as
   rotas por texto, compara a base INTEIRA no convite do leitor (ADR-43) e mostra a mesma faixa. O
   publicador aceita `url_servidor_demo` com caminho e também junta por texto (ADR-44).
-- **A conta do revisor.** A proteção da ADR-45 e a exceção da trava da ADR-24 (só o IP conta) valem
-  por `settings.conta_demo_protegida`, que liga na Vercel ou na demonstração e nunca na loja (as
-  emendas estão nas duas ADRs).
+- **A conta do revisor.** A proteção da ADR-45 vale por `settings.conta_demo_protegida`, que liga na
+  Vercel ou na demonstração e nunca na loja. A exceção da trava da ADR-24 (só o IP conta) vale SÓ na
+  demonstração da instalação (`settings.demonstracao`), cuja senha é sorteada; na Vercel a senha é
+  escolhida por gente, e a trava por e-mail continua a de sempre (as emendas estão nas duas ADRs).
 - **Carga, preparo e renovação: duas chaves.** O que era do build da Vercel virou
   `app/demonstracao.py`, com duas origens (ADR-42 para a Vercel). Na instalação, o
   `docker/entrada.sh` roda, depois do `alembic upgrade head`, `python -m app.cli
@@ -2199,7 +2205,7 @@ Erros: `{"code": "...", "message": "...", "detail": {...}}`.
 | `VALIDACAO` | 422 | payload inválido |
 | `EMISSOR_NAO_CONFIGURADO` | 409 | NFC-e sem emissor ligado no `.env`; `detail.faltando` (ADR-41) |
 | `DADOS_FISCAIS_INCOMPLETOS` | 409 | NFC-e sem NCM, CNPJ, IE ou regime; `detail.faltando`, `detail.produtos_sem_ncm` |
-| `MUITAS_TENTATIVAS` | 429 | logins errados demais na janela; `detail.retry_after` em segundos, header `Retry-After`. A conta da demonstração (`conta_demo_protegida`) conta só o IP (ADR-24, ADR-46) |
+| `MUITAS_TENTATIVAS` | 429 | logins errados demais na janela; `detail.retry_after` em segundos, header `Retry-After`. A conta da demonstração da instalação (`/demo`: `settings.demonstracao` e `conta_demo_protegida`) conta só o IP; na Vercel, a regra de sempre (ADR-24, ADR-46) |
 | `LEITOR_CODIGO_INVALIDO` | 404 | código do leitor pelo celular inexistente, vencido, já aceito por outro ou encerrado — a MESMA resposta (ADR-43) |
 | `LEITOR_DESLIGADO` | 409 | bipe num pareamento que não está ATIVO; `detail.status` diz qual (ADR-43) |
 | `LEITOR_FILA_CHEIA` | 409 | 100 bipes esperando o computador retirar (ADR-43) |
@@ -2594,9 +2600,11 @@ nome, o e-mail fica livre); o diário ganha a linha sem `user_id` e com o nome c
 demonstração ao lado da loja (ADR-46): token assinado com o segredo da demo é 401 na loja (acesso
 e renovação), a role `loja_demo` não conecta no banco `loja`, preparar e renovar sem as duas
 chaves (variável e marco do banco) saem com erro sem tocar em nada, a carga da instalação semeia e
-converge a conta do revisor, a renovação zera e semeia de novo (e o preparo espera a renovação
-que está rodando), a conta protegida não trava pelo e-mail (as outras, sim; e o IP trava todas), o
-cookie da demo vive e morre em `/demo/api/v1/auth`, a auditoria classifica sob `/demo`, fora do
+converge a conta do revisor, a renovação zera, apaga as fotos e semeia de novo (com a conta
+inválida no `.env`, para antes de zerar; e o preparo espera a renovação que está rodando), as
+fotos da demo têm teto (envios juntos não o furam; a foto minúscula conta o bloco), a conta
+protegida da instalação não trava pelo e-mail (a da Vercel e as outras, sim; e o IP trava
+todas), o cookie da demo vive e morre em `/demo/api/v1/auth`, a auditoria classifica sob `/demo`, fora do
 prefixo é 404, e a web, o app e o publicador nunca perdem o `/demo` (varredura de endereço
 absoluto no web; `servidor-demo.test.mjs` e o cenário de `rodar.mjs` no publicador). No CI,
 `testes/pilha/pilha.sh` sobe a pilha de verdade: `.env` antigo dá só a loja, e contas, tokens,

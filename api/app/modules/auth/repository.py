@@ -104,7 +104,7 @@ class AuthRepository:
         Conta as FALHAS na janela, por e-mail e por IP. Se qualquer um dos dois passou do
         teto, devolve o tempo até a falha mais antiga da janela sair — é quando o contador
         cai abaixo do teto de novo. `por_email=False` conta só o IP (a conta pública da
-        demonstração, ver `AuthService.login`).
+        demonstração da instalação, ver `AuthService._conta_publica_da_demonstracao`).
         """
         agora = datetime.now(UTC)
         inicio = agora - JANELA

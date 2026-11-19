@@ -119,7 +119,9 @@ publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com as telas do
   (`login_attempts`, janela de 15 min) e responde 429 com `Retry-After` quando passa do teto.
   A resposta de e-mail real e falso é idêntica — a trava não vaza se a conta existe, nem pelo
   tempo: e-mail inexistente confere contra `HASH_DE_MENTIRA`. A conta protegida da demonstração
-  conta só o IP (o e-mail dela é público nas notas da Apple). A contagem é serializada por
+  da instalação (`/demo`, `settings.demonstracao`) conta só o IP (o e-mail dela é público nas
+  notas da Apple, e a senha é sorteada); na Vercel a senha é escolhida por gente e a trava por
+  e-mail continua. A contagem é serializada por
   e-mail (`pg_advisory_xact_lock`), senão uma rajada paralela fura o teto. bcrypt **nunca**
   direto numa rota async: `hash_senha_async`/`verificar_senha_async` (thread), ou o login
   congela a loja inteira.
