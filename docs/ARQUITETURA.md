@@ -155,6 +155,14 @@ contrato de `PUT /produtos/{id}/foto` são os mesmos em todos os casos.
   `FUNCTION_PAYLOAD_TOO_LARGE` dela, sem o JSON da API (doc: *functions/limitations*, "Request
   body size"); os 0,5 MB que sobram são o envelope do multipart. O `limite_mb` do 422 diz o teto
   que vale. A web e o app já encolhem a foto para 100 a 300 KB antes de subir.
+- **Login antes do corpo**: a rota não declara o arquivo (`File()`). Com ele, o FastAPI lia o
+  multipart inteiro — e o Starlette gravava o arquivo num temporário — ANTES de resolver as
+  dependências: um envio sem login era gravado todo para só então dar 401. O crachá
+  (`CurrentUser`) roda primeiro, a transação da conferência termina (o envio lento de um celular
+  não segura conexão do pool nem a trava de leitura de `users`), e só então a rota lê o corpo
+  (`request.form`, um arquivo só). O contrato é o de antes: campo `arquivo`, 422 `VALIDACAO` com
+  `detail.campos` quando ele falta, 400 para multipart quebrado; o corpo continua na
+  documentação (`openapi_extra`).
 - **Cliente do Blob**: `httpx` direto, nas duas chamadas de que a loja precisa — `PUT
   {VERCEL_BLOB_API_URL}?pathname=produtos/<ambiente>/<nome>` (`x-vercel-blob-access: public`,
   `x-content-type` pela assinatura do arquivo, sem sufixo aleatório nem sobrescrita) e `POST
@@ -1005,7 +1013,8 @@ existe nas telas e no recibo impresso), `img-src 'self' data: blob:` (ícone e p
 (o navegador o ignora em HTTP), por um ano e sem `includeSubDomains`. O proxy também põe **teto
 no corpo do pedido** (`request_body`, 10 MB, em toda rota da loja e da demo, ADR-46): o FastAPI lê
 o corpo inteiro ANTES de conferir o login — o JSON na memória, o arquivo num temporário sem teto —,
-e um `PUT .../foto` de 40 MB sem login ocupava 39 MB de disco até sair o 401. O maior corpo
+e um `PUT .../foto` de 40 MB sem login ocupava 39 MB de disco até sair o 401 (hoje a rota da foto
+confere o login antes de ler o corpo, §2.2; as de JSON seguem lendo antes). O maior corpo
 legítimo é a foto, que a API recusa acima de 5 MB e as duas pontas encolhem para 100–300 KB: até
 10 MB responde a API (422, com a frase dela); acima, o Caddy responde 413 e a API nunca recebe
 mais que isso. Na Vercel o teto é o da plataforma (4,5 MB, ADR-42). `scripts/pentest.py`
@@ -2274,7 +2283,7 @@ com o valor atual. No `PATCH`, ausente = não mexe, `meta_diaria: null` tira a m
 | GET | `/produtos` | todos | `?q=&categoria_id=` · `q` acha por nome (sem acento, como `/variantes`) ou código da grade; custo só para quem tem VER_DINHEIRO |
 | POST | `/produtos` | A/V | produto + `variantes[]` (com `estoque_inicial?` → gera ENTRADA na mesma transação) |
 | GET/PATCH/DELETE | `/produtos/{id}` | A/V · A · A | detalhe traz variantes com saldo; DELETE só com saldo zero, conferido com grade e saldos travados (ADR-30) |
-| PUT | `/produtos/{id}/foto` | A/V | multipart; no disco salva em `media/produtos/` (caminho relativo), com `BLOB_READ_WRITE_TOKEN` no Vercel Blob público (URL absoluta, a antiga é apagada se for do mesmo ambiente). Teto 5 MB (4 MB na Vercel); 503 `FOTO_NAO_GUARDADA` se não guardou, inclusive na Vercel sem Blob (§2.2, ADR-42) |
+| PUT | `/produtos/{id}/foto` | A/V | multipart, campo `arquivo` (um arquivo só; mais de um, 400), lido só DEPOIS do login (sem login, 401 sem ler o envio); no disco salva em `media/produtos/` (caminho relativo), com `BLOB_READ_WRITE_TOKEN` no Vercel Blob público (URL absoluta, a antiga é apagada se for do mesmo ambiente). Teto 5 MB (4 MB na Vercel); 503 `FOTO_NAO_GUARDADA` se não guardou, inclusive na Vercel sem Blob (§2.2, ADR-42) |
 | POST | `/produtos/{id}/variantes` | A/V | adiciona variante a produto existente |
 | PATCH/DELETE | `/variantes/{id}` | A | DELETE só com saldo zero, conferido com peça e saldo travados (ADR-30) |
 | GET | `/versao` | A/V | commit instalado, quando foi conferido e se há versão nova; lê `docker/estado/versao.json` |
