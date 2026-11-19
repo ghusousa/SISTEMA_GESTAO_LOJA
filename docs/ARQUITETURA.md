@@ -1908,12 +1908,18 @@ editável ou travada; a mesma regra do publicador, `versoes.mjs`) e a travada pa
 envio do build; no completo, `publicar.mjs --conferir-envio` confere, só LENDO a Apple, tudo o que
 a revisão cobrará. *Servidor de demonstração* conferido pela API pública do sistema: `/health`, o
 login da conta demo com papel ADMIN, o código demo com ao menos 3 peças em estoque, a
-privacidade, a rota do leitor (404 `NAO_ENCONTRADO` × 404 genérico de deploy velho), a da exclusão
+privacidade e a URL de suporte (quando é outra página; sem `APPLE_URL_SUPORTE`, é a mesma), a
+rota do leitor (404 `NAO_ENCONTRADO` × 404 genérico de deploy velho), a da exclusão
 da própria conta (`DELETE /usuarios/me` com corpo vazio: 422 no campo senha, a validação recusa
 antes da rota e nada é excluído) e a proteção da conta demo (uma senha aleatória recebe 409
 `CONTA_DE_DEMONSTRACAO`, que vem antes de conferir a senha — ADR-45); a sessão aberta é encerrada
-e a senha da demo não sai em mensagem. Ele fica no ar
-depois da revisão: serve a política de privacidade da ficha. *Ficha fiel ao build:*
+e a senha da demo não sai em mensagem. Privacidade e suporte são pedidos como página
+(`Accept: text/html`, como o navegador do revisor). O suporte debaixo do servidor da demo é página
+do sistema e segura o envio como a privacidade; o de fora dele (a página de contato do dono, de
+terceiro) que não abre daqui vira só aviso — página de terceiro pode recusar robô, e o "não abre"
+seria falso —, e o resumo não o dá por conferido: quem confere é o dono, no navegador. O servidor
+de demonstração fica no ar depois da revisão: serve a política de privacidade da ficha.
+*Ficha fiel ao build:*
 `TELAS_CITADAS` (rótulo → arquivo do app que o mostra) para antes de falar com a Apple quando um
 texto cita tela que o commit não tem (a exclusão de conta é o ADR-45). *Idioma:* registro criado
 no site com outro idioma principal → pt-BR vira o principal e as localizações do outro idioma
