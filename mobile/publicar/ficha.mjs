@@ -228,14 +228,21 @@ export function telasQueFaltam(textos, raiz = process.env.PUBLICAR_TELAS || RAIZ
 }
 
 /**
- * Lê, preenche e confere os textos. `extras`: a lista de aparelhos testados e o nome do vídeo
- * anexado — sem eles, os marcadores viram "(pending)": a ficha pode subir, a revisão não.
+ * Lê, preenche e confere os textos. `extras`: a lista de aparelhos testados e o anexo da revisão
+ * — `{ tipo: 'video' | 'guia', nome }`, o ÚNICO que a Apple aceita (escolherAnexo, em
+ * anexos.mjs). As notas citam só o que vai estar lá: o vídeo no item 1 ou, com o guia anexado,
+ * a linha que começa com {{SE_GUIA_ANEXADO}} (sem ele, a linha sai inteira). Sem lista ou sem
+ * vídeo, os marcadores viram "(pending)": a ficha pode subir, a revisão não.
  */
-export function lerFicha(config, { aparelhos = [], video = null } = {}) {
+export function lerFicha(config, { aparelhos = [], anexo = null } = {}) {
   const ler = (nome) => readFileSync(join(AQUI, 'ficha', nome), 'utf8').trim();
   const linhaEtiquetas = config.url_etiquetas_demo
     ? `   No label? Open ${config.url_etiquetas_demo} on another screen to scan sample barcodes.`
     : null;
+  const video = anexo?.tipo === 'video' ? anexo.nome : null;
+  const guia = anexo?.tipo === 'guia' ? anexo.nome : null;
+  // Linha que começa com um destes marcadores só fica (sem ele) quando a condição vale.
+  const condicionais = { '{{SE_GUIA_ANEXADO}}': Boolean(guia) };
   const valores = {
     EMAIL_SUPORTE: config.email_suporte || PENDENTE,
     URL_PRIVACIDADE: config.url_privacidade,
@@ -247,6 +254,7 @@ export function lerFicha(config, { aparelhos = [], video = null } = {}) {
     APARELHOS_TESTADOS: aparelhos.length ? aparelhos.join('; ') : PENDENTE,
     APARELHO_DO_VIDEO: aparelhos[0] ?? PENDENTE,
     VIDEO: video ? `"${video}"` : PENDENTE,
+    GUIA: guia ? `"${guia}"` : PENDENTE,
   };
   // Troca por função, não por texto: uma senha com "$&" ou "$1" seria lida como padrão de
   // substituição e chegaria à Apple estragada.
@@ -254,9 +262,12 @@ export function lerFicha(config, { aparelhos = [], video = null } = {}) {
     Object.entries(valores)
       .reduce((t, [marcador, valor]) => t.replaceAll(`{{${marcador}}}`, () => valor), texto)
       .split('\n')
-      .flatMap((linha) =>
-        linha.includes('{{LINHA_ETIQUETAS}}') ? (linhaEtiquetas ? [linhaEtiquetas] : []) : [linha],
-      )
+      .flatMap((linha) => {
+        if (linha.includes('{{LINHA_ETIQUETAS}}')) return linhaEtiquetas ? [linhaEtiquetas] : [];
+        const condicao = Object.keys(condicionais).find((marcador) => linha.startsWith(marcador));
+        if (condicao) return condicionais[condicao] ? [linha.slice(condicao.length)] : [];
+        return [linha];
+      })
       .join('\n');
 
   const textos = [

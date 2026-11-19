@@ -1,8 +1,8 @@
 // GERADO por publicar/teste/gerar-esquema.mjs a partir da especificação oficial da
-// App Store Connect API 4.6 (JSON OpenAPI publicado pela Apple). Não edite à mão:
+// App Store Connect API 4.6.1 (JSON OpenAPI publicado pela Apple). Não edite à mão:
 // baixe a especificação nova e rode o gerador.
 
-export const VERSAO_DA_ESPECIFICACAO = "4.6";
+export const VERSAO_DA_ESPECIFICACAO = "4.6.1";
 
 /** "MÉTODO /caminho/{id}" → parâmetros de consulta aceitos e o esquema do corpo. */
 export const ROTAS = {
@@ -911,6 +911,10 @@ export const CORPOS = {
           "FREQUENT"
         ]
       },
+      "datingAndRelationships": {
+        "t": "boolean",
+        "nulo": true
+      },
       "gambling": {
         "t": "boolean",
         "nulo": true
@@ -1009,6 +1013,10 @@ export const CORPOS = {
           "INFREQUENT",
           "FREQUENT"
         ]
+      },
+      "sharedLocation": {
+        "t": "boolean",
+        "nulo": true
       },
       "socialMedia": {
         "t": "boolean",
@@ -1821,6 +1829,14 @@ export const CORPOS = {
       "streamlinedPurchasingEnabled": {
         "t": "boolean",
         "nulo": true
+      },
+      "groupPurchaseInvitationMode": {
+        "t": "string",
+        "nulo": true,
+        "enum": [
+          "APPLE_HOSTED",
+          "DEVELOPER_HOSTED"
+        ]
       }
     },
     "atributosObrigatorios": [],

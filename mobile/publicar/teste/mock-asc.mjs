@@ -2,12 +2,14 @@
  * Uma App Store Connect de mentira, na memória, para testar o publicador de ponta a ponta
  * sem tocar na conta de verdade. Ela COBRA como a de verdade:
  *
- *  - toda rota tem de existir na especificação oficial (esquema-asc.mjs, gerado da 4.6);
+ *  - toda rota tem de existir na especificação oficial (esquema-asc.mjs, gerado da 4.6.1);
  *  - todo parâmetro de consulta e todo corpo é conferido contra o esquema: atributo
  *    desconhecido, tipo errado, valor fora da lista ou campo obrigatório faltando voltam
  *    400/409 no formato de erro da Apple, e ficam anotados em `estado.recusas`;
  *  - captura e anexo da revisão só viram COMPLETE se os bytes chegaram inteiros e o MD5
  *    confere (e a captura tem o tamanho do slot, sem alfa);
+ *  - UM anexo por detalhe de revisão: o POST de outro com um já lá volta 409 STATE_ERROR,
+ *    com a frase da Apple (a rodada nº 8 de verdade parou nele);
  *  - o envio para revisão só passa com a ficha completa (classificação etária inteira,
  *    direitos de conteúdo, disponibilidade, TODAS as localizações preenchidas, capturas de
  *    6,5" processadas, conta demo, preço, build preso, "Novidades" quando é atualização) —
@@ -19,7 +21,8 @@
  *
  * `opcoes` liga os cenários (app criado no site em inglês, build antigo da mesma versão,
  * preço pago na frente, upload de 6,9" que cai...). Tudo o que recebeu fica em `estado`
- * (também em GET /_estado); `rejeitar()` e `novoBuild()` fazem o papel da Apple entre rodadas.
+ * (também em GET /_estado); `rejeitar()`, `novoBuild()`, `anexosNaRevisao()` e
+ * `consertarUploadDoAnexo()` fazem o papel da Apple entre rodadas.
  */
 
 import { createHash } from 'node:crypto';
@@ -66,9 +69,9 @@ const PADRAO = {
   disponibilidadeEmNovos: false, // availableInNewTerritories da que já existe
   semDisponibilidade: 404, // quando não tem: 404 ou 'nulo' (200 com data: null)
   idadeDesconhece: [], // atributos que esta Apple recusa como desconhecidos
-  descritoresNovos: [], // perguntas novas (fora da 4.6) que ela cobra no envio
+  descritoresNovos: [], // perguntas novas (fora da especificação) que ela cobra no envio
   falharUploadDoTipo: null, // ex.: 'APP_IPHONE_67' → o PUT dos bytes devolve 500
-  falharUploadDoAnexo: null, // nome do anexo da revisão cujo PUT devolve 500
+  falharUploadDoAnexo: null, // nome do anexo da revisão cujo PUT devolve 500 (até consertarUploadDoAnexo())
   buildValidoNaConsulta: 1, // em que consulta a /v1/builds o build da versão fica VALID
   buildNunca: false, // fica em PROCESSING para sempre
   versaoDoBuild: '1.0.0',
@@ -679,6 +682,10 @@ export function subirMock(opcoesDoTeste = {}) {
     'POST /v1/appStoreReviewAttachments': ({ corpo, porta }) => {
       const detalhe = corpo.data.relationships.appStoreReviewDetail.data.id;
       if (!Object.values(estado.revisoes).some((r) => r.id === detalhe)) return erro(404, 'NOT_FOUND', 'detalhe inexistente');
+      // A regra que parou a rodada nº 8: um anexo por detalhe, e a frase é a da Apple.
+      if (anexosDoDetalhe(detalhe).length) {
+        return erro(409, 'STATE_ERROR', 'There can be max of 1 attachment, please delete the existing attachment before loading a new one');
+      }
       const id = novoId('ATT');
       const { fileName, fileSize } = corpo.data.attributes;
       const tipo = fileName.endsWith('.pdf') ? 'application/pdf' : 'video/mp4';
@@ -1007,6 +1014,28 @@ export function subirMock(opcoesDoTeste = {}) {
         novoBuild({ id, numero, versao: versaoDoBuild = o.versaoDoBuild, validoEm = 1 }) {
           const n = estado.consultasDeBuild;
           listaDeBuilds.push({ id, versao: versaoDoBuild, numero, uploadedDate: new Date(Date.UTC(2026, 10, 18, 12, listaDeBuilds.length)).toISOString(), aparece: n + 1, valido: n + validoEm });
+        },
+        /**
+         * Os anexos da revisão da versão passam a ser estes — o que outra rodada, o site ou o
+         * publicador de antes da regra de um só deixou lá (dois anexos, um guia velho, uma
+         * reserva pela metade). Não passa pelo POST, então não esbarra na regra. Devolve os ids.
+         * `estado`: 'COMPLETE' (padrão), 'UPLOAD_COMPLETE' (processando), 'AWAITING_UPLOAD' ou 'FAILED'.
+         */
+        anexosNaRevisao(lista, versaoId = 'VER1') {
+          const detalhe = estado.revisoes[versaoId]?.id;
+          if (!detalhe) throw new Error(`a versão ${versaoId} ainda não tem detalhe de revisão`);
+          for (const [id, a] of Object.entries(estado.anexos)) if (a.detalhe === detalhe) delete estado.anexos[id];
+          return lista.map(({ nome, dados, estado: situacao = 'COMPLETE' }) => {
+            const id = novoId('ATT');
+            const soma = createHash('md5').update(dados).digest('hex');
+            const erros = situacao === 'FAILED' ? [{ code: 'FILE_INCOMPLETE', description: 'nem todas as partes chegaram' }] : [];
+            estado.anexos[id] = { detalhe, nome, esperado: dados.length, partes: {}, totalDePartes: 0, bytes: dados.length, md5: soma, checksum: soma, estado: situacao, erros };
+            return id;
+          });
+        },
+        /** O upload dos anexos volta a funcionar (fim do `falharUploadDoAnexo`). */
+        consertarUploadDoAnexo() {
+          o.falharUploadDoAnexo = null;
         },
         estadoDaVersao: (id) => estadoDaVersao(versao(id)),
         fechar: () => new Promise((r) => servidor.close(r)),

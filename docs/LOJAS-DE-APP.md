@@ -280,7 +280,7 @@ Ainda na aba "Conteúdo do app", duas declarações vizinhas que derrubam envio 
 
 Limites contados como a Apple conta: caractere, não byte (`[...texto].length`). Nada de citar outra plataforma ou loja (diretriz 2.3.10) — o publicador recusa o texto antes de enviar.
 
-**Resposta à Guideline 2.1 (nov/2026).** A 1ª submissão voltou com "Information Needed": gravação de tela num iPhone físico, aparelhos testados, propósito e público, como acessar, serviços externos, regiões, setor regulado. As notas (§6) passaram a ser em **inglês**, com os sete itens; o guia `mobile/publicar/revisao/app-review-guide.pdf` os traz por extenso, com os prints, e sobe como anexo da revisão junto com o vídeo; a lista de aparelhos mora em `mobile/publicar/ficha/aparelhos-testados.txt`. O publicador reenvia o MESMO envio devolvido (`UNRESOLVED_ISSUES`) — passo a passo e roteiro da gravação em `mobile/publicar/README.md`.
+**Resposta à Guideline 2.1 (nov/2026).** A 1ª submissão voltou com "Information Needed": gravação de tela num iPhone físico, aparelhos testados, propósito e público, como acessar, serviços externos, regiões, setor regulado. As notas (§6) passaram a ser em **inglês**, com os sete itens; o guia `mobile/publicar/revisao/app-review-guide.pdf` os traz por extenso, com os prints; a revisão leva **um anexo só** (a Apple recusa o segundo com 409 `STATE_ERROR`, "There can be max of 1 attachment" — o que parou a rodada nº 8): a gravação de tela e, enquanto ela não existe, o guia — e as notas citam só o que está anexado; a lista de aparelhos mora em `mobile/publicar/ficha/aparelhos-testados.txt`. O publicador reenvia o MESMO envio devolvido (`UNRESOLVED_ISSUES`) — passo a passo e roteiro da gravação em `mobile/publicar/README.md`.
 
 ---
 
@@ -391,7 +391,7 @@ Lembrete: o app conversa com o servidor da sua própria loja. As funções novas
 
 ## 5. FICHA DE PRIVACIDADE (App Privacy) — o único formulário SEM API
 
-> A API 4.6 da Apple não tem rota para esta ficha: é a única parte que nenhum programa preenche (a outra coisa fora do alcance da API é criar o registro do app). Responda UMA vez na tela com a tabela abaixo; depois ela vale para as próximas versões. O publicador lembra disso no resumo de toda rodada e, se a Apple recusar o envio por causa dela, mostra a mensagem.
+> A API 4.6.1 da Apple não tem rota para esta ficha: é a única parte que nenhum programa preenche (a outra coisa fora do alcance da API é criar o registro do app). Responda UMA vez na tela com a tabela abaixo; depois ela vale para as próximas versões. O publicador lembra disso no resumo de toda rodada e, se a Apple recusar o envio por causa dela, mostra a mensagem.
 
 **Resposta global: "Sim, coletamos dados deste app."**
 **Dados usados para rastrear você: NENHUM.** Nenhum tipo de dado responde "Sim" a rastreamento — não há SDK de terceiros, IDFA, publicidade nem *data broker*. Logo, sem prompt de ATT.
@@ -437,14 +437,15 @@ Dois campos obrigatórios que precisam bater com esta ficha: **URL da Política 
 
 ---
 
-## 6. NOTAS PARA A REVISÃO (App Review Notes) — 3.585 caracteres com os marcadores (limite 4.000)
+## 6. NOTAS PARA A REVISÃO (App Review Notes) — 3.590 caracteres com os marcadores (limite 4.000)
 
-**Em inglês** (o revisor lê inglês), com os rótulos das telas entre aspas em português, como aparecem no app, e os sete itens que a Apple pediu na Guideline 2.1. O publicador troca `{{SERVIDOR_DEMO}}`, `{{EMAIL_DEMO}}`, `{{SENHA_DEMO}}`, `{{CODIGO_DEMO}}` e `{{EMAIL_SUPORTE}}` pelos valores do config/Secrets; `{{APARELHOS_TESTADOS}}` e `{{APARELHO_DO_VIDEO}}` pela lista de `mobile/publicar/ficha/aparelhos-testados.txt` (a 1ª linha é o aparelho da gravação); `{{VIDEO}}` pelo nome do vídeo anexado; e `{{LINHA_ETIQUETAS}}` pela frase da folha de etiquetas (ou some, sem `url_etiquetas_demo`). Sem lista ou sem vídeo, os marcadores viram "(pending)": a ficha sobe, mas o `--enviar` é recusado. Com endereços, e-mails e sete aparelhos de nomes longos o texto chega perto dos 4.000 — o publicador confere depois da troca e para, dizendo o tamanho, se passar (o teste mede o pior caso).
+**Em inglês** (o revisor lê inglês), com os rótulos das telas entre aspas em português, como aparecem no app, e os sete itens que a Apple pediu na Guideline 2.1. O publicador troca `{{SERVIDOR_DEMO}}`, `{{EMAIL_DEMO}}`, `{{SENHA_DEMO}}`, `{{CODIGO_DEMO}}` e `{{EMAIL_SUPORTE}}` pelos valores do config/Secrets; `{{APARELHOS_TESTADOS}}` e `{{APARELHO_DO_VIDEO}}` pela lista de `mobile/publicar/ficha/aparelhos-testados.txt` (a 1ª linha é o aparelho da gravação); `{{VIDEO}}` pelo nome do vídeo anexado; e `{{LINHA_ETIQUETAS}}` pela frase da folha de etiquetas (ou some, sem `url_etiquetas_demo`). A revisão leva UM anexo (a Apple recusa o segundo), e as notas citam só ele: a linha que começa com `{{SE_GUIA_ANEXADO}}` (com `{{GUIA}}`, o nome do guia) só fica quando o anexo é o guia — com o vídeo anexado ela sai, e as notas não prometem o guia. Sem lista ou sem vídeo, os marcadores viram "(pending)": a ficha sobe, mas o `--enviar` é recusado. Com endereços, e-mails e sete aparelhos de nomes longos o texto chega perto dos 4.000 — o publicador confere depois da troca e para, dizendo o tamanho, se passar (o teste mede o pior caso, com o vídeo e com o guia).
 
 Os serviços externos (item 5) são o que o código faz: dado e login só do servidor da loja (a demonstração é uma loja como outra, sem provedor a citar: a da Vercel, com Neon e Vercel Blob, ou a que sobe com a loja em `<domínio>/demo`, ADR-46 — as notas não nomeiam nenhum); NFC-e opcional pela Focus NFe, desligada na demonstração; nada de pagamento, IA, login de terceiros, analytics ou anúncio. A única outra chamada é a da biblioteca de rede do React Native (NetInfo), que, no iPhone, testa a conexão com um pedido vazio ao `generate_204` do Google — sem dado nenhum; as notas dizem isso para não afirmar "nenhum outro servidor".
 
 ```
-B2B APP FOR SHOP STAFF; IT NEEDS THE SHOP'S SERVER. Answers to Guideline 2.1 below; the attached "app-review-guide.pdf" has them in full, with screenshots.
+B2B APP FOR SHOP STAFF; IT NEEDS THE SHOP'S SERVER. Answers to Guideline 2.1 below.
+{{SE_GUIA_ANEXADO}}The attached {{GUIA}} has them in full, with screenshots.
 
 DEMO SERVER (stays online after the review; it also serves our privacy policy)
 Server: {{SERVIDOR_DEMO}}
@@ -491,14 +492,14 @@ Contact: {{EMAIL_SUPORTE}}
 
 ## 7. CLASSIFICAÇÃO ETÁRIA — 4+ (o publicador responde todas)
 
-A API 4.6 tem 24 perguntas na declaração de idade (`AgeRatingDeclaration`); o publicador responde **todas** (`mobile/publicar/classificacao.mjs`) — "Nenhum" nas de frequência e "Não" nas de sim/não:
+A API 4.6.1 tem 26 perguntas na declaração de idade (`AgeRatingDeclaration`); o publicador responde **todas** (`mobile/publicar/classificacao.mjs`) — "Nenhum" nas de frequência e "Não" nas de sim/não:
 
 - **Frequência → Nenhum:** violência (de desenho, realista, prolongada), conteúdo sexual e nudez, horror/medo, temas maduros, palavrão/humor grosseiro, álcool/tabaco/drogas, jogo de azar simulado, concursos, informação médica, **armas** (pergunta nova). O app mostra estoque, preço e relatório.
-- **Sim/não → Não:** jogo de azar com dinheiro, **acesso irrestrito à web** (não há `WebView` nem navegador: o app só fala com a API da loja), e as perguntas novas: **conteúdo gerado por usuário** (fotos e textos ficam no servidor de UMA loja, só a equipe dela vê — sem feed, comentários nem descoberta de perfis; não se aplica a moderação da 1.2), **mensagens e conversa** (não há conversa entre usuários), **rede social** e rede social com restrição de idade, **anúncios** (sem publicidade nem SDK de anúncio), **verificação de idade**, **controle parental**, **caixa de recompensa** (sem compra no app) e **saúde e bem-estar**.
+- **Sim/não → Não:** jogo de azar com dinheiro, **acesso irrestrito à web** (não há `WebView` nem navegador: o app só fala com a API da loja), e as perguntas novas: **conteúdo gerado por usuário** (fotos e textos ficam no servidor de UMA loja, só a equipe dela vê — sem feed, comentários nem descoberta de perfis; não se aplica a moderação da 1.2), **mensagens e conversa** (não há conversa entre usuários), **rede social** e rede social com restrição de idade, **anúncios** (sem publicidade nem SDK de anúncio), **verificação de idade**, **controle parental**, **caixa de recompensa** (sem compra no app) e **saúde e bem-estar** — e as duas que a 4.6.1 trouxe: **namoro e relacionamentos** (é estoque, venda e caixa) e **localização compartilhada** (o app não pede nem compartilha a localização de ninguém).
 
 Ficam como o dono deixar (não são perguntas): a faixa da **Kids Category** (não inscreva: é ferramenta de trabalho, e a categoria infantil traria regras de publicidade e coleta que não fazem sentido aqui), os ajustes manuais de idade, o número da GRAC coreana e a página opcional sobre a classificação. Categoria certa na loja: **Business** (secundária: Productivity).
 
-Se a Apple recusar uma pergunta (saiu da API), o publicador tira só ela, envia de novo e avisa. Se a Apple criar perguntas novas (vieram duas em 16/11/2026, ainda fora da 4.6), elas voltam em branco: o publicador lista os nomes como pendência e, se o envio for recusado por causa delas, mostra a mensagem da Apple — responda na tela (App Information → Age Rating) e rode de novo; o envio que ficou aberto é retomado.
+Se a Apple recusar uma pergunta (saiu da API), o publicador tira só ela, envia de novo e avisa. Se a Apple criar perguntas novas antes de a especificação as publicar, elas voltam em branco: o publicador lista os nomes como pendência e, se o envio for recusado por causa delas, mostra a mensagem da Apple — responda na tela (App Information → Age Rating) e rode de novo; o envio que ficou aberto é retomado. Foi o que houve com as duas de 16/11/2026 (`datingAndRelationships` e `sharedLocation`), que pararam a rodada nº 8: a 4.6.1 as publicou, e o publicador passou a responder "Não" às duas.
 
 Mais duas respostas que o publicador grava fora da declaração: **direitos de conteúdo** = não usa conteúdo de terceiros; **disponibilidade** = só Brasil, sem entrar sozinho em países novos (app em pt-BR, com PIX e NFC-e) — só se a conta ainda não tiver disponibilidade; se tiver, fica como está.
 
@@ -535,7 +536,7 @@ Quem faz as imagens é `mobile/publicar/capturas/gerar.sh`: o app rodando com os
 O `--enviar` do publicador (caixa "revisao" no GitHub) confere tudo o que é conferível e, faltando algo, para ANTES de mexer na Apple, com uma pendência por item.
 
 - **Registro do app** (uma vez, no site, com Idioma principal "Português (Brasil)") e **Privacidade do App** (uma vez, na tela, §5): as duas coisas sem API.
-- **Gravação de tela** num iPhone FÍSICO, iOS mais novo, desde a abertura do app (roteiro em `mobile/publicar/README.md`): anexo da revisão pela API (`/v1/appStoreReviewAttachments`) — `--video-revisao <arquivo ou https://...>`, no GitHub a entrada `video_revisao_url`. Sem ela (nem já anexada à versão), a revisão não sai.
+- **Gravação de tela** num iPhone FÍSICO, iOS mais novo, desde a abertura do app (roteiro em `mobile/publicar/README.md`): o anexo da revisão pela API (`/v1/appStoreReviewAttachments`) — o único: a Apple aceita um, e o vídeo entra no lugar do guia — `--video-revisao <arquivo ou https://...>`, no GitHub a entrada `video_revisao_url`. Sem ela (nem já anexada à versão), a revisão não sai.
 - **Aparelhos testados**: `mobile/publicar/ficha/aparelhos-testados.txt`, uma linha por iPhone em que o teste rodou de verdade (`iPhone 17 — iOS 26.1`; a 1ª é a da gravação). Vazia, a revisão não sai. Mudou? Refaça o guia PDF (`node publicar/revisao/gerar-guia.mjs`) e faça commit.
 - **Telas citadas** — leitor do computador (ADR-43) e exclusão de conta (ADR-45): a descrição e as notas citam "Mais > Leitor do computador" e "Mais > Minha conta > Excluir minha conta". O publicador recusa a ficha de um commit cujo app não tenha essas telas, e confere no servidor de demonstração as rotas das duas — publique com o servidor na mesma versão.
 - `{{EMAIL_DEMO}}`, `{{SENHA_DEMO}}`: conta de perfil **dono** no servidor de demonstração (a Apple exige conta de demonstração sempre que o login não é público) — variável `APPLE_EMAIL_DEMO` e segredo `APPLE_DEMO_PASSWORD`. O publicador entra com ela antes de enviar e recusa se não for dona.
@@ -543,7 +544,7 @@ O `--enviar` do publicador (caixa "revisao" no GitHub) confere tudo o que é con
 - `{{URL_ETIQUETAS_DEMO}}` (opcional): página com códigos de barras de exemplo para bipar da tela; sem ela, a frase some e "Digitar código" e "Buscar" bastam.
 - `{{EMAIL_SUPORTE}}`: o e-mail de suporte (`APPLE_EMAIL_SUPORTE`; padrão `ghusousa@gmail.com`, o mesmo da política de privacidade).
 - **Servidor de demonstração no ar depois da revisão**: ele serve a política de privacidade da ficha (`<servidor>/privacidade`), que sem `APPLE_URL_SUPORTE` é também a URL de suporte. Desligá-lo derrubaria os links da App Store (5.1.1(i) e 1.5) e os do Play Console; outro endereço permanente vai em `APPLE_URL_PRIVACIDADE` (o suporte vai junto; outra página de suporte, `APPLE_URL_SUPORTE`), e o antigo só sai do ar depois que a versão com as URLs novas for aprovada.
-- Resposta na Central de Resolução: opcional (não tem API, e o reenvio já leva notas e anexos novos). Texto pronto, em inglês: `mobile/publicar/revisao/resposta-ao-app-review.txt`.
+- Resposta na Central de Resolução: opcional (não tem API, e o reenvio já leva notas e anexo novos). Texto pronto, em inglês: `mobile/publicar/revisao/resposta-ao-app-review.txt`.
 
 ## Um achado do código que afeta a revisão
 

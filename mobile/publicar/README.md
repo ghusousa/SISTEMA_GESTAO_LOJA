@@ -3,11 +3,11 @@
 Publica a ficha inteira sem clicar em nada: nome, subtítulo, descrição, texto promocional,
 palavras-chave, novidades (em atualização), as capturas de iPhone 6,5" e 6,9", categoria,
 classificação etária completa, direitos de conteúdo, disponibilidade (Brasil), preço grátis,
-conta de demonstração, notas para o revisor (em inglês), os anexos da revisão (o guia PDF e a
-gravação de tela), o build — e o envio para a revisão, **inclusive o reenvio** depois de uma
-recusa ou de um pedido de informação da Apple.
+conta de demonstração, notas para o revisor (em inglês), o anexo da revisão (UM só — a Apple
+recusa o segundo: a gravação de tela ou, sem ela, o guia PDF), o build — e o envio para a
+revisão, **inclusive o reenvio** depois de uma recusa ou de um pedido de informação da Apple.
 
-**O que nenhum programa faz** (a API 4.6 da Apple não tem rota para isso), uma vez só:
+**O que nenhum programa faz** (a API 4.6.1 da Apple não tem rota para isso), uma vez só:
 
 1. **Criar o registro do app** no site: appstoreconnect.apple.com → Apps → **+** → Novo app →
    iOS, nome "Gestão de Loja", **Idioma principal "Português (Brasil)"**, bundle
@@ -17,7 +17,7 @@ recusa ou de um pedido de informação da Apple.
    `docs/LOJAS-DE-APP.md` §5. Depois de respondida, vale para as próximas versões.
 
 E uma coisa que **não precisa**: escrever na Central de Resolução (a mensagem do App Review).
-A API também não escreve lá — mas o reenvio leva as notas e os anexos novos, e é isso que a
+A API também não escreve lá — mas o reenvio leva as notas e o anexo novos, e é isso que a
 Apple lê. Se quiser responder também, o texto pronto, em inglês, está em
 `revisao/resposta-ao-app-review.txt` (cole depois do reenvio).
 
@@ -29,17 +29,19 @@ as pendências (no GitHub, o mesmo resumo aparece na página da execução).
 A Apple devolveu a 1ª submissão pedindo sete coisas. Tudo sai deste repositório, e **o
 publicador reenvia sozinho**: o envio que voltou em `UNRESOLVED_ISSUES` é retomado (o MESMO
 envio, com a versão dentro e, se houver, o build novo — a Apple recusa abrir outro), as notas e
-os anexos sobem de novo e ele marca o item recusado como resolvido antes de reenviar. Não há
+o anexo sobem de novo e ele marca o item recusado como resolvido antes de reenviar. Não há
 nada a clicar no site.
 
 | A Apple pediu | Onde mora | Quem faz |
 |---|---|---|
 | 1. Gravação de tela num iPhone **físico**, iOS mais novo, desde a abertura do app | anexo da revisão (`--video-revisao` / entrada `video_revisao_url`) | a sessão no iPhone real (BrowserStack), seguindo o roteiro abaixo |
 | 2. Modelos e versões de iOS testados | `ficha/aparelhos-testados.txt` (uma linha por aparelho, `iPhone 17 — iOS 26.1`; a 1ª é a da gravação) | quem testou — **nada inventado** |
-| 3 a 7. Para que serve e para quem, como acessar (conta demo), serviços externos, regiões, setor regulado | `ficha/notas-revisao.txt` (inglês, até 4000) e o guia `revisao/app-review-guide.pdf` | já escritos |
+| 3 a 7. Para que serve e para quem, como acessar (conta demo), serviços externos, regiões, setor regulado | `ficha/notas-revisao.txt` (inglês, até 4000); por extenso, com os prints, no guia `revisao/app-review-guide.pdf` — que só vai anexado enquanto não há vídeo (a Apple aceita um anexo) | já escritos |
 
 As notas citam a lista e o vídeo por marcadores (`{{APARELHOS_TESTADOS}}`, `{{APARELHO_DO_VIDEO}}`,
-`{{VIDEO}}`): sem eles, viram "(pending)" — **a ficha sobe, a revisão não**. O `--enviar`
+`{{VIDEO}}`): sem eles, viram "(pending)" — **a ficha sobe, a revisão não**. E citam só o anexo
+que vai estar lá: a linha que começa com `{{SE_GUIA_ANEXADO}}` ("The attached `{{GUIA}}` has them
+in full...") só fica com o guia anexado; com o vídeo, ela sai e o item 1 cita o vídeo. O `--enviar`
 (caixa "revisao" no GitHub) é RECUSADO, antes de mexer em qualquer coisa na Apple, quando:
 
 - `ficha/aparelhos-testados.txt` está vazio (só comentários) ou tem linha fora do formato;
@@ -79,18 +81,28 @@ falar com a Apple** se citar tela que o app deste commit não tem (`TELAS_CITADA
 `ficha.mjs`: rótulo citado → arquivo do app que o mostra; rótulo novo nas notas = uma linha lá).
 
 **O guia PDF** (`revisao/app-review-guide.pdf`, em inglês, os sete itens por extenso e os
-prints) sai de `revisao/guia.mjs` por `node publicar/revisao/gerar-guia.mjs` (Playwright +
-Chromium + fonte Inter). Mudou o texto, a lista de aparelhos ou os prints? Rode de novo e faça
+prints; é o anexo da revisão só enquanto não há vídeo, e por isso não diz que a gravação está
+anexada — quem diz onde ela está são as notas) sai de `revisao/guia.mjs` por
+`node publicar/revisao/gerar-guia.mjs` (Playwright + Chromium + fonte Inter). Mudou o texto, a
+lista de aparelhos ou os prints? Rode de novo e faça
 commit do PDF e do `app-review-guide.entradas.json` (a impressão digital das entradas) — o
 `capturas/gerar.sh` já o refaz no fim. Nada que é segredo ou que muda por loja entra no PDF.
 
-**Anexos.** O guia e o vídeo sobem pela rota de anexos da revisão
-(`/v1/appStoreReviewAttachments`): reserva → bytes nas partes que a Apple devolve → confirma
-com o MD5 → espera o processamento. O reenvio **substitui** o anexo de mesmo nome e nunca
-duplica: igual (mesmo MD5) fica; diferente sobe primeiro e só então o antigo sai — se o novo
-falhar, a reserva pela metade é apagada e o antigo continua lá. O vídeo sobe sempre como
-`screen-recording.mp4` (ou `.mov`) e fica anexado às próximas rodadas DESTA versão; numa versão
-nova, passe o link de novo.
+**Um anexo só.** A Apple aceita UM anexo por revisão: o segundo `POST /v1/appStoreReviewAttachments`
+volta 409 `STATE_ERROR` ("There can be max of 1 attachment, please delete the existing attachment
+before loading a new one" — foi o que parou a rodada nº 8, de 19/11/2026, subindo o guia com o
+vídeo lá). O publicador escolhe um (`escolherAnexo`, em `anexos.mjs`), nesta ordem: o vídeo novo
+desta rodada (`--video-revisao`); senão, o vídeo que já está anexado e processado (`COMPLETE` —
+um vídeo bom nunca sai para o guia entrar; o que a Apple ainda processa é esperado antes da
+escolha e, se ainda não terminou, fica do mesmo jeito — com `--enviar`, a rodada para e diz para
+rodar de novo em alguns minutos); senão, o guia PDF. As notas citam só ele. Na troca (`trocarAnexo`): se o que está lá é
+exatamente o escolhido (mesmo nome, mesmo MD5, processado), ele fica e os outros saem; senão,
+TODOS os que estão lá saem ANTES e o escolhido sobe — reserva → bytes nas partes que a Apple
+devolve → confirma com o MD5 → espera o processamento. Entre o apagar e o subir a revisão fica sem
+anexo: se o envio falhar, a reserva pela metade sai, a pendência diz que a revisão ficou sem anexo,
+o `--enviar` não manda a revisão, e a próxima rodada sobe de novo. O vídeo sobe sempre como
+`screen-recording.mp4` (ou `.mov`) e fica anexado às próximas rodadas DESTA versão (o guia não
+volta a ocupar o lugar dele); numa versão nova, passe o link de novo.
 
 ### Roteiro da gravação (iPhone físico, iOS mais novo, ~2 min)
 
@@ -296,11 +308,11 @@ da demo vira `•••` até em mensagem de erro da Apple.
 | Texto promocional (170) | `ficha/texto-promocional.txt` — muda sem nova revisão |
 | Descrição (4000) | `ficha/descricao.txt` |
 | Novidades (4000) | `ficha/novidades.txt` — **só a partir da 2ª versão** (a Apple recusa na primeira). Reescreva a cada versão nova |
-| Notas para o revisor (4000, em inglês) | `ficha/notas-revisao.txt` + `ficha/aparelhos-testados.txt` + o nome do vídeo |
-| Anexos da revisão | `revisao/app-review-guide.pdf` e o vídeo de `--video-revisao` |
+| Notas para o revisor (4000, em inglês) | `ficha/notas-revisao.txt` + `ficha/aparelhos-testados.txt` + o anexo escolhido (o vídeo ou o guia: as notas citam só ele) |
+| Anexo da revisão (UM só: a Apple recusa o segundo) | o vídeo de `--video-revisao`, ou o que já está anexado e processado; sem vídeo, `revisao/app-review-guide.pdf` |
 | Capturas iPhone 6,5" (**obrigatórias**) | `media/app-store/iphone-6.5/NN-nome.png` — 1242×2688, PNG RGB sem alfa, até 10 |
 | Capturas iPhone 6,9" (extra) | `media/app-store/iphone-6.9/NN-nome.png` — 1320×2868 (ou 1290×2796, 1260×2736) |
-| Classificação etária | `classificacao.mjs`: as 24 perguntas da API 4.6, "Não/Nenhum" → 4+ |
+| Classificação etária | `classificacao.mjs`: as 26 perguntas da API 4.6.1, "Não/Nenhum" → 4+ |
 | Direitos de conteúdo, disponibilidade, preço, categorias | fixos no `publicar.mjs`: não usa conteúdo de terceiros; só Brasil (se a conta ainda não tiver disponibilidade — se já tiver, fica como está, mas é conferida: à venda fora do Brasil, o `--enviar` recusa, porque as notas dizem "Brazil only"); grátis; Negócios + Produtividade |
 
 Os textos são conferidos antes de falar com a Apple: limite contado como a Apple conta
@@ -326,10 +338,13 @@ primeiro da lista. Sem ponto grátis (ou lista vazia), nada é gravado e fica um
 nunca vira pago por engano.
 
 **Classificação etária.** Se a Apple recusar uma pergunta (409 que a nomeia), sai só ela, a
-declaração vai de novo e fica um aviso. Pergunta que a Apple criou depois da 4.6 (vieram duas
-em 16/11/2026) volta em branco: vira pendência com o nome dela e, se a Apple exigir no envio, a
-mensagem dela aparece inteira — responda na tela (App Information → Age Rating) e rode de novo;
-a rodada seguinte retoma o mesmo envio.
+declaração vai de novo e fica um aviso. Pergunta que a Apple criar antes de a especificação daqui
+tê-la volta em branco: vira pendência com o nome dela e, se a Apple exigir no envio, a mensagem
+dela aparece inteira — responda na tela (App Information → Age Rating) e rode de novo; a rodada
+seguinte retoma o mesmo envio. Foi o caso das duas de 16/11/2026 — namoro e relacionamentos
+(`datingAndRelationships`) e localização compartilhada (`sharedLocation`), que pararam a rodada
+nº 8: a 4.6.1 as publicou, e o publicador responde "Não" às duas (o app não tem nada de namoro e
+não pede nem compartilha a localização de ninguém).
 
 **Envio.** Um envio ativo por plataforma: o publicador retoma o rascunho que ficou aberto
 (`READY_FOR_REVIEW`) ou o devolvido pela Apple (`UNRESOLVED_ISSUES` — o REENVIO), sem repetir o
@@ -359,7 +374,8 @@ npm run publicar -- --enviar --aguardar-build 60 --video-revisao gravacao.mp4
 - `--mesmo-build` reenvia um envio devolvido com o build que a versão já tem preso (resposta à
   Apple que não pede app novo). Sem ela e sem `--build`, o `--enviar` de um envio devolvido é
   recusado quando o build mais novo da versão é o mesmo que voltou.
-- `--video-revisao <arquivo ou https://...>` anexa a gravação de tela (MP4/MOV de verdade, pelo
+- `--video-revisao <arquivo ou https://...>` anexa a gravação de tela no lugar do anexo que estiver
+  lá (MP4/MOV de verdade, pelo
   cabeçalho; até 500 MB). O link é baixado para a pasta temporária, conferido e apagado depois
   de lido. No Actions o workflow baixa o link UMA vez (`baixar-video.mjs`) e passa o arquivo.
 - `--conferir-envio` só confere o que a revisão vai cobrar e a versão na Apple, sem escrever nada.
@@ -375,8 +391,9 @@ node publicar/teste/rodar.mjs --reais   # a primeira publicação com as captura
 
 `rodar.mjs` sobe uma App Store Connect de mentira (`teste/mock-asc.mjs`) e um servidor de
 demonstração de mentira (`teste/demo-falso.mjs`) e roda o publicador de verdade contra eles:
-primeira publicação com guia e vídeo anexados e o servidor demo conferido; atualização
-(novidades, disponibilidade intocada, capturas e anexos substituídos, `--aguardar-build`); o
+primeira publicação com o vídeo como o anexo (o guia não sobe ao lado) e o servidor demo
+conferido; atualização (novidades, disponibilidade intocada, capturas substituídas, o vídeo
+anexado que fica, `--aguardar-build`); o
 build DESTA rodada com um VALID antigo da mesma versão na Apple; recusada → corrige → reenvia
 (o mesmo envio `UNRESOLVED_ISSUES`, com o build novo); pedido de informação sem build novo
 (reenvio recusado, nada escrito) e com `--mesmo-build` (o mesmo build, vídeo novo no lugar do
@@ -384,7 +401,11 @@ antigo); devolvido com um build novo processado (preso sem `--build`); disponibi
 com outros países (`--enviar` recusado, "Brazil only"); Apple que não aceita a marca de "resolvido"; app criado no site em
 inglês; rodada sem 6,9" apagando o conjunto velho; preço (pago primeiro, grátis na 2ª página,
 sem grátis, lista vazia); `--enviar` recusado sem aparelhos e sem vídeo (nenhuma escrita na
-Apple); só a ficha com "(pending)"; servidor demo fora do combinado (não-dono, código, leitor,
+Apple); só a ficha com "(pending)" e o guia como o anexo; um anexo só (o guia velho sai antes de
+o novo subir; o guia igual fica e a sobra ao lado sai; vídeo novo com o guia lá — só o vídeo fica, e
+as notas o citam; vídeo já anexado numa rodada sem vídeo — ele fica e o guia sai; vídeo ainda
+processando — espera e fica; falha no envio — pendência dizendo que a revisão ficou sem anexo, e a
+rodada seguinte sobe); servidor demo fora do combinado (não-dono, código, leitor,
 exclusão, privacidade, senha, fora do ar); o suporte de fora que não abre daqui (aviso, e o
 "Pronto" manda ver o aviso) e um aviso da conferência que não é do suporte (o "Pronto" segue
 dando o suporte por conferido: quem o põe é o gancho `teste/aviso-a-mais.mjs`, carregado com
@@ -393,14 +414,17 @@ do vídeo; falha no 6,9"; pergunta recusada; perguntas novas exigidas no envio; 
 estourado; tela citada que o app não tem; imagem com alfa; senha que a Apple ecoa num erro; app
 inexistente; opção inválida. A Apple de mentira **cobra como a de verdade**: toda rota,
 parâmetro e corpo é conferido contra o recorte da especificação oficial em
-`teste/esquema-asc.mjs` (versão 4.6), um envio ativo por plataforma, e o envio só passa com a
+`teste/esquema-asc.mjs` (versão 4.6.1), um anexo por revisão (o segundo POST volta o 409
+`STATE_ERROR` da Apple), um envio ativo por plataforma, e o envio só passa com a
 ficha completa — inclusive TODAS as localizações. Saiu especificação nova? Baixe o JSON no site
 da Apple e rode `node publicar/teste/gerar-esquema.mjs <arquivo.json>`: o diff mostra o que
 mudou, e pergunta de idade nova quebra o teste até ganhar resposta em `classificacao.mjs`.
 
 `revisao.test.mjs` confere as peças da resposta: o vídeo (cabeçalho, tamanho, download que não
-deixa nada pela metade), a lista de aparelhos (formato), as telas citadas, as notas (os sete
-itens, os dois caminhos da exclusão, até 4000 no pior caso) e que o **guia PDF commitado é o das
+deixa nada pela metade), a escolha e a troca do anexo (a ordem vídeo novo → vídeo anexado → guia;
+o que está lá sai antes de o novo subir; o que não sai impede a subida), a lista de aparelhos
+(formato), as telas citadas, as notas (os sete itens, os dois caminhos da exclusão, só o anexo que
+vai estar lá, até 4000 no pior caso com o vídeo e com o guia) e que o **guia PDF commitado é o das
 entradas de agora**. `ci.test.mjs` confere o preparo do Actions: segredos fora do log, a versão
 já enviada dita antes de compilar e os iPhones do perfil de teste.
 

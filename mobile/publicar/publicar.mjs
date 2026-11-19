@@ -4,9 +4,10 @@
  * descrição, texto promocional, palavras-chave, novidades (só em atualização), as capturas
  * de 6,5" (obrigatórias) e de 6,9" (extra), categoria, classificação etária completa,
  * direitos de conteúdo, disponibilidade (só Brasil, se ainda não houver), preço grátis,
- * dados de revisão (conta demo + notas em inglês), os anexos da revisão (o guia PDF e a
- * gravação de tela), o build e o envio — inclusive o REENVIO depois de uma recusa ou de um
- * pedido de informação da Apple (o envio que voltou "UNRESOLVED_ISSUES" é retomado).
+ * dados de revisão (conta demo + notas em inglês), o anexo da revisão (UM só, que a Apple não
+ * aceita dois: a gravação de tela ou, sem ela, o guia PDF), o build e o envio — inclusive o
+ * REENVIO depois de uma recusa ou de um pedido de informação da Apple (o envio que voltou
+ * "UNRESOLVED_ISSUES" é retomado).
  *
  *   npm run publicar                          prepara tudo e PARA antes de enviar para revisão
  *   npm run publicar -- --enviar              faz tudo E envia (ou reenvia) para a revisão
@@ -20,7 +21,8 @@
  *                                             build antigo é RECUSADO: as notas citam telas que
  *                                             ele pode não ter
  *   npm run publicar -- --video-revisao gravacao.mp4   (ou um endereço https://...)
- *                                             anexa a gravação de tela à revisão
+ *                                             anexa a gravação de tela à revisão (no lugar
+ *                                             do anexo que estiver lá)
  *   npm run publicar -- --conferir-envio      só confere o que a revisão precisa (abaixo) e a
  *                                             versão na Apple, sem escrever nada — o modo
  *                                             completo do Actions roda isto ANTES de compilar
@@ -33,17 +35,17 @@
  * ou reenviando, sem --build nem --mesmo-build, o mesmo build que a Apple devolveu. Só a ficha
  * pode subir sem eles.
  *
- * O que NENHUM programa faz — a API 4.6 da Apple não tem rota para isso:
+ * O que NENHUM programa faz — a API 4.6.1 da Apple não tem rota para isso:
  *   • criar o registro do app (só no site, uma vez);
  *   • a ficha "Privacidade do App" (uma vez na tela; respostas em docs/LOJAS-DE-APP.md §5);
  *   • escrever na Central de Resolução (a mensagem do App Review) — o reenvio pela API leva
- *     as notas e os anexos novos, e é isso que responde à Apple.
+ *     as notas e o anexo novos, e é isso que responde à Apple.
  * O resumo do fim diz o que ficou feito, os avisos e o que ainda precisa de alguém.
  *
  * Variáveis: PUBLICAR_CONFIG (o config.json), PUBLICAR_CAPTURAS (pasta com iphone-6.5/ e
  * iphone-6.9/; padrão media/app-store), PUBLICAR_INTERVALO_BUILD (segundos entre consultas
  * do build; padrão 60), PUBLICAR_INTERVALO_CAPTURAS (segundos entre consultas do
- * processamento das capturas e dos anexos; padrão 5); ASC_BASE e ASC_REPETIR_MS são do
+ * processamento das capturas e do anexo da revisão; padrão 5); ASC_BASE e ASC_REPETIR_MS são do
  * asc.mjs. Só para o teste: PUBLICAR_APARELHOS (outra lista de aparelhos), PUBLICAR_TELAS
  * (outra raiz onde procurar as telas citadas) e PUBLICAR_DEMO_BASE (para onde vão as
  * conferências do servidor de demonstração; com o caminho, se ele tiver — <servidor>/demo).
@@ -52,7 +54,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { lerAnexos, NOME_DO_VIDEO, obterVideo, subirAnexo, videoAnexado } from './anexos.mjs';
+import { escolherAnexo, esperarOsQueProcessam, lerAnexos, obterVideo, trocarAnexo } from './anexos.mjs';
 import { criarCliente } from './asc.mjs';
 import { RESPOSTAS, responderClassificacao } from './classificacao.mjs';
 import { DO_MODELO_ANTIGO, lerAparelhosTestados, lerConfig, lerFicha } from './ficha.mjs';
@@ -174,15 +176,18 @@ function lerCapturas(base) {
 
 // ---------- antes de mexer em qualquer coisa ----------
 
-/** O detalhe de revisão da versão e os anexos dele — só leitura. */
-async function lerRevisaoNaApple(asc, versaoId) {
+/**
+ * O detalhe de revisão da versão e os anexos dele — só leitura. O anexo que a Apple ainda
+ * processa é esperado: é com o estado de depois que se escolhe o anexo da rodada.
+ */
+async function lerRevisaoNaApple(asc, versaoId, esperaMs) {
   let detalhe = null;
   try {
     detalhe = (await asc.get(`/v1/appStoreVersions/${versaoId}/appStoreReviewDetail`)).data ?? null;
   } catch (erro) {
     if (erro.status !== 404) throw erro;
   }
-  return { detalhe, anexos: await lerAnexos(asc, detalhe?.id) };
+  return { detalhe, anexos: await esperarOsQueProcessam(asc, await lerAnexos(asc, detalhe?.id), esperaMs) };
 }
 
 /**
@@ -226,7 +231,7 @@ async function envioDevolvido(asc, app) {
  * guia em dia e o servidor de demonstração do jeito que as notas descrevem. Confere TUDO antes
  * de escrever qualquer coisa na Apple e lista todas as faltas de uma vez.
  */
-async function conferirAntesDeEnviar({ asc, app, versaoDoApp, situacao, args, aparelhos, video, guia, revisaoNaApple, config, soConferir = false }) {
+async function conferirAntesDeEnviar({ asc, app, versaoDoApp, situacao, args, aparelhos, anexo, guia, revisaoNaApple, config, soConferir = false }) {
   relatorio.passo(
     `${soConferir ? 'O que a revisão vai precisar' : 'Antes de enviar'}: aparelhos testados, gravação de tela, guia PDF, ` +
       'regiões, build e servidor de demonstração',
@@ -281,17 +286,24 @@ async function conferirAntesDeEnviar({ asc, app, versaoDoApp, situacao, args, ap
         '"iPhone 17 — iOS 26.1"; a primeira é o da gravação de tela.',
     ]);
   }
-  const jaAnexado = videoAnexado(revisaoNaApple.anexos);
-  if (video) {
-    relatorio.ok(`gravação de tela: ${video.nome} (${mb(video.tamanho)}), ${soConferir ? 'conferida — sobe na rodada de envio' : 'sobe nesta rodada'}`);
-  }
-  else if (jaAnexado) relatorio.ok(`gravação de tela já anexada na Apple: ${jaAnexado.attributes.fileName}`);
-  else {
+  // O anexo da revisão é UM (escolherAnexo): a gravação desta rodada, a que já está anexada e
+  // processada, ou o guia — e com o guia no lugar dela a revisão não sai.
+  if (anexo.tipo === 'video' && !anexo.existente) {
+    relatorio.ok(`gravação de tela: ${anexo.nome} (${mb(anexo.dados.length)}), ${soConferir ? 'conferida — sobe na rodada de envio' : 'sobe nesta rodada'}`);
+  } else if (anexo.tipo === 'video' && anexo.processando) {
+    faltas.push([
+      'video',
+      `A gravação de tela já anexada (${anexo.nome}) ainda está sendo processada pela Apple: rode de novo em alguns ` +
+        'minutos. Ela fica e é o anexo da revisão; nada precisa subir de novo.',
+    ]);
+  } else if (anexo.tipo === 'video') {
+    relatorio.ok(`gravação de tela já anexada na Apple: ${anexo.nome} — fica`);
+  } else {
     faltas.push([
       'video',
       'Sem a gravação de tela que a Apple pediu (aparelho físico, iOS mais novo, desde a abertura do app): passe ' +
-        '--video-revisao <arquivo ou https://...> — no GitHub, a entrada "video_revisao_url". Ela sobe como anexo da ' +
-        'revisão e fica lá para as próximas rodadas.',
+        '--video-revisao <arquivo ou https://...> — no GitHub, a entrada "video_revisao_url". Ela vira O anexo da ' +
+        'revisão (a Apple aceita um só: entra no lugar do guia PDF) e fica lá para as próximas rodadas desta versão.',
     ]);
   }
   if (guia.desatualizado.length) {
@@ -426,7 +438,7 @@ async function nomeSubtituloEPrivacidade(asc, info, ficha, config) {
 }
 
 async function classificacaoEtaria(asc, info) {
-  relatorio.passo('Classificação etária (todas as perguntas da API 4.6: "Não/Nenhum" → 4+)');
+  relatorio.passo('Classificação etária (todas as perguntas da API 4.6.1: "Não/Nenhum" → 4+)');
   try {
     const r = await responderClassificacao(asc, info.id);
     if (r.recusadas.length) {
@@ -630,11 +642,11 @@ async function capturas(asc, loc, lidos, intervaloMs) {
 }
 
 /**
- * Conta demo, notas (em inglês) e os anexos da revisão. Devolve true se tudo o que a revisão
- * precisa ficou lá — guia e, se pedido, o vídeo.
+ * Conta demo, notas (em inglês) e o anexo da revisão — UM só (a Apple recusa o segundo): o
+ * `anexo` de escolherAnexo, o mesmo que as notas citam. Devolve true se ele ficou lá.
  */
-async function revisaoEAnexos(asc, versao, ficha, config, { guia, video, revisaoNaApple, esperaMs }) {
-  relatorio.passo('Conta de demonstração, notas e anexos para o revisor');
+async function revisaoEAnexos(asc, versao, ficha, config, { anexo, revisaoNaApple, esperaMs }) {
+  relatorio.passo('Conta de demonstração, notas e o anexo para o revisor');
   const [nome, ...sobrenomes] = String(config.nome_contato ?? '').trim().split(/\s+/).filter(Boolean);
   // Campo sem valor NÃO vai: a Apple guarda o que já tinha (o telefone de um envio anterior,
   // a senha da demo de uma rodada com o Secret). O --enviar confere que nada falta.
@@ -666,46 +678,35 @@ async function revisaoEAnexos(asc, versao, ficha, config, { guia, video, revisao
   }
   relatorio.feito(`Conta demo (${config.email_demo}) e notas para o revisor, em inglês (${[...ficha.notasRevisao].length} de 4000 caracteres)`);
 
-  let tudo = true;
   const existentes = await lerAnexos(asc, detalhe.id);
-  const subir = async (arquivo, rotulo, assunto) => {
-    try {
-      const r = await subirAnexo(asc, {
-        detalheId: detalhe.id,
-        nome: arquivo.nome,
-        dados: arquivo.dados,
-        md5: arquivo.md5,
-        existentes,
-        esperaMs,
-        relatorio,
-      });
-      if (r.mantido) relatorio.feito(`${rotulo} ${arquivo.nome}: já estava anexado, igual (mesmo MD5) — nada subiu de novo`);
-      else {
-        relatorio.feito(
-          `${rotulo} ${arquivo.nome} (${mb(arquivo.dados.length)}) anexado à revisão, MD5 conferido pela Apple` +
-            (r.substituidos ? ' — o anterior de mesmo nome saiu' : ''),
-        );
-      }
-      if (r.processando) relatorio.avisar(`${rotulo} ${arquivo.nome}: a Apple ainda está processando — ela termina sozinha.`);
-      return true;
-    } catch (erro) {
-      relatorio.pendente(`${rotulo} ${arquivo.nome} não foi anexado (${erro.message}) — rode de novo; o que já estava lá ficou.`, assunto);
-      tudo = false;
-      return false;
+  const rotulo = anexo.tipo === 'video' ? 'Gravação de tela' : 'Guia PDF';
+  try {
+    const r = await trocarAnexo(asc, { detalheId: detalhe.id, escolhido: anexo, existentes, esperaMs, relatorio });
+    const sairam = !r.apagados
+      ? ''
+      : ` — ${r.apagados === 1 ? 'o anexo que estava lá saiu' : `os ${r.apagados} anexos que estavam lá saíram`} (a Apple aceita um só)`;
+    if (r.mantido) {
+      const como = anexo.existente ? 'processado' : 'igual (mesmo MD5)';
+      relatorio.feito(`${rotulo} ${anexo.nome}: já estava anexado, ${como} — fica, e nada subiu de novo${sairam}`);
+    } else {
+      relatorio.feito(`${rotulo} ${anexo.nome} (${mb(anexo.dados.length)}) anexado à revisão, MD5 conferido pela Apple${sairam}`);
     }
-  };
-  await subir(guia, 'Guia PDF', 'anexo-guia');
-  if (video && (await subir(video, 'Gravação de tela', 'anexo-video'))) {
-    // Vídeo de outro tipo de antes (screen-recording.mov, agora .mp4): sai, para não ficarem dois.
-    for (const outro of existentes.filter((a) => a.attributes?.fileName?.startsWith(`${NOME_DO_VIDEO}.`) && a.attributes.fileName !== video.nome)) {
-      try {
-        await asc.del(`/v1/appStoreReviewAttachments/${outro.id}`);
-      } catch {
-        relatorio.avisar(`O vídeo antigo ${outro.attributes.fileName} continua anexado — apague-o na tela, se quiser.`);
-      }
+    if (r.processando) relatorio.avisar(`${rotulo} ${anexo.nome}: a Apple ainda está processando — ela termina sozinha.`);
+    for (const sobra of r.sobras) {
+      relatorio.avisar(
+        `O anexo ${sobra} continua na revisão ao lado de ${anexo.nome}: apague-o na tela (App Review Information → ` +
+          'Attachments) ou rode de novo.',
+      );
     }
+    return true;
+  } catch (erro) {
+    // Os de antes saem ANTES de o escolhido subir: se ele não entrou, a revisão está sem anexo.
+    const agora = erro.semAnexo
+      ? `a revisão ficou SEM anexo${erro.apagados ? ' (o que estava lá saiu antes: a Apple aceita um só)' : ''} — rode de novo e ele sobe`
+      : 'rode de novo';
+    relatorio.pendente(`${rotulo} ${anexo.nome} não foi anexado (${erro.message}) — ${agora}.`, `anexo-${anexo.tipo}`);
+    return false;
   }
-  return tudo;
 }
 
 async function precoGratis(asc, app) {
@@ -821,7 +822,7 @@ function dicasDaRecusa(texto) {
   if (/age ?rating|ageRating|classifica/i.test(texto)) {
     dicas.push([
       'idade',
-      'Classificação etária: a Apple pede resposta que a API 4.6 não tem (ou que não foi gravada). Responda na tela — ' +
+      'Classificação etária: a Apple pede resposta que a API 4.6.1 não tem (ou que não foi gravada). Responda na tela — ' +
         'App Information → Age Rating, "Não/Nenhum" para este app — e rode de novo.',
     ]);
   }
@@ -924,7 +925,7 @@ async function enviarParaRevisao(asc, app, versao) {
   }
   relatorio.feito(
     envio === devolvido
-      ? 'REENVIADO para a revisão da Apple — o mesmo envio que tinha voltado, agora com as notas e os anexos novos ' +
+      ? 'REENVIADO para a revisão da Apple — o mesmo envio que tinha voltado, agora com as notas e o anexo novos ' +
           '(a resposta costuma vir em 1 a 3 dias, por e-mail)'
       : 'ENVIADO para a revisão da Apple (a resposta costuma vir em 1 a 3 dias, por e-mail)',
   );
@@ -948,8 +949,8 @@ function foraDaApi() {
       'responda UMA vez na tela — respostas prontas em docs/LOJAS-DE-APP.md §5; depois vale para as próximas versões.',
   );
   itens.push(
-    'Mensagem na Central de Resolução (App Review): a API não escreve nela. Não precisa: o reenvio leva as notas e os ' +
-      'anexos novos. Se quiser responder também, o texto está em mobile/publicar/revisao/resposta-ao-app-review.txt.',
+    'Mensagem na Central de Resolução (App Review): a API não escreve nela. Não precisa: o reenvio leva as notas e o ' +
+      'anexo novos. Se quiser responder também, o texto está em mobile/publicar/revisao/resposta-ao-app-review.txt.',
   );
   return itens;
 }
@@ -968,7 +969,10 @@ async function publicar() {
     video = await obterVideo(args.video);
     relatorio.ok(`${video.nome}: ${mb(video.tamanho)}, vídeo de verdade (cabeçalho ${video.nome.endsWith('.mov') ? 'QuickTime' : 'MP4'})`);
   }
-  let ficha = lerFicha(config, { aparelhos, video: video?.nome ?? null });
+  // A Apple aceita UM anexo na revisão, e as notas citam só ele. Antes de falar com ela, é o
+  // vídeo desta rodada ou o guia; depois de ler a revisão, o vídeo que já está anexado entra.
+  let anexo = escolherAnexo({ video, guia });
+  let ficha = lerFicha(config, { aparelhos, anexo });
   const expo = JSON.parse(readFileSync(join(RAIZ, 'mobile', 'app.json'), 'utf8')).expo;
   const versaoDoApp = expo.version;
   const bundle = expo.ios?.bundleIdentifier;
@@ -1004,7 +1008,7 @@ async function publicar() {
   // o que publicar com esse número — a Apple recusaria criar outra igual.
   if (situacao.travada) throw new Error(mensagemDaTravada(versaoDoApp, situacao.travada));
   const revisaoNaApple = situacao.editavel
-    ? { versaoId: situacao.editavel.id, ...(await lerRevisaoNaApple(asc, situacao.editavel.id)) }
+    ? { versaoId: situacao.editavel.id, ...(await lerRevisaoNaApple(asc, situacao.editavel.id, intervaloCapturasMs)) }
     : { versaoId: null, detalhe: null, anexos: [] };
   // Sem o Secret APPLE_DEMO_PASSWORD, vale a senha que já está no campo "Senha" da revisão na
   // Apple (gravada pelo workflow "Senha da conta demo na Apple", ou à mão no site): as notas e a
@@ -1016,10 +1020,18 @@ async function publicar() {
     relatorio.ocultar(senhaNaApple);
     relatorio.ok('senha da conta demo: a que já está na revisão da Apple');
   }
-  const jaAnexado = video ? null : videoAnexado(revisaoNaApple.anexos);
-  if (usarSenhaDaApple || jaAnexado) {
-    ficha = lerFicha(config, { aparelhos, video: video?.nome ?? jaAnexado?.attributes?.fileName ?? null });
-  }
+  anexo = escolherAnexo({ video, guia, anexos: revisaoNaApple.anexos });
+  ficha = lerFicha(config, { aparelhos, anexo });
+  relatorio.ok(
+    `anexo da revisão (a Apple aceita um só): ${anexo.nome} — ` +
+      (anexo.tipo === 'guia'
+        ? 'o guia PDF, sem gravação de tela nesta rodada nem anexada'
+        : anexo.existente
+          ? anexo.processando
+            ? 'a gravação de tela que já está anexada (a Apple ainda a processa; ela fica)'
+            : 'a gravação de tela que já está anexada'
+          : 'a gravação de tela desta rodada'),
+  );
   if (args.enviar || args.conferirEnvio) {
     await conferirAntesDeEnviar({
       asc,
@@ -1028,7 +1040,7 @@ async function publicar() {
       situacao,
       args,
       aparelhos,
-      video,
+      anexo,
       guia,
       revisaoNaApple,
       config,
@@ -1125,7 +1137,7 @@ async function publicar() {
 
   await capturas(asc, loc, lidos, intervaloCapturasMs);
 
-  const anexosOk = await revisaoEAnexos(asc, versao, ficha, config, { guia, video, revisaoNaApple, esperaMs: intervaloCapturasMs });
+  const anexoOk = await revisaoEAnexos(asc, versao, ficha, config, { anexo, revisaoNaApple, esperaMs: intervaloCapturasMs });
 
   await precoGratis(asc, app);
 
@@ -1164,8 +1176,8 @@ async function publicar() {
 
   const depois = [];
   if (args.enviar) {
-    if (!anexosOk) {
-      throw new Error('Os anexos da revisão não subiram inteiros (pendências acima): sem eles a revisão não sai. Rode de novo.');
+    if (!anexoOk) {
+      throw new Error('O anexo da revisão não ficou lá (pendência acima): as notas o citam, e sem ele a revisão não sai. Rode de novo.');
     }
     await enviarParaRevisao(asc, app, versao);
   } else {
