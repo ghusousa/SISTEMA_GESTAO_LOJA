@@ -232,6 +232,8 @@ async function conferirAntesDeEnviar({ asc, app, versaoDoApp, situacao, args, ap
       'regiões, build e servidor de demonstração',
   );
   const faltas = [];
+  // O suporte de fora do servidor da demo que não abriu daqui: o resumo do fim não o dá por conferido.
+  let suporteSoNoAviso = false;
 
   // Item 6 das notas: "Brazil only". Disponibilidade feita no site com outros países desmente.
   let disponivel = null;
@@ -340,6 +342,7 @@ async function conferirAntesDeEnviar({ asc, app, versaoDoApp, situacao, args, ap
     for (const c of demo.conferidos) relatorio.ok(c);
     // A página de suporte de fora do servidor da demo que não abriu daqui: aviso, não falta.
     for (const a of demo.avisos) relatorio.avisar(a);
+    suporteSoNoAviso = demo.avisos.length > 0;
     demo.problemas.forEach((p, i) => faltas.push([`demo-${i}`, p]));
   }
   if (faltas.length) {
@@ -352,9 +355,11 @@ async function conferirAntesDeEnviar({ asc, app, versaoDoApp, situacao, args, ap
             'Para subir só a ficha, rode sem --enviar (no GitHub, desmarque "revisão").',
     );
   }
+  // A frase diz só o que foi conferido: o suporte que ficou no aviso não entra como "conferido".
+  const paginas = suporteSoNoAviso ? 'privacidade (suporte: ver o aviso)' : 'privacidade e suporte';
   relatorio.feito(
     'Pronto para a revisão: aparelhos testados, gravação de tela, guia em dia, só Brasil, e servidor de demonstração ' +
-      'conferido (no ar, conta de dono e protegida, código de barras com estoque, privacidade e suporte, leitor e exclusão de conta)',
+      `conferido (no ar, conta de dono e protegida, código de barras com estoque, ${paginas}, leitor e exclusão de conta)`,
   );
 }
 

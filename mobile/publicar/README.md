@@ -50,8 +50,9 @@ As notas citam a lista e o vídeo por marcadores (`{{APARELHOS_TESTADOS}}`, `{{A
   notas mandam vender, e o PDV recusa peça sem estoque: reponha pela Entrada na demo); a
   política de privacidade abre (e a URL de suporte, quando é outra página; as duas pedidas como
   página, `Accept: text/html`. A de suporte FORA do servidor da demo que não abre daqui vira
-  aviso no resumo, sem segurar o envio: página de terceiro pode recusar robô); há rota para o
-  leitor pelo celular e para a exclusão da própria conta (deploy na mesma versão); e a conta
+  aviso no resumo, sem segurar o envio: página de terceiro pode recusar robô — e o "Pronto para
+  a revisão" diz "privacidade (suporte: ver o aviso)", não "privacidade e suporte"); há rota
+  para o leitor pelo celular e para a exclusão da própria conta (deploy na mesma versão); e a conta
   demo é **protegida** lá (ADR-45: não se exclui, não perde o papel nem troca de senha — senão
   o revisor que cria outro dono apaga a conta das notas no meio da revisão). Tudo pela API
   pública do sistema, a mesma do app; a sessão aberta para conferir é encerrada. A conferência

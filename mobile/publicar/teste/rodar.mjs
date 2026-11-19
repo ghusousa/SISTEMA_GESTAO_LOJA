@@ -365,6 +365,7 @@ await cenario(
       ['GET /health', 'POST /api/v1/auth/login', 'GET /api/v1/variantes/codigo-barras/7890000000000', 'GET /api/v1/leitor/pareamentos/0', 'DELETE /api/v1/usuarios/me', 'POST /api/v1/auth/logout', 'GET /privacidade', 'GET /suporte'].every((c) => demo.includes(c)),
       'servidor de demonstração conferido: no ar, login de dono, código, leitor, exclusão, privacidade, suporte (e a sessão encerrada)',
     );
+    conferir(/✔ Pronto para a revisão: .*privacidade e suporte,/.test(saida), 'o "Pronto para a revisão" dá o suporte por conferido: a página abriu');
     const exclusoes = DEMO.chamadas.slice(antesDaDemo).filter((c) => c.metodo === 'DELETE' && c.caminho === '/api/v1/usuarios/me');
     conferir(
       exclusoes.some((c) => typeof c.corpo?.senha === 'string') && saida.includes('é protegida lá'),
@@ -679,6 +680,12 @@ if (!REAIS) {
     conferir(codigo === 0 && e.envios.length === 1, 'enviado para revisão: o suporte de fora não segurou o envio');
     conferir(/⚠ A URL de suporte da ficha \(https:\/\/127\.0\.0\.1:1\/contato\) não abriu daqui/.test(saida), 'o aviso diz qual página não abriu');
     conferir(/Avisos \(\d+\):\n(?: {2}⚠ .*\n)*? {2}⚠ A URL de suporte da ficha/.test(saida), 'e vai ao resumo, entre os avisos (não às pendências)');
+    // O "Pronto" diz só o que foi conferido: o suporte que ficou no aviso não sai como conferido.
+    const pronto = saida.split('\n').filter((linha) => linha.includes('Pronto para a revisão'));
+    conferir(
+      pronto.length > 0 && pronto.every((linha) => !linha.includes('privacidade e suporte') && linha.includes('privacidade (suporte: ver o aviso)')),
+      'o "Pronto para a revisão" não dá o suporte por conferido: manda ver o aviso',
+    );
     const loc = Object.values(e.versaoLocs).find((l) => l.versao === 'VER1')?.atributos ?? {};
     conferir(loc.supportUrl === 'https://127.0.0.1:1/contato', 'a ficha leva a página do dono');
   });
