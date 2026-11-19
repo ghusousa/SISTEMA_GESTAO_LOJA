@@ -150,6 +150,17 @@ test('mesmoServidor compara host e porta, com a porta padrão preenchida', () =>
   assert.equal(mesmoServidor('http://loja.exemplo/api/v1', 'https://loja.exemplo'), false);
 });
 
+test('mesmoServidor: o caminho da base conta — a demo mora em /demo no host da loja (ADR-46)', () => {
+  // O convite leva a base da API da página (`baseDaApi()`), o app compara com a dele.
+  assert.equal(mesmoServidor('https://loja.exemplo/demo/api/v1', 'https://loja.exemplo/demo'), true);
+  assert.equal(mesmoServidor('https://loja.exemplo/demo/api/v1', 'https://loja.exemplo/demo/api/v1'), true);
+  assert.equal(mesmoServidor('https://loja.exemplo/demo/api/v1/', 'https://loja.exemplo/demo/'), true);
+  // O código da demo lido pelo app da loja (e o contrário) é de outro servidor.
+  assert.equal(mesmoServidor('https://loja.exemplo/demo/api/v1', 'https://loja.exemplo'), false);
+  assert.equal(mesmoServidor('https://loja.exemplo/api/v1', 'https://loja.exemplo/demo'), false);
+  assert.equal(mesmoServidor('https://loja.exemplo/demo/api/v1', 'https://loja.exemplo/demo2'), false);
+});
+
 test('mesmoServidor: convite de loopback não acusa ninguém', () => {
   for (const host of ['localhost', '127.0.0.1', '127.1.2.3', '[::1]']) {
     assert.equal(mesmoServidor(`http://${host}:8000/api/v1`, 'https://loja.exemplo'), true, host);
@@ -167,6 +178,9 @@ test('hostDoEndereco mostra só o que identifica o servidor', () => {
   assert.equal(hostDoEndereco('http://192.168.0.10:8000/api/v1'), '192.168.0.10:8000');
   assert.equal(hostDoEndereco('http://loja.exemplo:443'), 'loja.exemplo:443');
   assert.equal(hostDoEndereco('lixo'), 'lixo');
+  // Com caminho, ele vai junto: "loja.exemplo" e "loja.exemplo/demo" são servidores diferentes.
+  assert.equal(hostDoEndereco('https://Loja.Exemplo/demo/api/v1'), 'loja.exemplo/demo');
+  assert.equal(hostDoEndereco('https://loja.exemplo:8443/demo/'), 'loja.exemplo:8443/demo');
 });
 
 test('venceu: o bipe vale por dois minutos, como no servidor', () => {

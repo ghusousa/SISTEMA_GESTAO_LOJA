@@ -129,16 +129,21 @@ export function lerConvite(texto) {
 
 const PORTA_PADRAO = { http: '80', https: '443', ws: '80', wss: '443' };
 
-/** Esquema, host (IPv6 entre colchetes) e porta (a escrita, ou a padrão). Sem esquema, `null`. */
+/**
+ * Esquema, host (IPv6 entre colchetes), porta (a escrita, ou a padrão) e o caminho da BASE
+ * do servidor, sem barra no fim e sem o `/api/v1` da API: `"https://x/demo/api/v1"` e
+ * `"https://x/demo/"` dão o mesmo `"/demo"`. Sem esquema, `null`.
+ */
 function partirEndereco(texto) {
-  const achado = /^([a-z][a-z0-9+.-]*):\/\/(?:[^@/?#]*@)?(\[[^\]]*\]|[^:/?#]*)(?::(\d*))?(?:[/?#]|$)/i.exec(
+  const achado = /^([a-z][a-z0-9+.-]*):\/\/(?:[^@/?#]*@)?(\[[^\]]*\]|[^:/?#]*)(?::(\d*))?(\/[^?#]*)?(?:[?#]|$)/i.exec(
     String(texto ?? '').trim(),
   );
   if (!achado || !achado[2]) return null;
   const esquema = achado[1].toLowerCase();
   const host = achado[2].toLowerCase().replace(/\.$/, '');
   const porta = achado[3] || PORTA_PADRAO[esquema] || '';
-  return { esquema, host, porta };
+  const caminho = (achado[4] ?? '').replace(/\/+$/, '').replace(/\/api\/v1$/, '').replace(/\/+$/, '');
+  return { esquema, host, porta, caminho };
 }
 
 function ehLoopback(host) {
@@ -152,27 +157,32 @@ function ehLoopback(host) {
 }
 
 /**
- * O convite é do mesmo servidor em que o app está ligado? Compara host e porta (porta
- * padrão do esquema preenchida; sem diferenciar maiúsculas; caminho e barra final não
- * contam). Host de loopback no convite (`localhost`, `127.x`, `::1`) dá `true`: o
- * computador que abriu a loja por `localhost` não sabe o próprio endereço na rede, e
- * quem decide é o servidor. Endereço ilegível de qualquer lado também dá `true` — sem
- * saber, não se acusa.
+ * O convite é do mesmo servidor em que o app está ligado? Compara host, porta e o caminho
+ * da base (porta padrão do esquema preenchida; host sem diferenciar maiúsculas; barra final
+ * e o `/api/v1` não contam). O caminho conta porque a demonstração mora em `/demo` no MESMO
+ * host da loja (ADR-46): o código da demo, aceito na loja, não existiria lá. Host de
+ * loopback no convite (`localhost`, `127.x`, `::1`) dá `true`: o computador que abriu a
+ * loja por `localhost` não sabe o próprio endereço na rede, e quem decide é o servidor.
+ * Endereço ilegível de qualquer lado também dá `true` — sem saber, não se acusa.
  */
 export function mesmoServidor(apiDoConvite, apiDoApp) {
   const convite = partirEndereco(apiDoConvite);
   const app = partirEndereco(apiDoApp);
   if (!convite || !app) return true;
   if (ehLoopback(convite.host)) return true;
-  return convite.host === app.host && convite.porta === app.porta;
+  return convite.host === app.host && convite.porta === app.porta && convite.caminho === app.caminho;
 }
 
-/** `"https://Loja.Exemplo:8443/api/v1"` -> `"loja.exemplo:8443"`, para mostrar na dica. */
+/**
+ * `"https://Loja.Exemplo:8443/api/v1"` -> `"loja.exemplo:8443"`, para mostrar na dica. Com
+ * o caminho da base quando há um (`"loja.exemplo/demo"`): sem ele, a dica diria que o código
+ * da demo é do mesmo servidor em que o app da loja está ligado.
+ */
 export function hostDoEndereco(texto) {
   const partes = partirEndereco(texto);
   if (!partes) return String(texto ?? '');
   const padrao = !partes.porta || partes.porta === PORTA_PADRAO[partes.esquema];
-  return padrao ? partes.host : `${partes.host}:${partes.porta}`;
+  return `${padrao ? partes.host : `${partes.host}:${partes.porta}`}${partes.caminho}`;
 }
 
 /** O bipe passou do prazo sem sair? `lidoEm` e `agora` em milissegundos. */
