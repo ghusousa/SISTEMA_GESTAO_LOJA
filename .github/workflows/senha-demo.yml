@@ -1,0 +1,54 @@
+# Grava a senha da conta de demonstração (a do revisor da Apple) no campo "Senha" da revisão da
+# versão em edição no App Store Connect — só isso. Depois, o "Publicar iOS na App Store" usa a
+# senha que está na Apple quando não há o Secret APPLE_DEMO_PASSWORD (as notas e a conferência
+# do servidor de demonstração).
+#
+# A senha chega pela entrada do formulário e é mascarada no log ANTES de qualquer passo usá-la:
+# o primeiro passo a lê do arquivo do evento (sem passar por `env:`, que o log imprimiria) e
+# chama ::add-mask::. Mora num arquivo à parte porque o formulário do "Publicar iOS" já está no
+# limite de entradas do workflow_dispatch.
+name: Senha da conta demo na Apple
+
+on:
+  workflow_dispatch:
+    inputs:
+      senha:
+        description: "Senha da conta de demonstração (a DEMO_ADMIN_SENHA da Vercel). Fica escondida no log."
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  senha:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Esconder a senha do log
+        run: |
+          SENHA="$(jq -r '.inputs.senha // ""' "$GITHUB_EVENT_PATH")"
+          if [ -z "$SENHA" ]; then
+            echo "::error::A entrada \"senha\" está vazia."
+            exit 1
+          fi
+          echo "::add-mask::$SENHA"
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Gravar a senha na revisão da Apple
+        working-directory: mobile
+        env:
+          SENHA_DEMO: ${{ inputs.senha }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID || vars.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          APPLE_EMAIL_DEMO: ${{ vars.APPLE_EMAIL_DEMO }}
+        run: node publicar/ci.mjs senha-demo

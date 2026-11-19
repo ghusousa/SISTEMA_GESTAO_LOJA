@@ -24,6 +24,10 @@ export function criarRelatorio({ segredos = [] } = {}) {
 
   return {
     limpar,
+    /** Segredo que só aparece no meio da rodada (a senha da demo lida da Apple): some daqui em diante. */
+    ocultar(segredo) {
+      if (typeof segredo === 'string' && segredo.length >= 3 && !ocultos.includes(segredo)) ocultos.push(segredo);
+    },
     passo: (texto) => escrever(`\n• ${texto}\n`),
     /** Progresso miúdo (cada captura, cada consulta): só no log. */
     ok: (texto) => escrever(`  ✔ ${texto}\n`),

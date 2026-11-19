@@ -193,6 +193,13 @@ falhar, o passo diz isso.
 
 É experimental até a primeira rodada de verdade.
 
+**Sem compilar nada: o .ipa do build da loja.** O workflow à parte **"Link do .ipa (teste em
+iPhone real)"** (`.github/workflows/link-ipa.yml`, sem entradas) só lê a lista de builds da Expo
+com o `EXPO_TOKEN` e põe no resumo o link do .ipa do último build da LOJA que terminou. O
+BrowserStack reassina todo .ipa enviado (a documentação dele recomenda ad hoc; o da loja é a
+tentativa mais barata, porque já existe). Mora num arquivo à parte porque o formulário do
+"Publicar iOS" já está no limite de 10 entradas do `workflow_dispatch` — o `ci.test.mjs` confere.
+
 ### Uma vez só: segredos e variáveis do repositório
 
 Settings → Secrets and variables → Actions → **Secrets** → "Novo segredo do repositório"
@@ -204,7 +211,7 @@ da revisão:
 | `EXPO_TOKEN` | expo.dev → Account settings → Access tokens (o nome do token lá é livre; o do Secret, não) | compilar, enviar |
 | `ASC_KEY_ID` | App Store Connect → Usuários e acesso → Integrações → API → **Chaves da equipe** → coluna "ID da chave". Chave com acesso **Administrador** (Desenvolvedor não mexe na ficha nem envia para revisão) | ficha, enviar, revisão |
 | `ASC_KEY_P8` | o TEXTO de dentro do arquivo `AuthKey_<ID>.p8` dessa chave (Bloco de Notas → Ctrl+A → Ctrl+C), não o nome do arquivo — a Apple só deixa baixar uma vez. Linhas juntadas ou sem BEGIN/END ainda servem; se não for a chave, o passo diz o que parece ter sido colado (sem mostrá-lo) | ficha, enviar, revisão |
-| `APPLE_DEMO_PASSWORD` | a senha da conta demo do revisor: a mesma de `DEMO_ADMIN_SENHA` na Vercel | só a revisão |
+| `APPLE_DEMO_PASSWORD` | a senha da conta demo do revisor: a mesma de `DEMO_ADMIN_SENHA` na Vercel. **Ou, sem Secret:** o workflow **"Senha da conta demo na Apple"** (`senha-demo.yml`, entrada mascarada no log antes de qualquer uso) grava a senha no campo "Senha" da revisão na Apple, e o publicador passa a usar a que está lá | só a revisão |
 
 **O que não é segredo já está no repositório**, em `publicar/padroes.json`: o Issuer ID da chave,
 o time da Apple (Team ID e tipo), nome e e-mail de contato, URL de suporte, copyright, conta

@@ -1,0 +1,66 @@
+# Mostra o link do .ipa do último build da LOJA que a Expo terminou — para instalar num iPhone
+# real de teste na nuvem (BrowserStack) e gravar o vídeo que a Apple pede na revisão. Não
+# compila, não envia e não mexe na Apple: só lê a lista de builds com o EXPO_TOKEN.
+#
+# Mora num arquivo à parte de propósito: o formulário do "Publicar iOS na App Store" já está no
+# limite de entradas do workflow_dispatch, e uma entrada a mais quebraria o botão inteiro.
+name: Link do .ipa (teste em iPhone real)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  link:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      # O eas lê o app.json pelo @expo/config, que quer o pacote expo instalado.
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Link do último .ipa da loja
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "::error::Falta o Secret EXPO_TOKEN (expo.dev → Account settings → Access tokens)."
+            exit 1
+          fi
+          npx --yes eas-cli build:list --platform ios --status finished --distribution store \
+            --limit 1 --json --non-interactive > "$RUNNER_TEMP/builds.json"
+          node -e '
+            const fs = require("fs");
+            const lista = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const b = Array.isArray(lista) ? lista[0] : lista;
+            const url = b?.artifacts?.buildUrl ?? b?.artifacts?.applicationArchiveUrl ?? "";
+            if (!/^https:\/\//.test(url)) {
+              console.log("::error::Nenhum build iOS da loja terminado na Expo (ou sem link do .ipa). Compile um com o \"Publicar iOS na App Store\".");
+              process.exit(1);
+            }
+            const linhas = [
+              "## .ipa do último build da loja",
+              "",
+              `- Versão ${b.appVersion ?? "?"}, build ${b.appBuildVersion ?? "?"} (id ${b.id}), terminado em ${b.completedAt ?? "?"}.`,
+              `- Link do .ipa: ${url}`,
+              "- Para o BrowserStack: enviar o app por esse link https (ele reassina o .ipa para os iPhones da nuvem).",
+              "- O link baixa o app sem login: não o publique fora da equipe.",
+              "",
+            ];
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, linhas.join("\n") + "\n");
+            console.log(`Build ${b.appBuildVersion} (${b.appVersion}): ${url}`);
+          ' "$RUNNER_TEMP/builds.json"

@@ -441,6 +441,21 @@ async function classificacaoEtaria(asc, info) {
   }
 }
 
+/**
+ * Todos os territórios da Apple (uns 175: uma página de 200; segue o links.next se um dia
+ * passar disso). O links.next vem com o endereço inteiro; o cliente quer só o caminho.
+ */
+async function todosOsTerritorios(asc) {
+  const ids = [];
+  let caminho = '/v1/territories?limit=200';
+  while (caminho) {
+    const r = await asc.get(caminho);
+    ids.push(...(r.data ?? []).map((d) => d.id));
+    caminho = r.links?.next ? r.links.next.replace(/^https?:\/\/[^/]+/, '') : null;
+  }
+  return ids;
+}
+
 async function disponibilidade(asc, app) {
   relatorio.passo('Disponibilidade (onde o app é vendido)');
   let atual = null;
@@ -470,28 +485,32 @@ async function disponibilidade(asc, app) {
     return;
   }
   try {
-    // Criação em linha: o território vai em "included" com um id local ${...}, que o
-    // relacionamento cita — o formato da API para criar as duas coisas de uma vez.
-    const local = `\${${TERRITORIO}}`;
+    // Criação em linha: cada território vai em "included" com um id local ${...}, que o
+    // relacionamento cita. A Apple exige TODOS os territórios na criação — cada um com
+    // available true/false —, não só os que vão ficar à venda: com só o Brasil, ela devolve
+    // 409 "expects an included resource ... id 'ARG'" para cada um que faltou.
+    const territorios = await todosOsTerritorios(asc);
+    if (!territorios.includes(TERRITORIO)) throw new Error(`a Apple não listou o território ${TERRITORIO}`);
+    const local = (id) => `\${${id}}`;
     await asc.post('/v2/appAvailabilities', {
       data: {
         type: 'appAvailabilities',
         attributes: { availableInNewTerritories: false },
         relationships: {
           app: { data: { type: 'apps', id: app.id } },
-          territoryAvailabilities: { data: [{ type: 'territoryAvailabilities', id: local }] },
+          territoryAvailabilities: { data: territorios.map((id) => ({ type: 'territoryAvailabilities', id: local(id) })) },
         },
       },
-      included: [
-        {
-          type: 'territoryAvailabilities',
-          id: local,
-          attributes: { available: true },
-          relationships: { territory: { data: { type: 'territories', id: TERRITORIO } } },
-        },
-      ],
+      included: territorios.map((id) => ({
+        type: 'territoryAvailabilities',
+        id: local(id),
+        attributes: { available: id === TERRITORIO },
+        relationships: { territory: { data: { type: 'territories', id } } },
+      })),
     });
-    relatorio.feito('Disponibilidade: só no Brasil, sem entrar sozinho em países novos');
+    relatorio.feito(
+      `Disponibilidade: só no Brasil (os outros ${territorios.length - 1} territórios desligados), sem entrar sozinho em países novos`,
+    );
   } catch (erro) {
     relatorio.pendente(`Disponibilidade não foi criada (${erro.message}). Na tela: Pricing and Availability → só Brasil.`, 'disponibilidade');
   }
@@ -976,9 +995,19 @@ async function publicar() {
   const revisaoNaApple = situacao.editavel
     ? { versaoId: situacao.editavel.id, ...(await lerRevisaoNaApple(asc, situacao.editavel.id)) }
     : { versaoId: null, detalhe: null, anexos: [] };
-  if (!video) {
-    const jaAnexado = videoAnexado(revisaoNaApple.anexos);
-    if (jaAnexado) ficha = lerFicha(config, { aparelhos, video: jaAnexado.attributes.fileName });
+  // Sem o Secret APPLE_DEMO_PASSWORD, vale a senha que já está no campo "Senha" da revisão na
+  // Apple (gravada pelo workflow "Senha da conta demo na Apple", ou à mão no site): as notas e a
+  // conferência da demo usam ela, e ela some do log como o Secret sumiria.
+  const senhaNaApple = revisaoNaApple.detalhe?.attributes?.demoAccountPassword;
+  const usarSenhaDaApple = !config.senha_demo && typeof senhaNaApple === 'string' && senhaNaApple.trim() !== '';
+  if (usarSenhaDaApple) {
+    config.senha_demo = senhaNaApple;
+    relatorio.ocultar(senhaNaApple);
+    relatorio.ok('senha da conta demo: a que já está na revisão da Apple');
+  }
+  const jaAnexado = video ? null : videoAnexado(revisaoNaApple.anexos);
+  if (usarSenhaDaApple || jaAnexado) {
+    ficha = lerFicha(config, { aparelhos, video: video?.nome ?? jaAnexado?.attributes?.fileName ?? null });
   }
   if (args.enviar || args.conferirEnvio) {
     await conferirAntesDeEnviar({

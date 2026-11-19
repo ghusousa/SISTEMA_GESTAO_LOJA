@@ -38,6 +38,8 @@ const ROTAS = [
   'GET /v1/apps/{id}/appAvailabilityV2',
   // Os territórios de uma disponibilidade que já existe: as notas dizem "Brazil only".
   'GET /v2/appAvailabilities/{id}/territoryAvailabilities',
+  // Todos os territórios: a criação da disponibilidade exige a lista inteira (available true/false).
+  'GET /v1/territories',
   'POST /v2/appAvailabilities',
   'GET /v1/apps/{id}/appStoreVersions',
   'POST /v1/appStoreVersions',

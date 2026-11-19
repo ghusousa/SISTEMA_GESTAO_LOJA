@@ -335,12 +335,63 @@ async function aparelhos() {
   saida('aparelhos', lista.length);
 }
 
+/**
+ * O comando "senha-demo": grava a senha da conta de demonstração no campo "Senha" da revisão da
+ * versão em edição na Apple (com o e-mail da conta demo e "login obrigatório"). A senha chega por
+ * SENHA_DEMO (a entrada do workflow "Senha da conta demo na Apple", já mascarada no log) e nunca é
+ * impressa. Dali em diante o publicador usa a que está na Apple quando não há o Secret
+ * APPLE_DEMO_PASSWORD.
+ */
+export async function gravarSenhaDemo(cliente, { appId, versaoDoApp, email, senha }) {
+  const s = await situacaoDaVersao(cliente, appId, versaoDoApp);
+  if (!s.editavel) {
+    throw new Error(`A versão ${versaoDoApp} não está em edição na Apple: rode a ficha antes (ela cria/abre a versão).`);
+  }
+  let detalhe = null;
+  try {
+    detalhe = (await cliente.get(`/v1/appStoreVersions/${s.editavel.id}/appStoreReviewDetail`)).data ?? null;
+  } catch (erro) {
+    if (erro.status !== 404) throw erro;
+  }
+  const attributes = { demoAccountName: email, demoAccountPassword: senha, demoAccountRequired: true };
+  if (detalhe) {
+    await cliente.patch(`/v1/appStoreReviewDetails/${detalhe.id}`, { data: { type: 'appStoreReviewDetails', id: detalhe.id, attributes } });
+  } else {
+    await cliente.post('/v1/appStoreReviewDetails', {
+      data: {
+        type: 'appStoreReviewDetails',
+        attributes,
+        relationships: { appStoreVersion: { data: { type: 'appStoreVersions', id: s.editavel.id } } },
+      },
+    });
+  }
+  return { versaoId: s.editavel.id, criado: !detalhe };
+}
+
+async function senhaDemo() {
+  const senha = limpo(process.env.SENHA_DEMO);
+  if (!senha) throw new Error('Senha vazia: preencha a entrada "senha" do workflow (a DEMO_ADMIN_SENHA da Vercel).');
+  const r = montar(process.env, lerPadroes());
+  if (!r.temChave) throw new Error(`Chave da Apple incompleta — faltam os Secrets: ${r.faltandoChave.join(', ')}.`);
+  const appJson = JSON.parse(readFileSync(join(MOBILE, 'app.json'), 'utf8'));
+  const bundle = appJson.expo?.ios?.bundleIdentifier;
+  const versaoDoApp = appJson.expo?.version;
+  const cliente = criarCliente({ keyId: r.config.key_id, issuerId: r.config.issuer_id, p8: r.p8 });
+  const appId = await acharApp(cliente, bundle);
+  if (!appId) throw new Error(`O app ${bundle} não existe no App Store Connect.`);
+  const g = await gravarSenhaDemo(cliente, { appId, versaoDoApp, email: r.config.email_demo, senha });
+  process.stdout.write(
+    `✔ Senha da conta demo (${r.config.email_demo}) gravada no campo "Senha" da revisão da versão ${versaoDoApp}` +
+      `${g.criado ? ' (detalhe da revisão criado)' : ''}. As próximas rodadas usam ela sem o Secret.\n`,
+  );
+}
+
 const executadoDireto = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (executadoDireto) {
-  const comandos = { preparar, aparelhos };
+  const comandos = { preparar, aparelhos, 'senha-demo': senhaDemo };
   const comando = comandos[process.argv[2]];
   if (!comando) {
-    process.stderr.write('Uso: node publicar/ci.mjs preparar | aparelhos\n');
+    process.stderr.write('Uso: node publicar/ci.mjs preparar | aparelhos | senha-demo\n');
     process.exit(2);
   }
   if (!existsSync(join(MOBILE, 'app.json'))) {

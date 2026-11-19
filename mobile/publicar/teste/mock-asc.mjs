@@ -477,6 +477,15 @@ export function subirMock(opcoesDoTeste = {}) {
         },
       ];
     },
+    // Duas por página, de propósito: o publicador tem de seguir o links.next (a Apple de verdade
+    // pagina em 200, e são uns 175 — um dia passa).
+    'GET /v1/territories': ({ url }) => {
+      const todos = [...TERRITORIOS];
+      const de = Number(url.searchParams.get('cursor') ?? 0);
+      const pagina = todos.slice(de, de + 2);
+      const proximo = de + 2 < todos.length ? `${url.origin}/v1/territories?cursor=${de + 2}&limit=200` : undefined;
+      return [200, { data: pagina.map((id) => ({ type: 'territories', id })), links: { self: url.href, ...(proximo ? { next: proximo } : {}) } }];
+    },
     'POST /v2/appAvailabilities': ({ corpo }) => {
       if (estado.disponibilidade) return erro(409, 'ENTITY_ERROR', 'a disponibilidade já existe');
       const citados = corpo.data.relationships.territoryAvailabilities.data.map((d) => d.id);
@@ -486,8 +495,21 @@ export function subirMock(opcoesDoTeste = {}) {
       }
       const territorios = incluidos.map((i) => ({ id: i.relationships?.territory?.data?.id, available: i.attributes?.available }));
       if (territorios.some((t) => !TERRITORIOS.has(t.id))) return erro(409, 'ENTITY_ERROR.RELATIONSHIP.INVALID', 'território desconhecido');
+      // Como a Apple de verdade: a criação leva TODOS os territórios (available true/false);
+      // faltou um, 409 — a primeira rodada real mandava só o Brasil e parou aqui.
+      const faltou = [...TERRITORIOS].find((id) => !territorios.some((t) => t.id === id));
+      if (faltou) {
+        return erro(
+          409,
+          'ENTITY_ERROR.RELATIONSHIP.INVALID',
+          `The relationship 'territoryAvailabilities.territory' expects an included resource with type 'territories' and id '${faltou}' but no matching resource was included.`,
+        );
+      }
       estado.disponibilidadeCriada = { availableInNewTerritories: corpo.data.attributes.availableInNewTerritories, territorios };
-      estado.disponibilidade = { availableInNewTerritories: corpo.data.attributes.availableInNewTerritories, territorios: territorios.map((t) => t.id) };
+      estado.disponibilidade = {
+        availableInNewTerritories: corpo.data.attributes.availableInNewTerritories,
+        territorios: territorios.filter((t) => t.available === true).map((t) => t.id),
+      };
       return [201, { data: { type: 'appAvailabilities', id: 'AV1', attributes: { availableInNewTerritories: estado.disponibilidade.availableInNewTerritories } } }];
     },
     'GET /v1/apps/{id}/appStoreVersions': ({ url }) => {

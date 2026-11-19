@@ -1743,7 +1743,10 @@ primeira rodada; segredo de verdade (chave, senha da demo) nunca entra nesse arq
 `ci.test.mjs` recusa. Senha da demo e telefone de contato são **só da revisão**: sem eles a
 ficha sobe (notas com "(pending)", campo vazio não vai à Apple e ela guarda o que tinha) e o
 `--enviar` para dizendo o que falta — o telefone que a Apple já tem de um envio anterior basta.
-O issuer e o time chegam aos passos do eas por `secrets.X || steps.apple.outputs.x` (saída do
+A senha da demo também pode morar SÓ na Apple: o workflow `senha-demo.yml` a grava no campo "Senha" da
+revisão (entrada lida do arquivo do evento e mascarada antes de qualquer `env:`), e o publicador, sem o
+Secret, usa a que está lá — nas notas e na conferência da demo — e a esconde do log. Quem só tem a senha
+e não pode criar Secret (um agente, por exemplo) publica assim. O issuer e o time chegam aos passos do eas por `secrets.X || steps.apple.outputs.x` (saída do
 `ci.mjs`), nunca por saída que contenha Secret. O `app.json` guarda o `projectId` da Expo; sem
 `owner`, porque do SDK 53 em diante o eas-cli não o exige nem com token de robô. O endereço que o revisor usa é
 `url_servidor_demo` (padrão `https://loja-tria.vercel.app`, ADR-42) e a política de
@@ -1762,8 +1765,11 @@ sozinho e vira aviso; pergunta que a Apple criar depois da 4.6 (vieram duas em 1
 volta em branco e vira pendência com o nome, e a recusa do envio aparece inteira
 (`associatedErrors`) — a rodada seguinte retoma o envio que ficou aberto; **direitos de
 conteúdo** = não usa conteúdo de terceiros; **disponibilidade** só no Brasil
-(`POST /v2/appAvailabilities`, território em `included` com id local `${...}`,
-`availableInNewTerritories: false` — app em pt-BR, com PIX e NFC-e) e só quando a conta ainda
+(`POST /v2/appAvailabilities` com TODOS os territórios de `GET /v1/territories` em `included`,
+cada um com id local `${...}` e `available` só no Brasil — a Apple recusa a criação que traz só
+os que ficam à venda (409 "expects an included resource ... id 'ARG'", visto na 1ª rodada real),
+e a Apple de mentira agora exige o mesmo; `availableInNewTerritories: false` — app em pt-BR, com
+PIX e NFC-e) e só quando a conta ainda
 não tem: a que existe fica como está; **capturas em dois conjuntos**: 6,5" (`APP_IPHONE_65`,
 1242×2688) OBRIGATÓRIO — em ago/2026 o formulário só aceitou ele — e 6,9" (`APP_IPHONE_67`,
 1320×2868) extra: pasta ausente, imagem fora do padrão ou falha viram aviso, e o conjunto pela
