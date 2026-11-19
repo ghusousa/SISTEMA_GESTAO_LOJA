@@ -128,8 +128,10 @@ export function montar(env, padroes = {}) {
     arquivo_p8: 'chave-apple.p8',
     url_etiquetas_demo: valor('APPLE_URL_ETIQUETAS_DEMO', 'url_etiquetas_demo'),
     url_servidor_demo: valor('APPLE_SERVIDOR_DEMO', 'url_servidor_demo') || SERVIDOR_DEMO_PADRAO,
-    // Vazias, as duas viram <servidor>/privacidade no publicar.mjs (lerConfig), depois de o
-    // endereço do servidor ser conferido — e trocam junto com APPLE_SERVIDOR_DEMO.
+    // Vazia, a privacidade vira <servidor>/privacidade no lerConfig (ficha.mjs, na hora de
+    // publicar), depois de o endereço do servidor ser conferido — e troca junto com
+    // APPLE_SERVIDOR_DEMO. O suporte vazio segue a privacidade: a preenchida em
+    // APPLE_URL_PRIVACIDADE, se houver (o endereço permanente do dono), ou essa do servidor.
     url_privacidade: valor('APPLE_URL_PRIVACIDADE', 'url_privacidade'),
     url_suporte: valor('APPLE_URL_SUPORTE', 'url_suporte'),
   };
