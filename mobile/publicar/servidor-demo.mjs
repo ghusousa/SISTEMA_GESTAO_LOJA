@@ -12,7 +12,10 @@
  *   - o código de barras das notas existe E tem peças para vender (as notas mandam vender;
  *     com o saldo zerado, o PDV recusa a peça);
  *   - a política de privacidade abre (a URL da ficha), e a URL de suporte também, quando é
- *     outra página (sem APPLE_URL_SUPORTE, ela é a mesma privacidade);
+ *     outra página (sem APPLE_URL_SUPORTE, ela é a mesma privacidade). As duas são pedidas
+ *     como página (Accept: text/html, como o navegador). O suporte FORA do servidor da demo
+ *     (a página de contato do dono, de terceiro) que não abre daqui vira aviso, não pendência:
+ *     proteção contra robô ou negociação de conteúdo dariam um "não abre" falso;
  *   - as duas coisas que as notas mandam testar têm rota lá: o leitor pelo celular (ADR-43) e
  *     a exclusão da própria conta (ADR-45). Servidor com deploy velho = revisor sem a tela.
  *
@@ -43,19 +46,30 @@ const primeiraMaiuscula = (frase) => `${frase[0].toUpperCase()}${frase.slice(1)}
 const em = (base, caminho) => `${base.replace(/\/+$/, '')}${caminho}`;
 
 /**
- * A URL que mora debaixo de `de` passa a morar debaixo de `para`, com o mesmo resto; a de
- * outro lugar volta como veio. "Debaixo" é no limite do caminho: https://x/demo é base de
+ * A URL mora debaixo de `base`? No limite do caminho: https://x/demo é base de
  * https://x/demo/privacidade, mas não de https://x/demonstracao/privacidade.
  */
-export function trocarBase(url, de, para) {
-  const origem = de.replace(/\/+$/, '');
-  const resto = url.startsWith(origem) ? url.slice(origem.length) : null;
-  if (resto === null || !(resto === '' || /^[/?#]/.test(resto))) return url;
-  return `${para.replace(/\/+$/, '')}${resto}`;
+export function debaixoDe(url, base) {
+  const origem = base.replace(/\/+$/, '');
+  if (!url.startsWith(origem)) return false;
+  const resto = url.slice(origem.length);
+  return resto === '' || /^[/?#]/.test(resto);
 }
 
-async function chamar(url, { metodo = 'GET', token, corpo, tempoMs = ESPERA_MS } = {}) {
-  const cabecalhos = { Accept: 'application/json' };
+/**
+ * A URL que mora debaixo de `de` passa a morar debaixo de `para`, com o mesmo resto; a de
+ * outro lugar volta como veio.
+ */
+export function trocarBase(url, de, para) {
+  if (!debaixoDe(url, de)) return url;
+  return `${para.replace(/\/+$/, '')}${url.slice(de.replace(/\/+$/, '').length)}`;
+}
+
+/** O Accept de quem abre uma PÁGINA (a privacidade, o suporte), como o navegador do revisor. */
+const COMO_PAGINA = 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8';
+
+async function chamar(url, { metodo = 'GET', token, corpo, tempoMs = ESPERA_MS, aceita = 'application/json' } = {}) {
+  const cabecalhos = { Accept: aceita };
   if (token) cabecalhos.Authorization = `Bearer ${token}`;
   if (corpo !== undefined) cabecalhos['Content-Type'] = 'application/json';
   let r;
@@ -83,13 +97,15 @@ async function chamar(url, { metodo = 'GET', token, corpo, tempoMs = ESPERA_MS }
 const comoFalhou = (r) => (r.status ? `HTTP ${r.status}${r.json?.code ? ` ${r.json.code}` : ''}` : `sem resposta: ${r.erro}`);
 
 /**
- * Confere tudo e devolve { problemas: [frases], conferidos: [frases] }. `base` é para onde as
- * chamadas vão (o próprio servidor da demo; o teste aponta para um servidor de mentira) e
- * `servidor`, o endereço que aparece nas frases.
+ * Confere tudo e devolve { problemas: [frases], conferidos: [frases], avisos: [frases] }:
+ * problema segura o envio; aviso, não. `base` é para onde as chamadas vão (o próprio servidor
+ * da demo; o teste aponta para um servidor de mentira) e `servidor`, o endereço que aparece
+ * nas frases.
  */
 export async function conferirServidorDemo({ base, servidor = base, email, senha, codigo, urlPrivacidade, urlSuporte, tempoMs = ESPERA_MS }) {
   const problemas = [];
   const conferidos = [];
+  const avisos = [];
   const opcoes = { tempoMs };
 
   const saude = await chamar(em(base, '/health'), opcoes);
@@ -99,7 +115,7 @@ export async function conferirServidorDemo({ base, servidor = base, email, senha
         'O revisor não conseguiria nem conectar: confira que ele está no ar (na loja instalada, ./demo.sh --mostrar ' +
         'diz o endereço e se ela responde; na Vercel, o deploy) e rode de novo.',
     );
-    return { problemas, conferidos };
+    return { problemas, conferidos, avisos };
   }
   conferidos.push(`${servidor}/health no ar`);
 
@@ -116,7 +132,7 @@ export async function conferirServidorDemo({ base, servidor = base, email, senha
           ? 'o login está travado por tentativas erradas; espere 15 min'
           : comoFalhou(login);
     problemas.push(`A conta demo (${email}) não entra no servidor de demonstração: ${motivo}.`);
-    return { problemas, conferidos };
+    return { problemas, conferidos, avisos };
   }
   const token = login.json.access_token;
   const papel = login.json.usuario?.papel;
@@ -203,8 +219,9 @@ export async function conferirServidorDemo({ base, servidor = base, email, senha
     }
   }
 
+  const comoPagina = { ...opcoes, aceita: COMO_PAGINA };
   if (urlPrivacidade) {
-    const pagina = await chamar(urlPrivacidade, opcoes);
+    const pagina = await chamar(urlPrivacidade, comoPagina);
     if (pagina.status === 200 && /text\/html/i.test(pagina.tipo)) {
       conferidos.push('a política de privacidade abre');
     } else {
@@ -215,17 +232,26 @@ export async function conferirServidorDemo({ base, servidor = base, email, senha
     }
   }
   // Sem APPLE_URL_SUPORTE o suporte É a privacidade (já aberta acima); outra página também
-  // vai à ficha e também tem de estar no ar — senão ninguém percebe que ela caiu.
+  // vai à ficha e também tem de estar no ar — senão ninguém percebe que ela caiu. Debaixo do
+  // servidor da demo, é página do sistema e segura o envio como a privacidade. Fora dele (a
+  // página de contato do dono, de terceiro), o "não abre" daqui pode ser falso — proteção
+  // contra robô, negociação de conteúdo — e o envio não para por isso: vira aviso, no resumo.
   if (urlSuporte && urlSuporte !== urlPrivacidade) {
-    const suporte = await chamar(urlSuporte, opcoes);
+    const suporte = await chamar(urlSuporte, comoPagina);
     if (suporte.status === 200 && /text\/html/i.test(suporte.tipo)) {
       conferidos.push('a página de suporte abre');
-    } else {
+    } else if (debaixoDe(urlSuporte, base)) {
       problemas.push(
         `A URL de suporte da ficha não abre (${comoFalhou(suporte)}). A Apple exige a página de suporte no ar (1.5): ` +
-          'confira APPLE_URL_SUPORTE — vazia, ela é a política de privacidade do servidor de demonstração.',
+          'confira APPLE_URL_SUPORTE — vazia, ela é a mesma URL da política de privacidade.',
+      );
+    } else {
+      avisos.push(
+        `A URL de suporte da ficha (${urlSuporte}) não abriu daqui (${comoFalhou(suporte)}). Ela mora fora do servidor de ` +
+          'demonstração, então o envio segue; mas a Apple exige a página de suporte no ar (1.5): abra-a no navegador e, ' +
+          'se não abrir, corrija APPLE_URL_SUPORTE (vazia, ela é a mesma URL da política de privacidade).',
       );
     }
   }
-  return { problemas, conferidos };
+  return { problemas, conferidos, avisos };
 }

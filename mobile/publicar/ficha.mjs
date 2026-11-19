@@ -171,10 +171,12 @@ export function lerConfig() {
   // ficha publicaria a política da LOJA no lugar da página da demonstração.
   c.url_privacidade = String(c.url_privacidade || `${c.url_servidor_demo}/privacidade`).trim();
   if (!/^https:\/\//i.test(c.url_privacidade)) throw new Error('url_privacidade tem de começar com https://');
-  // Sem outra página (APPLE_URL_SUPORTE), o suporte é a privacidade do MESMO servidor e troca
-  // junto com ele: fixo no padroes.json, ficava na Vercel depois da troca para <domínio>/demo,
-  // e desligá-la derrubava o link de suporte da App Store. Na Vercel dá a URL de sempre.
-  c.url_suporte = String(c.url_suporte || `${c.url_servidor_demo}/privacidade`).trim();
+  // Sem outra página (APPLE_URL_SUPORTE), o suporte É a privacidade da ficha: a do servidor da
+  // demo, que troca junto com ele (fixo no padroes.json, ficava na Vercel depois da troca para
+  // <domínio>/demo, e desligá-la derrubava o link de suporte da App Store), ou a que o dono pôs
+  // em APPLE_URL_PRIVACIDADE — o endereço permanente dele vale para as duas, em vez de deixar
+  // o suporte preso a um servidor que pode ser desligado. Na Vercel e na /demo dá o mesmo.
+  c.url_suporte = String(c.url_suporte || c.url_privacidade).trim();
   // A Apple quer uma URL de verdade no suporte; "loja.com.br" sem esquema vira https://.
   if (!/^[a-z]+:\/\//i.test(c.url_suporte)) c.url_suporte = `https://${c.url_suporte}`;
   if (!/^https:\/\/[^\s]+$/i.test(c.url_suporte)) throw new Error(`url_suporte tem de ser https://...: ${c.url_suporte}`);

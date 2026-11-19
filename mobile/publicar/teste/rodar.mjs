@@ -661,6 +661,28 @@ if (!REAIS) {
     conferir(!saida.includes(SENHA_DEMO), 'a senha da demo não aparece');
   });
 
+  await cenario('URL de suporte FORA do servidor da demo que não abre daqui: aviso no resumo, e a revisão sai', async ({ conferir, guardar }) => {
+    // A página de contato do dono, noutro endereço (APPLE_URL_SUPORTE), que daqui não responde.
+    // Página de terceiro pode recusar robô: quem confere é o dono, no navegador, e o envio segue.
+    const suporteDeFora = join(PASTA_CONFIG, 'config-suporte-de-fora.json');
+    const config = JSON.parse(readFileSync(join(PASTA_CONFIG, 'config.json'), 'utf8'));
+    writeFileSync(suporteDeFora, JSON.stringify({ ...config, url_suporte: 'https://127.0.0.1:1/contato' }));
+    const mock = await subirMock();
+    const { codigo, saida } = await publicar(['--enviar', ...COM_VIDEO], {
+      porta: mock.porta,
+      capturas: baseSintetica,
+      env: { PUBLICAR_CONFIG: suporteDeFora },
+    });
+    guardar(saida);
+    const e = mock.estado;
+    await mock.fechar();
+    conferir(codigo === 0 && e.envios.length === 1, 'enviado para revisão: o suporte de fora não segurou o envio');
+    conferir(/⚠ A URL de suporte da ficha \(https:\/\/127\.0\.0\.1:1\/contato\) não abriu daqui/.test(saida), 'o aviso diz qual página não abriu');
+    conferir(/Avisos \(\d+\):\n(?: {2}⚠ .*\n)*? {2}⚠ A URL de suporte da ficha/.test(saida), 'e vai ao resumo, entre os avisos (não às pendências)');
+    const loc = Object.values(e.versaoLocs).find((l) => l.versao === 'VER1')?.atributos ?? {};
+    conferir(loc.supportUrl === 'https://127.0.0.1:1/contato', 'a ficha leva a página do dono');
+  });
+
   await cenario('Só a chave no GitHub (o resto do padroes.json): a ficha sobe sem senha da demo nem telefone; o --enviar pede os dois', async ({ conferir, guardar }) => {
     // O config.json que o ci.mjs grava quando o GitHub só tem ASC_KEY_ID + ASC_KEY_P8.
     const soChave = join(PASTA_CONFIG, 'config-so-chave.json');

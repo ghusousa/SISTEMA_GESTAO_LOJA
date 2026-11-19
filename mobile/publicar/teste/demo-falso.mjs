@@ -11,7 +11,7 @@
  * `prefixo: '/demo'` é a demonstração que sobe com a loja (ADR-46): tudo dela mora debaixo do
  * caminho, e fora dele responde a LOJA DE VERDADE (no ar, sem a conta da demo) — como no proxy
  * da instalação. Cada chamada guarda `caminho` (o de dentro do prefixo), `cheio` (o que chegou)
- * e `naLoja` (foi à loja da raiz: o publicador perdeu o caminho).
+ * e `naLoja` (foi à loja da raiz: o publicador perdeu o caminho); `aceita`, o Accept do pedido.
  */
 
 import { createServer } from 'node:http';
@@ -53,7 +53,7 @@ export function subirDemoFalso(opcoes = {}) {
       const cheio = url.pathname;
       const dentro = !o.prefixo || cheio === o.prefixo || cheio.startsWith(`${o.prefixo}/`);
       const caminho = dentro ? cheio.slice(o.prefixo.length) || '/' : cheio;
-      chamadas.push({ metodo: req.method, caminho, cheio, corpo, naLoja: !dentro });
+      chamadas.push({ metodo: req.method, caminho, cheio, corpo, naLoja: !dentro, aceita: req.headers.accept ?? '' });
 
       if (!dentro) {
         // A loja de verdade, na raiz do mesmo domínio: está no ar, mas a conta da demo não

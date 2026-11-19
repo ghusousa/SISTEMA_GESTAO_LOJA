@@ -5,18 +5,21 @@ Gerados junto com a política de privacidade — se um mudar, confira os outros.
 
 As páginas legais são servidas pela própria API, em cada servidor da loja (`<servidor>/privacidade`
 e `<servidor>/exclusao-de-dados`). As fichas das lojas usam as do servidor de demonstração, que
-fica no ar depois da revisão justamente por isso (outro endereço permanente: `APPLE_URL_PRIVACIDADE`
-e `APPLE_URL_SUPORTE`). Hoje, as da Vercel:
+fica no ar depois da revisão justamente por isso (outro endereço permanente: `APPLE_URL_PRIVACIDADE`,
+que o suporte segue; outra página de suporte: `APPLE_URL_SUPORTE`). Hoje, as da Vercel:
 
 - `https://loja-tria.vercel.app/privacidade` (na App Store, também a URL de suporte)
 - `https://loja-tria.vercel.app/exclusao-de-dados`
 
 **Trocar de servidor** (da Vercel para a demonstração que sobe com a loja, `https://<domínio>/demo`,
 ADR-46): na App Store, a privacidade e a URL de suporte seguem `APPLE_SERVIDOR_DEMO` sozinhas, na
-próxima rodada da ficha (`mobile/publicar/README.md`). O Google Play não passa pelo publicador:
-**antes de desligar o servidor antigo**, troque no Play Console a URL da política de privacidade
-e a de exclusão de dados por `<servidor novo>/privacidade` e `<servidor novo>/exclusao-de-dados`
-— desligado antes, a ficha de lá fica apontando para páginas fora do ar.
+próxima rodada da ficha (`mobile/publicar/README.md`) — mas as duas são campos da VERSÃO: a página
+da App Store só troca de link quando a versão com as URLs novas for **aprovada** e entrar no ar
+(com a versão em revisão, travada, só a próxima as leva). O Google Play não passa pelo publicador:
+troque no Play Console a URL da política de privacidade e a de exclusão de dados por
+`<servidor novo>/privacidade` e `<servidor novo>/exclusao-de-dados`. **Só desligue o servidor
+antigo depois das duas coisas** — a versão nova no ar na App Store e as URLs trocadas no Play —;
+desligado antes, as fichas ficam apontando para páginas fora do ar.
 
 (`sistemaobras.com.br` é o site do Sistema Obras, outro sistema: não cole esses endereços dele.)
 
@@ -539,7 +542,7 @@ O `--enviar` do publicador (caixa "revisao" no GitHub) confere tudo o que é con
 - `{{CODIGO_DEMO}}`: um código de barras que exista no banco de demonstração (`APPLE_CODIGO_DEMO`) — é o caminho sem câmera. O publicador o procura lá antes de enviar.
 - `{{URL_ETIQUETAS_DEMO}}` (opcional): página com códigos de barras de exemplo para bipar da tela; sem ela, a frase some e "Digitar código" e "Buscar" bastam.
 - `{{EMAIL_SUPORTE}}`: o e-mail de suporte (`APPLE_EMAIL_SUPORTE`). O `privacidade@sistemaobras.com.br` da política de privacidade precisa existir e ser lido.
-- **Servidor de demonstração no ar depois da revisão**: ele serve a política de privacidade da ficha (`<servidor>/privacidade`), que sem `APPLE_URL_SUPORTE` é também a URL de suporte. Desligá-lo derrubaria os links da App Store (5.1.1(i) e 1.5) e os do Play Console; outro endereço permanente vai em `APPLE_URL_PRIVACIDADE` e `APPLE_URL_SUPORTE`.
+- **Servidor de demonstração no ar depois da revisão**: ele serve a política de privacidade da ficha (`<servidor>/privacidade`), que sem `APPLE_URL_SUPORTE` é também a URL de suporte. Desligá-lo derrubaria os links da App Store (5.1.1(i) e 1.5) e os do Play Console; outro endereço permanente vai em `APPLE_URL_PRIVACIDADE` (o suporte vai junto; outra página de suporte, `APPLE_URL_SUPORTE`), e o antigo só sai do ar depois que a versão com as URLs novas for aprovada.
 - Resposta na Central de Resolução: opcional (não tem API, e o reenvio já leva notas e anexos novos). Texto pronto, em inglês: `mobile/publicar/revisao/resposta-ao-app-review.txt`.
 
 ## Um achado do código que afeta a revisão

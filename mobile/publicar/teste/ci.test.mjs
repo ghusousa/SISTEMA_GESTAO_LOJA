@@ -217,7 +217,7 @@ test('config.json local copiado do modelo: vazio e texto de exemplo caem no padr
   }
 });
 
-test('URL de suporte sem Variable: <servidor da demo>/privacidade — troca junto com o servidor, e na Vercel é a de antes', () => {
+test('URL de suporte sem Variable: a mesma da privacidade — <servidor da demo>/privacidade, ou a APPLE_URL_PRIVACIDADE do dono', () => {
   const pasta = mkdtempSync(join(tmpdir(), 'suporte-'));
   writeFileSync(join(pasta, 'chave-apple.p8'), `${P8}\n`);
   const padroes = lerPadroes(PADROES_DO_REPO);
@@ -247,12 +247,24 @@ test('URL de suporte sem Variable: <servidor da demo>/privacidade — troca junt
     // Outra página de suporte: a Variable vence, e trocar de servidor não a mexe.
     const propria = lido({ APPLE_SERVIDOR_DEMO: 'https://loja.minhaloja.com.br/demo', APPLE_URL_SUPORTE: 'https://minhaloja.com.br/contato' });
     assert.equal(propria.url_suporte, 'https://minhaloja.com.br/contato');
+    // Só a privacidade num endereço permanente do dono (APPLE_URL_PRIVACIDADE): o suporte vai
+    // junto com ela — preso ao servidor da demo, cairia com ele quando fosse desligado.
+    for (const env of [
+      { APPLE_URL_PRIVACIDADE: 'https://outra.com/privacidade' },
+      { APPLE_SERVIDOR_DEMO: 'https://loja.minhaloja.com.br/demo', APPLE_URL_PRIVACIDADE: 'https://outra.com/privacidade' },
+    ]) {
+      const c = lido(env);
+      assert.equal(c.url_privacidade, 'https://outra.com/privacidade', JSON.stringify(env));
+      assert.equal(c.url_suporte, 'https://outra.com/privacidade', JSON.stringify(env));
+    }
     // Na máquina do dono: o config.json do modelo, com o suporte vazio e o servidor da loja.
     const modelo = JSON.parse(readFileSync(join(MOBILE, 'publicar', 'config.exemplo.json'), 'utf8'));
     const local = join(pasta, 'config-local.json');
     writeFileSync(local, JSON.stringify({ ...modelo, key_id: 'TESTE123', url_servidor_demo: 'https://loja.minhaloja.com.br/demo' }));
     process.env.PUBLICAR_CONFIG = local;
     assert.equal(lerConfig().url_suporte, 'https://loja.minhaloja.com.br/demo/privacidade');
+    writeFileSync(local, JSON.stringify({ ...modelo, key_id: 'TESTE123', url_privacidade: 'https://outra.com/privacidade' }));
+    assert.equal(lerConfig().url_suporte, 'https://outra.com/privacidade', 'config.json com a privacidade própria e o suporte vazio');
   } finally {
     for (const [k, v] of [['PUBLICAR_CONFIG', antes.config], ['PUBLICAR_PADROES', antes.padroes]]) {
       if (v === undefined) delete process.env[k];

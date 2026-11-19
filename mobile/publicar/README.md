@@ -48,7 +48,9 @@ As notas citam a lista e o vídeo por marcadores (`{{APARELHOS_TESTADOS}}`, `{{A
 - o servidor de demonstração não está como as notas dizem: `GET /health` no ar; a conta demo
   entra e é de **dono**; o código de barras demo existe e tem ao menos 3 peças em estoque (as
   notas mandam vender, e o PDV recusa peça sem estoque: reponha pela Entrada na demo); a
-  política de privacidade abre (e a URL de suporte, quando é outra página); há rota para o
+  política de privacidade abre (e a URL de suporte, quando é outra página; as duas pedidas como
+  página, `Accept: text/html`. A de suporte FORA do servidor da demo que não abre daqui vira
+  aviso no resumo, sem segurar o envio: página de terceiro pode recusar robô); há rota para o
   leitor pelo celular e para a exclusão da própria conta (deploy na mesma versão); e a conta
   demo é **protegida** lá (ADR-45: não se exclui, não perde o papel nem troca de senha — senão
   o revisor que cria outro dono apaga a conta das notas no meio da revisão). Tudo pela API
@@ -233,7 +235,8 @@ podem ser Variable ou Secret; o resto, só Variable — Secret com esses nomes �
 | `APPLE_EMAIL_SUPORTE`, `APPLE_NOME_CONTATO`, `APPLE_COPYRIGHT` | contato e copyright |
 | `APPLE_EMAIL_DEMO`, `APPLE_CODIGO_DEMO` | conta demo (perfil **dono**) e um código de barras que exista nela |
 | `APPLE_SERVIDOR_DEMO` | `https://loja-tria.vercel.app` (a demo da Vercel). A que sobe com a loja: `https://<domínio>/demo`, com o caminho |
-| `APPLE_URL_PRIVACIDADE`, `APPLE_URL_SUPORTE` | as duas `<servidor demo>/privacidade` — não moram no `padroes.json`: trocam junto com `APPLE_SERVIDOR_DEMO` |
+| `APPLE_URL_PRIVACIDADE` | `<servidor demo>/privacidade` — não mora no `padroes.json`: troca junto com `APPLE_SERVIDOR_DEMO` |
+| `APPLE_URL_SUPORTE` | a mesma URL da privacidade (a de cima): troca junto com ela |
 | `APPLE_URL_ETIQUETAS_DEMO` | nenhum |
 | `APPLE_TELEFONE_CONTATO` (Variable ou Secret: é dado pessoal) | nenhum: só a revisão pede, e só se a Apple ainda não tiver um telefone (de um envio anterior) |
 
@@ -257,14 +260,19 @@ Esse servidor **fica no ar depois da revisão**: ele também serve a política d
 ficha (`<servidor>/privacidade`, com o caminho), que sem `APPLE_URL_SUPORTE` é também a URL de
 suporte — desligá-lo derrubaria os dois links da App Store (5.1.1(i) e 1.5). Trocar de servidor
 (da Vercel para a demo da loja) é rodar a ficha com as Variables novas: a URL de suporte segue
-sozinha, como a privacidade (ou a Variable `APPLE_URL_SUPORTE`, se o dono quiser outra página),
-e a conferência do `--enviar` abre as duas no endereço novo. **Antes de desligar o servidor
-antigo**, troque também no Play Console as URLs de privacidade e de exclusão de dados
-(`<servidor novo>/privacidade` e `<servidor novo>/exclusao-de-dados`, `docs/LOJAS-DE-APP.md`):
-o Google Play não passa pelo publicador, e a ficha de lá ficaria apontando para o servidor
-desligado. Só então desligue o antigo. Para morar noutro endereço permanente, preencha
-`APPLE_URL_PRIVACIDADE` e `APPLE_URL_SUPORTE`. Antes as notas mandavam o revisor para
-`sistemaobras.com.br`, que hoje é o site do Sistema Obras — a revisão voltaria.
+sozinha a privacidade (ou a Variable `APPLE_URL_SUPORTE`, se o dono quiser outra página), e a
+conferência do `--enviar` abre as duas no endereço novo. Só que a rodada **não troca o link da
+página que está à venda**: privacidade e suporte vão à Apple com a VERSÃO em preparação
+(informações do app e textos da versão), e a App Store mostra os da versão à venda — os do
+servidor antigo — até a versão nova ser **aprovada** e entrar no ar; com a versão em revisão
+(travada para o publicador), só a próxima leva as URLs novas. **Antes de desligar o servidor
+antigo**, então: (1) a versão com as URLs novas aprovada e no ar na App Store; (2) no Play
+Console, as URLs de privacidade e de exclusão de dados trocadas (`<servidor novo>/privacidade`
+e `<servidor novo>/exclusao-de-dados`, `docs/LOJAS-DE-APP.md`) — o Google Play não passa pelo
+publicador, e a ficha de lá ficaria apontando para o servidor desligado. Só então desligue o
+antigo. Para morar noutro endereço permanente, preencha `APPLE_URL_PRIVACIDADE` (o suporte vai
+junto com ela; outra página de suporte, `APPLE_URL_SUPORTE`). Antes as notas mandavam o revisor
+para `sistemaobras.com.br`, que hoje é o site do Sistema Obras — a revisão voltaria.
 
 **Primeira vez da loja na Apple:** o registro do app (lá em cima) tem de existir — se o primeiro
 build sair antes disso, ele fica na Expo: crie o app e rode com **enviar** marcado. Com a chave

@@ -338,6 +338,8 @@ async function conferirAntesDeEnviar({ asc, app, versaoDoApp, situacao, args, ap
       urlSuporte: trocarBase(config.url_suporte, config.url_servidor_demo, base),
     });
     for (const c of demo.conferidos) relatorio.ok(c);
+    // A página de suporte de fora do servidor da demo que não abriu daqui: aviso, não falta.
+    for (const a of demo.avisos) relatorio.avisar(a);
     demo.problemas.forEach((p, i) => faltas.push([`demo-${i}`, p]));
   }
   if (faltas.length) {

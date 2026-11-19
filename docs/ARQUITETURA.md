@@ -1800,7 +1800,7 @@ app inexistente vira aviso com o passo do site e o build sai mesmo assim. O perf
 três campos); o `ascAppId` entra só na cópia do runner. Com o time da Apple (Team ID e tipo),
 o build recebe `EXPO_ASC_*`/`EXPO_APPLE_*` e a Expo cria ou conserta certificado e perfil sem
 perguntar. **O que não é segredo mora em `mobile/publicar/padroes.json`** (Issuer ID da chave,
-time, contato, URL de suporte, copyright, conta e código de barras da demo): o GitHub só precisa
+time, contato, copyright, conta e código de barras da demo): o GitHub só precisa
 de `EXPO_TOKEN`, `ASC_KEY_ID` e `ASC_KEY_P8` para subir a ficha, e Variable de mesmo nome vence o
 padrão (`ASC_ISSUER_ID` e o telefone também como Secret: o passo "Preparar" lê os dois contextos). Pedir nove Variables a quem só quer publicar era o que travava a
 primeira rodada; segredo de verdade (chave, senha da demo) nunca entra nesse arquivo, e o
@@ -1814,7 +1814,10 @@ e não pode criar Secret (um agente, por exemplo) publica assim. O issuer e o ti
 `ci.mjs`), nunca por saída que contenha Secret. O `app.json` guarda o `projectId` da Expo; sem
 `owner`, porque do SDK 53 em diante o eas-cli não o exige nem com token de robô. O endereço que o revisor usa é
 `url_servidor_demo` (padrão `https://loja-tria.vercel.app`, ADR-42) e a política de
-privacidade sai de `<servidor>/privacidade`, que o próprio sistema serve. O endereço pode ter
+privacidade sai de `<servidor>/privacidade`, que o próprio sistema serve; a URL de suporte, sem
+`APPLE_URL_SUPORTE`, é a mesma da privacidade — sai também de `<servidor>/privacidade` e troca
+junto com `APPLE_SERVIDOR_DEMO` (fixa no `padroes.json`, ficava no servidor antigo), ou segue a
+`APPLE_URL_PRIVACIDADE` do dono. O endereço pode ter
 CAMINHO — a demonstração que sobe com a loja mora em `https://<domínio>/demo` (ADR-46) —, então
 toda junção (rotas da conferência, privacidade, notas) é por texto sobre a base inteira, nunca
 `new URL('/x', base)`, que apagaria o `/demo` e conferiria a loja de verdade no lugar da demo;

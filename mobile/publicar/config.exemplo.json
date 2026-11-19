@@ -1,6 +1,6 @@
 {
   "_leia": "Copie este arquivo para config.json (mesma pasta) e preencha. O config.json e o .p8 NUNCA vão para o git — já estão no .gitignore.",
-  "_padroes": "Campo VAZIO vale o publicar/padroes.json (issuer, contato, copyright, conta e código da demo): só preencha para trocar. url_suporte vazio = <url_servidor_demo>/privacidade, como a privacidade: troca junto com o servidor. telefone_contato e senha_demo só a revisão (--enviar) exige.",
+  "_padroes": "Campo VAZIO vale o publicar/padroes.json (issuer, contato, copyright, conta e código da demo): só preencha para trocar. url_suporte vazio = a mesma URL da privacidade (url_privacidade; vazia, <url_servidor_demo>/privacidade): troca junto com ela. telefone_contato e senha_demo só a revisão (--enviar) exige.",
   "_onde_gerar_a_chave": "appstoreconnect.apple.com > Users and Access > Integrations > App Store Connect API > Team Keys > +. Acesso: Administrador. Baixe o .p8 (só dá uma vez) e ponha nesta pasta. Renomeie o arquivo baixado para chave-apple.p8.",
   "key_id": "COLE_AQUI o Key ID da chave",
   "issuer_id": "",

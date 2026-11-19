@@ -11,11 +11,12 @@
  * aberta: a ficha publica as duas.
  */
 
+import { createServer } from 'node:http';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { servidorDemo } from '../ficha.mjs';
-import { conferirServidorDemo, trocarBase } from '../servidor-demo.mjs';
+import { conferirServidorDemo, debaixoDe, trocarBase } from '../servidor-demo.mjs';
 import { subirDemoFalso } from './demo-falso.mjs';
 
 const CONTA = { email: 'revisao@teste.dev', senha: 'segredo-demo', codigo: '7890000000000' };
@@ -104,12 +105,60 @@ test('URL de suporte: outra página também tem de abrir; a mesma da privacidade
   const fora = await subirDemoFalso({ suporte: 404 });
   try {
     const r = await conferirServidorDemo({ ...CONTA, base: fora.base, urlPrivacidade: `${fora.base}/privacidade`, urlSuporte: `${fora.base}/suporte` });
+    // Debaixo do servidor da demo, o suporte é página do sistema: segura o envio, como a privacidade.
     assert.match(r.problemas.join('\n'), /URL de suporte da ficha não abre \(HTTP 404\)/);
     assert.match(r.problemas.join('\n'), /APPLE_URL_SUPORTE/);
+    assert.deepEqual(r.avisos, []);
     assert.ok(r.conferidos.includes('a política de privacidade abre'), 'a privacidade continua conferida à parte');
   } finally {
     await fora.fechar();
   }
+});
+
+test('URL de suporte FORA do servidor da demo: pedida como página; a que não abre daqui é aviso, não segura o envio', async () => {
+  // A página de contato do dono, noutro servidor: como muita página de terceiro, ela só
+  // entrega HTML a quem pede HTML (o navegador); o resto, recusa. A outra rota saiu do ar.
+  const pedidos = [];
+  const deFora = createServer((req, res) => {
+    pedidos.push({ caminho: req.url, aceita: req.headers.accept ?? '' });
+    if (req.url === '/contato' && /text\/html/.test(req.headers.accept ?? '')) {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end('<!doctype html><title>Contato</title>');
+    }
+    res.writeHead(req.url === '/contato' ? 406 : 404, { 'Content-Type': 'text/plain; charset=utf-8' });
+    return res.end('não');
+  });
+  await new Promise((pronto) => deFora.listen(0, '127.0.0.1', pronto));
+  const paginaDeFora = `http://127.0.0.1:${deFora.address().port}`;
+  const demo = await subirDemoFalso({ prefixo: '/demo' });
+  try {
+    const base = `${demo.base}/demo`;
+    const abre = await conferirServidorDemo({ ...CONTA, base, urlPrivacidade: `${base}/privacidade`, urlSuporte: `${paginaDeFora}/contato` });
+    assert.deepEqual(abre.problemas, [], 'a página que o navegador abre não pode virar "não abre"');
+    assert.deepEqual(abre.avisos, []);
+    assert.ok(abre.conferidos.includes('a página de suporte abre'), abre.conferidos.join(' | '));
+    assert.match(pedidos.at(-1).aceita, /^text\/html/, 'o suporte não foi pedido como página');
+    const privacidade = demo.chamadas.find((c) => c.cheio === '/demo/privacidade');
+    assert.match(privacidade?.aceita ?? '', /^text\/html/, 'a privacidade não foi pedida como página');
+
+    const caiu = await conferirServidorDemo({ ...CONTA, base, urlPrivacidade: `${base}/privacidade`, urlSuporte: `${paginaDeFora}/saiu` });
+    assert.deepEqual(caiu.problemas, [], 'a página de fora que não abre daqui segurou o envio');
+    assert.match(caiu.avisos.join('\n'), /URL de suporte da ficha \(http:\/\/127\.0\.0\.1:\d+\/saiu\) não abriu daqui \(HTTP 404\)/);
+    assert.match(caiu.avisos.join('\n'), /APPLE_URL_SUPORTE/);
+    assert.ok(caiu.conferidos.includes('a política de privacidade abre'), 'a privacidade continua conferida à parte');
+  } finally {
+    await demo.fechar();
+    await new Promise((fim) => deFora.close(fim));
+  }
+});
+
+test('debaixoDe: no limite do caminho, como o trocarBase', () => {
+  assert.equal(debaixoDe('https://x.dev/demo/suporte', 'https://x.dev/demo/'), true);
+  assert.equal(debaixoDe('https://x.dev/demo', 'https://x.dev/demo'), true);
+  assert.equal(debaixoDe('https://x.dev/demo?x=1', 'https://x.dev/demo'), true);
+  assert.equal(debaixoDe('https://x.dev/demonstracao/suporte', 'https://x.dev/demo'), false);
+  assert.equal(debaixoDe('https://x.dev/contato', 'https://x.dev/demo'), false, 'a loja, na raiz do mesmo domínio, é fora');
+  assert.equal(debaixoDe('http://127.0.0.1:12345/x', 'http://127.0.0.1:1234'), false, 'outra porta');
 });
 
 test('o endereço sem o /demo cai na loja de verdade, e a conferência recusa (nunca passa por ela)', async () => {
