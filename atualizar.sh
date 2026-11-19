@@ -676,23 +676,6 @@ subir_demo() {
     fi
 }
 
-# Na volta atrás, a demonstração recomeça do zero com a versão de antes: o banco dela pode ter
-# sido migrado por uma versão que a de antes não conhece ("Can't locate revision"), e ela é
-# descartável — o código de antes migra e semeia tudo de novo. O contêiner sai primeiro, para
-# o recriado rodar o entrada.sh (migra e semeia) mesmo que a imagem volte a ser a mesma.
-recriar_demo() {
-    demo_ligada || return 0
-    aviso "A demonstração volta do zero, com a versão de antes (ela é descartável)."
-    dk compose rm -sf api-demo >/dev/null 2>&1 || true
-    if ! dk compose exec -T db psql -U loja -d postgres -v ON_ERROR_STOP=1 -q \
-            -c "DROP DATABASE IF EXISTS loja_demo WITH (FORCE)" >/dev/null 2>&1; then
-        aviso "não consegui apagar o banco da demonstração; ela pode não subir até a próxima atualização."
-    fi
-    if ! dk compose up -d demo-banco api-demo >/dev/null 2>&1; then
-        aviso "a demonstração não subiu de novo (a loja não depende dela): ./demo.sh --ligar"
-    fi
-}
-
 # ------------------------------------------------------------------ voltar atrás
 
 voltar_atras() {
@@ -745,7 +728,11 @@ voltar_atras() {
         printf '  Veja o que aconteceu com: %sdocker compose logs --tail 50 api%s\n' "$FORTE" "$NORMAL"
         [ -n "$ARQUIVO_BACKUP" ] && printf '  A cópia do banco de antes está em %s\n' "$ARQUIVO_BACKUP"
     fi
-    recriar_demo
+    # A demonstração não é tocada: ela só passa para a versão nova na segunda fase (subir_demo),
+    # depois de a loja estar de pé e conferida, e toda volta atrás vem antes dela. O `up` da
+    # primeira fase e o daqui só nomeiam db, api e proxy, então ela segue na imagem e no banco
+    # de antes — apagá-la e semeá-la de novo só a tirava do ar e derrubava a sessão de quem
+    # estava nela (o revisor da Apple inclusive).
     printf '  A versão %s não será tentada de novo sozinha: a próxima é quando chegar um commit\n' \
         "$(git rev-parse --short "$DEPOIS")"
     printf '  novo no GitHub.\n'

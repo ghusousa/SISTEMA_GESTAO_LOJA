@@ -723,10 +723,11 @@ async def test_proxy_que_ja_nao_abria_nao_desfaz_a_atualizacao(tmp_path: Path) -
 
 
 @precisa_do_git
-async def test_volta_atras_recria_a_demo_do_zero(tmp_path: Path) -> None:
-    """O banco da demonstração pode ter sido migrado por uma versão que a de antes não
-    conhece ("Can't locate revision"). Ela é descartável: na volta atrás, sai o contêiner,
-    sai o banco, e a versão de antes migra e semeia tudo de novo."""
+async def test_volta_atras_nao_mexe_na_demo(tmp_path: Path) -> None:
+    """A demonstração só passa para a versão nova na segunda fase, depois de a loja estar de pé
+    e conferida — e a volta atrás vem sempre antes. Ela segue na imagem e no banco de antes:
+    apagar o banco dela e semear de novo (como fazia) só a tirava do ar, com /demo em 503, e
+    derrubava a sessão de quem estava nela, o revisor da Apple inclusive."""
     env = _maquina(tmp_path, FAKE_API="[ ! -f quebrada ]") | GIT_ISOLADO
     servidor = _servidor(tmp_path, env, antes={}, depois={"quebrada": ""})
     (servidor / ".env").write_text(ENV_COM_DEMO)
@@ -735,13 +736,12 @@ async def test_volta_atras_recria_a_demo_do_zero(tmp_path: Path) -> None:
 
     assert r.returncode == 1, r.stdout + r.stderr
     assert not (servidor / "quebrada").exists()
+    assert "O sistema voltou para a versão de antes e está no ar" in r.stdout
     log = (tmp_path / "ctr" / "docker.log").read_text()
-    tirar = log.index("compose rm -sf api-demo")
-    apagar = log.index("DROP DATABASE IF EXISTS loja_demo WITH (FORCE)")
-    subir = log.index("compose up -d demo-banco api-demo")
-    assert tirar < apagar < subir
-    # A demonstração nunca subiu com a versão quebrada: só a de antes, do zero.
-    assert log.count("compose up -d demo-banco api-demo") == 1
+    # Nem o contêiner, nem o banco dela: nada da demonstração passa pelo docker na volta atrás.
+    assert "api-demo" not in log and "demo-banco" not in log, log
+    assert "loja_demo" not in log, log
+    assert "demonstração" not in (r.stdout + r.stderr).lower()
 
 
 @precisa_do_git

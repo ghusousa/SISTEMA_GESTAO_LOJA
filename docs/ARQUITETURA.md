@@ -2124,10 +2124,12 @@ navegador: as duas dividem a mesma origem.
   a demo, esperando com teto e só avisando se ela não ficou pronta. O `atualizar.sh` sobe em DUAS
   fases: `up -d --build --remove-orphans db api proxy` decide sucesso ou volta atrás, como sempre; só
   então, com a demo ligada, `up -d demo-banco api-demo`, cuja falha avisa (pelo `notificar.sh`) e não
-  desfaz nada. Na volta atrás com a demo ligada, o banco dela é apagado (`DROP DATABASE IF EXISTS
-  loja_demo WITH (FORCE)`) e ela sobe de novo com o código de antes, que migra e semeia do zero: a
-  demo é descartável, e um schema mais novo que o código não a deixaria subir. Backup e vigia
-  continuam só da loja.
+  desfaz nada. **A volta atrás não toca na demo:** toda volta atrás vem antes da segunda fase, e o
+  `up` que só nomeia `db api proxy` não recria serviço que não foi nomeado — a demo segue no
+  contêiner, na imagem e no banco de ANTES, sem nunca ter rodado a versão desfeita. Apagar o banco
+  dela e semear de novo (era o que se fazia, "um schema mais novo que o código não a deixaria
+  subir") não protegia nada: só a tirava do ar, com `/demo` em 503, e derrubava a sessão de quem
+  estava nela — o revisor da Apple inclusive. Backup e vigia continuam só da loja.
 - **A pasta do Caddyfile, montada inteira.** O `git reset --hard` da atualização troca o
   `docker/caddy/Caddyfile` por um arquivo novo (inode novo), e um arquivo montado sozinho continua
   mostrando o VELHO ao contêiner até ele ser recriado: o `caddy reload` "dava certo" sem mudar nada,
