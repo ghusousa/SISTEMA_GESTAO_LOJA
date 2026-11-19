@@ -13,7 +13,8 @@ O que se prende:
   Apple a cada preparo (senha trocada no banco volta a ser a do .env), renova voltando as
   vendas para hoje (igual à primeira carga) e levando as fotos de quem testou, põe preparo e
   renovação em fila — e nunca imprime senha nem a URL do banco;
-- com a conta inválida no .env, a renovação para ANTES de zerar: a demo de ontem fica.
+- com a conta inválida no .env, a renovação para ANTES de zerar: a demo de ontem fica;
+- o TRUNCATE que perde a vez para a API (impasse, tabela ocupada) volta inteiro e se repete.
 
 O banco da demo daqui imita o da instalação: um papel SEM superusuário, dono só do próprio
 banco, que migra e semeia sozinho. Nome e papel derivam do banco de teste desta suíte.
@@ -430,6 +431,114 @@ async def test_renovar_com_a_conta_invalida_para_antes_de_zerar(
         assert sorted(tuple(u) for u in await _consultar("SELECT email, role FROM users")) \
             == contas, (comando, frase)
         assert foto.exists()
+
+
+async def test_renovacao_repete_o_truncate_que_perde_a_vez_para_a_api(
+    banco_da_demo: str, tmp_path: Path
+) -> None:
+    """A API no meio de uma leitura segura uma tabela que o TRUNCATE precisa: a 1ª tentativa
+    estoura a espera da trava (55P03) e volta inteira — nada zerado, a foto fica —, e a
+    repetição, com a leitura já terminada, renova. Antes, a renovação caía ali (impasse ou
+    espera), o dono recebia o aviso e a demo ficava com os dados de ontem."""
+    await _marcar_o_banco()
+    feito = _rodar("preparar-demonstracao", _da_demo(), tmp_path)
+    assert feito.returncode == 0, _sem_segredo(feito)[-3000:]
+    retrato = tuple((await _consultar(RETRATO))[0])
+    foto = _foto_de_quem_testou(tmp_path)
+
+    leitura = await asyncpg.connect(
+        host=_BASE.host, port=_BASE.port or 5432, user=_BASE.username,
+        password=_BASE.password, database=BANCO_DA_DEMO,
+    )
+    try:
+        transacao = leitura.transaction()
+        await transacao.start()
+        # O `SELECT ... FROM products` da API, parado no meio da transação.
+        await leitura.execute("LOCK TABLE products IN ACCESS SHARE MODE")
+        processo = await asyncio.create_subprocess_exec(
+            sys.executable, "-m", "app.cli", "renovar-demonstracao",
+            cwd=PASTA_API, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env={
+                **_da_demo(DEMO_RENOVAR_ESPERA_DA_TRAVA_MS="300"),
+                "MEDIA_DIR": str(tmp_path / "media"),
+            },
+        )
+        linhas: list[str] = []
+        while not any("tentando de novo" in linha for linha in linhas):
+            linha = await asyncio.wait_for(processo.stdout.readline(), timeout=120)
+            assert linha, "a renovação acabou sem repetir: " + "".join(linhas)
+            linhas.append(linha.decode())
+        # A tentativa que perdeu a vez não zerou nada, e a foto não saiu.
+        assert await leitura.fetchval("SELECT count(*) FROM products") == retrato[1]
+        assert foto.exists()
+        await transacao.rollback()  # a leitura da API terminou
+        resto, erros = await asyncio.wait_for(processo.communicate(), timeout=600)
+    finally:
+        await leitura.close()
+    renovou = subprocess.CompletedProcess(
+        [], processo.returncode, "".join(linhas) + resto.decode(), erros.decode()
+    )
+    saida = _sem_segredo(renovou)
+    assert renovou.returncode == 0, saida[-3000:]
+    assert "SQLSTATE 55P03" in renovou.stdout and "2ª de 5 tentativas" in renovou.stdout
+    assert "zerada" in renovou.stdout and "demonstração semeada" in renovou.stdout
+    assert not foto.exists()
+    assert tuple((await _consultar(RETRATO))[0]) == retrato
+
+
+async def test_zerar_repete_no_impasse_e_desiste_sem_zerar(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A repetição do TRUNCATE com o impasse (40P01) do jeito que o SQLAlchemy entrega um do
+    Postgres: repete depois da pausa e conclui; impasse em toda tentativa para na 5ª com a
+    frase de que nada foi zerado; erro que não é de trava sobe na hora, sem repetir."""
+    from sqlalchemy import text
+    from sqlalchemy.exc import DBAPIError
+
+    from app import demonstracao
+    from app.core.db import engine
+
+    async def erro_do_banco(sqlstate: str) -> DBAPIError:
+        with pytest.raises(DBAPIError) as erro:
+            async with engine.connect() as conn:
+                await conn.execute(text(
+                    "DO $$ BEGIN RAISE EXCEPTION 'simulado' "
+                    f"USING ERRCODE = '{sqlstate}'; END $$"
+                ))
+        return erro.value
+
+    impasse = await erro_do_banco("40P01")
+    tabela_que_sumiu = await erro_do_banco("42P01")
+    esperas: list[int] = []
+
+    def zerar_que_falha(*erros: DBAPIError):
+        async def uma_vez(_engine, espera_da_trava_ms: int) -> int:
+            esperas.append(espera_da_trava_ms)
+            if len(esperas) <= len(erros):
+                raise erros[len(esperas) - 1]
+            return 32
+        return uma_vez
+
+    monkeypatch.delenv("DEMO_RENOVAR_ESPERA_DA_TRAVA_MS", raising=False)
+    monkeypatch.setattr(demonstracao, "_zerar_uma_vez", zerar_que_falha(impasse))
+    assert await demonstracao._zerar(pausa_s=0.01) == 32
+    assert esperas == [demonstracao.ESPERA_DA_TRAVA_MS] * 2
+    saida = capsys.readouterr().out
+    assert "SQLSTATE 40P01" in saida and "tentando de novo em 0.01 s (2ª de 5" in saida
+
+    esperas.clear()
+    monkeypatch.setenv("DEMO_RENOVAR_ESPERA_DA_TRAVA_MS", "250")
+    monkeypatch.setattr(demonstracao, "_zerar_uma_vez", zerar_que_falha(*[impasse] * 5))
+    with pytest.raises(SystemExit) as parou:
+        await demonstracao._zerar(pausa_s=0.001)
+    assert esperas == [250] * 5
+    assert "nada foi zerado" in str(parou.value) and "40P01" in str(parou.value)
+
+    esperas.clear()
+    monkeypatch.setattr(demonstracao, "_zerar_uma_vez", zerar_que_falha(tabela_que_sumiu))
+    with pytest.raises(DBAPIError):
+        await demonstracao._zerar(pausa_s=0.001)
+    assert len(esperas) == 1
 
 
 async def test_preparo_espera_a_renovacao_que_esta_rodando(

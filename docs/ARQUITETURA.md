@@ -2118,7 +2118,13 @@ navegador: as duas dividem a mesma origem.
   ramo ROUPAS (o catálogo do seed é de roupa) e converge a conta do revisor. `renovar-demonstracao`
   faz TRUNCATE de todas as tabelas do schema `public` menos `alembic_version` (`RESTART IDENTITY
   CASCADE`), apaga os arquivos de `MEDIA_DIR/produtos` (a pasta e o `MEDIA_DIR`, onde o volume está
-  montado, ficam) e prepara de novo. Os dois comandos exigem as DUAS chaves — o contêiner se diz
+  montado, ficam) e prepara de novo. O TRUNCATE disputa as travas das tabelas com a API que está
+  atendendo — ele trava em ordem alfabética (`categories` antes de `products`), a leitura na ordem
+  da consulta (`products JOIN categories`), e o Postgres derruba um dos dois —: cada trava espera
+  no máximo 5 s (`lock_timeout`; `DEMO_RENOVAR_ESPERA_DA_TRAVA_MS` troca) e, em impasse (40P01) ou
+  espera vencida (55P03), a transação inteira volta — nada foi zerado — e se repete, até 5
+  tentativas, com pausa que dobra (1, 2, 4, 8 s), avisando na saída. As fotos só saem depois de um
+  TRUNCATE que deu certo. Os dois comandos exigem as DUAS chaves — o contêiner se diz
   demonstração (`settings.demonstracao`) E o banco também (o marco `loja.demonstracao`) —, porque o
   banco de uma loja recém-instalada está vazio, que é exatamente o "pode semear" da carga: uma
   variável copiada por engano para o contêiner da loja não basta para tocar no banco dela. Sem as
@@ -2622,7 +2628,8 @@ demonstração ao lado da loja (ADR-46): token assinado com o segredo da demo é
 e renovação), a role `loja_demo` não conecta no banco `loja`, preparar e renovar sem as duas
 chaves (variável e marco do banco) saem com erro sem tocar em nada, a carga da instalação semeia e
 converge a conta do revisor, a renovação zera, apaga as fotos e semeia de novo (com a conta
-inválida no `.env`, para antes de zerar; e o preparo espera a renovação que está rodando), as
+inválida no `.env`, para antes de zerar; o TRUNCATE que perde a vez para a API se repete; e o
+preparo espera a renovação que está rodando), as
 fotos da demo têm teto (envios juntos não o furam; a foto minúscula conta o bloco), a conta
 protegida da instalação não trava pelo e-mail (a da Vercel e as outras, sim; e o IP trava
 todas), o cookie da demo vive e morre em `/demo/api/v1/auth`, a auditoria classifica sob `/demo`, fora do

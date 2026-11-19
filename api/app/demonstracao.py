@@ -43,8 +43,12 @@ import sys
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncEngine
 
 #: A conta de vendedora da demonstração. A senha vem de DEMO_VENDEDORA_SENHA; sem ela, é
 #: sorteada e não aparece em lugar nenhum — o dono define outra na tela Usuários. Senha
@@ -469,8 +473,89 @@ async def _dar_nome_a_loja() -> None:
         await engine.dispose()
 
 
-async def _zerar() -> int:
-    """TRUNCATE de todas as tabelas do schema public menos `alembic_version`.
+#: Quando o TRUNCATE da renovação tenta de novo (ADR-46). Ele trava as tabelas uma a uma, em
+#: ordem alfabética (`categories` antes de `products`), e a API que está atendendo trava na
+#: ordem da consulta (`products JOIN categories`): cada um espera o outro, e o Postgres
+#: derruba um dos dois (impasse) — ou a leitura demora mais que a espera da trava. Nos dois
+#: casos a transação inteira volta: nada foi zerado, e repetir é seguro.
+_PERDEU_A_VEZ = {
+    "40P01": "impasse com uma leitura da API",
+    "55P03": "tabela ocupada pela API além da espera",
+}
+#: Tentativas do TRUNCATE e a pausa antes da segunda, que dobra a cada uma (1, 2, 4, 8 s).
+TENTATIVAS_DO_ZERAR = 5
+PAUSA_DO_ZERAR_S = 1.0
+#: Quanto cada trava de tabela pode esperar (`lock_timeout`), em milissegundos. Sem prazo, o
+#: TRUNCATE ficaria na fila atrás de uma leitura lenta — e, atrás dele, a API inteira.
+#: `DEMO_RENOVAR_ESPERA_DA_TRAVA_MS` troca (os testes encurtam).
+ESPERA_DA_TRAVA_MS = 5000
+
+
+def _sqlstate(exc: BaseException) -> str:
+    """O SQLSTATE de um erro do banco, onde o SQLAlchemy (e, embaixo, o asyncpg) o deixa."""
+    orig = getattr(exc, "orig", None)
+    for erro in (orig, getattr(orig, "__cause__", None)):
+        codigo = getattr(erro, "sqlstate", None)
+        if codigo:
+            return str(codigo)
+    return ""
+
+
+def _espera_da_trava_ms() -> int:
+    try:
+        espera = int(os.environ.get("DEMO_RENOVAR_ESPERA_DA_TRAVA_MS", ""))
+    except ValueError:
+        return ESPERA_DA_TRAVA_MS
+    return espera if espera > 0 else ESPERA_DA_TRAVA_MS
+
+
+async def _zerar(
+    *, tentativas: int = TENTATIVAS_DO_ZERAR, pausa_s: float = PAUSA_DO_ZERAR_S
+) -> int:
+    """TRUNCATE de todas as tabelas do schema public menos `alembic_version`, repetido quando
+    perde a vez para a API que está atendendo (`_PERDEU_A_VEZ`).
+
+    Cada trava espera no máximo `ESPERA_DA_TRAVA_MS`; impasse (40P01) ou espera vencida
+    (55P03) desfazem a transação inteira, e a próxima tentativa vem depois de uma pausa que
+    dobra. Esgotadas as tentativas, para com a frase de que nada foi zerado: a demo de ontem
+    segue no ar e a próxima renovação tenta de novo. Outro erro sobe na hora.
+    """
+    from sqlalchemy.exc import DBAPIError
+
+    from app.core.db import engine
+
+    espera = _espera_da_trava_ms()
+    tentativa = 1
+    try:
+        while True:
+            try:
+                return await _zerar_uma_vez(engine, espera)
+            except DBAPIError as exc:
+                codigo = _sqlstate(exc)
+                motivo = _PERDEU_A_VEZ.get(codigo)
+                if motivo is None:
+                    raise
+                if tentativa >= tentativas:
+                    raise SystemExit(
+                        f"As tabelas da demonstração seguiram ocupadas pela API em {tentativas} "
+                        f"tentativas ({motivo}, SQLSTATE {codigo}): nada foi zerado, e a "
+                        "demonstração de ontem segue no ar. A próxima renovação tenta de novo "
+                        "(na hora: ./demo.sh --renovar)."
+                    ) from None
+                pausa = pausa_s * 2 ** (tentativa - 1)
+                tentativa += 1
+                _passo(
+                    f"o TRUNCATE perdeu a vez para a API ({motivo}, SQLSTATE {codigo}): nada "
+                    f"foi zerado; tentando de novo em {pausa:g} s ({tentativa}ª de "
+                    f"{tentativas} tentativas)"
+                )
+                await asyncio.sleep(pausa)
+    finally:
+        await engine.dispose()
+
+
+async def _zerar_uma_vez(engine: AsyncEngine, espera_da_trava_ms: int) -> int:
+    """Uma tentativa do TRUNCATE, numa transação só.
 
     Confere o marco do banco NA MESMA transação do TRUNCATE: entre a conferência da CLI e
     aqui não há janela em que outro banco passe por demonstração. As sequências voltam ao
@@ -479,39 +564,37 @@ async def _zerar() -> int:
     """
     from sqlalchemy import text
 
-    from app.core.db import engine
-
-    try:
-        async with engine.begin() as conn:
-            if not await conn.scalar(text(SQL_DO_MARCO)):
-                raise SystemExit(
-                    "O banco desta API não tem o marco da demonstração: nada foi zerado."
+    async with engine.begin() as conn:
+        if not await conn.scalar(text(SQL_DO_MARCO)):
+            raise SystemExit("O banco desta API não tem o marco da demonstração: nada foi zerado.")
+        # `SET LOCAL`, com o valor por parâmetro: vale só nesta transação.
+        await conn.execute(
+            text("SELECT set_config('lock_timeout', :espera, true)"),
+            {"espera": f"{espera_da_trava_ms}ms"},
+        )
+        tabelas = (
+            await conn.execute(
+                text(
+                    "SELECT quote_ident(tablename) FROM pg_tables "
+                    "WHERE schemaname = 'public' AND tablename <> 'alembic_version' "
+                    "ORDER BY tablename"
                 )
-            tabelas = (
-                await conn.execute(
-                    text(
-                        "SELECT quote_ident(tablename) FROM pg_tables "
-                        "WHERE schemaname = 'public' AND tablename <> 'alembic_version' "
-                        "ORDER BY tablename"
-                    )
+            )
+        ).scalars().all()
+        if tabelas:
+            lista = ", ".join(f"public.{t}" for t in tabelas)
+            await conn.execute(text(f"TRUNCATE {lista} RESTART IDENTITY CASCADE"))
+        sequencias = (
+            await conn.execute(
+                text(
+                    "SELECT quote_ident(sequence_name) FROM information_schema.sequences "
+                    "WHERE sequence_schema = 'public'"
                 )
-            ).scalars().all()
-            if tabelas:
-                lista = ", ".join(f"public.{t}" for t in tabelas)
-                await conn.execute(text(f"TRUNCATE {lista} RESTART IDENTITY CASCADE"))
-            sequencias = (
-                await conn.execute(
-                    text(
-                        "SELECT quote_ident(sequence_name) FROM information_schema.sequences "
-                        "WHERE sequence_schema = 'public'"
-                    )
-                )
-            ).scalars().all()
-            for sequencia in sequencias:
-                await conn.execute(text(f"ALTER SEQUENCE public.{sequencia} RESTART"))
-        return len(tabelas)
-    finally:
-        await engine.dispose()
+            )
+        ).scalars().all()
+        for sequencia in sequencias:
+            await conn.execute(text(f"ALTER SEQUENCE public.{sequencia} RESTART"))
+    return len(tabelas)
 
 
 # ------------------------------------------------------------------ a carga
@@ -706,8 +789,9 @@ def renovar_demonstracao() -> None:
     de hoje e da semana ficam vazios e quem testa vê uma loja parada. Só a origem instalação
     renova (na Vercel, zerar é DROP SCHEMA + Redeploy, à mão). As contas são conferidas antes
     do TRUNCATE: com elas inválidas no .env, a renovação para sem tocar em nada e a demo de
-    ontem segue no ar, com a conta do revisor. As fotos que quem testou enviou saem junto
-    com as tabelas (`_esvaziar_as_fotos`).
+    ontem segue no ar, com a conta do revisor. O TRUNCATE que perde a vez para a API que está
+    atendendo (impasse, tabela ocupada) se repete (`_zerar`); as fotos que quem testou enviou
+    saem só depois de um TRUNCATE que deu certo (`_esvaziar_as_fotos`).
     """
     motivo = motivo_para_recusar()
     if motivo:
