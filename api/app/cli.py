@@ -12,6 +12,10 @@ demonstração (`app/demonstracao.py`):
     python -m app.cli renovar-demonstracao    # zera o banco da demo e semeia de novo
 
 Saída: 0 feito; 2 recusado, sem tocar em nada (não é a demonstração); 1 falhou no meio.
+
+E o diagnóstico do push do chamado do leitor (ADR-47) — "a notificação não chega no celular":
+
+    python -m app.cli testar-push --email dona@loja.com   # 0: a Apple/o Google aceitaram
 """
 
 import argparse
@@ -91,6 +95,122 @@ async def _configurar_loja(
 #: Recusado sem tocar em nada: esta API ou este banco não são os da demonstração.
 SAIDA_RECUSADO = 2
 
+#: Como ligar o push quando ele está desligado — sem ele, o app nem pede a permissão.
+_COMO_LIGAR = (
+    "O app só pede a permissão de notificação (e manda o token) com NOTIFICACOES_PUSH=expo neste "
+    "servidor: na instalação, no .env da raiz e recriando a api (./atualizar.sh, ou docker "
+    "compose up -d api); na Vercel, a variável do projeto e um Redeploy. Depois, no iPhone, "
+    'toque em "Abrir o leitor" (o sistema pergunta) e rode este teste de novo.'
+)
+#: O que fazer, pelo que a Expo, a Apple ou o Google responderam.
+_O_QUE_FAZER = {
+    "sem_credencial": (
+        "Falta, ou foi revogada, a chave de push da Apple (APNs) do app na Expo. Quem publica o "
+        "app cria a chave com `npx eas-cli credentials` (iOS > Push Notifications) e roda este "
+        "teste de novo. Nada a mudar no servidor da loja."
+    ),
+    "token_morto": (
+        "O celular não aceita mais avisos deste app (desinstalou, ou tirou a permissão em "
+        'Ajustes). O token velho já saiu daqui: abra o app com este login e toque em "Abrir o '
+        'leitor".'
+    ),
+    "erro": (
+        "A Expo não entregou: o código acima diz por quê (lista em "
+        "https://docs.expo.dev/push-notifications/sending-notifications/). Nome de erro de rede "
+        "(ConnectError, TimeoutError) é este servidor que não alcança https://exp.host."
+    ),
+}
+
+
+async def _testar_push(email: str, espera_s: float, intervalo_s: float = 5.0) -> int:
+    """`testar-push` (ADR-47): manda um aviso de TESTE aos celulares de um login e espera o
+    recibo da ENTREGA — o único lugar que diz se a Apple aceitou a chave de push de quem
+    publica o app depois de a Expo ter aceitado o aviso (o chamado do leitor não espera por
+    ele, e diria ENVIADA). Imprime o que fazer. Nunca imprime o token.
+
+    Saída: 0 quando a Apple ou o Google aceitaram o aviso em algum celular; 1 nos outros casos.
+    """
+    from app.core.config import settings
+    from app.modules.notificacoes.service import NotificacoesService
+
+    ligado = settings.notificacoes_push == "expo"
+    print(f"Push do chamado do leitor: NOTIFICACOES_PUSH={settings.notificacoes_push}.")
+    if not ligado:
+        print("  Desligado, o chamado chega só ao app ABERTO (a faixa). O teste manda mesmo assim.")
+    async with SessionLocal() as session:
+        usuario = await UsuarioService(session).repo.por_email(email)
+        if usuario is None:
+            print(f"Nenhum usuário com o e-mail {email}.")
+            return 1
+        servico = NotificacoesService(session)
+        teste = await servico.mandar_teste(usuario.id)
+        print(
+            f"Login {email}: {teste.aparelhos} aparelho(s) com o app, "
+            f"{len(teste.recibos)} com notificação."
+        )
+        if not teste.aparelhos:
+            print(
+                "Nenhum aparelho registrado: entre no app atualizado com este login, neste "
+                "servidor, e rode o teste de novo."
+            )
+            return 1
+        if not teste.recibos:
+            print(
+                _COMO_LIGAR
+                if not ligado
+                else "Nenhum celular deste login deu a permissão de notificação. No iPhone: "
+                'toque em "Abrir o leitor" (o sistema pergunta); se já recusou, Ajustes > '
+                "Notificações > o app. O Android ainda não recebe push nesta versão."
+            )
+            return 1
+
+        aceitos = [r for r in teste.recibos if r.situacao == "ok" and r.id_na_expo]
+        entregas: dict = {}
+        if aceitos:
+            print(f"A Expo aceitou. Esperando a Apple e o Google (até {espera_s:g} s)...")
+            relogio = asyncio.get_running_loop()
+            prazo = relogio.time() + espera_s
+            while True:
+                entregas.update(await servico.conferir_entregas(aceitos) or {})
+                if all(r.id_na_expo in entregas for r in aceitos) or relogio.time() >= prazo:
+                    break
+                await asyncio.sleep(intervalo_s)
+
+    situacoes: list[str] = []
+    for n, r in enumerate(teste.recibos, start=1):
+        rotulo = f"  aparelho {n} ({r.plataforma})"
+        ios = r.plataforma == "ios"
+        quem, a_quem = ("a Apple", "à Apple") if ios else ("o Google", "ao Google")
+        if r.situacao != "ok":
+            situacoes.append(r.situacao)
+            print(f"{rotulo}: a Expo recusou o aviso ({r.motivo})")
+        elif r.id_na_expo not in entregas:
+            situacoes.append("sem_recibo")
+            print(f"{rotulo}: a Expo aceitou; {quem} ainda não respondeu")
+        elif entregas[r.id_na_expo].situacao == "ok":
+            situacoes.append("ok")
+            print(f"{rotulo}: entregue {a_quem}")
+        else:
+            entrega = entregas[r.id_na_expo]
+            situacoes.append(entrega.situacao)
+            print(f"{rotulo}: {quem} recusou ({entrega.motivo})")
+
+    if "ok" in situacoes:
+        print(
+            "A notificação saiu deste servidor e foi aceita. Se não apareceu no celular: "
+            "Ajustes > Notificações > o app (Permitir), e o Foco/Não Perturbe desligado."
+        )
+        return 0
+    for situacao in ("sem_credencial", "token_morto", "erro"):
+        if situacao in situacoes:
+            print(_O_QUE_FAZER[situacao])
+            return 1
+    print(
+        "A Apple ainda não respondeu (sob carga, o recibo leva até 15 min). Se o aviso não "
+        "aparecer no celular, rode o teste de novo daqui a pouco."
+    )
+    return 1
+
 
 def _demonstracao(comando: str) -> int:
     """`preparar-demonstracao` e `renovar-demonstracao` (ADR-46).
@@ -155,11 +275,26 @@ def main(argv: list[str] | None = None) -> int:
         help="Zera o banco da demonstração e semeia de novo, com as datas de hoje (ADR-46)",
     )
 
+    p_push = sub.add_parser(
+        "testar-push",
+        help="Manda um aviso de teste aos celulares de um login e diz se a Apple ou o Google "
+        "aceitaram — e, se não, o que fazer (ADR-47)",
+    )
+    p_push.add_argument("--email", required=True, help="O login dos celulares que recebem o teste")
+    p_push.add_argument(
+        "--espera",
+        type=float,
+        default=60.0,
+        help="Segundos esperando a resposta da Apple/do Google (padrão: 60)",
+    )
+
     args = parser.parse_args(argv)
     if args.comando in ("preparar-demonstracao", "renovar-demonstracao"):
         return _demonstracao(args.comando)
     if args.comando == "create-admin":
         return asyncio.run(_create_admin(args.nome, args.email, args.senha))
+    if args.comando == "testar-push":
+        return asyncio.run(_testar_push(args.email, args.espera))
     if args.comando == "configurar-loja":
         return asyncio.run(
             _configurar_loja(

@@ -162,7 +162,8 @@ async def auth_supervisora(client: AsyncClient, supervisora: User) -> dict[str, 
 
 class ExpoFalsa:
     """A API de push da Expo, de mentira: guarda cada lote que chegou e responde o que o
-    teste mandar (por padrão, "ok" para cada mensagem, na ordem)."""
+    teste mandar (por padrão, "ok" para cada mensagem, na ordem). Responde também à pergunta
+    pelos recibos da entrega (`getReceipts`), que só o diagnóstico `testar-push` faz."""
 
     def __init__(self) -> None:
         self.lotes: list[list[dict]] = []
@@ -170,17 +171,31 @@ class ExpoFalsa:
         self.durante: Callable[[list[dict]], Awaitable[None]] | None = None
         #: Monta a resposta a partir do lote; `None` = tudo "ok".
         self.responder: Callable[[list[dict]], Awaitable[httpx.Response]] | None = None
+        #: Os ids de cada pergunta pelos recibos da entrega.
+        self.perguntas: list[list[str]] = []
+        #: Monta a resposta do `getReceipts` a partir dos ids; `None` = todos entregues.
+        self.responder_entregas: Callable[[list[str]], Awaitable[httpx.Response]] | None = None
 
     async def __call__(self, request: httpx.Request) -> httpx.Response:
+        if str(request.url) == push_da_expo.URL_DAS_ENTREGAS:
+            ids = json.loads(request.content)["ids"]
+            self.perguntas.append(ids)
+            if self.responder_entregas is not None:
+                return await self.responder_entregas(ids)
+            return httpx.Response(200, json={"data": {i: {"status": "ok"} for i in ids}})
         assert str(request.url) == push_da_expo.URL_DO_ENVIO
         lote = json.loads(request.content)
         self.lotes.append(lote)
+        n = len(self.lotes)
         if self.durante is not None:
             await self.durante(lote)
         if self.responder is not None:
             return await self.responder(lote)
+        # O id do recibo é único entre os lotes, como o da Expo: é por ele que se pergunta
+        # depois pela entrega.
         return httpx.Response(
-            200, json={"data": [{"status": "ok", "id": f"recibo-{i}"} for i in range(len(lote))]}
+            200,
+            json={"data": [{"status": "ok", "id": f"recibo-{n}-{i}"} for i in range(len(lote))]},
         )
 
     @property

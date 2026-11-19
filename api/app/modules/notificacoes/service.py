@@ -21,7 +21,7 @@ from starlette import status as http
 from app.core.config import settings
 from app.core.exceptions import AppError
 from app.modules.notificacoes import expo
-from app.modules.notificacoes.repository import NotificacoesRepository
+from app.modules.notificacoes.repository import Aparelho, NotificacoesRepository
 from app.modules.notificacoes.schemas import AparelhoFora, AparelhoIn, SituacaoDaNotificacao
 from app.modules.usuarios.models import User
 
@@ -33,6 +33,12 @@ TIPO_DO_CHAMADO = "leitor-chamado"
 #: Quanto o push espera para ser entregue: o chamado vale 5 min (`PRAZO_DO_CODIGO` do leitor,
 #: que passa o dele); depois disso a notificação só abriria um "esse chamado já acabou".
 VALIDADE_DO_CHAMADO_S = 300
+
+#: O aviso de TESTE do diagnóstico do dono (`python -m app.cli testar-push`). O app não trata
+#: este tipo: na frente, aparece como um aviso qualquer; o toque só abre o app.
+TITULO_DO_TESTE = "Teste de notificação"
+TEXTO_DO_TESTE = "Se este aviso apareceu, as notificações do leitor chegam a este celular."
+TIPO_DO_TESTE = "teste-de-notificacao"
 
 
 class RegistroIndisponivel(AppError):
@@ -63,6 +69,14 @@ def texto_do_chamado(sinal: str) -> str:
         f"O computador do sinal {sinal} está chamando: toque para abrir a câmera e ler as "
         "etiquetas."
     )
+
+
+@dataclass(frozen=True)
+class TesteDoPush:
+    #: Os aparelhos do login com o app (com ou sem notificação).
+    aparelhos: int
+    #: Um por aparelho com token, na ordem; vazio quando nenhum tem.
+    recibos: list[expo.Recibo]
 
 
 @dataclass(frozen=True)
@@ -159,30 +173,14 @@ class NotificacoesService:
         if not com_token:
             return ResultadoDoAviso(SituacaoDaNotificacao.SEM_NOTIFICACAO, len(aparelhos))
 
-        # A leitura acaba ANTES da rede: nenhuma transação nem trava fica aberta durante os
-        # até 4 s do envio (na demo, a renovação da madrugada esperaria por ela).
-        await self.session.commit()
-        mensagens = [
-            expo.Mensagem(
-                token=a.token,
-                titulo=TITULO_DO_CHAMADO,
-                texto=texto_do_chamado(sinal),
-                dados={"tipo": TIPO_DO_CHAMADO, "sinal": sinal},
-                validade_s=validade_s,
-                plataforma=a.plataforma,
-            )
-            for a in com_token
-            if a.token
-        ]
-        recibos = await expo.fabrica(settings.notificacoes_push).enviar(mensagens)
-
-        mortos = [r.token for r in recibos if r.situacao == "token_morto"]
-        if mortos:
-            # Transação curta, só nesta tabela. A instalação fica: com o app aberto ela ainda
-            # vê o chamado, e o app registra o token novo quando houver um.
-            await self.repo.anular_tokens(mortos)
-            await self.session.commit()
-
+        recibos = await self._mandar(
+            com_token,
+            titulo=TITULO_DO_CHAMADO,
+            texto=texto_do_chamado(sinal),
+            dados={"tipo": TIPO_DO_CHAMADO, "sinal": sinal},
+            validade_s=validade_s,
+            adaptador=settings.notificacoes_push,
+        )
         aceitos = sum(1 for r in recibos if r.situacao == "ok")
         if aceitos:
             return ResultadoDoAviso(SituacaoDaNotificacao.ENVIADA, aceitos)
@@ -191,3 +189,78 @@ class NotificacoesService:
         if recibos and all(r.situacao == "token_morto" for r in recibos):
             return ResultadoDoAviso(SituacaoDaNotificacao.SEM_NOTIFICACAO, len(aparelhos))
         return ResultadoDoAviso(SituacaoDaNotificacao.FALHOU, 0)
+
+    async def _mandar(
+        self,
+        aparelhos: list[Aparelho],
+        *,
+        titulo: str,
+        texto: str,
+        dados: dict[str, str],
+        validade_s: int,
+        adaptador: str,
+    ) -> list[expo.Recibo]:
+        """Manda o aviso aos aparelhos (todos com token) e esquece os tokens que a Expo disse
+        que morreram."""
+        # A leitura acaba ANTES da rede: nenhuma transação nem trava fica aberta durante os
+        # até 4 s do envio (na demo, a renovação da madrugada esperaria por ela).
+        await self.session.commit()
+        mensagens = [
+            expo.Mensagem(
+                token=a.token,
+                titulo=titulo,
+                texto=texto,
+                dados=dados,
+                validade_s=validade_s,
+                plataforma=a.plataforma,
+            )
+            for a in aparelhos
+            if a.token
+        ]
+        recibos = await expo.fabrica(adaptador).enviar(mensagens)
+        await self._anular_mortos([r.token for r in recibos if r.situacao == "token_morto"])
+        return recibos
+
+    async def _anular_mortos(self, tokens: list[str]) -> None:
+        if tokens:
+            # Transação curta, só nesta tabela. A instalação fica: com o app aberto ela ainda
+            # vê o chamado, e o app registra o token novo quando houver um.
+            await self.repo.anular_tokens(tokens)
+            await self.session.commit()
+
+    # ------------------------------------------------------------ o diagnóstico do dono
+
+    async def mandar_teste(self, user_id: int) -> TesteDoPush:
+        """`python -m app.cli testar-push`: um aviso de TESTE aos aparelhos do login, pela
+        Expo, esteja o `NOTIFICACOES_PUSH` ligado ou não — é como o dono confere a chave de
+        push da Apple antes (ou depois) de ligar. Sem chamado e sem dado da loja."""
+        aparelhos = await self.repo.do_usuario(user_id)
+        com_token = [a for a in aparelhos if a.token]
+        if not com_token:
+            await self.session.commit()
+            return TesteDoPush(len(aparelhos), [])
+        recibos = await self._mandar(
+            com_token,
+            titulo=TITULO_DO_TESTE,
+            texto=TEXTO_DO_TESTE,
+            dados={"tipo": TIPO_DO_TESTE},
+            validade_s=VALIDADE_DO_CHAMADO_S,
+            adaptador="expo",
+        )
+        return TesteDoPush(len(aparelhos), recibos)
+
+    async def conferir_entregas(self, recibos: list[expo.Recibo]) -> dict[str, expo.Entrega] | None:
+        """O que a Apple e o Google responderam aos avisos que a Expo aceitou (o recibo da
+        ENTREGA: é só nele que uma chave de push revogada aparece). O token que morreu ali
+        também sai. `None`: a Expo não respondeu agora."""
+        ids = [r.id_na_expo for r in recibos if r.situacao == "ok" and r.id_na_expo]
+        entregas = await expo.fabrica("expo").entregas(ids)
+        if entregas:
+            await self._anular_mortos(
+                [
+                    r.token
+                    for r in recibos
+                    if r.id_na_expo in entregas and entregas[r.id_na_expo].situacao == "token_morto"
+                ]
+            )
+        return entregas

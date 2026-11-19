@@ -375,7 +375,9 @@ async def test_chamado_manda_push_so_aos_aparelhos_com_token_do_mesmo_login(
 
     corpo = await _chamar(client, auth_admin)
     assert corpo["notificacao"] == "ENVIADA" and corpo["celulares"] == 2
-    assert len(expo.lotes) == 1, "um POST só, com a lista"
+    # Um POST por aparelho: o erro de um pedido (um token de outro projeto da Expo, por
+    # exemplo) não derruba o aviso dos outros celulares do login.
+    assert sorted(len(lote) for lote in expo.lotes) == [1, 1]
     assert sorted(expo.tokens) == sorted([_token("iphone"), _token("android")])
 
 
@@ -592,6 +594,115 @@ async def test_invalid_credentials_no_iphone_diz_sem_chave_da_apple(
     assert (corpo["notificacao"], corpo["celulares"]) == ("FALHOU", 0)
 
 
+@pytest.mark.parametrize("codigo", ["InvalidCredentials", "PUSH_CREDENTIALS_NOT_FOUND"])
+async def test_falta_de_credencial_no_pedido_tambem_e_sem_chave_da_apple(
+    client, auth_admin, expo, codigo: str
+) -> None:
+    """A Expo documenta que "um projeto sem credenciais de push também dá erro", sem dizer o
+    código nem se vem no recibo ou no PEDIDO inteiro (HTTP 4xx). No pedido, qualquer código
+    que fale de credencial é a mesma falta de quem publica o app — não um FALHOU mudo."""
+    await _registrar(client, auth_admin, uuid.uuid4(), "ios", token=_token("iphone"))
+
+    async def recusar_o_pedido(lote: list[dict]) -> httpx.Response:
+        return httpx.Response(
+            400, json={"errors": [{"code": codigo, "message": f"sem chave para {lote[0]['to']}"}]}
+        )
+
+    expo.responder = recusar_o_pedido
+    corpo = await _chamar(client, auth_admin)
+    assert (corpo["notificacao"], corpo["celulares"]) == ("SEM_CHAVE_DA_APPLE", 0)
+
+
+async def test_token_de_outro_projeto_nao_derruba_o_push_dos_outros(
+    client, auth_admin, expo
+) -> None:
+    """A Expo recusa o PEDIDO inteiro que mistura tokens de projetos diferentes (4xx
+    `PUSH_TOO_MANY_EXPERIENCE_IDS`). Um registro de outro projeto no login — um build de
+    desenvolvimento de outra conta da Expo, ou alguém com a senha da conta compartilhada da
+    demo — deixaria o iPhone certo sem aviso se os aparelhos fossem num POST só."""
+    certo, alheio = _token("do-app-da-loja"), _token("de-outro-projeto")
+    await _registrar(client, auth_admin, uuid.uuid4(), "ios", token=certo)
+    await _registrar(client, auth_admin, uuid.uuid4(), "ios", token=alheio)
+
+    async def como_a_expo(lote: list[dict]) -> httpx.Response:
+        tokens = {m["to"] for m in lote}
+        if len(tokens) > 1 and alheio in tokens:
+            return httpx.Response(
+                400,
+                json={
+                    "errors": [
+                        {
+                            "code": "PUSH_TOO_MANY_EXPERIENCE_IDS",
+                            "message": "All push notification messages in the same request "
+                            "must be for the same project",
+                            "details": {"@loja/app": [certo], "@outra/coisa": [alheio]},
+                        }
+                    ]
+                },
+            )
+        return _resposta(*(OK for _ in lote))
+
+    expo.responder = como_a_expo
+    corpo = await _chamar(client, auth_admin)
+    assert corpo["notificacao"] == "ENVIADA", "um token alheio derrubou o push do iPhone certo"
+    assert certo in expo.tokens
+
+
+async def test_o_teto_e_do_envio_inteiro_e_o_aparelho_rapido_nao_espera_o_lento(
+    client, auth_admin, expo, monkeypatch
+) -> None:
+    """Os aparelhos vão em paralelo, dentro do MESMO teto total: o que a Expo aceitou a tempo
+    conta, e só o que passou do teto vira erro."""
+    monkeypatch.setattr(push_da_expo, "TETO_DO_ENVIO_S", 0.3)
+    rapido, lento = _token("rapido"), _token("lento")
+    await _registrar(client, auth_admin, uuid.uuid4(), "ios", token=rapido)
+    await _registrar(client, auth_admin, uuid.uuid4(), "ios", token=lento)
+
+    async def um_demora(lote: list[dict]) -> httpx.Response:
+        if lote[0]["to"] == lento:
+            await asyncio.sleep(3)
+        return _resposta(OK)
+
+    expo.responder = um_demora
+    inicio = time.monotonic()
+    corpo = await _chamar(client, auth_admin)
+    assert time.monotonic() - inicio < 1.5
+    assert (corpo["notificacao"], corpo["celulares"]) == ("ENVIADA", 1)
+
+
+async def test_log_diz_o_codigo_do_erro_da_expo_e_nunca_o_token(
+    client, auth_admin, expo, caplog, monkeypatch
+) -> None:
+    """"A notificação não chega": o log do servidor diz POR QUÊ — o código do erro da Expo,
+    do pedido (HTTP 4xx) e de cada aviso recusado —, nunca o `message`, que repete o token.
+    E código que não tem cara de código (o token no lugar dele, texto livre) também não sai."""
+    um, dois, tres = _token("primeiro-segredo"), _token("segundo-segredo"), _token("terceiro")
+    await _registrar(client, auth_admin, uuid.uuid4(), "ios", token=um)
+    await _registrar(client, auth_admin, uuid.uuid4(), "ios", token=dois)
+    await _registrar(client, auth_admin, uuid.uuid4(), "ios", token=tres)
+    _ouvir_o_log(monkeypatch, caplog)
+
+    async def tres_recusas(lote: list[dict]) -> httpx.Response:
+        token = lote[0]["to"]
+        if token == um:
+            return httpx.Response(
+                400,
+                json={"errors": [{"code": "PUSH_TOO_MANY_EXPERIENCE_IDS", "message": token}]},
+            )
+        if token == dois:
+            return _resposta(_erro("MessageRateExceeded", token))
+        return httpx.Response(400, json={"errors": [{"code": token, "message": token}]})
+
+    expo.responder = tres_recusas
+    assert (await _chamar(client, auth_admin))["notificacao"] == "FALHOU"
+
+    assert "PUSH_TOO_MANY_EXPERIENCE_IDS" in caplog.text
+    assert "HTTP 400" in caplog.text
+    assert "MessageRateExceeded" in caplog.text
+    for segredo in ("primeiro-segredo", "segundo-segredo", "terceiro"):
+        assert segredo not in caplog.text
+
+
 async def test_token_nunca_aparece_no_log_nem_no_repr(
     client, auth_admin, expo, caplog, monkeypatch
 ) -> None:
@@ -709,3 +820,141 @@ async def test_desativar_esquece_os_aparelhos(client, vendedor, auth_admin, auth
     r = await client.patch(f"/usuarios/{vendedor.id}", headers=auth_admin, json={"ativo": False})
     assert r.status_code == 200, r.text
     assert await _aparelhos() == []
+
+
+# ------------------------------------------------------------------ o diagnóstico do dono
+# `python -m app.cli testar-push --email ...`: manda um aviso de TESTE aos aparelhos do login
+# e lê o recibo da entrega (`getReceipts`) — o único lugar que diz se a Apple recusou a chave
+# de push de quem publica o app depois de a Expo ter aceitado o aviso.
+
+
+def _recibos_com(codigo: str | None, token: str):
+    async def responder(ids: list[str]) -> httpx.Response:
+        if codigo is None:
+            return httpx.Response(200, json={"data": {i: {"status": "ok"} for i in ids}})
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    i: {
+                        "status": "error",
+                        # A Expo repete o token na mensagem: nunca sai na tela do terminal.
+                        "message": f"The recipient {token} could not be reached",
+                        "details": {"error": codigo},
+                    }
+                    for i in ids
+                }
+            },
+        )
+
+    return responder
+
+
+async def test_testar_push_mostra_a_chave_da_apple_que_falta_so_no_recibo(
+    client, admin, auth_admin, expo, capsys
+) -> None:
+    """O ticket diz "ok" (a Expo aceitou), e só o recibo diz que a Apple recusou a chave
+    (`InvalidCredentials`): é o caso que o chamado do leitor mostraria como ENVIADA."""
+    from app import cli
+
+    segredo = _token("iphone-da-dona")
+    await _registrar(client, auth_admin, uuid.uuid4(), "ios", token=segredo)
+    await _registrar(client, auth_admin, uuid.uuid4(), "android", token=None)
+    expo.responder_entregas = _recibos_com("InvalidCredentials", segredo)
+
+    saida = await cli._testar_push(admin.email, espera_s=2, intervalo_s=0.01)
+    texto = capsys.readouterr().out
+    assert saida == 1
+    assert "2 aparelho(s) com o app, 1 com notificação" in texto
+    assert "InvalidCredentials" in texto
+    assert "eas-cli credentials" in texto
+    assert "iphone-da-dona" not in texto
+    # O aviso é de TESTE: texto fixo, sem chamado nem dado da loja, e o app não o trata.
+    (lote,) = expo.lotes
+    (aviso,) = lote
+    assert aviso["data"] == {"tipo": "teste-de-notificacao"}
+    assert aviso["title"] == "Teste de notificação"
+    # A credencial é de quem publica, não do aparelho: o token fica.
+    assert (await _aparelhos())[0][3] == segredo
+
+
+async def test_testar_push_entregue_sai_com_zero(client, admin, auth_admin, expo, capsys) -> None:
+    from app import cli
+
+    await _registrar(client, auth_admin, uuid.uuid4(), "ios", token=_token("iphone"))
+    saida = await cli._testar_push(admin.email, espera_s=2, intervalo_s=0.01)
+    texto = capsys.readouterr().out
+    assert saida == 0, texto
+    assert "entregue" in texto
+    assert len(expo.perguntas) == 1
+
+
+async def test_testar_push_token_morto_no_recibo_e_apagado(
+    client, admin, auth_admin, expo, capsys
+) -> None:
+    from app import cli
+
+    segredo = _token("desinstalado")
+    await _registrar(client, auth_admin, uuid.uuid4(), "ios", token=segredo)
+    expo.responder_entregas = _recibos_com("DeviceNotRegistered", segredo)
+    saida = await cli._testar_push(admin.email, espera_s=2, intervalo_s=0.01)
+    texto = capsys.readouterr().out
+    assert saida == 1
+    assert "DeviceNotRegistered" in texto and "desinstalado" not in texto
+    # O recibo é a palavra final da Apple: o token morto sai, a instalação fica.
+    assert [t for *_, t in await _aparelhos()] == [None]
+
+
+async def test_testar_push_espera_o_recibo_e_desiste_no_prazo(
+    client, admin, auth_admin, expo, capsys
+) -> None:
+    from app import cli
+
+    await _registrar(client, auth_admin, uuid.uuid4(), "ios", token=_token("iphone"))
+
+    async def ainda_nao(_ids: list[str]) -> httpx.Response:
+        return httpx.Response(200, json={"data": {}})
+
+    expo.responder_entregas = ainda_nao
+    saida = await cli._testar_push(admin.email, espera_s=0.2, intervalo_s=0.05)
+    texto = capsys.readouterr().out
+    assert saida == 1
+    assert len(expo.perguntas) >= 2, "o diagnóstico tem de perguntar de novo enquanto espera"
+    assert "ainda não respondeu" in texto
+
+
+async def test_testar_push_sem_aparelho_ou_sem_token_diz_o_que_fazer(
+    client, admin, auth_admin, expo, capsys, monkeypatch
+) -> None:
+    from app import cli
+
+    assert await cli._testar_push("ninguem@loja.com", espera_s=0, intervalo_s=0) == 1
+    assert "Nenhum usuário" in capsys.readouterr().out
+
+    assert await cli._testar_push(admin.email, espera_s=0, intervalo_s=0) == 1
+    assert "nenhum aparelho" in capsys.readouterr().out.lower()
+
+    # Com o push desligado o app nem pede a permissão: o terminal diz como ligar.
+    monkeypatch.setattr(settings, "notificacoes_push", "desligado")
+    await _registrar(client, auth_admin, uuid.uuid4(), "ios", token=None)
+    assert await cli._testar_push(admin.email, espera_s=0, intervalo_s=0) == 1
+    texto = capsys.readouterr().out
+    assert "NOTIFICACOES_PUSH=desligado" in texto and "NOTIFICACOES_PUSH=expo" in texto
+    assert expo.lotes == []
+
+
+def test_testar_push_no_terminal(monkeypatch) -> None:
+    """O comando existe no `python -m app.cli` e leva o e-mail e a espera. (Sem `asyncio.run`
+    de verdade: um loop novo aqui trocaria o do pytest-asyncio no meio da suíte.)"""
+    from app import cli
+
+    pedidos: list[tuple] = []
+
+    def de_mentira(email: str, espera_s: float, intervalo_s: float = 5) -> str:
+        pedidos.append((email, espera_s))
+        return "a corrotina do teste"
+
+    monkeypatch.setattr(cli, "_testar_push", de_mentira)
+    monkeypatch.setattr(cli.asyncio, "run", lambda c: 0 if c == "a corrotina do teste" else 9)
+    assert cli.main(["testar-push", "--email", "dona@loja.com", "--espera", "30"]) == 0
+    assert pedidos == [("dona@loja.com", 30.0)]
