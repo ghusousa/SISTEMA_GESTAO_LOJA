@@ -42,7 +42,9 @@ class AuthService:
         await self.repo.travar_email(email)
         # Antes de conferir a senha, checa a trava: erros demais recentes → 429 sem nem
         # olhar a senha, que é o que torna a força bruta inviável.
-        bloqueio = await self.repo.segundos_de_bloqueio(email, ip)
+        bloqueio = await self.repo.segundos_de_bloqueio(
+            email, ip, por_email=not self._conta_publica_da_demonstracao(email)
+        )
         if bloqueio > 0:
             raise MuitasTentativas(bloqueio)
 
@@ -78,6 +80,25 @@ class AuthService:
         tokens = await self._emitir(user, family_id=uuid.uuid4())
         await self.session.commit()
         return tokens
+
+    @staticmethod
+    def _conta_publica_da_demonstracao(email: str) -> bool:
+        """É a conta das notas da Apple, numa demonstração? Ela não trava pelo e-mail.
+
+        O e-mail dela está nas notas da revisão e o endereço da demo vai na ficha pública
+        da App Store: qualquer um que mandasse 10 senhas erradas a cada 15 min (uma por
+        liberação, guiado pelo `Retry-After`) deixava o revisor do lado de fora para
+        sempre, sem nunca chegar ao teto do IP. Para ela vale só a trava por IP (30), que é
+        a que segura a força bruta de uma origem; e a senha dela não é de gente (na demo
+        que sobe com a loja, 20 caracteres sorteados pelo instalador, ADR-46).
+
+        Não vaza se a conta existe (ADR-24): a exceção é UM e-mail, conhecido de antemão —
+        está nas notas e na config, não na resposta —, e para qualquer outro e-mail, exista
+        a conta ou não, a resposta segue idêntica. Na loja de verdade não há conta protegida
+        (`conta_demo_protegida` é vazia), e a regra é a de sempre.
+        """
+        protegida = settings.conta_demo_protegida
+        return bool(protegida) and email.strip().lower() == protegida
 
     async def esquecer_tentativas(self, email: str) -> int:
         """A conta deste e-mail foi excluída: as tentativas de login dela saem junto, na mesma

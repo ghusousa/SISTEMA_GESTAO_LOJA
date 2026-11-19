@@ -97,16 +97,18 @@ class UsuarioService:
 
     @staticmethod
     def _proteger_conta_da_demonstracao(user: User) -> None:
-        """Na Vercel, a conta do dono da demonstração fica como está (ADR-45).
+        """Na demonstração, a conta do dono das notas fica como está (ADR-45, ADR-46).
 
-        É a conta que as notas da revisão da App Store dão ao revisor. Excluída, rebaixada,
-        desativada ou com a senha trocada, o próximo revisor (ou a próxima rodada) não entra
-        e a resposta volta como "conta demo inválida" (2.1). Vale antes da senha: quem está
-        com ela na mão não precisa de senha nenhuma para saber que é a conta da demo, e é
-        assim que o publicador confere, sem risco, que a proteção está de pé.
+        É a conta que as notas da revisão da App Store dão ao revisor — na Vercel ou na
+        demo que sobe com a loja em `/demo`. Excluída, rebaixada, desativada ou com a senha
+        trocada, o próximo revisor (ou a próxima rodada) não entra e a resposta volta como
+        "conta demo inválida" (2.1). Vale antes da senha: quem está com ela na mão não
+        precisa de senha nenhuma para saber que é a conta da demo, e é assim que o
+        publicador confere, sem risco, que a proteção está de pé. Na loja de verdade não
+        há conta protegida (`settings.conta_demo_protegida` vazia).
         """
-        demo = settings.demo_admin_email.strip().lower()
-        if settings.vercel and demo and user.email.strip().lower() == demo:
+        demo = settings.conta_demo_protegida
+        if demo and user.email.strip().lower() == demo:
             raise ContaDeDemonstracao()
 
     @staticmethod

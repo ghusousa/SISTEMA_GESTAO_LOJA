@@ -40,8 +40,10 @@ class LoginAttempt(Base):
     Um atacante que testa senha atrás de senha precisa ser barrado — sem isto, a única
     defesa é o comprimento da senha, e a dona escolhe "loja123". A trava conta as falhas
     recentes por e-mail e por IP numa janela deslizante; passou do teto, o login responde
-    429 até a janela liberar. Não bloqueia a conta para sempre (não dá para uma pessoa
-    trancar a outra de fora); a janela escorrega e o acesso volta sozinho.
+    429 até a janela liberar. Não bloqueia a conta para sempre: a janela escorrega e o
+    acesso volta sozinho — quando quem erra PARA. Quem insiste (uma senha errada a cada
+    liberação) mantém o e-mail travado enquanto quiser; por isso a conta pública da
+    demonstração, cujo e-mail está nas notas da Apple, trava só pelo IP (ADR-46).
 
     Guarda o e-mail digitado mesmo quando não existe: é assim que se barra quem fica
     adivinhando e-mails, e não vaza se o e-mail existe ou não (a resposta é a mesma).

@@ -2,6 +2,7 @@
 
 import hashlib
 import hmac
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -40,11 +41,21 @@ PASTA_API = Path(__file__).resolve().parents[2]
 #: Para onde o build da Vercel copia o sistema web: a função só empacota o que está DENTRO
 #: do Root Directory (`api/`), e o `web/` mora ao lado dele no repositório (ADR-42).
 PASTA_WEB_NA_VERCEL = PASTA_API / "web_vercel"
+#: O caminho em que a API inteira pode ser servida (ADR-46): uma palavra só, minúscula, sem
+#: barra no fim. É o que vai no `Mount` e no `Path` do cookie — "/Demo" ou "/demo/" dariam
+#: dois caminhos diferentes para o navegador e para o proxy.
+PREFIXO_VALIDO = re.compile(r"/[a-z0-9-]+")
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        # Config inválida derruba o boot, e o pydantic repetia na mensagem os valores LIDOS
+        # (`input_value`): a URL do banco com a senha, o JWT_SECRET curto. Isso ia parar no
+        # log do Docker (30 MB guardados) e no da Vercel. A frase de cada erro continua.
+        hide_input_in_errors=True,
     )
 
     app_name: str = "Gestão Loja API"
@@ -136,10 +147,21 @@ class Settings(BaseSettings):
     vercel_branch_url: str = ""
     vercel_project_production_url: str = ""
     vercel_git_commit_sha: str = ""
-    #: O dono da demonstração (a mesma variável que o build usa para criá-lo, ADR-42). Na
-    #: Vercel, a conta deste e-mail não se exclui, não perde o papel, não é desativada e não
-    #: troca de senha: é a conta das notas da revisão da App Store, e o revisor seguinte
-    #: precisa entrar com ela (ADR-45). Fora da Vercel não vale nada.
+    #: Esta API é a DEMONSTRAÇÃO que sobe junto com a loja (ADR-46): outro contêiner, outro
+    #: banco, outro segredo de login. Liga a faixa "dados fictícios" das telas e a proteção
+    #: da conta das notas da Apple, e é a primeira das duas chaves dos comandos que semeiam
+    #: e zeram o banco (a segunda é o marco no próprio banco, `app/demonstracao.py`). A
+    #: Vercel NÃO liga isto: lá a demonstração é a própria Vercel (`vercel`), e nada muda.
+    demonstracao: bool = Field(default=False, validation_alias="LOJA_DEMONSTRACAO")
+    #: O caminho em que esta API inteira é servida, "" (a loja) ou "/demo" (a demonstração
+    #: no mesmo domínio, ADR-46). Com ele, `app.main` monta a API sob o caminho, e tudo que
+    #: gera caminho absoluto (o `/` → `/app/`, o cookie do refresh) lê o `root_path`.
+    prefixo: str = ""
+    #: O dono da demonstração (a mesma variável que o build e a CLI usam para criá-lo). Na
+    #: demonstração — a Vercel (ADR-42) ou a que sobe com a loja (ADR-46) —, a conta deste
+    #: e-mail não se exclui, não perde o papel, não é desativada e não troca de senha: é a
+    #: conta das notas da revisão da App Store, e o revisor seguinte precisa entrar com ela
+    #: (ADR-45). Na loja não vale nada (ver `conta_demo_protegida`).
     demo_admin_email: str = ""
 
     @field_validator("cors_origins", mode="before")
@@ -147,6 +169,18 @@ class Settings(BaseSettings):
     def _split_origins(cls, v: object) -> object:
         if isinstance(v, str):
             return [item.strip() for item in v.split(",") if item.strip()]
+        return v
+
+    @field_validator("prefixo")
+    @classmethod
+    def _prefixo_valido(cls, v: str) -> str:
+        # Recusar no boot, e não "consertar": o proxy encaminha um caminho exato, e um
+        # prefixo que a API entendesse diferente do Caddy daria 404 em tudo, calado.
+        if v and not PREFIXO_VALIDO.fullmatch(v):
+            raise ValueError(
+                f"PREFIXO inválido: {v!r}. Use vazio (a loja) ou um caminho como '/demo': "
+                "começa com barra, só minúsculas, números e hífen, sem barra no fim."
+            )
         return v
 
     @field_validator("timezone_loja")
@@ -215,6 +249,21 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def _demonstracao_nao_emite_nota(self) -> "Settings":
+        """Na demonstração que sobe com a loja (ADR-46), NFC-e desligada, sempre.
+
+        O compose já não passa FISCAL_EMISSOR nem FOCUSNFE_TOKEN ao contêiner da demo, mas a
+        variável chegar por engano (um bloco de `environment` copiado do serviço da loja)
+        faria uma venda de mentira, de quem testa, sair como nota de verdade no CNPJ da loja.
+        Aqui o engano não tem efeito: "no real, nada".
+        """
+        if self.demonstracao:
+            self.fiscal_emissor = "desligado"
+            self.focusnfe_token = SecretStr("")
+            self.fiscal_emitir_automatico = False
+        return self
+
+    @model_validator(mode="after")
     def _url_do_banco(self) -> "Settings":
         """A URL que o asyncpg entende, venha ela do `.env` da loja ou do Neon (ADR-42)."""
         conexao = preparar_url(self.database_url_unpooled or self.database_url)
@@ -257,6 +306,19 @@ class Settings(BaseSettings):
     def producao(self) -> bool:
         """Está servindo a loja de verdade? (qualquer ambiente que não seja dev/test/local)."""
         return self.ambiente.lower() not in {"dev", "test", "local"}
+
+    @property
+    def conta_demo_protegida(self) -> str:
+        """O e-mail (minúsculo, sem espaço) da conta das notas da Apple, ou "" se nenhuma.
+
+        Só numa demonstração — a Vercel (ADR-42) ou a que sobe com a loja (ADR-46) — e só
+        com DEMO_ADMIN_EMAIL: na loja de verdade a mesma variável, se existir por engano,
+        não protege nada (o dono de uma loja real sai como qualquer um). Quem pergunta
+        compara o e-mail do usuário com este texto.
+        """
+        if not (self.vercel or self.demonstracao):
+            return ""
+        return self.demo_admin_email.strip().lower()
 
     def connect_args(self, *, com_teto: bool = True) -> dict[str, Any]:
         """`connect_args` do engine: teto por consulta, SSL e o modo PgBouncer.

@@ -64,8 +64,9 @@ class OperacaoInvalida(AppError):
 
 
 class ContaDeDemonstracao(OperacaoInvalida):
-    """A conta do dono da demonstração (DEMO_ADMIN_EMAIL, na Vercel) não sai nem muda de
-    acesso: é com ela que o próximo revisor da App Store entra (ADR-45)."""
+    """A conta do dono da demonstração (DEMO_ADMIN_EMAIL, na Vercel ou na demo que sobe com
+    a loja em `/demo`) não sai nem muda de acesso: é com ela que o próximo revisor da App
+    Store entra (ADR-45, ADR-46)."""
 
     code = "CONTA_DE_DEMONSTRACAO"
     message = (

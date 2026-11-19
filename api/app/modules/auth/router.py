@@ -13,7 +13,18 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 COOKIE_REFRESH = "loja_refresh"
 
 
-def _guardar_refresh(resposta: Response, token: str) -> None:
+def caminho_do_cookie(request: Request) -> str:
+    """Onde o cookie do refresh vale: as rotas de auth DESTA API, com o prefixo dela.
+
+    A loja e a demonstração moram no mesmo domínio (`/` e `/demo`, ADR-46) e o cookie tem o
+    mesmo nome nas duas. É o caminho que separa: o da demo vale só sob `/demo/api/v1/auth`,
+    então o navegador nunca manda o refresh da loja para a demo, nem o contrário — e sair
+    de uma não derruba a outra.
+    """
+    return f"{request.scope.get('root_path', '')}/api/v1/auth"
+
+
+def _guardar_refresh(resposta: Response, request: Request, token: str) -> None:
     """Grava o refresh num cookie que o JavaScript não enxerga.
 
     O app do celular guarda os tokens no cofre do sistema, mas no navegador não existe
@@ -29,8 +40,14 @@ def _guardar_refresh(resposta: Response, token: str) -> None:
         samesite="strict",
         secure=settings.ambiente.lower() not in {"dev", "test", "local"},
         max_age=settings.refresh_token_expire_days * 24 * 3600,
-        path="/api/v1/auth",
+        path=caminho_do_cookie(request),
     )
+
+
+def apagar_refresh(resposta: Response, request: Request) -> None:
+    """Tira o cookie do refresh do navegador — no MESMO caminho em que foi gravado, senão o
+    navegador o trata como outro cookie e o original fica."""
+    resposta.delete_cookie(COOKIE_REFRESH, path=caminho_do_cookie(request))
 
 
 def _ip_do_cliente(request: Request) -> str | None:
@@ -47,13 +64,14 @@ async def login(
     session: SessionDep, request: Request, resposta: Response, dados: LoginIn
 ) -> TokenOut:
     tokens = await AuthService(session).login(dados.email, dados.senha, _ip_do_cliente(request))
-    _guardar_refresh(resposta, tokens.refresh_token)
+    _guardar_refresh(resposta, request, tokens.refresh_token)
     return tokens
 
 
 @router.post("/refresh", response_model=TokenOut, summary="Renovar sessão (rotaciona o refresh)")
 async def refresh(
     session: SessionDep,
+    request: Request,
     resposta: Response,
     dados: RefreshIn | None = None,
     loja_refresh: Annotated[str | None, Cookie()] = None,
@@ -63,13 +81,14 @@ async def refresh(
     if not token:
         raise TokenInvalido("Sessão não encontrada.")
     tokens = await AuthService(session).refresh(token)
-    _guardar_refresh(resposta, tokens.refresh_token)
+    _guardar_refresh(resposta, request, tokens.refresh_token)
     return tokens
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT, summary="Sair")
 async def logout(
     session: SessionDep,
+    request: Request,
     resposta: Response,
     _: CurrentUser,
     dados: RefreshIn | None = None,
@@ -78,7 +97,7 @@ async def logout(
     token = (dados.refresh_token if dados else None) or loja_refresh
     if token:
         await AuthService(session).logout(token)
-    resposta.delete_cookie(COOKIE_REFRESH, path="/api/v1/auth")
+    apagar_refresh(resposta, request)
 
 
 @router.get("/me", response_model=UsuarioOut, summary="Usuário da sessão atual")
