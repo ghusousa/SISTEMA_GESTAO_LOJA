@@ -542,14 +542,16 @@ copiar_para_nuvem() {
     # Num caminho fixo (`/tmp/rclone.err`), o arquivo era de quem o criou primeiro: criado por
     # outro usuário, o `2>` falhava, e a cópia saía "NÃO consegui enviar" com o rclone bom.
     # E o temporário só diz o motivo, nunca impede o envio: TMPDIR que não existe tenta o /tmp,
-    # e sem nenhum dos dois a cópia sobe assim mesmo, com a frase genérica se falhar. Vazio =
-    # sem temporário (o `2>` vai ao /dev/null, que a saída do script nunca apaga).
+    # e sem nenhum dos dois a cópia sobe assim mesmo, com a frase genérica na tela se falhar. Vazio =
+    # sem temporário: aí o erro do rclone segue pela saída de erro do próprio script (o fd 3 é cópia
+    # dela), e o motivo fica ao menos no journal do timer.
     ERROS_DO_RCLONE="$(mktemp "${TMPDIR:-/tmp}/loja-rclone.XXXXXX" 2>/dev/null)" \
         || ERROS_DO_RCLONE="$(mktemp /tmp/loja-rclone.XXXXXX 2>/dev/null)" \
         || ERROS_DO_RCLONE=""
     [ -z "$ERROS_DO_RCLONE" ] || trap 'rm -f "$ERROS_DO_RCLONE"' EXIT
-    if ! rclone --config "$CONF_RCLONE" copyto "$arquivo" "loja:$pasta/loja-$carimbo.dump" \
-            2>"${ERROS_DO_RCLONE:-/dev/null}"; then
+    if [ -n "$ERROS_DO_RCLONE" ]; then exec 3>"$ERROS_DO_RCLONE"; else exec 3>&2; fi
+    if ! rclone --config "$CONF_RCLONE" copyto "$arquivo" "loja:$pasta/loja-$carimbo.dump" 2>&3; then
+        exec 3>&-
         local motivo=""
         [ -z "$ERROS_DO_RCLONE" ] \
             || motivo="$(tail -2 "$ERROS_DO_RCLONE" 2>/dev/null | tr '\n' ' ')"
@@ -558,6 +560,7 @@ copiar_para_nuvem() {
         printf '  %s\n' "$motivo"
         exit 1
     fi
+    exec 3>&-
     if cifrar_copias_de_fora; then
         ok "enviada para o Drive, cifrada, em $pasta/"
     else

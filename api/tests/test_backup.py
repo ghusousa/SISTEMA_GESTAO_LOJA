@@ -603,8 +603,9 @@ async def test_sem_temporario_o_envio_que_falha_ainda_e_anotado(
     session: AsyncSession, tmp_path: Path, sem: str
 ) -> None:
     """Com o TMPDIR que não existe, o motivo vai a um temporário do /tmp (e some no fim); sem
-    temporário nenhum, a tela recebe a frase genérica — e o /dev/null, que serviu de saída ao
-    rclone, nunca é apagado na saída do script (que roda como root no timer)."""
+    temporário nenhum, a tela recebe a frase genérica e o motivo segue pela saída de erro do
+    script (o journal do timer) — nunca ao /dev/null, que o some, nem apagando o /dev/null na saída
+    do script (que roda como root no timer)."""
     await _ligar_backup(session)
     env = _maquina(tmp_path, TMPDIR=str(tmp_path / "nao-existe"))
     rclone = tmp_path / "bin" / "rclone"
@@ -630,7 +631,8 @@ async def test_sem_temporario_o_envio_que_falha_ainda_e_anotado(
         assert not destino.exists()  # e não fica para trás
         assert MOTIVO_DO_DRIVE in linha.ultimo_erro
     else:
-        assert destino == Path("/dev/null")
+        assert destino != Path("/dev/null")
+        assert MOTIVO_DO_DRIVE in r.stderr  # no journal, ao menos
         assert linha.ultimo_erro == "Não subiu para o Drive: erro do rclone"
 
 
