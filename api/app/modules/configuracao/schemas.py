@@ -76,6 +76,12 @@ class ConfiguracaoPublicaOut(BaseModel):
     #: banco: quem decide é o contêiner (LOJA_DEMONSTRACAO), não quem está logado. Na
     #: Vercel é falso — lá nada muda (ADR-42).
     demonstracao: bool = False
+    #: Este servidor manda o push do chamado do leitor (`NOTIFICACOES_PUSH=expo`, ADR-47)? O
+    #: app só pede a permissão de notificação (e só manda o token) quando é true: ninguém vê
+    #: um pedido de notificação que não vai funcionar. Desligado, o chamado chega ao app
+    #: aberto. Vem da config da máquina, como `demonstracao`; servidor antigo não manda o
+    #: campo, e o app trata ausente como false.
+    notificacoes_push: bool = False
 
     @classmethod
     def de_modelo(cls, config) -> "ConfiguracaoPublicaOut":  # noqa: ANN001
@@ -85,6 +91,7 @@ class ConfiguracaoPublicaOut(BaseModel):
             timezone=settings.timezone_loja,
             vocabulario=_vocabulario_out(config.segmento),
             demonstracao=settings.demonstracao,
+            notificacoes_push=settings.notificacoes_push == "expo",
         )
 
 
@@ -114,6 +121,7 @@ class ConfiguracaoOut(ConfiguracaoPublicaOut):
             serie_nfce=config.serie_nfce,
             vocabulario=_vocabulario_out(config.segmento),
             demonstracao=settings.demonstracao,
+            notificacoes_push=settings.notificacoes_push == "expo",
         )
 
 

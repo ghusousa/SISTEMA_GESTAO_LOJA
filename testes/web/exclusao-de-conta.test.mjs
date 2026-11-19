@@ -34,6 +34,19 @@ test('a própria conta diz o que some e o que fica, e que não tem volta', () =>
   assert.match(t.fim, /^Não tem volta\./);
 });
 
+test('o registro do celular para as notificações some com a conta, nas duas variantes (ADR-47)', () => {
+  // O texto é o MESMO de `mobile/src/lib/exclusaoDeConta.ts`: é o que a pessoa (e o revisor da
+  // loja de app) lê antes de confirmar.
+  assert.ok(
+    textosDaExclusao({ propria: true }).some.includes(
+      'As sessões abertas em todos os aparelhos, o celular ligado como leitor e o registro dele para as notificações.',
+    ),
+  );
+  assert.ok(
+    textosDaExclusao({ propria: false, nome: 'Ana' }).some.some((l) => l.includes('o registro dele para as notificações')),
+  );
+});
+
 test('a conta de outra pessoa leva o nome e aponta o Desativar para afastamento', () => {
   const t = textosDaExclusao({ propria: false, nome: 'Ana Paula' });
   assert.ok(t.some[0].includes('Ana Paula'));

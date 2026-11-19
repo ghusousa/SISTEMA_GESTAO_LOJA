@@ -121,10 +121,13 @@ def registrar_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def _app_error(_: Request, exc: AppError) -> JSONResponse:
         # Retry-After é o cabeçalho padrão do 429: diz ao cliente (e a um humano) quantos
-        # segundos esperar. O front lê daqui para mostrar "tente de novo em X".
+        # segundos esperar. O front lê daqui para mostrar "tente de novo em X". Vale para todo
+        # 429 que saiba o prazo (a força bruta, o chamado do leitor rápido demais), e não só
+        # para um `code`: o próximo 429 ganharia o corpo sem o cabeçalho, calado.
         cabecalhos = (
             {"Retry-After": str(exc.detail["retry_after"])}
-            if exc.code == "MUITAS_TENTATIVAS" and "retry_after" in exc.detail
+            if exc.http_status == status.HTTP_429_TOO_MANY_REQUESTS
+            and "retry_after" in exc.detail
             else None
         )
         return JSONResponse(

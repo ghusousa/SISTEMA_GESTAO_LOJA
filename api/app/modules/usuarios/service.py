@@ -24,6 +24,7 @@ from app.core.permissoes import Pode, pode
 from app.core.security import HASH_DE_MENTIRA, hash_senha_async, verificar_senha_async
 from app.modules.auditoria.service import AuditoriaService
 from app.modules.leitor.service import LeitorService
+from app.modules.notificacoes.service import NotificacoesService
 from app.modules.usuarios.models import Papel, User
 from app.modules.usuarios.repository import UsuarioRepository
 from app.modules.usuarios.schemas import (
@@ -248,12 +249,14 @@ class UsuarioService:
         registrou é documento contábil da loja, não dado dela para levar embora; a linha de
         auditoria é a prestação de contas que o dono precisa guardar (ADR-23).
 
-        Sem histórico, a linha sai inteira: sessões e celular-leitor vão junto pelo
-        CASCADE, e o diário perde o vínculo (`ON DELETE SET NULL`), com o nome congelado.
+        Sem histórico, a linha sai inteira: sessões, celular-leitor e o registro dos aparelhos
+        para as notificações vão junto pelo CASCADE, e o diário perde o vínculo (`ON DELETE
+        SET NULL`), com o nome congelado.
         Com histórico — vendeu, abriu caixa, deu entrada: FKs RESTRICT —, apagar a linha
         daria 500 e reescreveria a contabilidade; ela fica só com o nome e o papel de quem
         fez cada registro, e o que é da CONTA vai embora do mesmo jeito: e-mail (fica livre
-        para uma conta nova), senha, sessões, leitor, comissão e meta (a remuneração da
+        para uma conta nova), senha, sessões e aparelhos (`_derrubar_sessoes`), leitor,
+        comissão e meta (a remuneração da
         pessoa; a comissão de cada venda já está congelada nela, ADR-37), com `deleted_at`
         marcando que ela não existe mais (ADR-45). Nos dois casos o e-mail sai também do
         diário, onde vira máscara, e das tentativas de login; o nome congelado de quem agiu
@@ -311,9 +314,15 @@ class UsuarioService:
         Quem trocou a senha quer justamente cortar o acesso de quem estava dentro — um
         refresh token vazado (celular roubado, funcionário desligado) continuaria válido por
         semanas se as sessões não caíssem junto.
+
+        O registro dos aparelhos para as notificações cai junto (ADR-47): o celular roubado
+        continuaria recebendo o chamado do computador, e o token de push é credencial ao
+        portador. O app que continuar nas mãos certas registra de novo ao entrar. Depois de
+        `refresh_tokens`, na mesma direção de sempre (as portas da renovação da demo, ADR-46).
         """
         await self.session.execute(
             update(RefreshToken)
             .where(RefreshToken.user_id == user_id, RefreshToken.revoked.is_(False))
             .values(revoked=True)
         )
+        await NotificacoesService(self.session).esquecer_usuario(user_id)

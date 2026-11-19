@@ -1757,10 +1757,12 @@ kbd {
   }
 }
 
-/* ------------------------------------------------- celular como leitor (ADR-43)
-   O botão mora no rodapé da barra, à vista de qualquer papel: o celular de qualquer
-   pessoa da equipe vira leitor do computador. Ligado, o botão dá lugar ao selo com o
-   nome de quem está bipando — e o selo é o caminho para desligar. */
+/* ------------------------------------------- celular como leitor (ADR-43, ADR-47)
+   O botão principal mora nas telas que leem código, acima do campo de leitura: "Abrir no
+   app o leitor de código" chama o celular do mesmo login (`.leitor-chamado`, abaixo). O do
+   rodapé da barra, à vista de qualquer papel, é o QR: o celular de outra pessoa, ou o app
+   sem atualizar. Ligado, ele dá lugar ao selo com o nome de quem está bipando — e o selo é
+   um dos caminhos para desligar. */
 
 .lateral__leitor {
   display: flex;
@@ -1854,10 +1856,47 @@ kbd {
   }
 }
 
+/* A área do chamado, ACIMA do campo de leitura: `.pdv__campo` é flex sem quebra (um terceiro
+   item espremeria o campo), e debaixo dele a lista da busca por nome fica sobreposta. Nada
+   aqui é modal: enquanto o celular é chamado, o leitor USB segue bipando. */
+.leitor-chamado {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px 12px;
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+
+.leitor-chamado__acoes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.leitor-chamado__sinal {
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.leitor-chamado__dica {
+  flex-basis: 100%;
+  text-align: right;
+  color: var(--texto-suave);
+}
+
 @media (max-width: 860px) {
   .lateral__leitor {
     width: auto;
     white-space: nowrap;
+  }
+  .leitor-chamado {
+    justify-content: flex-start;
+  }
+  .leitor-chamado__dica {
+    text-align: left;
   }
 }
 

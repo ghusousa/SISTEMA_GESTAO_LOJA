@@ -501,8 +501,9 @@ if [ "$SEM_BACKUP" -eq 0 ]; then
     # `pg_dump -Fc` dentro do contêiner e depois `cp` para fora: o formato comprimido do
     # Postgres restaura com pg_restore e não depende da versão do cliente na máquina.
     # `chmod 600`: é o banco inteiro (CPF, telefones, hashes de senha), e o `docker cp` traz
-    # a permissão de dentro do contêiner, legível por qualquer usuário da máquina.
-    if dk compose exec -T db pg_dump -U loja -d loja -Fc -f /tmp/backup.dump 2>/dev/null \
+    # a permissão de dentro do contêiner, legível por qualquer usuário da máquina. Sem os
+    # dados de `notificacao_aparelhos` (ADR-47): o token de push é credencial ao portador.
+    if dk compose exec -T db pg_dump --exclude-table-data=notificacao_aparelhos -U loja -d loja -Fc -f /tmp/backup.dump 2>/dev/null \
         && dk compose cp db:/tmp/backup.dump "$ARQUIVO_BACKUP" 2>/dev/null \
         && chmod 600 "$ARQUIVO_BACKUP" \
         && dump_abre "$ARQUIVO_BACKUP"; then

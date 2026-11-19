@@ -12,6 +12,7 @@
 import { api, ErroApi } from '../api.js';
 import { ligarBuscaDePeca } from '../busca-peca.js';
 import { criarLeitor, manterFoco } from '../leitor.js';
+import { ligarBotaoDoCelular } from '../leitor-chamado.js';
 import { ir } from '../router.js';
 import {
   carrinho,
@@ -42,6 +43,7 @@ const LAYOUT = html`
   <div class="pagina pagina--larga pdv">
     <div>
       <div class="pdv__leitura">
+        <div class="leitor-chamado" data-leitor-chamado></div>
         <div class="pdv__campo">
           <label class="so-leitor" for="leitura">Código de barras ou nome da peça</label>
           <input
@@ -372,6 +374,7 @@ export function render(raiz) {
   });
   const leitor = criarLeitor({ aoLer: lerCodigo, ignorarQuando: busca.aberta });
   leitor.ligar();
+  const soltarChamado = ligarBotaoDoCelular(raiz.querySelector('[data-leitor-chamado]'));
   const pararFoco = manterFoco(campo);
   const desinscrever = carrinho.inscrever(pintar);
   const metaDoDia = ligarMetaDoDia(raiz.querySelector('[data-meta]'));
@@ -381,6 +384,7 @@ export function render(raiz) {
   return () => {
     metaDoDia.desligar();
     leitor.desligar();
+    soltarChamado();
     busca.desligar();
     pararFoco();
     desinscrever();

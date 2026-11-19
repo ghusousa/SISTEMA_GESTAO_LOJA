@@ -17,6 +17,8 @@ import test from 'node:test';
 import {
   ALFABETO,
   avisoDaEntrega,
+  avisoDaNotificacao,
+  avisoDoChamadoQueAcabou,
   avisoDoFimNoComputador,
   avisoDosDescartados,
   BUSCA_COM_CANAL_MS,
@@ -26,6 +28,7 @@ import {
   ESPERA_DA_DONA_MS,
   ESPERA_DA_TELA_MS,
   ESPERA_DO_LEITOR_MS,
+  estadoDoChamado,
   formatarCodigo,
   hostDoEndereco,
   intervaloDaBusca,
@@ -33,7 +36,9 @@ import {
   mesmoServidor,
   montarConvite,
   normalizarCodigo,
+  oQueMostrar,
   PRAZO_DO_BIPE_MS,
+  ROTULOS_DO_CHAMADO,
   umaPorVez,
   venceu,
 } from '../../web/js/leitor-remoto.js';
@@ -697,4 +702,155 @@ test('criarDonaDaAba: a cópia de "Duplicar aba" não retoma o leitor da aba de 
 test('criarDonaDaAba: sem BroadcastChannel, ninguém responde e nada muda', async () => {
   const dona = criarDonaDaAba({ canal: null, meu: () => 7 });
   assert.equal(await dona.outraCuida(7), false);
+});
+
+// ------------------------------------------------------------- o chamado (ADR-47)
+
+const CHAMADO = { id: 41, status: 'AGUARDANDO', chamado: true, sinal: '7K3', codigo: null };
+const DO_QR = { id: 40, status: 'AGUARDANDO', chamado: false, sinal: null, codigo: 'ABC234' };
+
+test('estadoDoChamado: livre, pedindo, chamando, qr e ligado', () => {
+  assert.equal(estadoDoChamado({ pareamento: null, pedindo: false }), 'livre');
+  assert.equal(estadoDoChamado({}), 'livre');
+  assert.equal(estadoDoChamado({ pareamento: { ...CHAMADO, status: 'EXPIRADO' } }), 'livre');
+  assert.equal(estadoDoChamado({ pareamento: { ...CHAMADO, status: 'ENCERRADO' } }), 'livre');
+  // O clique pinta "pedindo" antes da resposta — também por cima do chamado que vai ser trocado.
+  assert.equal(estadoDoChamado({ pareamento: null, pedindo: true }), 'pedindo');
+  assert.equal(estadoDoChamado({ pareamento: CHAMADO, pedindo: true }), 'pedindo');
+  assert.equal(estadoDoChamado({ pareamento: CHAMADO }), 'chamando');
+  assert.equal(estadoDoChamado({ pareamento: DO_QR }), 'qr');
+  // Pareamento sem o campo (como era antes da ADR-47) é QR.
+  assert.equal(estadoDoChamado({ pareamento: { id: 9, status: 'AGUARDANDO', codigo: 'ABC234' } }), 'qr');
+  assert.equal(estadoDoChamado({ pareamento: { ...CHAMADO, status: 'ATIVO' } }), 'ligado');
+  assert.equal(estadoDoChamado({ pareamento: { ...DO_QR, status: 'ATIVO' } }), 'ligado');
+});
+
+const acoesDe = (m) => m.acoes.map((a) => a.acao);
+const rotulosDe = (m) => m.acoes.map((a) => a.rotulo);
+
+test('oQueMostrar livre: o botão do pedido do dono e o QR recolhido num link', () => {
+  const m = oQueMostrar('livre', {});
+  assert.deepEqual(acoesDe(m), ['chamar', 'qr']);
+  assert.deepEqual(rotulosDe(m), ['Abrir no app o leitor de código', 'Celular de outra pessoa? Ler o QR']);
+  assert.equal(m.acoes[0].jeito, 'principal');
+  assert.equal(m.acoes[1].jeito, 'link');
+  assert.equal(m.texto, '');
+  assert.deepEqual(m.trechos, []);
+  assert.equal(m.dica, null);
+  assert.equal(m.travado, false);
+  assert.equal(ROTULOS_DO_CHAMADO.chamar, 'Abrir no app o leitor de código');
+});
+
+test('oQueMostrar pedindo: "Chamando…" já no clique, sem sinal e com tudo apagado', () => {
+  const m = oQueMostrar('pedindo', { pareamento: null });
+  assert.equal(m.texto, 'Chamando o leitor no seu celular…');
+  assert.equal(m.dica, null, 'a situação da notificação ainda não chegou');
+  assert.deepEqual(acoesDe(m), ['chamar-de-novo', 'cancelar', 'qr']);
+  assert.equal(m.travado, true);
+  // O sinal do chamado que está sendo TROCADO não aparece: não é o que o celular vai mostrar.
+  assert.doesNotMatch(oQueMostrar('pedindo', { pareamento: CHAMADO }).texto, /7K3/);
+});
+
+test('oQueMostrar chamando: o sinal em destaque, a dica da notificação e as três saídas', () => {
+  const m = oQueMostrar('chamando', {
+    pareamento: CHAMADO,
+    notificacao: { situacao: 'SEM_CELULAR', celulares: 0 },
+  });
+  assert.equal(m.texto, 'Chamando o leitor no seu celular… Sinal 7K3 — confira o mesmo no celular.');
+  assert.deepEqual(m.trechos, ['Chamando o leitor no seu celular… Sinal ', { sinal: '7K3' }, ' — confira o mesmo no celular.']);
+  assert.equal(m.dica, avisoDaNotificacao('SEM_CELULAR', { celulares: 0 }));
+  assert.deepEqual(acoesDe(m), ['chamar-de-novo', 'cancelar', 'qr']);
+  assert.deepEqual(rotulosDe(m), ['Chamar de novo', 'Cancelar', 'Ler o QR']);
+  assert.equal(m.travado, false);
+  assert.equal(oQueMostrar('chamando', { pareamento: CHAMADO, ocupado: true }).travado, true, 'cancelando');
+  // Depois do F5 a situação não vem de novo: a frase geral.
+  assert.equal(oQueMostrar('chamando', { pareamento: CHAMADO }).dica, avisoDaNotificacao(null));
+});
+
+test('oQueMostrar qr: esperando a leitura, com o QR de novo e o cancelar', () => {
+  const m = oQueMostrar('qr', { pareamento: DO_QR });
+  assert.equal(m.texto, 'Esperando um celular ler o QR…');
+  assert.deepEqual(acoesDe(m), ['mostrar-qr', 'cancelar']);
+  assert.deepEqual(rotulosDe(m), ['Mostrar o QR', 'Cancelar']);
+  assert.equal(m.dica, null);
+});
+
+test('oQueMostrar ligado: com o sinal pelo chamado; pelo QR, sem sinal e sem "Chamar de novo"', () => {
+  const pelo = oQueMostrar('ligado', { pareamento: { ...CHAMADO, status: 'ATIVO', aparelho_nome: 'Maria' } });
+  assert.equal(pelo.texto, 'Celular de Maria ligado (sinal 7K3): as leituras caem aqui.');
+  assert.deepEqual(pelo.trechos[1], { sinal: '7K3' });
+  assert.deepEqual(acoesDe(pelo), ['chamar-de-novo', 'desligar']);
+  assert.deepEqual(rotulosDe(pelo), ['Chamar de novo', 'Desligar']);
+
+  // Pelo QR pode ser o celular de OUTRA pessoa: chamar o do próprio login o desligaria.
+  const qr = oQueMostrar('ligado', { pareamento: { ...DO_QR, status: 'ATIVO', aparelho_nome: 'Bia' } });
+  assert.equal(qr.texto, 'Celular de Bia ligado: as leituras caem aqui.');
+  assert.deepEqual(acoesDe(qr), ['desligar']);
+  assert.ok(!rotulosDe(qr).includes('Chamar de novo'));
+
+  // O nome vem do servidor e vai como TEXTO (a tela usa textContent): nada de marcação aqui.
+  const nome = '<img src=x onerror=alert(1)>';
+  const comNome = oQueMostrar('ligado', { pareamento: { ...CHAMADO, status: 'ATIVO', aparelho_nome: nome } });
+  assert.equal(comNome.trechos[0], `Celular de ${nome} ligado (sinal `);
+  assert.equal(oQueMostrar('ligado', { pareamento: { ...DO_QR, status: 'ATIVO' } }).texto, 'Celular de alguém ligado: as leituras caem aqui.');
+});
+
+test('avisoDaNotificacao: cada situação diz por que o celular foi avisado, ou não', () => {
+  assert.equal(
+    avisoDaNotificacao('ENVIADA', { celulares: 1 }),
+    'Notificação enviada a 1 celular com o seu login: toque nela — ou abra o app, o chamado aparece lá.',
+  );
+  assert.match(avisoDaNotificacao('ENVIADA', { celulares: 2 }), /^Notificação enviada a 2 celulares com o seu login/);
+  assert.equal(
+    avisoDaNotificacao('SEM_CELULAR'),
+    'Nenhum celular com o seu login tem o app atualizado. Atualize o app, entre com o MESMO login e abra-o — ou leia o QR.',
+  );
+  assert.equal(
+    avisoDaNotificacao('SEM_NOTIFICACAO'),
+    'O celular com o seu login não recebe notificações deste app: com o app aberto, o chamado aparece lá. Para receber com o app fechado: no celular, Mais → Leitor do computador.',
+  );
+  assert.equal(
+    avisoDaNotificacao('SEM_CHAVE_DA_APPLE'),
+    'O iPhone ainda não recebe as notificações deste app (falta um passo de quem publica o app): com o app aberto, o chamado aparece lá — ou leia o QR.',
+  );
+  assert.equal(
+    avisoDaNotificacao('FALHOU'),
+    'A notificação não saiu agora: com o app aberto, o chamado aparece lá — ou leia o QR.',
+  );
+  // F5 ou reenvio da mesma chave: o servidor não conta de novo; e um valor que este web não conhece.
+  const geral = 'Toque na notificação no celular — ou abra o app: o chamado aparece lá.';
+  assert.equal(avisoDaNotificacao(null), geral);
+  assert.equal(avisoDaNotificacao(undefined), geral);
+  assert.equal(avisoDaNotificacao('OUTRA_COISA'), geral);
+});
+
+test('avisoDaNotificacao: o push desligado (o padrão do servidor) só fala do app aberto e do QR', () => {
+  const desligada = avisoDaNotificacao('DESLIGADA', { celulares: 1 });
+  assert.equal(desligada, 'Com o app aberto no celular, o chamado aparece lá. Ou leia o QR.');
+  assert.doesNotMatch(desligada, /chave|Apple|publica|notifica/i);
+});
+
+test('avisoDaNotificacao: nenhuma frase manda o dono a um passo que é de quem publica o app', () => {
+  for (const situacao of ['ENVIADA', 'SEM_CELULAR', 'SEM_NOTIFICACAO', 'DESLIGADA', 'SEM_CHAVE_DA_APPLE', 'FALHOU', null]) {
+    const frase = avisoDaNotificacao(situacao, { celulares: 1 });
+    assert.doesNotMatch(frase, /\bdono\b|README|mobile\/|publicar\/|APNs|Expo/i, `${situacao}: ${frase}`);
+    // Toda frase deixa um caminho que funciona sem a notificação.
+    assert.match(frase, /abra|aberto|QR/, `${situacao}: ${frase}`);
+  }
+});
+
+test('avisoDoChamadoQueAcabou: venceu sem atender, ou o teto de leitores do login', () => {
+  assert.equal(
+    avisoDoChamadoQueAcabou({ status: 'EXPIRADO' }),
+    'O celular não atendeu em 5 min. Toque de novo em “Abrir no app o leitor de código” — ou leia o QR.',
+  );
+  assert.match(avisoDoChamadoQueAcabou({ status: 'EXPIRADO' }), new RegExp(ROTULOS_DO_CHAMADO.chamar));
+  assert.equal(
+    avisoDoChamadoQueAcabou({ status: 'ENCERRADO', motivo_encerramento: 'SUBSTITUIDO' }),
+    'Este chamado foi encerrado: há leitores demais abertos com o seu login.',
+  );
+  // Cancelado aqui (COMPUTADOR), sumido (404) ou ainda vivo: sem aviso.
+  assert.equal(avisoDoChamadoQueAcabou({ status: 'ENCERRADO', motivo_encerramento: 'COMPUTADOR' }), null);
+  assert.equal(avisoDoChamadoQueAcabou(null), null);
+  assert.equal(avisoDoChamadoQueAcabou({ status: 'AGUARDANDO' }), null);
 });

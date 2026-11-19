@@ -12,6 +12,7 @@
 import { api, ErroApi } from '../api.js';
 import { ligarBuscaDePeca } from '../busca-peca.js';
 import { criarLeitor, manterFoco } from '../leitor.js';
+import { ligarBotaoDoCelular } from '../leitor-chamado.js';
 import { ir } from '../router.js';
 import {
   ajuda,
@@ -35,6 +36,7 @@ export function render(raiz) {
     <div class="pagina pagina--larga pdv">
       <div>
         <div class="pdv__leitura">
+          <div class="leitor-chamado" data-leitor-chamado></div>
           <div class="pdv__campo">
             <label class="so-leitor" for="leitura-inventario">Código de barras ou nome da peça</label>
             <input id="leitura-inventario" data-leitor type="text" autocomplete="off"
@@ -309,11 +311,13 @@ export function render(raiz) {
     ocupadoQuando: () => enviando,
   });
   leitor.ligar();
+  const soltarChamado = ligarBotaoDoCelular(raiz.querySelector('[data-leitor-chamado]'));
   const pararFoco = manterFoco(campo);
   pintar();
 
   return () => {
     leitor.desligar();
+    soltarChamado();
     busca.desligar();
     pararFoco();
   };
