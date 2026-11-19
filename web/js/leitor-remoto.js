@@ -487,15 +487,22 @@ export function estadoDoChamado({ pareamento, pedindo } = {}) {
   return 'livre';
 }
 
+/** A dica com o push desligado no servidor: o chamado chega ao app ABERTO, pela faixa. */
+const SEM_PUSH = 'Com o app aberto no celular, o chamado aparece lá. Ou leia o QR.';
+
 /**
  * Por que o celular foi avisado, ou não — a dica debaixo do sinal, pela `notificacao` da resposta
- * do chamado. `null` (F5, reenvio da mesma chave: o servidor não conta de novo) cai na frase
- * geral. Nenhuma fala de dono nem de repositório: a chave da Apple é de quem publica o app, não
- * de cada loja. E a do push desligado — o padrão do servidor — não fala de chave nem de Apple.
+ * do chamado. Nenhuma fala de dono nem de repositório: a chave da Apple é de quem publica o app,
+ * não de cada loja. E a do push desligado — o padrão do servidor — não fala de chave nem de Apple.
+ *
+ * Sem situação (F5, reenvio da mesma chave: o servidor não conta de novo), quem decide é
+ * `pushLigado` — o `notificacoes_push` de `GET /configuracao`. Desligado (o padrão, e o que vale
+ * enquanto a configuração não chega), a frase é a da DESLIGADA: ninguém espera uma notificação
+ * que não vai chegar.
  * @param {string | null | undefined} situacao
- * @param {{ celulares?: number }} [extra]
+ * @param {{ celulares?: number, pushLigado?: boolean }} [extra]
  */
-export function avisoDaNotificacao(situacao, { celulares = 0 } = {}) {
+export function avisoDaNotificacao(situacao, { celulares = 0, pushLigado = false } = {}) {
   switch (situacao) {
     case 'ENVIADA':
       return `Notificação enviada a ${plural(celulares, 'celular', 'celulares')} com o seu login: toque nela — ou abra o app, o chamado aparece lá.`;
@@ -504,13 +511,13 @@ export function avisoDaNotificacao(situacao, { celulares = 0 } = {}) {
     case 'SEM_NOTIFICACAO':
       return 'O celular com o seu login não recebe notificações deste app: com o app aberto, o chamado aparece lá. Para receber com o app fechado: no celular, Mais → Leitor do computador.';
     case 'DESLIGADA':
-      return 'Com o app aberto no celular, o chamado aparece lá. Ou leia o QR.';
+      return SEM_PUSH;
     case 'SEM_CHAVE_DA_APPLE':
       return 'O iPhone ainda não recebe as notificações deste app (falta um passo de quem publica o app): com o app aberto, o chamado aparece lá — ou leia o QR.';
     case 'FALHOU':
       return 'A notificação não saiu agora: com o app aberto, o chamado aparece lá — ou leia o QR.';
     default:
-      return 'Toque na notificação no celular — ou abra o app: o chamado aparece lá.';
+      return pushLigado ? 'Toque na notificação no celular — ou abra o app: o chamado aparece lá.' : SEM_PUSH;
   }
 }
 
@@ -541,10 +548,13 @@ const acao = (nome, rotulo, jeito = 'botao') => ({ acao: nome, rotulo, jeito });
  *
  * O "ligado" pelo QR não oferece "Chamar de novo": pode ser o celular de OUTRA pessoa, e chamar
  * o do próprio login o desligaria.
+ *
+ * `pushLigado` (o `notificacoes_push` de `GET /configuracao`) só muda a dica sem situação
+ * (`avisoDaNotificacao`).
  * @param {string} estado o de `estadoDoChamado`
- * @param {{ pareamento?: object | null, notificacao?: { situacao?: string | null, celulares?: number } | null, ocupado?: boolean }} [leitor]
+ * @param {{ pareamento?: object | null, notificacao?: { situacao?: string | null, celulares?: number } | null, ocupado?: boolean, pushLigado?: boolean }} [leitor]
  */
-export function oQueMostrar(estado, { pareamento = null, notificacao = null, ocupado = false } = {}) {
+export function oQueMostrar(estado, { pareamento = null, notificacao = null, ocupado = false, pushLigado = false } = {}) {
   const sinal = pareamento?.sinal || null;
   let trechos = [];
   let dica = null;
@@ -558,7 +568,10 @@ export function oQueMostrar(estado, { pareamento = null, notificacao = null, ocu
         ? ['Chamando o leitor no seu celular… Sinal ', { sinal }, ' — confira o mesmo no celular.']
         : ['Chamando o leitor no seu celular…'];
     if (estado === 'chamando') {
-      dica = avisoDaNotificacao(notificacao?.situacao ?? null, { celulares: notificacao?.celulares ?? 0 });
+      dica = avisoDaNotificacao(notificacao?.situacao ?? null, {
+        celulares: notificacao?.celulares ?? 0,
+        pushLigado,
+      });
     }
     acoes = [
       acao('chamar-de-novo', ROTULOS_DO_CHAMADO.chamarDeNovo),
