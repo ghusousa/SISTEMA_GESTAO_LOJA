@@ -39,6 +39,45 @@ globalThis.sessionStorage = {
 };
 // Sem BroadcastChannel ninguém mais cuida do leitor: a aba dona tem teste próprio.
 globalThis.BroadcastChannel = undefined;
+/**
+ * Para os casos de mais de uma aba, e para a pergunta às outras abas (`outraCuida`), que sem canal
+ * responde na hora e esconde a espera de até 300 ms do navegador de verdade: um BroadcastChannel
+ * de mentira, que entrega às OUTRAS instâncias do mesmo nome, depois, como o de verdade. Vale para
+ * as páginas que ligarem o leitor depois dele (`dona()` cria o canal uma vez por página).
+ * `fecharAsAbertas()` é o F5 das páginas de até agora: o módulo de mentira continua vivo no
+ * teste, mas a página de verdade morreu, e o canal dela não ouve nem responde mais nada (o de
+ * um documento que saiu de cena não recebe mensagem).
+ */
+function abasConversando() {
+  const canais = new Set();
+  globalThis.BroadcastChannel = class {
+    constructor(nome) {
+      this.nome = nome;
+      this.ouvintes = [];
+      canais.add(this);
+    }
+    addEventListener(tipo, fn) {
+      if (tipo === 'message') this.ouvintes.push(fn);
+    }
+    postMessage(data) {
+      if (!canais.has(this)) return;
+      for (const outro of canais) {
+        if (outro !== this && outro.nome === this.nome) {
+          setImmediate(() => canais.has(outro) && outro.ouvintes.forEach((fn) => fn({ data })));
+        }
+      }
+    }
+    close() {
+      canais.delete(this);
+    }
+  };
+  return {
+    fecharAsAbertas: () => canais.forEach((canal) => canal.close()),
+    desligar: () => {
+      globalThis.BroadcastChannel = undefined;
+    },
+  };
+}
 const areaDeAvisos = { append: (caixa) => avisos.push({ texto: caixa.textContent, tipo: caixa.className }) };
 globalThis.document = {
   visibilityState: 'visible',
@@ -810,23 +849,7 @@ test('a sessão cai (sem Sair) enquanto o F5 retoma: nada é encerrado, e a chav
 // ------------------------------------------------- uma aba por leitor, também no clique
 
 test('"Duplicar aba" com a chave sem resposta: o clique da aba de origem não adota o chamado que a cópia já cuida', async () => {
-  // O BroadcastChannel de mentira: entrega às OUTRAS instâncias do mesmo nome, depois, como o de verdade.
-  const canais = new Set();
-  globalThis.BroadcastChannel = class {
-    constructor(nome) {
-      this.nome = nome;
-      this.ouvintes = [];
-      canais.add(this);
-    }
-    addEventListener(tipo, fn) {
-      if (tipo === 'message') this.ouvintes.push(fn);
-    }
-    postMessage(data) {
-      for (const outro of canais) {
-        if (outro !== this && outro.nome === this.nome) setImmediate(() => outro.ouvintes.forEach((fn) => fn({ data })));
-      }
-    }
-  };
+  const abas = abasConversando();
   leitor.pararLeitorCelular();
   guarda.clear();
   pedidos.length = 0;
@@ -879,6 +902,54 @@ test('"Duplicar aba" com a chave sem resposta: o clique da aba de origem não ad
     abaA.pararLeitorCelular();
     abaB.pararLeitorCelular();
   } finally {
-    globalThis.BroadcastChannel = undefined;
+    abas.desligar();
+  }
+});
+
+test('"Duplicar aba" durante o F5 que retoma o leitor ligado (ADR-43): a cópia que pergunta antes de a origem retomar ouve que ela cuida — um leitor, uma aba', async () => {
+  const abas = abasConversando();
+  try {
+    leitor.pararLeitorCelular();
+    guarda.clear();
+    pedidos.length = 0;
+    guarda.set('leitor-celular', '40'); // o celular da Bia, ligado pelo QR antes do F5
+    const daBia = qr(40, { status: 'ATIVO', aparelho_nome: 'Bia' });
+    responder = (p) => {
+      if (p.caminho === '/leitor/pareamentos/40') return { corpo: daBia };
+      if (p.caminho === '/leitor/pareamentos/40/retirar') return { corpo: lote(daBia) };
+      return naoEsperado(p);
+    };
+    // A origem (o F5) pergunta às outras abas antes de retomar o leitor guardado.
+    const abaA = await import('../../web/js/leitor-celular.js?f5-ligado-duplicado-A');
+    abaA.ligarLeitorCelular(moldura);
+    await assentar();
+    // "Duplicar aba" nesse meio; a cópia carrega rápido e pergunta pelo MESMO leitor, depois de A.
+    const daCopia = new Map(guarda);
+    for (const antes = Date.now(); Date.now() === antes; );
+    const daAbaA = new Map(guarda);
+    guarda.clear();
+    for (const [k, v] of daCopia) guarda.set(k, v);
+    const abaB = await import('../../web/js/leitor-celular.js?f5-ligado-duplicado-B');
+    abaB.ligarLeitorCelular(moldura);
+    await assentar();
+    assert.equal(abaB.estadoDoLeitor().pareamento, null, 'a cópia não retoma o leitor da origem');
+    assert.equal(estado(abaB), 'livre');
+    assert.equal(guarda.has('leitor-celular'), false, 'e esquece o id que herdou');
+
+    guarda.clear();
+    for (const [k, v] of daAbaA) guarda.set(k, v);
+    mock.timers.tick(300); // ninguém respondeu a A: ela retoma
+    await assentar();
+    assert.equal(estado(abaA), 'ligado');
+    assert.equal(abaA.estadoDoLeitor().pareamento.id, 40);
+    assert.equal(
+      pedidos.filter((p) => p.metodo === 'GET' && p.caminho === '/leitor/pareamentos/40').length,
+      1,
+      'só a origem buscou o leitor: a fila dele é retirada por UMA aba',
+    );
+    abaA.pararLeitorCelular();
+    abaB.pararLeitorCelular();
+  } finally {
+    abas.desligar();
   }
 });
