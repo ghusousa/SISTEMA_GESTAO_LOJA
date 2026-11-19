@@ -31,8 +31,10 @@
  *   autoteste os aprova de propósito: o guarda recebido por parâmetro de outra função
  *   (`salvar(localStorage)`), o devolvido por uma função (`obterGuarda().setItem(`), o que
  *   mora num objeto (`this.guarda`), `new window.BroadcastChannel(`,
- *   `Storage.prototype.setItem.call(`, `Reflect.set(` e `Object.assign(`. Use o guarda pelo
- *   nome ou por um apelido.
+ *   `Storage.prototype.setItem.call(`, `Reflect.set(`, `Object.assign(`, o método emprestado
+ *   (`localStorage.getItem.bind(`), o `'x' in localStorage` e a constante `= nomeNaRaiz(`
+ *   que recebe outro valor depois. Use o guarda pelo nome ou por um apelido, e a chave numa
+ *   `const`.
  *
  * Comentário não conta (linha que começa com `*`, `/*`, `//`, e o `<!-- -->` do HTML): é
  * onde estas regras são explicadas. `js/vendor/` é de terceiros e não fala com o servidor.
@@ -486,9 +488,11 @@ test('a varredura reprova o que o ADR-46 corrigiu, e não o que está certo (sem
 
 test('os limites do cabeçalho passam, de propósito: a varredura lê o texto e não segue valor', () => {
   // A chave é solta em todos, e nenhum é pego: o guarda chega por outra função, por um objeto
-  // ou por um método emprestado, e no texto isso não se distingue de uma coleção qualquer.
-  // Por isso o cabeçalho manda usar o guarda pelo nome ou por um apelido. Se um dia a
-  // varredura pegar um deles, ele sai daqui (e do cabeçalho) e vai para os reprovados.
+  // ou por um método emprestado, e no texto isso não se distingue de uma coleção qualquer; a
+  // chave do `in` não passa por método nem colchete; e a constante vale pela declaração.
+  // Por isso o cabeçalho manda usar o guarda pelo nome ou por um apelido, e a chave numa
+  // `const`. Se um dia a varredura pegar um deles, ele sai daqui (e do cabeçalho) e vai para
+  // os reprovados.
   const limites = {
     'js/guarda-por-parametro.js': "const CHAVE = nomeNaRaiz('x');\nfunction salvar(guarda) {\n  guarda.setItem('formato', v);\n}\nsalvar(localStorage);",
     'js/guarda-de-funcao.js': "const CHAVE = nomeNaRaiz('x');\nobterGuarda().setItem('formato', v);",
@@ -497,6 +501,9 @@ test('os limites do cabeçalho passam, de propósito: a varredura lê o texto e 
     'js/metodo-emprestado.js': "const CHAVE = nomeNaRaiz('x');\nStorage.prototype.setItem.call(localStorage, 'formato', v);",
     'js/reflect.js': "const CHAVE = nomeNaRaiz('x');\nReflect.set(localStorage, 'formato', v);",
     'js/object-assign.js': "const CHAVE = nomeNaRaiz('x');\nObject.assign(localStorage, { formato: v });",
+    'js/metodo-por-bind.js': "const CHAVE = nomeNaRaiz('x');\nconst ler = localStorage.getItem.bind(localStorage);\nler('formato');",
+    'js/chave-no-in.js': "const CHAVE = nomeNaRaiz('x');\nif ('formato' in localStorage) f();",
+    'js/constante-reatribuida.js': "let CHAVE = nomeNaRaiz('x');\nCHAVE = 'formato';\nlocalStorage.setItem(CHAVE, v);",
   };
   for (const [nome, texto] of Object.entries(limites)) {
     assert.deepEqual(infracoesEm([{ nome, texto }]), [], `${nome} passou a ser pego: tire-o dos limites (e do cabeçalho) e ponha nos reprovados`);
