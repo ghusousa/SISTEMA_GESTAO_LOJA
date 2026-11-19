@@ -25,9 +25,11 @@ import { z } from 'zod';
 
 import { baseAtual, mensagemDoErro } from '@/api/client';
 import { Botao, Campo } from '@/components/ui';
+import { deslocamentoDoTeclado } from '@/lib/areaSegura';
 import { ALVO_TOQUE, cores, espaco, fonte, raio } from '@/lib/tema';
 import { useServidorStore } from '@/stores/servidorStore';
 import { useAuthStore } from '@/stores/authStore';
+import { useAlturaDasFaixas } from '@/hooks/useAlturaDasFaixas';
 import { useBarraDeStatusEscura } from '@/hooks/useBarraDeStatusEscura';
 import { useLoja } from '@/hooks/useLoja';
 
@@ -49,6 +51,9 @@ export default function Login() {
   const avisoDaEntrada = useAuthStore((e) => e.avisoDaEntrada);
   const [erroServidor, setErroServidor] = useState<string | null>(null);
   const insets = useSafeAreaInsets();
+  // Na demonstração (e sem conexão) esta tela começa debaixo da faixa do topo, e o teclado é
+  // medido na tela inteira: sem descontar a faixa, a altura dela ficaria atrás do teclado.
+  const alturaDasFaixas = useAlturaDasFaixas();
   // Lido do store para a linha do rodapé reagir na hora em que o endereço muda; sem isso,
   // quem acabou de configurar o servidor voltaria para o login vendo o endereço antigo.
   useServidorStore((e) => e.endereco);
@@ -82,6 +87,7 @@ export default function Login() {
     <KeyboardAvoidingView
       style={s.tela}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={deslocamentoDoTeclado(alturaDasFaixas)}
     >
       <Pressable
         onPress={() => router.push('/servidor')}

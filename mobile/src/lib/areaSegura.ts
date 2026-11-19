@@ -101,3 +101,17 @@ export interface Bordas {
 export function areaAbaixoDasFaixas<T extends Bordas>(janela: T, temFaixa: boolean): T {
   return temFaixa && janela.top !== 0 ? { ...janela, top: 0 } : janela;
 }
+
+/**
+ * O `keyboardVerticalOffset` de um `KeyboardAvoidingView` de tela que mora DEBAIXO das faixas
+ * do topo: a altura delas, medida (`useAlturaDasFaixas`) — sem faixa, zero, e nada muda.
+ *
+ * O RN (0.81, `KeyboardAvoidingView.js`) mede o KAV em relação ao PAI, que começa debaixo das
+ * faixas, e compara com o topo do teclado medido na tela inteira. Sem o desconto ele acolchoa
+ * de menos justo a altura das faixas, e essa altura do fim do formulário fica atrás do teclado
+ * (na entrada da demonstração, o rodapé e, com o Texto Maior, o "Entrar"). Para cima, como as
+ * áreas acima: nunca fica atrás; medida inválida conta como sem faixa.
+ */
+export function deslocamentoDoTeclado(alturaDasFaixas: number): number {
+  return Number.isFinite(alturaDasFaixas) && alturaDasFaixas > 0 ? Math.ceil(alturaDasFaixas) : 0;
+}

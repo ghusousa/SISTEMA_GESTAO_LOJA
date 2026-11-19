@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   ABA,
   areaAbaixoDasFaixas,
+  deslocamentoDoTeclado,
   medidasDaBarraDeAbas,
   respiroDeBaixo,
   respiroDeCima,
@@ -101,4 +102,24 @@ test('sem faixa, a área é a MESMA (o mesmo objeto): nada redesenha à toa', ()
   // Topo já zero (export web, aparelho sem recorte): nada a tirar.
   const semTopo = { top: 0, right: 0, bottom: 0, left: 0 };
   assert.equal(areaAbaixoDasFaixas(semTopo, true), semTopo);
+});
+
+test('teclado debaixo das faixas: o KeyboardAvoidingView desconta a altura delas (sem faixa, nada)', () => {
+  // A conta do KeyboardAvoidingView do RN 0.81 (behavior 'padding'): o KAV medido em relação
+  // ao PAI — que começa debaixo das faixas — e o topo do teclado medido na tela inteira.
+  const acolchoa = (kav: { y: number; altura: number }, topoDoTeclado: number, deslocamento: number) =>
+    Math.max(kav.y + kav.altura - (topoDoTeclado - deslocamento), 0);
+  const tela = 667; // iPhone SE
+  const teclado = 260; // com a barra de sugestões
+  const faixa = 45; // a da demonstração: barra de status (20) + respiro + frase + respiro
+  const entrada = { y: 0, altura: tela - faixa }; // a tela de entrada, debaixo da faixa
+  assert.equal(acolchoa(entrada, tela - teclado, 0), teclado - faixa, 'sem desconto, a altura da faixa fica atrás do teclado');
+  assert.equal(acolchoa(entrada, tela - teclado, deslocamentoDoTeclado(faixa)), teclado, 'com ele, o teclado inteiro');
+  // Sem faixa (a loja de verdade, com conexão), o KAV fica como sempre foi.
+  assert.equal(deslocamentoDoTeclado(0), 0);
+  assert.equal(acolchoa({ y: 0, altura: tela }, tela - teclado, deslocamentoDoTeclado(0)), teclado);
+  // Com o Texto Maior a frase quebra e a medida vem quebrada: para cima, nunca fica atrás.
+  assert.equal(deslocamentoDoTeclado(44.2), 45);
+  assert.equal(deslocamentoDoTeclado(Number.NaN), 0);
+  assert.equal(deslocamentoDoTeclado(-1), 0);
 });

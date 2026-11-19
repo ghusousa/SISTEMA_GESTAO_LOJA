@@ -11,14 +11,16 @@
  * Quem fica no topo ocupa a barra de status. A navegação embaixo, então, lê a área segura
  * com o topo zerado (`areaAbaixoDasFaixas`) — senão o cabeçalho azul somaria a ilha de novo,
  * numa tira vazia. O Modal de tela cheia, que desenha por cima de tudo a partir do topo da
- * tela, lê a da janela (`useAreaDaJanela`).
+ * tela, lê a da janela (`useAreaDaJanela`). E o teclado, medido na tela inteira: o
+ * KeyboardAvoidingView de tela aqui embaixo desconta a altura das faixas (`useAlturaDasFaixas`).
  */
 
-import { type ReactNode, useMemo } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { type ReactNode, useCallback, useMemo, useState } from 'react';
+import { type LayoutChangeEvent, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaInsetsContext, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BannerConexao, useConexao } from '@/components/BannerConexao';
+import { AlturaDasFaixas } from '@/hooks/useAlturaDasFaixas';
 import { AreaDaJanela } from '@/hooks/useAreaDaJanela';
 import { useLoja } from '@/hooks/useLoja';
 import { areaAbaixoDasFaixas, respiroDeCima } from '@/lib/areaSegura';
@@ -33,13 +35,22 @@ export function ComFaixasNoTopo({ children }: { children: ReactNode }) {
     () => areaAbaixoDasFaixas(janela, semConexao || demonstracao),
     [janela, semConexao, demonstracao],
   );
+  // A navegação começa debaixo do bloco; o teclado é medido na tela inteira. Quem desvia do
+  // teclado lá embaixo (a entrada) desconta esta altura (`useAlturaDasFaixas`).
+  const [alturaDasFaixas, setAlturaDasFaixas] = useState(0);
+  const medir = useCallback((e: LayoutChangeEvent) => setAlturaDasFaixas(e.nativeEvent.layout.height), []);
 
   return (
     <AreaDaJanela.Provider value={janela}>
-      <BannerConexao />
-      {/* Debaixo do aviso de sem conexão, a barra de status já está coberta por ele. */}
-      {demonstracao && <FaixaDeDemonstracao areaDeCima={semConexao ? 0 : janela.top} />}
-      <SafeAreaInsetsContext.Provider value={abaixo}>{children}</SafeAreaInsetsContext.Provider>
+      {/* Sem faixa nenhuma, o bloco mede 0 e nada muda embaixo. */}
+      <View onLayout={medir}>
+        <BannerConexao />
+        {/* Debaixo do aviso de sem conexão, a barra de status já está coberta por ele. */}
+        {demonstracao && <FaixaDeDemonstracao areaDeCima={semConexao ? 0 : janela.top} />}
+      </View>
+      <AlturaDasFaixas.Provider value={alturaDasFaixas}>
+        <SafeAreaInsetsContext.Provider value={abaixo}>{children}</SafeAreaInsetsContext.Provider>
+      </AlturaDasFaixas.Provider>
     </AreaDaJanela.Provider>
   );
 }
