@@ -1658,6 +1658,45 @@ async def test_dns_num_tec_br_pede_o_arroba_e_mostra_o_nome_inteiro(tmp_path: Pa
             "  ·  Valor 203.0.113.10") in r.stdout, _saida(r, loja)
 
 
+@precisa_do_bash
+async def test_dominio_em_maiusculas_vai_para_minusculas_venha_de_onde_vier(tmp_path: Path) -> None:
+    """O domínio nunca ia para minúsculas: "MINHALOJA.TEC.BR" dava "Nome MINHALOJA" (o certo é
+    @), e o CORS_ORIGINS não casava com a Origin que o navegador manda (em minúsculas). Nome de
+    domínio não diferencia caixa: vale para o parâmetro e para o .env de antes."""
+    loja, env = _instalador(tmp_path)
+    _dns(tmp_path, ip="203.0.113.10", v4=())
+
+    r = _instalar(loja, env, "MINHALOJA.TEC.BR")
+
+    assert r.returncode == 0, _saida(r, loja)
+    assert ("Crie no painel do domínio:   Tipo A  ·  Nome @ — o registro completo é minhaloja.tec.br"
+            "  ·  Valor 203.0.113.10") in r.stdout, _saida(r, loja)
+    assert "https://minhaloja.tec.br/app/" in r.stdout
+    dotenv = _ler_env(loja)
+    assert (dotenv["DOMINIO"], dotenv["ENDERECO_PROXY"], dotenv["CORS_ORIGINS"]) == (
+        "minhaloja.tec.br", "minhaloja.tec.br", "https://minhaloja.tec.br")
+    assert "MINHALOJA" not in (tmp_path / "ctr" / "getent.log").read_text()
+
+    # Um .env de antes, com o domínio como foi digitado: a conferida usa minúsculas, e o arquivo
+    # também passa a usar (o ./atualizar.sh lê só o .env).
+    (loja / ".env").write_text(
+        ENV_DE_ANTES.replace("DOMINIO=192.168.0.10\nENDERECO_PROXY=:80",
+                             "DOMINIO=Loja.MinhaLoja.Com.Br\nENDERECO_PROXY=Loja.MinhaLoja.Com.Br")
+        .replace("AMBIENTE=local\nCORS_ORIGINS=*",
+                 "AMBIENTE=producao\nCORS_ORIGINS=https://Loja.MinhaLoja.Com.Br"))
+
+    de_antes = _religar(loja, env)
+
+    assert de_antes.returncode == 0, _saida(de_antes, loja)
+    assert ("Crie no painel do domínio:   Tipo A  ·  Nome loja — o registro completo é "
+            "loja.minhaloja.com.br  ·  Valor 203.0.113.10") in de_antes.stdout, _saida(de_antes, loja)
+    assert "https://loja.minhaloja.com.br/app/" in de_antes.stdout
+    dotenv = _ler_env(loja)
+    assert (dotenv["DOMINIO"], dotenv["ENDERECO_PROXY"], dotenv["CORS_ORIGINS"]) == (
+        "loja.minhaloja.com.br", "loja.minhaloja.com.br", "https://loja.minhaloja.com.br")
+    assert dotenv["SENHA_BANCO"] == "senhaDoBancoDeAntes123"  # o resto fica como estava
+
+
 @precisa_do_git
 async def test_repositorio_publico_sem_token_tambem_confere_o_ci(tmp_path: Path) -> None:
     """Sem credencial gravada (repositório público), a pergunta vai sem token — e a resposta

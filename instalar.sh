@@ -231,6 +231,11 @@ explicar_ip_publico() {
 # disso (instalação nova interativa, por parâmetro, e reaproveitando um .env), e uma cópia
 # esquecida deixava o resumo final quebrar com "URL_FINAL: unbound variable".
 definir_endereco() {
+    # Em minúsculas, venha de onde vier (parâmetro, pergunta, .env reaproveitado): nome de
+    # domínio não diferencia caixa, e o navegador manda a Origin em minúsculas — com o domínio
+    # como foi digitado, "MINHALOJA.TEC.BR" dava "Nome MINHALOJA" (o certo é @) e um
+    # CORS_ORIGINS que não casava com a Origin de ninguém.
+    DOMINIO="$(printf '%s' "$DOMINIO" | tr '[:upper:]' '[:lower:]')"
     # Recusa em vez de "instalar e avisar": um aviso no fim da instalação não fecha a porta
     # que a instalação acabou de abrir. Vale também para o .env reaproveitado.
     ip_publico "$DOMINIO" && morrer "$(explicar_ip_publico "$DOMINIO")"
@@ -775,6 +780,14 @@ if [ -f .env ] && [ "$FORCAR" -eq 0 ]; then
     unset COMPOSE_PROFILES DEMO_SENHA_BANCO DEMO_JWT_SECRET DEMO_ADMIN_EMAIL DEMO_ADMIN_SENHA
     REAPROVEITADO=1
     definir_endereco
+    # Um .env de antes das minúsculas: o domínio vai em minúsculas também no arquivo. Exportado
+    # daqui, ele já vence o .env no compose desta rodada — e o das próximas (o ./atualizar.sh lê
+    # só o .env) subiria a loja com o endereço de antes.
+    for chave in DOMINIO ENDERECO_PROXY CORS_ORIGINS; do
+        antes="$(valor_no_env "$chave")"
+        depois="$(printf '%s' "$antes" | tr '[:upper:]' '[:lower:]')"
+        if [ "$antes" != "$depois" ]; then gravar_no_env "$chave" "$depois"; fi
+    done
 else
     REAPROVEITADO=0
 

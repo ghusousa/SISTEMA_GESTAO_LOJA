@@ -172,8 +172,9 @@ novo, o resumo diz "veja com `./demo.sh --mostrar`".
 
 ### Com domínio: HTTPS sem trabalho
 
-Informando um domínio, o Caddy pede o certificado ao Let's Encrypt e o renova sozinho. Para isso
-funcionar, duas coisas precisam estar prontas:
+Informando um domínio, o Caddy pede o certificado ao Let's Encrypt e o renova sozinho (digitado com
+maiúsculas ou não, ele vai em minúsculas para o `.env`: nome de domínio não diferencia caixa, e o
+navegador manda a origem assim). Para isso funcionar, duas coisas precisam estar prontas:
 
 1. O **DNS do domínio aponta para o IP deste servidor** (registro `A`).
 2. As **portas 80 e 443 estão abertas** — é por elas que o Let's Encrypt confere que o domínio é
