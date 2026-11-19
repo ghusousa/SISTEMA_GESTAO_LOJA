@@ -198,10 +198,28 @@ server {
     # seguram N vezes ele). 2M neste bloco, que é o JSON; a foto tem o `location` dela, abaixo.
     client_max_body_size 2M;
     gzip on;
-    gzip_types application/json application/javascript text/css text/html;
+    # Sem text/html: o Nginx já o comprime sempre, e repetido o `nginx -t` avisa.
+    gzip_types application/json application/javascript text/css;
 
     location / {
         proxy_pass http://unix:/run/loja/api.sock;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # O tempo real (WebSocket em /api/v1/tempo-real). Sem este bloco, o Nginx fala HTTP/1.0
+    # com a API e não repassa o Upgrade: o socket não sobe, e as telas ficam sem o aviso de
+    # mudança. A conexão fica aberta enquanto a tela estiver ligada: o ping da API (a cada 25 s)
+    # já cabe nos 60 s padrão do Nginx, e o `proxy_read_timeout` longo é a folga para um ping
+    # que atrase não derrubar o socket.
+    location = /api/v1/tempo-real {
+        proxy_pass http://unix:/run/loja/api.sock;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 1h;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
