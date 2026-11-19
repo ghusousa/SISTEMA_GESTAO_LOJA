@@ -603,9 +603,9 @@ if (!REAIS) {
   await cenario('Servidor de demonstração fora do combinado: --enviar recusado, com cada problema', async ({ conferir, guardar }) => {
     const casos = [
       [{ papel: 'GERENTE', codigos: [], semLeitor: true, semExclusao: true, privacidade: 404 }, ['não de dono', 'não existe no servidor de demonstração', 'não tem o leitor pelo celular', 'não tem a exclusão da própria conta', 'política de privacidade da ficha não abre'], 'conta não-dono, código, leitor, exclusão e privacidade'],
-      [{ senha: 'outra-senha' }, ['não entra no servidor de demonstração', 'APPLE_DEMO_PASSWORD', 'Redeploy da demo a recria'], 'senha da demo errada (ou conta excluída lá)'],
-      [{ protegida: false }, ['não está protegida no servidor de demonstração', 'DEMO_ADMIN_EMAIL'], 'conta demo sem a proteção'],
-      [{ saldo: 2 }, ['tem 2 peça(s) em estoque', 'Reponha pela Entrada'], 'código demo quase sem estoque'],
+      [{ senha: 'outra-senha' }, ['não entra no servidor de demonstração', 'APPLE_DEMO_PASSWORD', './demo.sh --mostrar', 'Redeploy da demo a recria'], 'senha da demo errada (ou conta excluída lá)'],
+      [{ protegida: false }, ['não está protegida no servidor de demonstração', 'DEMO_ADMIN_EMAIL', './demo.sh --mostrar', './atualizar.sh'], 'conta demo sem a proteção'],
+      [{ saldo: 2 }, ['tem 2 peça(s) em estoque', 'Reponha pela Entrada', './demo.sh --renovar'], 'código demo quase sem estoque'],
       [{ fora: true }, ['não respondeu ao /health'], 'servidor fora do ar'],
     ];
     for (const [opcoes, frases, rotulo] of casos) {
@@ -621,6 +621,40 @@ if (!REAIS) {
       conferir(!saida.includes(SENHA_DEMO), `${rotulo}: a senha não aparece`);
       conferir(!demo.chamadas.some((c) => c.metodo === 'EXCLUIU A CONTA'), `${rotulo}: nenhuma conta excluída na demo`);
     }
+  });
+
+  await cenario('Demonstração que sobe com a loja, em <domínio>/demo: o caminho chega à ficha, às notas e a toda conferência', async ({ conferir, guardar }) => {
+    // O que o ./demo.sh --mostrar manda levar ao GitHub (ADR-46): o endereço COM o /demo. A
+    // loja de verdade mora na raiz do mesmo domínio — o servidor de mentira responde como ela
+    // fora do /demo, e qualquer chamada que perder o caminho cai lá.
+    const comCaminho = join(PASTA_CONFIG, 'config-demo-da-loja.json');
+    const config = JSON.parse(readFileSync(join(PASTA_CONFIG, 'config.json'), 'utf8'));
+    writeFileSync(comCaminho, JSON.stringify({ ...config, url_servidor_demo: 'https://loja.teste.dev/demo/' }));
+    const demo = await subirDemoFalso({ prefixo: '/demo' });
+    const mock = await subirMock();
+    const { codigo, saida } = await publicar(['--enviar', ...COM_VIDEO], {
+      porta: mock.porta,
+      capturas: baseSintetica,
+      env: { PUBLICAR_CONFIG: comCaminho, PUBLICAR_DEMO_BASE: `${demo.base}/demo` },
+    });
+    guardar(saida);
+    const e = mock.estado;
+    await mock.fechar();
+    await demo.fechar();
+    conferir(codigo === 0 && e.envios.length === 1, 'enviado para revisão: a demo em /demo passou na conferência');
+    conferir(infoPt(e, 'INFO1')?.privacyPolicyUrl === 'https://loja.teste.dev/demo/privacidade', 'a URL de privacidade da ficha é a da DEMO (com o /demo)');
+    const loc = Object.values(e.versaoLocs).find((l) => l.versao === 'VER1')?.atributos ?? {};
+    conferir(loc.description?.includes('https://loja.teste.dev/demo/privacidade'), 'a descrição leva a privacidade com o /demo');
+    const notas = e.revisoes.VER1?.atributos.notes ?? '';
+    conferir(notas.includes('Server: https://loja.teste.dev/demo\n'), 'as notas mandam o revisor ao endereço com o /demo (sem a barra do fim)');
+    const feitas = demo.chamadas.map((c) => `${c.metodo} ${c.cheio}`);
+    conferir(
+      ['GET /demo/health', 'POST /demo/api/v1/auth/login', 'GET /demo/api/v1/variantes/codigo-barras/7890000000000', 'GET /demo/api/v1/leitor/pareamentos/0', 'DELETE /demo/api/v1/usuarios/me', 'POST /demo/api/v1/auth/logout', 'GET /demo/privacidade'].every((c) => feitas.includes(c)),
+      'conferiu tudo debaixo do /demo: no ar, login, código, leitor, exclusão, privacidade e a sessão encerrada',
+    );
+    const naLoja = demo.chamadas.filter((c) => c.naLoja).map((c) => `${c.metodo} ${c.cheio}`);
+    conferir(naLoja.length === 0, `nenhuma chamada foi à loja de verdade, na raiz${naLoja.length ? ` (${naLoja.join(', ')})` : ''}`);
+    conferir(!saida.includes(SENHA_DEMO), 'a senha da demo não aparece');
   });
 
   await cenario('Só a chave no GitHub (o resto do padroes.json): a ficha sobe sem senha da demo nem telefone; o --enviar pede os dois', async ({ conferir, guardar }) => {
@@ -647,7 +681,10 @@ if (!REAIS) {
     const envio = await publicar(['--enviar', ...COM_VIDEO], { porta: mock.porta, capturas: baseSintetica, env: { PUBLICAR_CONFIG: soChave } });
     guardar(envio.saida);
     conferir(envio.codigo === 1 && envio.saida.includes('--enviar recusado'), '--enviar recusado');
-    conferir(envio.saida.includes('APPLE_DEMO_PASSWORD') && envio.saida.includes('DEMO_ADMIN_SENHA'), 'pede a senha da demo e diz onde ela está');
+    conferir(
+      envio.saida.includes('APPLE_DEMO_PASSWORD') && envio.saida.includes('./demo.sh --mostrar') && envio.saida.includes('DEMO_ADMIN_SENHA'),
+      'pede a senha da demo e diz onde ela está (na demo da loja e na da Vercel)',
+    );
     conferir(envio.saida.includes('APPLE_TELEFONE_CONTATO'), 'pede o telefone de contato');
     conferir(!chamadasDaDemo(antesDaDemo).includes('POST /api/v1/auth/login'), 'sem a senha, nem tenta entrar na demo');
     conferir(mock.estado.envios.length === 0, 'continua sem envio para revisão');

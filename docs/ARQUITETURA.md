@@ -1750,7 +1750,12 @@ e não pode criar Secret (um agente, por exemplo) publica assim. O issuer e o ti
 `ci.mjs`), nunca por saída que contenha Secret. O `app.json` guarda o `projectId` da Expo; sem
 `owner`, porque do SDK 53 em diante o eas-cli não o exige nem com token de robô. O endereço que o revisor usa é
 `url_servidor_demo` (padrão `https://loja-tria.vercel.app`, ADR-42) e a política de
-privacidade sai de `<servidor>/privacidade`, que o próprio sistema serve. Entrada do formulário
+privacidade sai de `<servidor>/privacidade`, que o próprio sistema serve. O endereço pode ter
+CAMINHO — a demonstração que sobe com a loja mora em `https://<domínio>/demo` (ADR-46) —, então
+toda junção (rotas da conferência, privacidade, notas) é por texto sobre a base inteira, nunca
+`new URL('/x', base)`, que apagaria o `/demo` e conferiria a loja de verdade no lugar da demo;
+`servidorDemo()` (`ficha.mjs`) recusa o que não é base (http, `?`, `#`, `@`, `//`, `/app`,
+`/api`) antes de ele chegar às notas. Entrada do formulário
 vai por `env`, nunca colada no script (`${{ }}` no `run:` viraria comando num runner com
 token). *Consequências:* publicar é um clique por rodada (build; depois, revisão), sem Mac;
 os segredos são os mesmos do Obras e moram no GitHub, nunca no repositório nem no log
@@ -1844,7 +1849,9 @@ no site com outro idioma principal → pt-BR vira o principal e as localizaçõe
 (versão e appInfo) são apagadas, ou travariam o envio vazias. *6,9" fora da rodada:* o conjunto
 velho da versão é apagado. *Preço:* só o ponto 0,00 da lista inteira (paginada); sem ele, nada é
 gravado e fica pendência. *Serviços externos* escritos a partir do código: dado e login só do
-servidor da loja; demonstração na Vercel com Neon e Vercel Blob; NFC-e opcional (Focus NFe),
+servidor da loja; a demonstração é uma loja só de dados fictícios, isolada de qualquer loja de
+verdade (as notas e o guia não amarram um provedor: ela pode ser a da instalação, ADR-46, ou a da
+Vercel, ADR-42, e quem cita os provedores é a política de privacidade); NFC-e opcional (Focus NFe),
 desligada na demonstração; e a biblioteca de rede do React Native (NetInfo), que no iPhone testa a
 conexão com um pedido vazio ao `generate_204` do Google — dito nas notas, para não afirmar
 "nenhum outro servidor". *Teste em iPhones reais* (experimental até a 1ª rodada real): perfil
@@ -1865,7 +1872,8 @@ a Apple pediu e com o servidor da demonstração conferido; mudar prints ou a li
 pede refazer o guia (o CI acusa). A Apple de mentira ganhou um envio ativo por
 plataforma, o estado `UNRESOLVED_ISSUES`, anexos, aparelhos, localizações de outro idioma, pontos
 de preço paginados e builds antigos da mesma versão; `teste/demo-falso.mjs` faz o servidor de
-demonstração.
+demonstração (com `prefixo: '/demo'`, a demo debaixo do caminho e a loja de verdade na raiz: o
+cenário de `rodar.mjs` e o `servidor-demo.test.mjs` provam que nenhuma chamada perde o caminho).
 *Capturas do app de verdade (nov/2026):* as 20 imagens saem de `mobile/publicar/capturas/gerar.sh`
 — banco local de teste com a loja da seed (`seed_demo.py`, "Loja Tria", roupas), a API e o export
 web do próprio app, fotografado cena a cena pelo Playwright numa tela de iPhone (áreas seguras

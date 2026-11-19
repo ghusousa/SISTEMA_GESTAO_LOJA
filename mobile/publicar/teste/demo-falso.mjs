@@ -7,6 +7,11 @@
  * sem estoque, deploy sem o leitor, sem a exclusão da própria conta ou sem a proteção da conta
  * demo, privacidade fora, servidor fora. `chamadas` guarda o que chegou — o teste confere que
  * ninguém mandou a senha DA DEMO para a rota de excluir a própria conta (e que nada saiu).
+ *
+ * `prefixo: '/demo'` é a demonstração que sobe com a loja (ADR-46): tudo dela mora debaixo do
+ * caminho, e fora dele responde a LOJA DE VERDADE (no ar, sem a conta da demo) — como no proxy
+ * da instalação. Cada chamada guarda `caminho` (o de dentro do prefixo), `cheio` (o que chegou)
+ * e `naLoja` (foi à loja da raiz: o publicador perdeu o caminho).
  */
 
 import { createServer } from 'node:http';
@@ -22,6 +27,7 @@ const PADRAO = {
   saldo: 12, // peças do código demo em estoque
   privacidade: 200,
   fora: false, // /health devolve 503
+  prefixo: '', // '/demo': a demo mora debaixo dele, e a loja de verdade na raiz
 };
 
 export function subirDemoFalso(opcoes = {}) {
@@ -43,9 +49,20 @@ export function subirDemoFalso(opcoes = {}) {
       } catch {
         /* sem JSON */
       }
-      const caminho = url.pathname;
-      chamadas.push({ metodo: req.method, caminho, corpo });
+      const cheio = url.pathname;
+      const dentro = !o.prefixo || cheio === o.prefixo || cheio.startsWith(`${o.prefixo}/`);
+      const caminho = dentro ? cheio.slice(o.prefixo.length) || '/' : cheio;
+      chamadas.push({ metodo: req.method, caminho, cheio, corpo, naLoja: !dentro });
 
+      if (!dentro) {
+        // A loja de verdade, na raiz do mesmo domínio: está no ar, mas a conta da demo não
+        // existe nela — e nenhuma rota dela pode valer como a demonstração.
+        if (caminho === '/health') return json(res, 200, { status: 'ok', ambiente: 'producao' });
+        if (caminho === '/api/v1/auth/login') {
+          return json(res, 401, { code: 'CREDENCIAIS_INVALIDAS', message: 'E-mail ou senha incorretos.', detail: {} });
+        }
+        return json(res, 404, { detail: 'Not Found' });
+      }
       if (caminho === '/health') return o.fora ? json(res, 503, { detail: 'fora' }) : json(res, 200, { status: 'ok', ambiente: 'producao' });
       if (caminho === '/privacidade' && req.method === 'GET') {
         res.writeHead(o.privacidade, { 'Content-Type': 'text/html; charset=utf-8' });

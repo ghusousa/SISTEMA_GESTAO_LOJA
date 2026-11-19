@@ -5,7 +5,7 @@ Server: {{SERVIDOR_DEMO}}
 E-mail: {{EMAIL_DEMO}}
 Password: {{SENHA_DEMO}}
 Barcode to type: {{CODIGO_DEMO}}
-Shop OWNER account: every screen is visible. Test data: sell, cancel, return freely.
+Shop OWNER account: every screen is visible. Fictitious data only, isolated from any real shop: sell, cancel, return freely.
 
 1) SCREEN RECORDING: attachment {{VIDEO}}, made on a physical {{APARELHO_DO_VIDEO}}. From app launch: server setup, sign-in, camera permission, a sale, creating a staff account, deleting accounts.
 
@@ -15,7 +15,7 @@ Shop OWNER account: every screen is visible. Test data: sell, cancel, return fre
 
 4) SET UP AND ACCESS
 1. On the sign-in screen tap the GEAR (top right): "Conectar à loja" opens.
-2. In "Endereço do servidor" type the server above, with https://, and tap "Conectar".
+2. In "Endereço do servidor" type the server above exactly as written (with https://), and tap "Conectar".
 3. Enter e-mail and password, tap "Entrar": the "Vender" tab (point of sale) opens.
 4. Add an item: "Ler código de barras" (camera), "Digitar código" (type the barcode above) or "Buscar" (part of a name, e.g. "cami").
 {{LINHA_ETIQUETAS}}
@@ -29,7 +29,7 @@ ACCOUNT DELETION (5.1.1(v)), inside the app:
 - Owner, a staff account: Mais > Usuários > (pessoa) > Excluir conta ("pessoa" is the person's card).
 The demo account is protected (can't be deleted) for the next reviewer: please create a staff account and delete it either way.
 
-5) EXTERNAL SERVICES: data and sign-in come only from the shop's own server (FastAPI + PostgreSQL, installed by the shop). The demo server runs on Vercel, with Neon (PostgreSQL) and Vercel Blob (item photos). NFC-e (Brazilian e-receipt) is optional, via an accredited issuer (Focus NFe); off in the demo. No payments in the app (the card terminal is separate; the app only records the method), no AI, no third-party sign-in, no analytics or ad SDKs. The network library only checks connectivity (empty request to Google's generate_204).
+5) EXTERNAL SERVICES: data and sign-in come only from the shop's own server (FastAPI + PostgreSQL, installed by the shop). NFC-e (Brazilian e-receipt) is optional, via an accredited issuer (Focus NFe); off in the demo. No payments in the app (the card terminal is separate; the app only records the method), no AI, no third-party sign-in, no analytics or ad SDKs. The network library only checks connectivity (empty request to Google's generate_204).
 
 6) REGIONS: Brazil only, in Portuguese (Brazil); the same everywhere.
 

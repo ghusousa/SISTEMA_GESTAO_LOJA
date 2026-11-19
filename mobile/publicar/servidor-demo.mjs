@@ -18,16 +18,40 @@
  * Antes, nada disso era conferido: senha trocada, código digitado errado ou banco recarregado
  * só apareciam dias depois, numa recusa por 2.1. Agora cada falha vira pendência e o envio não
  * sai. Nenhuma mensagem leva a senha.
+ *
+ * O servidor pode morar num caminho: a demonstração que sobe com a loja fica em <domínio>/demo
+ * (ADR-46), e a loja de verdade, na raiz do mesmo domínio. Toda rota é juntada à base por
+ * TEXTO — new URL('/health', base) apagaria o /demo e conferiria a LOJA no lugar da demo.
+ * As frases dizem o remédio nas duas formas de rodar a demo: a da loja instalada (./demo.sh)
+ * e a da Vercel (ADR-42).
  */
 
 import { randomBytes } from 'node:crypto';
 
-const ESPERA_MS = 20_000; // a Vercel acorda a função fria em alguns segundos
+// Servidor frio leva alguns segundos: a função da Vercel acordando, a demo recém-renovada.
+const ESPERA_MS = 20_000;
 /** Peças do código demo que sobram para o revisor vender (e cancelar, e devolver) à vontade. */
 export const SALDO_MINIMO_DEMO = 3;
 
-/** Junta a base (sem barra no fim) com o caminho. */
+/** Como o código deste commit chega ao servidor da demo, nas duas formas de rodá-la. */
+const ATUALIZE_A_DEMO =
+  'atualize o servidor de demonstração com o código deste commit (na loja instalada, ./atualizar.sh; na Vercel, um Redeploy)';
+const primeiraMaiuscula = (frase) => `${frase[0].toUpperCase()}${frase.slice(1)}`;
+
+/** Junta a base (sem barra no fim) com o caminho, por texto: o caminho da base fica. */
 const em = (base, caminho) => `${base.replace(/\/+$/, '')}${caminho}`;
+
+/**
+ * A URL que mora debaixo de `de` passa a morar debaixo de `para`, com o mesmo resto; a de
+ * outro lugar volta como veio. "Debaixo" é no limite do caminho: https://x/demo é base de
+ * https://x/demo/privacidade, mas não de https://x/demonstracao/privacidade.
+ */
+export function trocarBase(url, de, para) {
+  const origem = de.replace(/\/+$/, '');
+  const resto = url.startsWith(origem) ? url.slice(origem.length) : null;
+  if (resto === null || !(resto === '' || /^[/?#]/.test(resto))) return url;
+  return `${para.replace(/\/+$/, '')}${resto}`;
+}
 
 async function chamar(url, { metodo = 'GET', token, corpo, tempoMs = ESPERA_MS } = {}) {
   const cabecalhos = { Accept: 'application/json' };
@@ -71,7 +95,8 @@ export async function conferirServidorDemo({ base, servidor = base, email, senha
   if (saude.status !== 200 || saude.json?.status !== 'ok') {
     problemas.push(
       `O servidor de demonstração (${servidor}) não respondeu ao /health (${comoFalhou(saude)}). ` +
-        'O revisor não conseguiria nem conectar: confira o deploy e rode de novo.',
+        'O revisor não conseguiria nem conectar: confira que ele está no ar (na loja instalada, ./demo.sh --mostrar ' +
+        'diz o endereço e se ela responde; na Vercel, o deploy) e rode de novo.',
     );
     return { problemas, conferidos };
   }
@@ -81,11 +106,13 @@ export async function conferirServidorDemo({ base, servidor = base, email, senha
   if (login.status !== 200 || !login.json?.access_token) {
     const motivo =
       login.status === 401
-        ? 'e-mail ou senha não conferem — veja a variável APPLE_EMAIL_DEMO e o segredo APPLE_DEMO_PASSWORD. Se a ' +
-          'conta foi excluída no servidor de demonstração (antes da proteção da conta demo), um Redeploy da demo a ' +
-          'recria com DEMO_ADMIN_EMAIL e DEMO_ADMIN_SENHA da Vercel'
+        ? 'e-mail ou senha não conferem — veja a variável APPLE_EMAIL_DEMO e o segredo APPLE_DEMO_PASSWORD (ou a ' +
+          'senha gravada na Apple pelo workflow "Senha da conta demo na Apple"). Na demonstração que sobe com a loja, ' +
+          './demo.sh --mostrar (na máquina dela) diz o e-mail e a senha, e cada subida da demo (ou ./demo.sh ' +
+          '--renovar) refaz a conta com eles; na Vercel, um Redeploy da demo a recria com DEMO_ADMIN_EMAIL e ' +
+          'DEMO_ADMIN_SENHA'
         : login.status === 429
-          ? 'o login da conta está travado por tentativas erradas; espere 15 min'
+          ? 'o login está travado por tentativas erradas; espere 15 min'
           : comoFalhou(login);
     problemas.push(`A conta demo (${email}) não entra no servidor de demonstração: ${motivo}.`);
     return { problemas, conferidos };
@@ -111,7 +138,7 @@ export async function conferirServidorDemo({ base, servidor = base, email, senha
         problemas.push(
           `O código de barras demo ${codigo} existe, mas tem ${saldo} peça(s) em estoque: as notas mandam vender, ` +
             `e o PDV recusa peça sem estoque. Reponha pela Entrada na demo (Estoque › Entrada, ao menos ${SALDO_MINIMO_DEMO}) ` +
-            'e rode de novo.',
+            '— ou, na demonstração que sobe com a loja, volte os dados ao começo com ./demo.sh --renovar — e rode de novo.',
         );
       }
     } else if (peca.status === 404) {
@@ -131,7 +158,7 @@ export async function conferirServidorDemo({ base, servidor = base, email, senha
     } else {
       problemas.push(
         `O servidor de demonstração não tem o leitor pelo celular (${comoFalhou(leitor)}), que as notas mandam testar: ` +
-          'atualize o deploy da demo com o código deste commit.',
+          `${ATUALIZE_A_DEMO}.`,
       );
     }
 
@@ -156,15 +183,16 @@ export async function conferirServidorDemo({ base, servidor = base, email, senha
       } else {
         problemas.push(
           `A conta demo (${email}) não está protegida no servidor de demonstração (${comoFalhou(protecao)}): o revisor ` +
-            'que criar outro dono pode excluí-la, e a próxima revisão não entra. Atualize o deploy da demo com o código ' +
-            'deste commit e confira que DEMO_ADMIN_EMAIL (Vercel) é o mesmo e-mail de APPLE_EMAIL_DEMO.',
+            `que criar outro dono pode excluí-la, e a próxima revisão não entra. ${primeiraMaiuscula(ATUALIZE_A_DEMO)} ` +
+            'e confira que a conta protegida lá (DEMO_ADMIN_EMAIL: ./demo.sh --mostrar na loja instalada, as ' +
+            'Environment Variables na Vercel) é o mesmo e-mail de APPLE_EMAIL_DEMO.',
         );
       }
     } else {
       problemas.push(
         `O servidor de demonstração não tem a exclusão da própria conta (${comoFalhou(exclusao)}${
           campos.length ? `, campos: ${campos.join(', ')}` : ''
-        }), que as notas mandam testar (5.1.1(v)): atualize o deploy da demo com o código deste commit.`,
+        }), que as notas mandam testar (5.1.1(v)): ${ATUALIZE_A_DEMO}.`,
       );
     }
   } finally {

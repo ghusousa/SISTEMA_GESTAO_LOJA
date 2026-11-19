@@ -56,8 +56,13 @@ As notas citam a lista e o vídeo por marcadores (`{{APARELHOS_TESTADOS}}`, `{{A
   a rota rodar) e, para a proteção, uma senha aleatória: a recusa da conta da demonstração vem
   antes de a senha ser conferida, e uma senha que nunca confere não exclui nada. Nenhuma
   mensagem leva a senha da demo. Login recusado (401): confira `APPLE_EMAIL_DEMO` e
-  `APPLE_DEMO_PASSWORD`; se a conta foi excluída lá antes da proteção, um Redeploy da demo a
-  recria com `DEMO_ADMIN_EMAIL`/`DEMO_ADMIN_SENHA` da Vercel (que tem de ser o mesmo e-mail).
+  `APPLE_DEMO_PASSWORD` contra o servidor — na demonstração que sobe com a loja (ADR-46),
+  `./demo.sh --mostrar` na máquina dela diz os dois, e cada subida da demo (ou
+  `./demo.sh --renovar`) refaz a conta com eles; na Vercel (ADR-42), um Redeploy da demo a
+  recria com `DEMO_ADMIN_EMAIL`/`DEMO_ADMIN_SENHA` de lá (que tem de ser o mesmo e-mail).
+  O servidor pode ter caminho (`https://loja.seudominio.com.br/demo`): toda rota é juntada por
+  texto à base inteira — nunca `new URL('/x', base)`, que apagaria o `/demo` e conferiria a
+  loja de verdade no lugar da demonstração.
 
 O que as notas e o guia dizem da **exclusão de conta** (5.1.1(v)) é o que o app faz: qualquer
 pessoa em `Mais > Minha conta > Excluir minha conta` (pede a senha, diz o que some e o que fica,
@@ -211,7 +216,7 @@ da revisão:
 | `EXPO_TOKEN` | expo.dev → Account settings → Access tokens (o nome do token lá é livre; o do Secret, não) | compilar, enviar |
 | `ASC_KEY_ID` | App Store Connect → Usuários e acesso → Integrações → API → **Chaves da equipe** → coluna "ID da chave". Chave com acesso **Administrador** (Desenvolvedor não mexe na ficha nem envia para revisão) | ficha, enviar, revisão |
 | `ASC_KEY_P8` | o TEXTO de dentro do arquivo `AuthKey_<ID>.p8` dessa chave (Bloco de Notas → Ctrl+A → Ctrl+C), não o nome do arquivo — a Apple só deixa baixar uma vez. Linhas juntadas ou sem BEGIN/END ainda servem; se não for a chave, o passo diz o que parece ter sido colado (sem mostrá-lo) | ficha, enviar, revisão |
-| `APPLE_DEMO_PASSWORD` | a senha da conta demo do revisor: a mesma de `DEMO_ADMIN_SENHA` na Vercel. **Ou, sem Secret:** o workflow **"Senha da conta demo na Apple"** (`senha-demo.yml`, entrada mascarada no log antes de qualquer uso) grava a senha no campo "Senha" da revisão na Apple, e o publicador passa a usar a que está lá | só a revisão |
+| `APPLE_DEMO_PASSWORD` | a senha da conta demo do revisor: na demonstração que sobe com a loja, a que `./demo.sh --mostrar` mostra (na máquina dela); na Vercel, a de `DEMO_ADMIN_SENHA`. **Ou, sem Secret:** o workflow **"Senha da conta demo na Apple"** (`senha-demo.yml`, entrada mascarada no log antes de qualquer uso) grava a senha no campo "Senha" da revisão na Apple, e o publicador passa a usar a que está lá | só a revisão |
 
 **O que não é segredo já está no repositório**, em `publicar/padroes.json`: o Issuer ID da chave,
 o time da Apple (Team ID e tipo), nome e e-mail de contato, URL de suporte, copyright, conta
@@ -226,7 +231,7 @@ podem ser Variable ou Secret; o resto, só Variable — Secret com esses nomes �
 | `APPLE_TEAM_ID`, `APPLE_TEAM_TYPE` | `apple_team_id`, `apple_team_type` |
 | `APPLE_EMAIL_SUPORTE`, `APPLE_URL_SUPORTE`, `APPLE_NOME_CONTATO`, `APPLE_COPYRIGHT` | contato, suporte e copyright |
 | `APPLE_EMAIL_DEMO`, `APPLE_CODIGO_DEMO` | conta demo (perfil **dono**) e um código de barras que exista nela |
-| `APPLE_SERVIDOR_DEMO` | `https://loja-tria.vercel.app` |
+| `APPLE_SERVIDOR_DEMO` | `https://loja-tria.vercel.app` (a demo da Vercel). A que sobe com a loja: `https://<domínio>/demo`, com o caminho |
 | `APPLE_URL_PRIVACIDADE`, `APPLE_URL_ETIQUETAS_DEMO` | `<servidor demo>/privacidade` e nenhum |
 | `APPLE_TELEFONE_CONTATO` (Variable ou Secret: é dado pessoal) | nenhum: só a revisão pede, e só se a Apple ainda não tiver um telefone (de um envio anterior) |
 
@@ -235,12 +240,23 @@ Sem a senha da demo e sem telefone a **ficha sobe** (as notas dizem "(pending)")
 precisa dela diz **quais nomes** faltam; os outros seguem. No modo completo, a falta aparece
 ANTES de compilar.
 
-**A conta demo do revisor mora no servidor de demonstração DA LOJA** (`APPLE_SERVIDOR_DEMO`):
-crie lá um usuário de perfil dono só para a Apple. Esse servidor **fica no ar depois da
-revisão**: ele também serve a política de privacidade da ficha (`/privacidade`) — desligá-lo
-derrubaria o link da App Store (5.1.1(i)). Para morar noutro endereço permanente, preencha
-`APPLE_URL_PRIVACIDADE`. Antes as notas mandavam o revisor para `sistemaobras.com.br`, que hoje
-é o site do Sistema Obras — a revisão voltaria.
+**A conta demo do revisor mora no servidor de demonstração DA LOJA** (`APPLE_SERVIDOR_DEMO`),
+uma loja só de dados fictícios, isolada de qualquer loja de verdade. São duas as formas:
+
+- **A que sobe com a loja (ADR-46)**: o `./instalar.sh` já a deixa pronta em
+  `https://<domínio>/demo`, com a conta de dono `dono@demo.example` protegida e os dados
+  fictícios renovados toda madrugada. `./demo.sh --mostrar`, na máquina da loja, diz o que
+  levar: as Variables `APPLE_SERVIDOR_DEMO` (o endereço COM o `/demo`) e `APPLE_EMAIL_DEMO`, e a
+  senha — pelo workflow "Senha da conta demo na Apple" ou no Secret `APPLE_DEMO_PASSWORD`.
+- **A da Vercel (ADR-42)**: é o padrão enquanto as Variables não apontarem para outra; a conta
+  (`DEMO_ADMIN_EMAIL`/`DEMO_ADMIN_SENHA`) nasce no build de lá.
+
+Esse servidor **fica no ar depois da revisão**: ele também serve a política de privacidade da
+ficha (`<servidor>/privacidade`, com o caminho) — desligá-lo derrubaria o link da App Store
+(5.1.1(i)). Trocar de servidor (da Vercel para a demo da loja) é rodar a ficha com as Variables
+novas, conferir que a privacidade abre no endereço novo, e só então desligar o antigo. Para
+morar noutro endereço permanente, preencha `APPLE_URL_PRIVACIDADE`. Antes as notas mandavam o
+revisor para `sistemaobras.com.br`, que hoje é o site do Sistema Obras — a revisão voltaria.
 
 **Primeira vez da loja na Apple:** o registro do app (lá em cima) tem de existir — se o primeiro
 build sair antes disso, ele fica na Expo: crie o app e rode com **enviar** marcado. Com a chave

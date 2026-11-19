@@ -219,10 +219,11 @@ expenses — the server filters them, not the screen. The audit log (who did wha
 <section>
 <h2><span class="n">4</span>How to set up and access the main features</h2>
 <p>Each shop installs the server once (Docker on its own computer, or a cloud server). For the review we run a demo
-server with sample data; its address, the owner account and a sample barcode are in the notes.</p>
+shop with fictitious data only; its address, the owner account and a sample barcode are in the notes.</p>
 <ol>
   <li>Open the app. On the sign-in screen tap the <b>gear</b> (top right): ${rotulo('Conectar à loja')} opens.</li>
-  <li>In ${rotulo('Endereço do servidor')} type the demo server address, with <b>https://</b>, and tap ${rotulo('Conectar')}.</li>
+  <li>In ${rotulo('Endereço do servidor')} type the demo server address exactly as in the notes (with <b>https://</b>), and
+    tap ${rotulo('Conectar')}.</li>
   <li>Type the e-mail and password of the demo account and tap ${rotulo('Entrar')}. The ${rotulo('Vender')} tab
     (point of sale) opens. The demo account is the shop owner: every screen is visible.</li>
   <li>Add an item: ${rotulo('Ler código de barras')} (camera), ${rotulo('Digitar código')} (type the sample barcode)
@@ -258,7 +259,8 @@ computer's open sale.</p>
       Every sale, item, photo and login goes to that server and to no other.</td></tr>
     <tr><td>Connectivity check</td><td>The network-status library of React Native (NetInfo) checks whether the phone is
       online with an empty request to Google's <i>generate_204</i> address. It carries no user or shop data.</td></tr>
-    <tr><td>Demo server (review)</td><td>Vercel (hosting), Neon (PostgreSQL) and Vercel Blob (item photos).</td></tr>
+    <tr><td>Demo server (review)</td><td>A demo shop with fictitious data only, isolated from any real shop: its own
+      database, accounts and item photos.</td></tr>
     <tr><td>NFC-e (optional)</td><td>Brazil's electronic consumer receipt, issued through an accredited issuer (Focus NFe)
       that the shop hires and connects to its server. Off in the demo.</td></tr>
     <tr><td>Payments</td><td>None in the app. The card terminal is a separate device; the app only records how the

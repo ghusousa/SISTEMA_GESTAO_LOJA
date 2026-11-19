@@ -370,7 +370,12 @@ export async function gravarSenhaDemo(cliente, { appId, versaoDoApp, email, senh
 
 async function senhaDemo() {
   const senha = limpo(process.env.SENHA_DEMO);
-  if (!senha) throw new Error('Senha vazia: preencha a entrada "senha" do workflow (a DEMO_ADMIN_SENHA da Vercel).');
+  if (!senha) {
+    throw new Error(
+      'Senha vazia: preencha a entrada "senha" do workflow com a senha da conta demo (na demo que sobe com a loja, ' +
+        './demo.sh --mostrar, na máquina dela; na Vercel, a DEMO_ADMIN_SENHA).',
+    );
+  }
   const r = montar(process.env, lerPadroes());
   if (!r.temChave) throw new Error(`Chave da Apple incompleta — faltam os Secrets: ${r.faltandoChave.join(', ')}.`);
   const appJson = JSON.parse(readFileSync(join(MOBILE, 'app.json'), 'utf8'));

@@ -54,7 +54,7 @@ npm run bundle       # expo export: pega erro de import que o tsc não vê
 npm run publicar     # ficha inteira na App Store via API (mobile/publicar/; -- --enviar submete ou REENVIA, --aguardar-build 60 espera o build,
                      #   --video-revisao arquivo|https anexa a gravação de tela, --conferir-envio só confere sem escrever,
                      #   --mesmo-build reenvia o build que a Apple devolveu — sem ela nem --build, o reenvio dele é recusado)
-node --test publicar/teste/*.test.mjs  # testes do publicador (ci.mjs, notas em inglês, guia PDF em dia)
+node --test publicar/teste/*.test.mjs  # testes do publicador (ci.mjs, notas em inglês, guia PDF em dia, demo em <domínio>/demo)
 node publicar/teste/rodar.mjs  # o publicador contra a Apple de mentira (--reais: com as capturas de media/app-store)
 node publicar/revisao/gerar-guia.mjs  # refaz o guia PDF do revisor (mudou texto, prints ou ficha/aparelhos-testados.txt)
 publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com as telas do app (export web: cabeçalho do navegador) e o guia PDF (Postgres local + seed; --sem-build)

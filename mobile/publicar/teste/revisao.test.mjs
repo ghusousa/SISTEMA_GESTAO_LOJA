@@ -189,14 +189,18 @@ test('telas citadas: rótulo que o app não mostra, ou tela que não existe, vir
   assert.deepEqual(telasQueFaltam({ 'descricao.txt': 'nada citado aqui' }, join(TEMP, 'vazio')), [], 'quem não cita não cobra');
 });
 
+// O servidor da demo que sobe com a loja tem CAMINHO (<domínio>/demo, ADR-46): num domínio
+// comprido, é o endereço mais longo que as notas carregam (na linha do servidor e na das
+// etiquetas) — mais que o da Vercel.
+const DEMO_COMPRIDA = 'https://gestao.minhalojaderoupas.com.br/demo';
 const CONFIG_PIOR_CASO = {
   email_suporte: 'suporte.gestaodeloja@sistemaobras.com.br',
-  url_privacidade: 'https://loja-tria.vercel.app/privacidade',
-  url_servidor_demo: 'https://loja-tria.vercel.app',
+  url_privacidade: `${DEMO_COMPRIDA}/privacidade`,
+  url_servidor_demo: DEMO_COMPRIDA,
   email_demo: 'revisao.apple@lojatria.com.br',
   senha_demo: 'Senha-Longa-Da-Demo-2026!$&',
   codigo_demo: '7891234567895',
-  url_etiquetas_demo: 'https://loja-tria.vercel.app/legal/etiquetas-de-exemplo.html',
+  url_etiquetas_demo: `${DEMO_COMPRIDA}/legal/etiquetas-de-exemplo.html`,
 };
 const SETE_APARELHOS = [
   'iPhone 18 Pro Max — iOS 27.0.1',
@@ -221,6 +225,8 @@ test('notas da revisão: em inglês, os 7 itens, os dois caminhos da exclusão e
     assert.ok(notas.includes('Mais > Leitor do computador > "Ler o QR do computador"'));
     assert.ok(notas.includes(`made on a physical ${SETE_APARELHOS[0]}`) && notas.includes(SETE_APARELHOS.join('; ')));
     assert.ok(notas.includes('Password: Senha-Longa-Da-Demo-2026!$&'), 'a senha com $& chegou estragada (troca por texto em vez de função)');
+    assert.ok(notas.includes(`Server: ${DEMO_COMPRIDA}\n`), 'o servidor chega às notas com o caminho');
+    assert.ok(!/Vercel|Neon|Blob/.test(notas), 'as notas não amarram a demo a um provedor: ela pode ser a da loja ou a da Vercel');
     assert.ok(!notas.includes(PENDENTE) && !/\{\{/.test(notas));
     assert.ok(!/sistemaobras\.com\.br\b(?!$)/.test(notas.replace(CONFIG_PIOR_CASO.email_suporte, '')), 'o revisor não é mandado ao site de outro sistema');
 
