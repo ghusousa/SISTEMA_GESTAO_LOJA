@@ -542,6 +542,20 @@ test('workflow: o vídeo do link é baixado UMA vez, e a conferência e a ficha 
   }
 });
 
+test('senha-demo.yml: a senha é mascarada no log ANTES de qualquer passo usá-la, e não vai para env: cedo', () => {
+  const yml = readFileSync(join(MOBILE, '..', '.github', 'workflows', 'senha-demo.yml'), 'utf8');
+  const passos = yml.split(/\n      - /).slice(1);
+  // 1º passo: lê do arquivo do evento (sem env:, que o log imprimiria) e mascara.
+  assert.match(passos[0], /jq -r '\.inputs\.senha \/\/ ""' "\$GITHUB_EVENT_PATH"/);
+  assert.match(passos[0], /::add-mask::\$SENHA/);
+  assert.doesNotMatch(passos[0], /env:/, 'o 1º passo não pode ter env: (o log imprime antes do mask)');
+  // Só o passo que grava recebe a senha por env:, e ele roda o comando do ci.mjs.
+  const comSenha = passos.filter((p) => p.includes('inputs.senha }}'));
+  assert.equal(comSenha.length, 1);
+  assert.match(comSenha[0], /node publicar\/ci\.mjs senha-demo/);
+  assert.ok(passos.indexOf(comSenha[0]) > 0, 'a senha entra num passo depois do mask');
+});
+
 test('link-ipa.yml: só LÊ a lista de builds da Expo (sem entrada, sem compilar, sem enviar) e põe o link no resumo', () => {
   const yml = readFileSync(join(MOBILE, '..', '.github', 'workflows', 'link-ipa.yml'), 'utf8');
   assert.match(yml, /^on:\n  workflow_dispatch:\n\n/m, 'sem entradas: o formulário do outro já está no limite');

@@ -661,6 +661,54 @@ if (!REAIS) {
     await mock.fechar();
   });
 
+  await cenario('Senha da demo gravada na Apple (workflow "Senha da conta demo"): a revisão sem o Secret usa ela, sem mostrar', async ({ conferir, guardar }) => {
+    // Só a chave, e o e-mail da conta que o servidor de demonstração de mentira conhece.
+    const soChave = join(PASTA_CONFIG, 'config-so-chave-e-email.json');
+    writeFileSync(
+      soChave,
+      JSON.stringify({ key_id: 'TESTE123', issuer_id: '', arquivo_p8: 'chave-apple.p8', senha_demo: '', email_demo: 'revisao@teste.dev' }),
+    );
+    const mock = await subirMock();
+    const ficha = await publicar([], { porta: mock.porta, capturas: baseSintetica, env: { PUBLICAR_CONFIG: soChave } });
+    guardar(ficha.saida);
+    conferir(ficha.codigo === 0, 'a ficha subiu sem a senha');
+
+    // O comando do workflow, com a chave dos Secrets e a senha da entrada (já mascarada lá).
+    const gravar = await new Promise((resolver) => {
+      const limpo = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(GITHUB_|PUBLICAR_|ASC_|RUNNER_|APPLE_)/.test(k)));
+      const filho = spawn(process.execPath, [join(MOBILE, 'publicar', 'ci.mjs'), 'senha-demo'], {
+        cwd: MOBILE,
+        env: {
+          ...limpo,
+          ASC_BASE: `http://127.0.0.1:${mock.porta}`,
+          ASC_REPETIR_MS: '5',
+          ASC_KEY_ID: 'TESTE123',
+          ASC_KEY_P8: privateKey.export({ type: 'pkcs8', format: 'pem' }),
+          APPLE_EMAIL_DEMO: 'revisao@teste.dev',
+          SENHA_DEMO,
+        },
+      });
+      let saida = '';
+      filho.stdout.on('data', (p) => (saida += p));
+      filho.stderr.on('data', (p) => (saida += p));
+      filho.on('exit', (codigo) => resolver({ codigo, saida }));
+    });
+    guardar(gravar.saida);
+    conferir(gravar.codigo === 0 && gravar.saida.includes('gravada no campo "Senha"'), 'o comando "senha-demo" gravou');
+    conferir(!gravar.saida.includes(SENHA_DEMO), 'o comando não mostra a senha');
+    conferir(mock.estado.revisoes.VER1?.atributos.demoAccountPassword === SENHA_DEMO, 'a senha está no campo da revisão na Apple');
+
+    mock.estado.revisoes.VER1.atributos.contactPhone = '+55 11 98888-7777';
+    const antesDaDemo = DEMO.chamadas.length;
+    const envio = await publicar(['--enviar', ...COM_VIDEO], { porta: mock.porta, capturas: baseSintetica, env: { PUBLICAR_CONFIG: soChave } });
+    guardar(envio.saida);
+    conferir(envio.codigo === 0 && mock.estado.envios.length === 1, 'sem o Secret, a revisão sai com a senha que está na Apple');
+    conferir(chamadasDaDemo(antesDaDemo).includes('POST /api/v1/auth/login'), 'e a conferência do servidor de demonstração entrou com ela');
+    conferir((mock.estado.revisoes.VER1.atributos.notes ?? '').includes(`Password: ${SENHA_DEMO}`), 'as notas levam a senha (o revisor lê ali)');
+    conferir(!envio.saida.includes(SENHA_DEMO), 'a senha lida da Apple não aparece no log');
+    await mock.fechar();
+  });
+
   await cenario('--conferir-envio (o modo completo, antes de compilar): confere tudo e não escreve nada na Apple', async ({ conferir, guardar }) => {
     const mock = await subirMock();
     const antesDaDemo = DEMO.chamadas.length;

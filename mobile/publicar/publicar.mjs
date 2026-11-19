@@ -995,9 +995,19 @@ async function publicar() {
   const revisaoNaApple = situacao.editavel
     ? { versaoId: situacao.editavel.id, ...(await lerRevisaoNaApple(asc, situacao.editavel.id)) }
     : { versaoId: null, detalhe: null, anexos: [] };
-  if (!video) {
-    const jaAnexado = videoAnexado(revisaoNaApple.anexos);
-    if (jaAnexado) ficha = lerFicha(config, { aparelhos, video: jaAnexado.attributes.fileName });
+  // Sem o Secret APPLE_DEMO_PASSWORD, vale a senha que já está no campo "Senha" da revisão na
+  // Apple (gravada pelo workflow "Senha da conta demo na Apple", ou à mão no site): as notas e a
+  // conferência da demo usam ela, e ela some do log como o Secret sumiria.
+  const senhaNaApple = revisaoNaApple.detalhe?.attributes?.demoAccountPassword;
+  const usarSenhaDaApple = !config.senha_demo && typeof senhaNaApple === 'string' && senhaNaApple.trim() !== '';
+  if (usarSenhaDaApple) {
+    config.senha_demo = senhaNaApple;
+    relatorio.ocultar(senhaNaApple);
+    relatorio.ok('senha da conta demo: a que já está na revisão da Apple');
+  }
+  const jaAnexado = video ? null : videoAnexado(revisaoNaApple.anexos);
+  if (usarSenhaDaApple || jaAnexado) {
+    ficha = lerFicha(config, { aparelhos, video: video?.nome ?? jaAnexado?.attributes?.fileName ?? null });
   }
   if (args.enviar || args.conferirEnvio) {
     await conferirAntesDeEnviar({

@@ -1743,7 +1743,10 @@ primeira rodada; segredo de verdade (chave, senha da demo) nunca entra nesse arq
 `ci.test.mjs` recusa. Senha da demo e telefone de contato são **só da revisão**: sem eles a
 ficha sobe (notas com "(pending)", campo vazio não vai à Apple e ela guarda o que tinha) e o
 `--enviar` para dizendo o que falta — o telefone que a Apple já tem de um envio anterior basta.
-O issuer e o time chegam aos passos do eas por `secrets.X || steps.apple.outputs.x` (saída do
+A senha da demo também pode morar SÓ na Apple: o workflow `senha-demo.yml` a grava no campo "Senha" da
+revisão (entrada lida do arquivo do evento e mascarada antes de qualquer `env:`), e o publicador, sem o
+Secret, usa a que está lá — nas notas e na conferência da demo — e a esconde do log. Quem só tem a senha
+e não pode criar Secret (um agente, por exemplo) publica assim. O issuer e o time chegam aos passos do eas por `secrets.X || steps.apple.outputs.x` (saída do
 `ci.mjs`), nunca por saída que contenha Secret. O `app.json` guarda o `projectId` da Expo; sem
 `owner`, porque do SDK 53 em diante o eas-cli não o exige nem com token de robô. O endereço que o revisor usa é
 `url_servidor_demo` (padrão `https://loja-tria.vercel.app`, ADR-42) e a política de
