@@ -42,10 +42,12 @@ export function ouvir(assuntos, aoMudar) {
 /**
  * Quem precisa saber NA HORA, sem esperar a rodada. `{ assuntos: Set, aoMudar: fn }`
  *
- * Só o celular-leitor (ADR-43) usa: o bipe da câmera tem de cair no carrinho já, e a
- * rodada segura o aviso de 1 a 2 s. Redesenhar tela continua indo pela rodada — o que
- * passa por aqui é um `retirar` barato, que não redesenha nada. Só do web: no app o
- * celular é quem MANDA o bipe, e o espelho (`mobile/src/lib/tempoReal.ts`) não precisa.
+ * Só o celular-leitor (ADR-43, ADR-47) usa, com dois assuntos: "leitor" é o bipe da câmera,
+ * que tem de cair no carrinho já; "leitor_pareamento" é o celular que atendeu o chamado ou
+ * aceitou o QR, e a área do leitor tem de dizer "ligado" já. A rodada seguraria os dois de 1
+ * a 2 s. Redesenhar tela continua indo pela rodada — o que passa por aqui é um `retirar` ou
+ * uma consulta do pareamento, baratos, que não redesenham a tela. Só do web: no app o celular
+ * é quem MANDA o bipe, e o espelho (`mobile/src/lib/tempoReal.ts`) não precisa.
  */
 const naHora = new Set();
 
