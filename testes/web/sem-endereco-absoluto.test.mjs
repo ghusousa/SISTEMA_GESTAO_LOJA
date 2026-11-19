@@ -20,11 +20,19 @@
  * - quem guarda no navegador (`sessionStorage`, `localStorage`, `BroadcastChannel`) dá o
  *   nome por `nomeNaRaiz(...)`, nunca um texto solto: em CADA chamada, a chave é a própria
  *   `nomeNaRaiz(...)` ou uma constante declarada `= nomeNaRaiz(` no mesmo arquivo — ter a
- *   função noutra linha não basta. Vale para toda forma de chegar lá: `localStorage?.setItem(`,
- *   o apelido (`const s = window.sessionStorage; s.setItem(...)`) e a chave como propriedade
- *   (`localStorage['x'] = v`, `localStorage.x`). Só no guarda: `lista.getItem(0)` é de outra
- *   coleção, `obj.s` não é o apelido `s`, e o apelido que também é parâmetro ou outra
- *   declaração no arquivo (`(s) => s.trim()`) só conta pelo método (`s.setItem(`).
+ *   função noutra linha não basta. Contam o `localStorage?.setItem(`, a janela
+ *   (`window.localStorage`, e `w['localStorage']` com `const w = window`), o apelido
+ *   (`const s = window.sessionStorage; s.setItem(...)`, também o apelido do apelido, o de
+ *   `const g = localStorage, n = 1` e o padrão de `function f(g = localStorage)`) e a chave
+ *   como propriedade (`localStorage['x'] = v`, `localStorage.x`). Só no guarda:
+ *   `lista.getItem(0)` é de outra coleção, `obj.s` não é o apelido `s`, e o apelido que também
+ *   é parâmetro, import ou outra declaração no arquivo (`(s) => s.trim()`) só conta pelo
+ *   método (`s.setItem(`). A varredura lê o texto e não segue valor; ficam de fora, e o
+ *   autoteste os aprova de propósito: o guarda recebido por parâmetro de outra função
+ *   (`salvar(localStorage)`), o devolvido por uma função (`obterGuarda().setItem(`), o que
+ *   mora num objeto (`this.guarda`), `new window.BroadcastChannel(`,
+ *   `Storage.prototype.setItem.call(`, `Reflect.set(` e `Object.assign(`. Use o guarda pelo
+ *   nome ou por um apelido.
  *
  * Comentário não conta (linha que começa com `*`, `/*`, `//`, e o `<!-- -->` do HTML): é
  * onde estas regras são explicadas. `js/vendor/` é de terceiros e não fala com o servidor.
@@ -70,39 +78,47 @@ const escapar = (nome) => nome.replaceAll('$', '\\$');
 /** `nome` é declarado `= funcao(` neste arquivo? */
 const declaradoCom = (nome, funcao, codigo) =>
   nomeSolto(nome) && new RegExp(`(?<![\\w$])(?:const|let|var)\\s+${escapar(nome)}\\s*=\\s*${funcao}\\(`).test(codigo);
+/** `|a|b`: os nomes como mais alternativas de uma regex. */
+const eOsNomes = (nomes) => nomes.map((nome) => `|${escapar(nome)}`).join('');
+/**
+ * Antes de um nome que é ele mesmo: nem pedaço de outro nome (`itens` não termina no apelido
+ * `s`) nem propriedade de outro objeto, com espaço depois do ponto ou sem (`obj.s`, `obj ?. s`).
+ */
+const NOME_PROPRIO = '(?<![\\w$]|\\.\\s*)';
 
 /**
  * O guarda do navegador no lugar de quem recebe o método, o colchete ou o ponto:
- * `sessionStorage`/`localStorage` — sozinho, como propriedade de uma janela (`window.`,
- * `globalThis.`, `w.`) ou pelo nome entre aspas (`window['localStorage']`) —, ele como um ramo
- * de `?:`, `||`, `??` ou `&&` entre parênteses (`(sessao ? sessionStorage : localStorage)`; os
- * argumentos de uma chamada e o `(localStorage.length)`, não) ou um apelido dele neste arquivo.
- * O apelido, sim, nunca é propriedade de outro objeto (`obj.s` não é o `s`) nem pedaço de outro
- * nome (`itens` não termina no apelido `s`).
+ * `sessionStorage`/`localStorage` — sozinho, como propriedade de outro objeto (`window.`,
+ * `globalThis.`, `w.`) ou pelo nome entre aspas na janela (`window['localStorage']`, e no
+ * apelido dela: `w['localStorage']` com `const w = window`) —, ele como um ramo de `?:`, `||`,
+ * `??` ou `&&` entre parênteses (`(sessao ? sessionStorage : localStorage)`; os argumentos de
+ * uma chamada e o `(localStorage.length)`, não) ou um apelido dele neste arquivo (`guardas`,
+ * de `guardasDoArquivo`). O apelido, sim, é só o nome próprio (`NOME_PROPRIO`).
  */
-function oGuarda(apelidos) {
+function oGuarda({ apelidos, janelas }) {
+  const janela = `(?:\\b(?:window|globalThis|self)${janelas.length ? `|${NOME_PROPRIO}(?:${janelas.map(escapar).join('|')})` : ''})`;
   const caminhos = [
     '(?<![\\w$])(?:session|local)Storage',
-    '\\b(?:window|globalThis|self)\\s*(?:\\?\\.\\s*)?\\[\\s*(?:\'(?:session|local)Storage\'|"(?:session|local)Storage"|`(?:session|local)Storage`)\\s*\\]',
+    `${janela}\\s*(?:\\?\\.\\s*)?\\[\\s*(?:'(?:session|local)Storage'|"(?:session|local)Storage"|\`(?:session|local)Storage\`)\\s*\\]`,
     '(?<![\\w$)\\]])\\(\\s*[\\w$.?:|&\\s]*?\\b(?:session|local)Storage\\b(?!\\s*\\??\\.)[\\w$.?:|&\\s]*\\)',
   ];
-  if (apelidos.length) caminhos.push(`(?<![\\w$.])(?:${apelidos.map(escapar).join('|')})`);
+  if (apelidos.length) caminhos.push(`${NOME_PROPRIO}(?:${apelidos.map(escapar).join('|')})`);
   return `(?:${caminhos.join('|')})`;
 }
 const METODO_DO_GUARDA = '(?:get|set|remove)Item\\s*(?:\\?\\.\\s*)?';
 /**
  * Cada chamada que guarda no navegador e o começo do 1º argumento, a chave (pode vir na linha
- * de baixo). O método conta no guarda, chegue-se a ele como for — `localStorage?.setItem(`,
- * `window.sessionStorage.getItem(`, o apelido `s.setItem(` —, e só nele: `lista.getItem(0)` é
+ * de baixo). O método conta no guarda — `localStorage?.setItem(`,
+ * `window.sessionStorage.getItem(`, o apelido `s.setItem(` — e só nele: `lista.getItem(0)` é
  * de outra coleção. O guarda que sai de uma função (`obterGuarda().setItem(`) ou mora noutro
- * objeto (`this.guarda.setItem(`) a varredura não distingue de uma coleção: use-o pelo nome ou
- * por um apelido.
+ * objeto (`this.guarda.setItem(`) a varredura não distingue de uma coleção (os limites do
+ * cabeçalho): use-o pelo nome ou por um apelido.
  */
-const guardaNoNavegador = (apelidos) =>
-  new RegExp(`(?:${oGuarda(apelidos)}\\s*\\??\\.\\s*${METODO_DO_GUARDA}|\\bnew\\s+BroadcastChannel\\s*)\\(\\s*([^\\s,)]*)`, 'g');
-const usaONavegador = (apelidos) =>
+const guardaNoNavegador = (guardas) =>
+  new RegExp(`(?:${oGuarda(guardas)}\\s*\\??\\.\\s*${METODO_DO_GUARDA}|\\bnew\\s+BroadcastChannel\\s*)\\(\\s*([^\\s,)]*)`, 'g');
+const usaONavegador = (guardas) =>
   new RegExp(
-    `\\b(?:sessionStorage|localStorage)\\s*(?:\\?\\.|\\.|\\[)|\\bnew\\s+BroadcastChannel\\s*\\(|${oGuarda(apelidos)}\\s*\\??\\.\\s*${METODO_DO_GUARDA}\\(`,
+    `\\b(?:sessionStorage|localStorage)\\s*(?:\\?\\.|\\.|\\[)|\\bnew\\s+BroadcastChannel\\s*\\(|${oGuarda(guardas)}\\s*\\??\\.\\s*${METODO_DO_GUARDA}\\(`,
   );
 
 /**
@@ -115,56 +131,135 @@ function chaveNaRaiz(argumento, codigo) {
 }
 
 /**
- * O valor dá o próprio guarda? Ele, ou um ramo de `?:`, `||`, `??` e `&&`, com parênteses ou
- * sem: `window.sessionStorage`, `sessao ? sessionStorage : localStorage`,
- * `sessionStorage || localStorage`, `(window.localStorage)`.
+ * O valor de uma atribuição até onde ele acaba: no primeiro `,` ou `)` (ou `]`, `}`) fora de
+ * parênteses, colchetes, chaves e aspas, ou no comentário do fim da linha. Assim
+ * `const g = localStorage, n = 1` e `function f(g = localStorage) {` dão `localStorage`.
  */
-const daOGuarda = (valor) =>
-  valor
-    .replace(/\/\/.*$/, '')
-    .split(/\?\?|\|\||&&|\?(?!\.)|:/)
-    .some((ramo) => /^(?:(?:window|globalThis|self)\??\.)?(?:session|local)Storage$/.test(ramo.replace(/[\s()]/g, '')));
-/** Cada `nome = valor` do arquivo, declarado ou não (nunca `obj.nome =`, `==` ou `=>`). */
-const ATRIBUICAO = /(?<![\w$.])([A-Za-z_$][\w$]*)\s*=(?![=>])\s*([^;\n]*)/g;
-/** O padrão de uma desestruturação declarada (`const { localStorage: guarda } = window`) e quem renomeia o guarda nele. */
-const DESESTRUTURACAO = /(?<![\w$.])(?:const|let|var)\s*(\{[^{}]*\}|\[[^[\]]*\])/g;
+function ateOFimDoValor(valor) {
+  let fundo = 0;
+  let aspa = '';
+  for (let i = 0; i < valor.length; i++) {
+    const c = valor[i];
+    if (aspa) {
+      if (c === '\\') i += 1;
+      else if (c === aspa) aspa = '';
+    } else if (`'"\``.includes(c)) {
+      aspa = c;
+    } else if (c === '/' && valor[i + 1] === '/') {
+      return valor.slice(0, i);
+    } else if ('([{'.includes(c)) {
+      fundo += 1;
+    } else if (')]}'.includes(c)) {
+      if (--fundo < 0) return valor.slice(0, i);
+    } else if (c === ',' && fundo === 0) {
+      return valor.slice(0, i);
+    }
+  }
+  return valor;
+}
+/** Os ramos de um valor, sem espaço nem parênteses: ele mesmo e cada lado de `?:`, `||`, `??` e `&&`. */
+const ramos = (valor) => valor.split(/\?\?|\|\||&&|\?(?!\.)|:/).map((ramo) => ramo.replace(/[\s()]/g, ''));
+/** O valor dá a janela (`window`, `globalThis`, `self` ou um apelido dela), ele ou um ramo dele? */
+function daAJanela(valor, { janelas }) {
+  const janela = new RegExp(`^(?:window|globalThis|self${eOsNomes(janelas)})$`);
+  return ramos(valor).some((ramo) => janela.test(ramo));
+}
+/**
+ * O valor dá o próprio guarda? Ele, ou um ramo de `?:`, `||`, `??` e `&&`, com parênteses ou
+ * sem: `window.sessionStorage`, `w['localStorage']` (com `const w = window`),
+ * `sessao ? sessionStorage : localStorage`, `sessionStorage || localStorage`,
+ * `(window.localStorage)` — ou um apelido já conhecido (`const b = a`, com `const a = localStorage`).
+ */
+function daOGuarda(valor, { apelidos, janelas }) {
+  const janela = `(?:window|globalThis|self${eOsNomes(janelas)})`;
+  const guarda = new RegExp(
+    `^(?:(?:${janela}\\??\\.)?(?:session|local)Storage|${janela}(?:\\?\\.)?\\[(['"\`])(?:session|local)Storage\\1\\]${eOsNomes(apelidos)})$`,
+  );
+  return ramos(valor).some((ramo) => guarda.test(ramo));
+}
+/**
+ * Cada `nome = valor` do arquivo, declarado ou não (nunca `obj.nome =`, `==` ou `=>`), também o
+ * segundo de `const a = 1, b = 2` e o padrão de um parâmetro (`function f(g = localStorage)`):
+ * a busca não consome o valor, que vai só até onde acaba (`ateOFimDoValor`).
+ */
+const ATRIBUICAO = /(?<![\w$]|\.\s*)([A-Za-z_$][\w$]*)\s*=(?![=>])(?=\s*([^;\n]*))/g;
+const atribuicoesDe = (codigo) => [...codigo.matchAll(ATRIBUICAO)].map(([, nome, valor]) => [nome, ateOFimDoValor(valor)]);
+/**
+ * O padrão de uma desestruturação declarada (`const { localStorage: guarda } = window`, com um
+ * nível de aninhamento: `const { a: { s } } = o`) e quem renomeia o guarda nele.
+ */
+const DESESTRUTURACAO = /(?<![\w$.])(?:const|let|var)\s*(\{(?:[^{}]|\{[^{}]*\})*\}|\[(?:[^[\]]|\[[^[\]]*\])*\])/g;
 const RENOMEIA_O_GUARDA = /\b(?:session|local)Storage\s*:\s*([A-Za-z_$][\w$]*)/g;
+/** Uma lista entre parênteses, com um nível de aninhamento: o padrão `h = x()` cabe nela. */
+const ENTRE_PARENTESES = String.raw`\(((?:[^()]|\([^()]*\))*)\)`;
 /** As listas que dão nome a parâmetros: `function f(…)`, `(…) =>`, `metodo(…) {` e `catch (…) {`. */
 const PARAMETROS = [
-  /\bfunction\b[\s*]*[\w$]*\s*\(([^()]*)\)/g,
-  /\(([^()]*)\)\s*=>/g,
-  /(?<![\w$.])(?!(?:if|for|while|switch|with)(?![\w$]))[A-Za-z_$][\w$]*\s*\(([^()]*)\)\s*\{/g,
+  new RegExp(String.raw`\bfunction\b[\s*]*[\w$]*\s*${ENTRE_PARENTESES}`, 'g'),
+  new RegExp(String.raw`${ENTRE_PARENTESES}\s*=>`, 'g'),
+  new RegExp(String.raw`(?<![\w$.])(?!(?:if|for|while|switch|with)(?![\w$]))[A-Za-z_$][\w$]*\s*${ENTRE_PARENTESES}\s*\{`, 'g'),
 ];
+/** O que um `import` nomeia (`import s`, `import * as s`, `import { s }`) e o nome de fora de `{ x as s }`, que não é do arquivo. */
+const IMPORTACAO = /\bimport\s*([^'"`;]*?)\s*from\s*['"`]/g;
+const EXPORTADO_COMO = /[A-Za-z_$][\w$]*\s+as(?![\w$])/g;
 
 /**
- * Os nomes que guardam o próprio `sessionStorage`/`localStorage` neste arquivo:
- * `const s = window.sessionStorage`, `let guarda = sessao ? sessionStorage : localStorage`,
- * `guarda = sessionStorage || localStorage` (sem declarar) e `const { localStorage: guarda } = window`.
+ * Os nomes do guarda neste arquivo, cada lista até não aparecer nenhum novo (o `const b = a`
+ * entra depois do `a`): os apelidos da janela (`const w = window`) e os do próprio
+ * `sessionStorage`/`localStorage` — `const s = window.sessionStorage`,
+ * `let guarda = sessao ? sessionStorage : localStorage`, `guarda = sessionStorage || localStorage`
+ * (sem declarar), `const g = localStorage, n = 1`, o padrão de `function f(g = localStorage)`,
+ * `const s = w['localStorage']` e `const { localStorage: guarda } = window`.
  */
-function apelidosDoGuarda(codigo) {
-  const apelidos = new Set();
-  for (const [, nome, valor] of codigo.matchAll(ATRIBUICAO)) if (daOGuarda(valor)) apelidos.add(nome);
+function guardasDoArquivo(codigo) {
+  const guardas = { atribuicoes: atribuicoesDe(codigo), janelas: [], apelidos: [] };
+  const ateParar = (lista, serve) => {
+    for (let antes = -1; antes !== guardas[lista].length; ) {
+      antes = guardas[lista].length;
+      for (const [nome, valor] of guardas.atribuicoes) {
+        if (!guardas[lista].includes(nome) && serve(valor, guardas)) guardas[lista].push(nome);
+      }
+    }
+  };
+  ateParar('janelas', daAJanela);
   for (const [, padrao] of codigo.matchAll(DESESTRUTURACAO)) {
-    for (const [, nome] of padrao.matchAll(RENOMEIA_O_GUARDA)) apelidos.add(nome);
+    for (const [, nome] of padrao.matchAll(RENOMEIA_O_GUARDA)) if (!guardas.apelidos.includes(nome)) guardas.apelidos.push(nome);
   }
-  return [...apelidos];
+  ateParar('apelidos', daOGuarda);
+  return guardas;
 }
 
 /**
  * O apelido também é outra coisa neste arquivo: recebe outro valor (`const s = situacao(c)`,
- * `s = null`), é parâmetro (`(s) => …`, `s => …`, `function f(g)`, `salvar(g) {`, `catch (g)`),
- * nome de laço (`for (const s of …)`), de função ou de classe, ou sai de uma desestruturação sem
- * ser o guarda renomeado. A varredura não acompanha escopo: aí o colchete e o ponto (`g[0]`,
- * `s.trim()`) não dizem de qual dos dois se trata — o `.setItem(` diz.
+ * `s = null`), é parâmetro (`(s) => …`, `s => …`, `function f(g)`, `function f(g, h = x())`,
+ * `salvar(g) {`, `catch (g)`), nome de laço (`for (const s of …)`), de função, de classe ou de
+ * um `import` (`import { s }`), ou sai de uma desestruturação sem ser o guarda renomeado
+ * (também a aninhada, `const { a: { s } } = o`). A varredura não acompanha escopo: aí o
+ * colchete e o ponto (`g[0]`, `s.trim()`) não dizem de qual dos dois se trata — o `.setItem(` diz.
  */
-function temOutroSentido(nome, codigo) {
+function temOutroSentido(nome, codigo, guardas) {
   const n = escapar(nome);
   const nele = (trecho) => new RegExp(`(?<![\\w$])${n}(?![\\w$])`).test(trecho);
-  for (const [, outro, valor] of codigo.matchAll(ATRIBUICAO)) if (outro === nome && !daOGuarda(valor)) return true;
+  if (guardas.atribuicoes.some(([outro, valor]) => outro === nome && !daOGuarda(valor, guardas))) return true;
   const nomeia = `(?<![\\w$.])${n}\\s*=>|\\b(?:function|class)\\s+${n}(?![\\w$])|\\b(?:const|let|var)\\s+${n}\\s+(?:of|in)\\b`;
   if (new RegExp(nomeia).test(codigo)) return true;
   for (const [, padrao] of codigo.matchAll(DESESTRUTURACAO)) if (nele(padrao.replace(RENOMEIA_O_GUARDA, ''))) return true;
+  for (const [, nomes] of codigo.matchAll(IMPORTACAO)) if (nele(nomes.replace(EXPORTADO_COMO, ''))) return true;
   return PARAMETROS.some((lista) => [...codigo.matchAll(lista)].some(([, dentro]) => nele(dentro)));
+}
+
+/**
+ * Os apelidos em que o colchete e o ponto contam: os que não têm outro sentido no arquivo nem
+ * saem de um que tem (`const b = a`, com o `a` também parâmetro: o `b` pode ser o parâmetro).
+ */
+function apelidosSemDuvida(codigo, guardas) {
+  const duvidosos = new Set(guardas.apelidos.filter((apelido) => temOutroSentido(apelido, codigo, guardas)));
+  for (let antes = -1; antes !== duvidosos.size; ) {
+    antes = duvidosos.size;
+    for (const [nome, valor] of guardas.atribuicoes) {
+      if (guardas.apelidos.includes(nome) && ramos(valor).some((ramo) => duvidosos.has(ramo))) duvidosos.add(nome);
+    }
+  }
+  return guardas.apelidos.filter((apelido) => !duvidosos.has(apelido));
 }
 
 /** O `${...}` inteiro que fecha no `}` de `fim`: o índice do `$` e a expressão de dentro (ou null). */
@@ -248,14 +343,14 @@ function infracoesEm(arquivos) {
       if (fotoSemEndereco(expressaoQueAbreEm(codigo, inicio))) anotar(linhaDe(achado.index), 'foto sem enderecoDaFoto');
     }
 
-    const apelidos = apelidosDoGuarda(codigo);
-    for (const chamada of codigo.matchAll(guardaNoNavegador(apelidos))) {
+    const guardas = guardasDoArquivo(codigo);
+    for (const chamada of codigo.matchAll(guardaNoNavegador(guardas))) {
       if (!chaveNaRaiz(chamada[1], codigo)) anotar(linhaDe(chamada.index), 'chave do navegador sem nomeNaRaiz');
     }
     // A chave como propriedade do próprio guarda (ou de um apelido dele): `localStorage['x'] = v`
     // passa pelo mesmo critério; `localStorage.x` é sempre um nome solto. O apelido que também é
-    // outra coisa no arquivo (`temOutroSentido`) fica só com o método, que diz de quem se trata.
-    const guarda = oGuarda(apelidos.filter((apelido) => !temOutroSentido(apelido, codigo)));
+    // outra coisa no arquivo (`apelidosSemDuvida`) fica só com o método, que diz de quem se trata.
+    const guarda = oGuarda({ ...guardas, apelidos: apelidosSemDuvida(codigo, guardas) });
     for (const achado of codigo.matchAll(new RegExp(`${guarda}\\s*(?:\\?\\.\\s*)?\\[\\s*([^\\]]*?)\\s*\\]`, 'g'))) {
       if (!chaveNaRaiz(achado[1], codigo)) anotar(linhaDe(achado.index), 'chave do navegador sem nomeNaRaiz');
     }
@@ -264,7 +359,7 @@ function infracoesEm(arquivos) {
     for (const achado of codigo.matchAll(new RegExp(`${guarda}\\??\\.(?!(?:${naoEChave})(?![\\w$]))[A-Za-z_$]`, 'g'))) {
       anotar(linhaDe(achado.index), 'chave do navegador sem nomeNaRaiz');
     }
-    if (usaONavegador(apelidos).test(codigo) && !codigo.includes('nomeNaRaiz(')) {
+    if (usaONavegador(guardas).test(codigo) && !codigo.includes('nomeNaRaiz(')) {
       achadas.push(`${nome} — guarda no navegador e não chama nomeNaRaiz`);
     }
   }
@@ -311,6 +406,15 @@ test('a varredura reprova o que o ADR-46 corrigiu, e não o que está certo (sem
     'js/entre-aspas.js': "const CHAVE = nomeNaRaiz('x');\nwindow['localStorage'].removeItem('formato');",
     'js/entre-parenteses.js': "const CHAVE = nomeNaRaiz('x');\n(sessao ? sessionStorage : localStorage).setItem('formato', v);",
     'js/linha-de-baixo.js': "const CHAVE = nomeNaRaiz('x');\nwindow?.sessionStorage\n  ?.setItem('leitor', v);",
+    // O apelido que só se vê seguindo o valor: o do apelido, o segundo de uma declaração com
+    // vírgula, o do padrão de um parâmetro e o da janela guardada, com o guarda entre aspas. Num
+    // arquivo sem nomeNaRaiz, também o aviso do arquivo inteiro.
+    'js/apelido-de-apelido.js': "const CHAVE = nomeNaRaiz('x');\nconst a = localStorage;\nconst b = a;\nb.setItem('formato', v);",
+    'js/apelido-com-virgula.js': "const CHAVE = nomeNaRaiz('x');\nconst g = localStorage, n = 1;\ng.setItem('formato', v);",
+    'js/apelido-no-padrao.js': "const CHAVE = nomeNaRaiz('x');\nfunction f(g = localStorage) {\n  g.setItem('formato', v);\n}",
+    'js/janela-guardada-entre-aspas.js': "const CHAVE = nomeNaRaiz('x');\nconst w = window;\nw['localStorage'].setItem('formato', v);",
+    'js/apelido-pela-janela-guardada.js': "const CHAVE = nomeNaRaiz('x');\nconst w = window;\nconst s = w['sessionStorage'];\ns['leitor'] = v;",
+    'js/apelido-de-apelido-sem-raiz.js': 'const a = localStorage;\nconst b = a;\nb.setItem(CHAVE, v);',
     // A foto da API direto no src: na demo, o /media/... vai à loja e dá 404 (ADR-42/46).
     'js/foto-src.js': 'export function f(img, item) { img.src = item.foto_url; }',
     'js/foto-src-quebrado.js': 'img.src =\n  item.foto_url;',
@@ -352,6 +456,22 @@ test('a varredura reprova o que o ADR-46 corrigiu, e não o que está certo (sem
     'js/apelido-e-outra-declaracao.js':
       "const CHAVE = nomeNaRaiz('x');\nfunction guardar(v) {\n  const s = sessionStorage;\n  s.setItem(CHAVE, v);\n}\n" +
       'function rotulo(c) {\n  const s = situacao(c);\n  return s.texto + s[0];\n}',
+    // Também onde o outro sentido é mais escondido: o parâmetro com padrão que tem parênteses,
+    // a desestruturação aninhada, o import, a propriedade com espaço depois do ponto e o apelido
+    // que sai de um nome que também é parâmetro.
+    'js/parametro-com-padrao.js':
+      "const CHAVE = nomeNaRaiz('x');\nconst g = localStorage;\ng.setItem(CHAVE, v);\nfunction primeiro(g, h = x()) {\n  return g[0];\n}",
+    'js/seta-com-padrao.js': "const CHAVE = nomeNaRaiz('x');\nconst s = sessionStorage;\ns.setItem(CHAVE, v);\nconst limpar = (s = f()) => s.trim();",
+    'js/desestruturacao-aninhada.js':
+      "const CHAVE = nomeNaRaiz('x');\nfunction guardar(v) {\n  const s = sessionStorage;\n  s.setItem(CHAVE, v);\n}\n" +
+      'function ler(o) {\n  const { a: { s } } = o;\n  return s.nome + s[0];\n}',
+    'js/importado.js':
+      "import { s } from './sessao.js';\nconst CHAVE = nomeNaRaiz('x');\nfunction guardar(v) {\n  const s = sessionStorage;\n  s.setItem(CHAVE, v);\n}\n" +
+      'const nome = s.nome + s[0];',
+    'js/espaco-depois-do-ponto.js':
+      "const CHAVE = nomeNaRaiz('x');\nconst s = sessionStorage;\ns.setItem(CHAVE, v);\nconst nome = obj. s.nome;\nconst primeira = obj ?. s[0];",
+    'js/apelido-de-parametro.js':
+      "const CHAVE = nomeNaRaiz('x');\nconst a = window.sessionStorage;\na.setItem(CHAVE, v);\nfunction primeiro(a) {\n  const b = a;\n  return b[0];\n}",
     'js/foto.js':
       "img.src = enderecoDaFoto(item.foto_url) ?? '';\nimg.setAttribute('src', enderecoDaFoto(p.foto_url));\n" +
       'const t = html`<img src=${enderecoDaFoto(p.foto_url)}>`;\nprevia.src = url;\n' +
@@ -361,6 +481,25 @@ test('a varredura reprova o que o ADR-46 corrigiu, e não o que está certo (sem
   };
   for (const [nome, texto] of Object.entries(aprovados)) {
     assert.deepEqual(infracoesEm([{ nome, texto }]), [], `${nome} reprovado sem motivo: ${texto}`);
+  }
+});
+
+test('os limites do cabeçalho passam, de propósito: a varredura lê o texto e não segue valor', () => {
+  // A chave é solta em todos, e nenhum é pego: o guarda chega por outra função, por um objeto
+  // ou por um método emprestado, e no texto isso não se distingue de uma coleção qualquer.
+  // Por isso o cabeçalho manda usar o guarda pelo nome ou por um apelido. Se um dia a
+  // varredura pegar um deles, ele sai daqui (e do cabeçalho) e vai para os reprovados.
+  const limites = {
+    'js/guarda-por-parametro.js': "const CHAVE = nomeNaRaiz('x');\nfunction salvar(guarda) {\n  guarda.setItem('formato', v);\n}\nsalvar(localStorage);",
+    'js/guarda-de-funcao.js': "const CHAVE = nomeNaRaiz('x');\nobterGuarda().setItem('formato', v);",
+    'js/guarda-em-objeto.js': "const CHAVE = nomeNaRaiz('x');\nthis.guarda = localStorage;\nthis.guarda.setItem('formato', v);",
+    'js/canal-pela-janela.js': "const CHAVE = nomeNaRaiz('x');\nconst canal = new window.BroadcastChannel('canal-da-loja');",
+    'js/metodo-emprestado.js': "const CHAVE = nomeNaRaiz('x');\nStorage.prototype.setItem.call(localStorage, 'formato', v);",
+    'js/reflect.js': "const CHAVE = nomeNaRaiz('x');\nReflect.set(localStorage, 'formato', v);",
+    'js/object-assign.js': "const CHAVE = nomeNaRaiz('x');\nObject.assign(localStorage, { formato: v });",
+  };
+  for (const [nome, texto] of Object.entries(limites)) {
+    assert.deepEqual(infracoesEm([{ nome, texto }]), [], `${nome} passou a ser pego: tire-o dos limites (e do cabeçalho) e ponha nos reprovados`);
   }
 });
 
