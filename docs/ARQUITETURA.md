@@ -1014,16 +1014,28 @@ existe nas telas e no recibo impresso), `img-src 'self' data: blob:` (ícone e p
 `connect-src 'self'` mais o WebSocket da mesma origem, `frame-ancestors 'none'`. `/docs` e
 `/redoc` ficam fora dela: o Swagger vem de CDN e só existe fora de produção. HSTS vai sempre
 (o navegador o ignora em HTTP), por um ano e sem `includeSubDomains`. O proxy também põe **teto
-no corpo do pedido** (`request_body`, 10 MB, em toda rota da loja e da demo, ADR-46): o FastAPI lê
-o corpo inteiro ANTES de conferir o login — o JSON na memória, o arquivo num temporário sem teto —,
-e um `PUT .../foto` de 40 MB sem login ocupava 39 MB de disco até sair o 401 (hoje a rota da foto
-confere o login antes de ler o corpo, §2.2; as de JSON seguem lendo antes). O maior corpo
-legítimo é a foto, que a API recusa acima de 5 MB e as duas pontas encolhem para 100–300 KB: até
-10 MB responde a API (422, com a frase dela); acima, o Caddy responde 413 e a API nunca recebe
-mais que isso. Na Vercel o teto é o da plataforma (4,5 MB, ADR-42). `scripts/pentest.py`
-confere os quatro no Caddy quando `PENTEST_PROXY` aponta para ele, e no `docker/caddy/Caddyfile`
-quando não aponta. Rota nova que precise de origem de fora tem de entrar na CSP, ou o navegador a
-bloqueia calado.
+no corpo do pedido, por rota** (`request_body`, na loja e na demo, ADR-46): o FastAPI lê o corpo
+inteiro ANTES de conferir o login — o JSON na memória, o arquivo num temporário sem teto —, e um
+`PUT .../foto` de 40 MB sem login ocupava 39 MB de disco até sair o 401 (hoje a rota da foto
+confere o login antes de ler o corpo, §2.2; as de JSON seguem lendo antes). E o teto vale por pedido:
+N conexões abertas, segurando o último byte, seguram N vezes ele (com 10 MB em toda rota, 20 JSON
+no login sem conta levaram a API da loja de 91 para 290 MiB). Por isso cada rota tem o menor que
+lhe cabe: **6 MB** no `PUT .../produtos/{id}/foto`, o único arquivo — a API recusa a foto acima
+de 5 MiB com a frase dela (422), e as duas pontas a encolhem para 100–300 KB antes —, e **2 MB**
+em todo o resto, que é JSON: o maior legítimo, a contagem do Inventário ou a Entrada de uma nota,
+leva de 50 a 70 bytes por peça (venda e condicional a API limita a 200 e 100 itens). Os dois
+`request_body` têm matchers que se excluem (empilhados, o menor valeria para a foto); rota nova
+que receba arquivo precisa do seu, ou fica com os 2 MB. Acima do teto, o Caddy responde 413 e a
+API nunca recebe mais que ele — o 413 é do **Caddy 2.7** em diante: o 2.6 responde 502 ao mesmo
+corpo com `Content-Length`, e o `handle_errors` da demo exclui esse erro pela mensagem (`request
+body too large`) para não chamá-lo de "demonstração desligada". O WebSocket do tempo real não
+sente o teto: depois do upgrade, o Caddy liga as duas pontas sem ler corpo (e ele não oferece
+WebSocket por HTTP/2, onde o socket seria o corpo). Na Vercel o teto é o da plataforma (4,5 MB,
+ADR-42). `scripts/pentest.py` confere tudo isso no Caddy quando `PENTEST_PROXY` aponta para ele,
+e no `docker/caddy/Caddyfile` quando não aponta — lido como o Caddy lê: comentário não conta,
+`request_body` aninhado num `handle` não cobre o site, e o tamanho vem nas unidades do
+go-humanize (`1.5MB`, `10Mi`). Rota nova que precise de origem de fora tem de entrar na CSP, ou o
+navegador a bloqueia calado.
 
 **ADR-26 — Nome e ramo da loja no banco, e o ramo troca palavras, não dados.**
 O sistema nasceu para uma loja de roupas e o vocabulário foi junto ("peça", "tamanho", "cor").
@@ -2051,8 +2063,11 @@ navegador: as duas dividem a mesma origem.
   `/demo/*` uma página com a mesma frase — nunca a loja de verdade no lugar, e nunca um 502 vazio:
   com a frase, o app e a tela dizem que a demonstração está desligada ou começando, em vez de um
   erro que faria a pessoa redigitar um endereço certo. Só o erro de não alcançar a `api-demo` (502
-  a 504) vira a frase: o 413 do teto do corpo (10 MB, o mesmo da loja, ADR-25) também é erro do
-  Caddy, e passa como é — "desligada" seria mentira para quem mandou um arquivo grande demais.
+  a 504) vira a frase: o 413 do teto do corpo (o mesmo da loja, por rota: 6 MB na foto e 2 MB no
+  resto, ADR-25) também é erro do Caddy, e passa como é — "desligada" seria mentira para quem
+  mandou um corpo grande demais. O 413 é do Caddy 2.7 em diante; no 2.6 o mesmo corpo sai 502
+  (`request body too large`), e por isso os matchers da frase excluem esse erro pela mensagem: na
+  demo ele sai 502 vazio, como na loja, e nunca "desligada ou começando".
 - **Banco e role próprios, sem CONNECT no real.** No MESMO Postgres (um segundo servidor de banco
   seria memória a mais numa VPS pequena), o `demo-banco` cria e converge, a cada `up`, a role
   `loja_demo` — sem superusuário, sem criar banco nem role, `CONNECTION LIMIT 20` — dona só do banco
@@ -2249,7 +2264,9 @@ demo que não vale na loja (segredo próprio), a role da demo que nem conecta no
 fictício do lado de lá. Os testes provam o isolamento em cada ponta (§7), e o job `imagem` do CI sobe
 a pilha de verdade (`testes/pilha/pilha.sh`: compose com `.env` antigo e novo, o Caddyfile nos dois
 modos, e contas, tokens, cookies e bancos da loja e da demo sem se cruzar; o pool da demo em três
-rajadas de 60 pedidos e o teto do corpo nas duas, com a foto de verdade passando).
+rajadas de 60 pedidos; o teto do corpo por rota nas duas — 413 no login de 3 MB e na foto de 7 MB,
+com a foto de verdade passando, até a de 3 MB —; e o WebSocket do tempo real pelo proxy, com mais
+que o teto passando pelo socket).
 
 ## 4. Contratos de API
 

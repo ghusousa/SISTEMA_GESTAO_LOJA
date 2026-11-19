@@ -128,8 +128,10 @@ publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com as telas do
 - **Fora de dev o app se blinda**: `settings.producao` esconde `/docs` e `/openapi.json`, e
   todo request leva `X-Content-Type-Options`, `X-Frame-Options` e `Referrer-Policy`.
   `api/scripts/pentest.py` roda a bateria de ataques contra a API no ar.
-  **CSP, HSTS, Permissions-Policy e o teto do corpo (10 MB: o FastAPI lê o corpo antes do login)
-  moram no Caddy** (`docker/caddy/Caddyfile`): `script-src 'self'`
+  **CSP, HSTS, Permissions-Policy e o teto do corpo POR ROTA (o FastAPI lê o corpo antes do login,
+  e N conexões seguram N vezes o teto: 6 MB no PUT da foto, 2 MB no resto; rota nova com arquivo
+  ganha matcher próprio; o 413 é do Caddy 2.7+) moram no Caddy** (`docker/caddy/Caddyfile`):
+  `script-src 'self'`
   sem inline — atributo `onclick=""` em template é bloqueado; use delegação (`data-*`). Origem
   de fora nova (CDN, imagem) tem de entrar na CSP. O pentest confere no proxy com
   `PENTEST_PROXY=http://...`, ou no Caddyfile sem ele.

@@ -6,17 +6,39 @@
 {$ENDERECO} {
 	encode gzip
 
-	# Teto do corpo do pedido, da loja e da demo, em TODA rota. O FastAPI lê o corpo inteiro
-	# ANTES de conferir o login — o JSON na memória; o arquivo, o Starlette grava num
-	# temporário sem teto: sem isto, um PUT .../foto de 40 MB SEM login ocupava 39 MB de disco
-	# até sair o 401, e o disco é o mesmo do banco. O maior corpo legítimo é a foto da peça,
-	# que a API recusa acima de 5 MB (MAX_UPLOAD_BYTES) e que a web e o app já encolhem para
-	# 100–300 KB antes de subir; o resto é JSON de poucos KB. 10 MB é o dobro do teto da API:
-	# até lá quem responde é ela, com a frase dela (422); acima, o Caddy responde 413 e a API
-	# nunca recebe mais que 10 MB — o Caddy de hoje recusa pelo Content-Length antes de passar
-	# um byte; sem ele (chunked), corta a conexão com a API no 10º MB.
-	request_body {
-		max_size 10MB
+	# Teto do corpo do pedido, da loja e da demo, POR ROTA. O FastAPI lê o corpo inteiro ANTES
+	# de conferir o login — o JSON na memória; o arquivo, o Starlette grava num temporário sem
+	# teto: sem isto, um PUT .../foto de 40 MB SEM login ocupava 39 MB de disco até sair o 401,
+	# e o disco é o mesmo do banco. E o teto vale por PEDIDO: N conexões abertas, segurando o
+	# último byte, seguram N vezes o teto (com 10 MB em tudo, 20 JSON no login sem conta levaram
+	# a API da loja de 91 para 290 MiB). Por isso cada rota tem o menor teto que lhe cabe:
+	#   - o envio da foto da peça (PUT .../produtos/<id>/foto), o único arquivo: 6 MB. A API
+	#     recusa a foto acima de 5 MiB (MAX_UPLOAD_BYTES) com a frase dela (422), e 6 MB é isso
+	#     mais o envelope do multipart. A web e o app encolhem a foto para 100–300 KB antes.
+	#   - todo o resto, que é JSON: 2 MB. O maior JSON legítimo é a contagem do Inventário ou
+	#     a Entrada de uma nota, de 50 a 70 bytes por peça: 2 MB passam de 30 mil linhas, que
+	#     ninguém bipa de uma vez. Venda e condicional a API já limita a 200 e 100 itens.
+	# Acima do teto, o Caddy responde 413 (do 2.7 em diante; o 2.6 responde 502) e a API nunca
+	# recebe mais que ele: o 2.11 recusa pelo Content-Length antes de passar um byte; sem ele
+	# (chunked), ou num Caddy mais velho, corta no teto. Os dois matchers são a MESMA regra, um
+	# negado: dois request_body no mesmo pedido se empilham, e o menor valeria para a foto. O
+	# WebSocket do tempo real não passa por aqui: depois do upgrade (HTTP/1.1; o Caddy não
+	# oferece WebSocket por HTTP/2), ele liga as duas pontas direto, sem ler corpo.
+	@envio_de_foto {
+		method PUT
+		path_regexp ^(/demo)?/api/v1/produtos/[0-9]+/foto$
+	}
+	@todo_o_resto {
+		not {
+			method PUT
+			path_regexp ^(/demo)?/api/v1/produtos/[0-9]+/foto$
+		}
+	}
+	request_body @envio_de_foto {
+		max_size 6MB
+	}
+	request_body @todo_o_resto {
+		max_size 2MB
 	}
 
 	# Cabeçalhos de navegador que a API não põe — eles são do PROXY, que é quem fala com o
@@ -68,12 +90,14 @@
 	# vazio — e NUNCA a loja real no lugar. Só chega aqui erro do próprio Caddy; um 404 da
 	# api-demo é resposta normal e passa direto. E só o que quer dizer "não alcancei a
 	# api-demo" (502 a 504) vira a frase: o 413 do teto do corpo também é erro do Caddy, e
-	# dizer "desligada" a quem mandou um arquivo grande demais seria mentira. Sem matcher que
-	# case (a loja real fora do ar, o 413), o Caddy responde como sempre: o código, sem corpo.
+	# dizer "desligada" a quem mandou um corpo grande demais seria mentira. No Caddy 2.6 esse
+	# mesmo corpo grande vira 502 ("request body too large") — por isso a exclusão pela
+	# mensagem, e não só pelo código. Sem matcher que case (a loja real fora do ar, o 413), o
+	# Caddy responde como sempre: o código, sem corpo.
 	handle_errors {
 		@demo_api {
 			path /demo/api/*
-			expression `{err.status_code} >= 502 && {err.status_code} <= 504`
+			expression `{err.status_code} >= 502 && {err.status_code} <= 504 && !{err.message}.contains("request body too large")`
 		}
 		handle @demo_api {
 			header Content-Type "application/json; charset=utf-8"
@@ -81,7 +105,7 @@
 		}
 		@demo {
 			path /demo /demo/*
-			expression `{err.status_code} >= 502 && {err.status_code} <= 504`
+			expression `{err.status_code} >= 502 && {err.status_code} <= 504 && !{err.message}.contains("request body too large")`
 		}
 		handle @demo {
 			header Content-Type "text/plain; charset=utf-8"

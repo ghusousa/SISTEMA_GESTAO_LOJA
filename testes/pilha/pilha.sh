@@ -217,7 +217,9 @@ dc start api-demo >/dev/null 2>&1
 # A role loja_demo tem CONNECTION LIMIT 20: com o pool padrão (10 + 20) uma rajada passava de
 # 20 conexões e o excesso saía 500, em vez de esperar a vez no pool. E o FastAPI lê o corpo
 # inteiro ANTES de conferir o login: sem teto no Caddy, um PUT de foto gigante SEM login
-# enchia o disco (o mesmo do banco) com o temporário — na loja e na demo.
+# enchia o disco (o mesmo do banco) com o temporário — na loja e na demo. O teto vale por
+# pedido (N conexões seguram N vezes ele), então é POR ROTA: 6 MB no envio da foto, 2 MB em
+# todo o resto, que é JSON.
 echo "9. pool da demo e teto do corpo"
 conferir "a api-demo volta depois de parada" saudavel api-demo 240
 conferir "a api-demo roda com pool 5 + 8 (cabe no CONNECTION LIMIT 20)" \
@@ -254,10 +256,15 @@ EOF
 placar=$(rajada /demo/api/v1/configuracao 60 3)
 conferir "3 rajadas de 60 GET simultâneos na demo, nenhum 500 ($placar)" test "$placar" = "200:180"
 
-# Um JPEG para a API (ela confere a assinatura): 11 MB passa do teto de 10; 200 KB é o que a
-# web e o app mandam depois de encolher a foto.
-{ printf '\377\330\377\340'; head -c $((11 * 1024 * 1024)) /dev/zero; } > "$TMP/grande.jpg"
+# Um JPEG para a API (ela confere a assinatura): 7 MB passa do teto da foto (e não dos 10 MB
+# de antes); 3 MB passa do teto do JSON, e a foto tem de passar mesmo assim (os dois tetos não
+# se empilham); 200 KB é o que a web e o app mandam depois de encolher a foto. E um login de
+# 3 MB, sem conta nenhuma: o JSON que o FastAPI guardaria na memória antes de olhar a senha.
+{ printf '\377\330\377\340'; head -c 7000000 /dev/zero; } > "$TMP/grande.jpg"
+{ printf '\377\330\377\340'; head -c 3000000 /dev/urandom; } > "$TMP/media.jpg"
 { printf '\377\330\377\340'; head -c $((200 * 1024)) /dev/urandom; } > "$TMP/peca.jpg"
+python3 -c 'import sys; sys.stdout.write("{\"email\":\"x@x.example\",\"senha\":\"" + "a" * 3000000 + "\"}")' \
+    > "$TMP/grande.json"
 put_foto() {  # put_foto <arquivo> <url> [args do curl...] → status
     local arquivo=$1 url=$2; shift 2
     # Sem `Expect: 100-continue`: quem ataca manda o corpo de uma vez, sem pedir licença.
@@ -265,7 +272,12 @@ put_foto() {  # put_foto <arquivo> <url> [args do curl...] → status
         -F "arquivo=@$arquivo;type=image/jpeg" "$url"
 }
 for raiz in "" /demo; do
-    conferir "PUT de 11 MB sem login em ${raiz}/api/v1/produtos/1/foto: 413 do proxy" \
+    # Na demo, 413 e nunca 503: o corpo grande não é "demonstração desligada".
+    conferir "JSON de 3 MB sem login em ${raiz}/api/v1/auth/login: 413 do proxy" \
+        test "$(curl -s -o "$TMP/resposta" -w '%{http_code}' -H 'Expect:' \
+            -H 'Content-Type: application/json' --data-binary "@$TMP/grande.json" \
+            "$BASE$raiz/api/v1/auth/login")" = 413
+    conferir "PUT de 7 MB sem login em ${raiz}/api/v1/produtos/1/foto: 413 do proxy" \
         test "$(put_foto "$TMP/grande.jpg" "$BASE$raiz/api/v1/produtos/1/foto")" = 413
     conferir "o mesmo em pedaços, sem Content-Length (${raiz:-loja}): 413 do proxy" \
         test "$(put_foto "$TMP/grande.jpg" "$BASE$raiz/api/v1/produtos/1/foto" \
@@ -280,12 +292,91 @@ categoria_real=$(curl -s -H "Authorization: Bearer $token_real" -H 'Content-Type
 produto_real=$(curl -s -H "Authorization: Bearer $token_real" -H 'Content-Type: application/json' \
     -d "{\"categoria_id\":$categoria_real,\"nome\":\"Peça da pilha\",\"variantes\":[{\"tamanho\":\"U\",\"preco_custo\":\"10.00\",\"preco_venda\":\"20.00\"}]}" \
     "$BASE/api/v1/produtos" | json 'd["id"]')
-conferir "foto de 200 KB com login passa pelo proxy (loja)" \
-    test "$(put_foto "$TMP/peca.jpg" "$BASE/api/v1/produtos/$produto_real/foto" \
-        -H "Authorization: Bearer $token_real")" = 200
-conferir "foto de 200 KB com login passa pelo proxy (demo)" \
-    test "$(put_foto "$TMP/peca.jpg" "$BASE/demo/api/v1/produtos/$produto_demo/foto" \
-        -H "Authorization: Bearer $token_demo")" = 200
+for foto in "peca:200 KB" "media:3 MB (acima do teto do JSON)"; do
+    conferir "foto de ${foto#*:} com login passa pelo proxy (loja)" \
+        test "$(put_foto "$TMP/${foto%%:*}.jpg" "$BASE/api/v1/produtos/$produto_real/foto" \
+            -H "Authorization: Bearer $token_real")" = 200
+    conferir "foto de ${foto#*:} com login passa pelo proxy (demo)" \
+        test "$(put_foto "$TMP/${foto%%:*}.jpg" "$BASE/demo/api/v1/produtos/$produto_demo/foto" \
+            -H "Authorization: Bearer $token_demo")" = 200
+done
+
+# --- 10. O tempo real atravessa o proxy ----------------------------------------------------
+# O teto é do corpo do pedido HTTP. O WebSocket entra por um GET sem corpo e, depois do
+# upgrade, o Caddy liga as duas pontas direto: o teto não vale para o que passa por ele, e a
+# tela que fica aberta o dia inteiro não pode cair por causa dele.
+echo "10. tempo real pelo proxy"
+tempo_real() {  # tempo_real <raiz> <token> → "ok" se o aviso chega pelo socket
+    # Entra, espera o "conectado", manda 3 MiB pelo socket (mais que o teto do JSON) e cria
+    # uma categoria pela API: o aviso "catalogo" tem de chegar pelo MESMO socket.
+    python3 - "$PORTA" "$1" "$2" <<'EOF'
+import base64, json, os, socket, sys, urllib.request
+porta, raiz, token = int(sys.argv[1]), sys.argv[2], sys.argv[3]
+s = socket.create_connection(("127.0.0.1", porta), timeout=30)
+s.sendall((f"GET {raiz}/api/v1/tempo-real HTTP/1.1\r\nHost: 127.0.0.1:{porta}\r\n"
+           "Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\n"
+           f"Sec-WebSocket-Key: {base64.b64encode(os.urandom(16)).decode()}\r\n\r\n").encode())
+resto = b""
+while b"\r\n\r\n" not in resto:
+    pedaco = s.recv(4096)
+    if not pedaco:
+        sys.exit("o proxy fechou no aperto de mão")
+    resto += pedaco
+cabecalho, resto = resto.split(b"\r\n\r\n", 1)
+if not cabecalho.startswith(b"HTTP/1.1 101"):
+    sys.exit(cabecalho.split(b"\r\n")[0].decode())
+def quadro(opcode, dados):  # do cliente para o servidor, sempre com máscara
+    n, mascara = len(dados), os.urandom(4)
+    if n < 126:
+        tamanho = bytes([0x80 | n])
+    elif n < 65536:
+        tamanho = bytes([0x80 | 126]) + n.to_bytes(2, "big")
+    else:
+        tamanho = bytes([0x80 | 127]) + n.to_bytes(8, "big")
+    m = int.from_bytes((mascara * (n // 4 + 1))[:n], "big")
+    s.sendall(bytes([0x80 | opcode]) + tamanho + mascara
+              + (int.from_bytes(dados, "big") ^ m).to_bytes(n, "big"))
+def ler(n):
+    global resto
+    while len(resto) < n:
+        pedaco = s.recv(65536)
+        if not pedaco:
+            raise EOFError("o socket fechou")
+        resto += pedaco
+    dados, resto = resto[:n], resto[n:]
+    return dados
+def assunto():  # o próximo aviso do servidor; o ping do protocolo é respondido no caminho
+    while True:
+        b0, b1 = ler(2)
+        n = b1 & 0x7F
+        if n >= 126:
+            n = int.from_bytes(ler(2 if n == 126 else 8), "big")
+        dados = ler(n)
+        if b0 & 0x0F == 0x8:
+            raise EOFError("o servidor fechou o socket")
+        if b0 & 0x0F == 0x9:
+            quadro(0xA, dados)
+        elif b0 & 0x0F == 0x1:
+            return json.loads(dados)["assunto"]
+quadro(0x1, json.dumps({"tipo": "entrar", "token": token}).encode())
+while assunto() != "conectado":
+    pass
+for _ in range(48):
+    quadro(0x1, b"a" * 65536)
+pedido = urllib.request.Request(
+    f"http://127.0.0.1:{porta}{raiz}/api/v1/categorias", method="POST",
+    data=json.dumps({"nome": f"Tempo real {os.urandom(3).hex()}"}).encode(),
+    headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+urllib.request.urlopen(pedido, timeout=30).read()
+while assunto() != "catalogo":
+    pass
+print("ok")
+EOF
+}
+conferir "WebSocket da loja pelo proxy: 3 MiB pelo socket e o aviso ainda chega" \
+    test "$(tempo_real "" "$token_real")" = ok
+conferir "WebSocket da demo pelo proxy: 3 MiB pelo socket e o aviso ainda chega" \
+    test "$(tempo_real /demo "$token_demo")" = ok
 
 echo
 if [ "$FALHAS" -gt 0 ]; then

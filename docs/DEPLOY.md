@@ -193,9 +193,12 @@ server {
     listen 80;
     server_name api.sualoja.com.br;
 
-    # Teto do corpo: acima do padrão do Nginx (1 MB) para a foto passar (a API aceita até 5 MB),
+    # Teto do corpo: acima do padrão do Nginx (1 MB) para a foto passar (a API aceita até 5 MiB),
     # mas nunca sem teto (0): a API lê o corpo inteiro ANTES de conferir o login, e um envio
-    # gigante sem login encheria o disco. O Caddy do instalador põe 10 MB.
+    # gigante sem login encheria o disco. O teto vale por pedido (N conexões seguram N vezes
+    # ele), e por isso o Caddy do instalador o põe POR ROTA: 6 MB no PUT .../produtos/<id>/foto
+    # e 2 MB no resto, que é JSON. Para o mesmo aqui: 2M neste bloco e um `location` só da foto
+    # (~ ^/api/v1/produtos/[0-9]+/foto$) com 6M e o mesmo proxy_pass.
     client_max_body_size 6M;
     gzip on;
     gzip_types application/json application/javascript text/css text/html;
