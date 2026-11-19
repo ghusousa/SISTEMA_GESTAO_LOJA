@@ -759,7 +759,8 @@ DOCKER_QUE_PERDE_A_DEMO = r"""#!/usr/bin/env bash
 if [ "$1 $2" = "compose up" ]; then
     case " $* " in
         *" api-demo "*) echo "id-api-demo" > "$FAKE_CTR/id-api-demo" ;;
-        *" --remove-orphans "*) if [ -f sem-demo-no-compose ]; then : > "$FAKE_CTR/id-api-demo"; fi ;;
+        *" --remove-orphans "*)
+            if [ -f sem-demo-no-compose ]; then : > "$FAKE_CTR/id-api-demo"; fi ;;
     esac
 fi
 exit 0
@@ -768,7 +769,9 @@ exit 0
 
 @precisa_do_git
 @pytest.mark.parametrize("sobe", [True, False])
-async def test_volta_atras_sobe_a_demo_que_a_versao_desfeita_levou(tmp_path: Path, sobe: bool) -> None:
+async def test_volta_atras_sobe_a_demo_que_a_versao_desfeita_levou(
+    tmp_path: Path, sobe: bool
+) -> None:
     """Uma versão que tira ou renomeia o serviço da demonstração e cai: o `--remove-orphans` da
     primeira fase já levou o contêiner dela, e a volta atrás, que só nomeia db, api e proxy,
     não o trazia de volta — a demo ficava fora, calada, até o próximo ./demo.sh --ligar. Agora a
@@ -781,7 +784,8 @@ async def test_volta_atras_sobe_a_demo_que_a_versao_desfeita_levou(tmp_path: Pat
     docker.rename(tmp_path / "bin" / "docker-de-mentira")
     docker.write_text(DOCKER_QUE_PERDE_A_DEMO)
     docker.chmod(0o755)
-    servidor = _servidor(tmp_path, env, antes={}, depois={"quebrada": "", "sem-demo-no-compose": ""})
+    servidor = _servidor(tmp_path, env, antes={},
+                         depois={"quebrada": "", "sem-demo-no-compose": ""})
     (servidor / ".env").write_text(ENV_COM_DEMO)
 
     r = _atualizar(servidor, env, "--sem-backup")
@@ -1033,7 +1037,8 @@ fi
 achou=0
 if [ -s "$FAKE_CTR/dns-$v" ]; then
     while read -r ip; do
-        [ -n "$ip" ] && printf '%s IN %s %s                -- link: eth0\n' "$alvo" "$tipo" "$ip" && achou=1
+        [ -n "$ip" ] || continue
+        printf '%s IN %s %s                -- link: eth0\n' "$alvo" "$tipo" "$ip"; achou=1
     done < "$FAKE_CTR/dns-$v"
 fi
 if [ "$achou" -eq 0 ]; then
@@ -1052,10 +1057,15 @@ def _sem_ipv6(tmp_path: Path) -> None:
     (tmp_path / "ctr" / "if_inet6").write_text(IF_INET6_SO_LO)
 
 
+#: O ✓ do DNS certo, nos testes da conferida.
+APONTA = "loja.seudominio.com.br aponta para este servidor (203.0.113.10)"
+
+
 def _com_systemd_resolved(tmp_path: Path) -> None:
     """O resolv.conf do Ubuntu: o stub do systemd-resolved, que responde pelo /etc/hosts."""
     (tmp_path / "ctr" / "resolv.conf").write_text(
-        "# This is /run/systemd/resolve/stub-resolv.conf\nnameserver 127.0.0.53\noptions edns0 trust-ad\n")
+        "# This is /run/systemd/resolve/stub-resolv.conf\n"
+        "nameserver 127.0.0.53\noptions edns0 trust-ad\n")
 
 
 def _instalador(tmp_path: Path) -> tuple[Path, dict[str, str]]:
@@ -1381,8 +1391,10 @@ async def test_forcar_leva_a_linha_com_export_como_estava(tmp_path: Path) -> Non
     linhas = (loja / ".env").read_text().splitlines()
     assert linhas.count("export FISCAL_EMISSOR=focusnfe") == 1
     assert linhas.count("export\tFOCUSNFE_AMBIENTE=producao") == 1
-    assert [linha for linha in linhas if "BACKUP_REMOTO=" in linha] == ["BACKUP_REMOTO=gdrive:loja-backups"]
-    mantidas = next(linha for linha in r.stdout.splitlines() if "do .env de antes, mantidas:" in linha)
+    backup = [linha for linha in linhas if "BACKUP_REMOTO=" in linha]
+    assert backup == ["BACKUP_REMOTO=gdrive:loja-backups"]
+    mantidas = next(linha for linha in r.stdout.splitlines()
+                    if "do .env de antes, mantidas:" in linha)
     assert set(mantidas.split("mantidas:")[1].replace(",", " ").split()) == {
         "BACKUP_REMOTO", "FISCAL_EMISSOR", "FOCUSNFE_AMBIENTE"}
 
@@ -1431,6 +1443,34 @@ async def test_religar_com_sudo_deixa_o_env_com_quem_instalou(tmp_path: Path) ->
     assert _ler_env(loja)["COMPOSE_PROFILES"] == "demo"  # regravado, e não só lido
     dono = (loja / ".env").stat()
     assert (dono.st_uid, dono.st_gid) == (4242, 4343)
+    assert _modo(loja / ".env") == 0o600
+
+
+def _grupo_suplementar() -> int | None:
+    """Um grupo de quem roda os testes que não é o primário (no runner do CI, o docker ou o adm)."""
+    return next((grupo for grupo in os.getgroups() if grupo != os.getgid()), None)
+
+
+@precisa_do_bash
+@pytest.mark.skipif(_grupo_suplementar() is None,
+                    reason="quem roda os testes não tem grupo suplementar")
+async def test_religar_mantem_o_grupo_do_env(tmp_path: Path) -> None:
+    """A variante sem root do teste acima, para o CI: o .env num grupo suplementar de quem roda
+    (o `chgrp` que o dono do arquivo pode). Sem o `chown --reference`, o .env trocado nasce com o
+    grupo primário de quem rodou o script, e quem lia o .env pelo grupo perde o acesso."""
+    grupo = _grupo_suplementar()
+    assert grupo is not None
+    loja, env = _instalador(tmp_path)
+    (loja / ".env").write_text(ENV_DE_ANTES)
+    (loja / ".env").chmod(0o600)
+    os.chown(loja / ".env", -1, grupo)
+
+    r = _religar(loja, env)
+
+    assert r.returncode == 0, _saida(r, loja)
+    assert _ler_env(loja)["COMPOSE_PROFILES"] == "demo"  # regravado, e não só lido
+    dono = (loja / ".env").stat()
+    assert (dono.st_uid, dono.st_gid) == (os.getuid(), grupo)
     assert _modo(loja / ".env") == 0o600
 
 
@@ -1659,7 +1699,9 @@ async def test_sem_terminal_a_pergunta_para_com_a_frase_e_sem_laco(
 
 
 @precisa_do_bash
-async def test_email_errado_pergunta_de_novo_e_a_ultima_linha_sem_enter_vale(tmp_path: Path) -> None:
+async def test_email_errado_pergunta_de_novo_e_a_ultima_linha_sem_enter_vale(
+    tmp_path: Path
+) -> None:
     """O e-mail errado ficava na variável, e o perguntar não pergunta o que já tem valor: o laço
     repetia "e-mail inválido." para sempre sem perguntar de novo. Agora pergunta de novo — e, se
     a entrada acabou, para com a frase. A última linha sem o Enter no fim é resposta, não o fim:
@@ -1774,12 +1816,13 @@ async def test_getent_antigo_numa_maquina_com_ipv6_da_o_certo(tmp_path: Path) ->
     r = _instalar(loja, env | {"FAKE_GETENT_ANTIGO": "1"}, "loja.seudominio.com.br")
 
     assert r.returncode == 0, _saida(r, loja)
-    assert "✓ loja.seudominio.com.br aponta para este servidor (203.0.113.10)" in r.stdout, _saida(r, loja)
+    assert f"✓ {APONTA}" in r.stdout, _saida(r, loja)
     assert "não foi conferido" not in r.stdout
 
     # E o AAAA que leva a outra máquina, o getent antigo vê: continua pendência.
     _dns(tmp_path, ip="203.0.113.10", v4=("203.0.113.10",), v6=("2001:db8::dead",))
-    com_aaaa = _instalar(loja, env | {"FAKE_GETENT_ANTIGO": "1"}, "loja.seudominio.com.br", "--forcar")
+    com_aaaa = _instalar(loja, env | {"FAKE_GETENT_ANTIGO": "1"}, "loja.seudominio.com.br",
+                         "--forcar")
     assert "Apague o registro AAAA de loja.seudominio.com.br (2001:db8::dead)" in com_aaaa.stdout
 
 
@@ -1792,12 +1835,15 @@ async def test_getent_antigo_numa_maquina_com_ipv6_da_o_certo(tmp_path: Path) ->
     # O hostname da VPS igual ao domínio, em 127.0.1.1: escondia o registro de verdade.
     ("hostname-127", "✓ loja.seudominio.com.br aponta para este servidor (203.0.113.10)"),
 ])
-async def test_getent_antigo_ainda_pergunta_sem_o_etc_hosts(tmp_path: Path, caso: str, recado: str) -> None:
+async def test_getent_antigo_ainda_pergunta_sem_o_etc_hosts(
+    tmp_path: Path, caso: str, recado: str
+) -> None:
     """O getent de antes do -A (glibc anterior à 2.35: Debian 11, Ubuntu 20.04) já tem o
     `-s dns`: a conferida pergunta com ele, e o /etc/hosts continua de fora."""
     loja, env = _instalador(tmp_path)
     _dns(tmp_path, ip="203.0.113.10", v4=() if caso == "so-no-hosts" else ("203.0.113.10",))
-    (tmp_path / "ctr" / "hosts-v4").write_text("203.0.113.10\n" if caso == "so-no-hosts" else "127.0.1.1\n")
+    hosts = "203.0.113.10\n" if caso == "so-no-hosts" else "127.0.1.1\n"
+    (tmp_path / "ctr" / "hosts-v4").write_text(hosts)
 
     r = _instalar(loja, env | {"FAKE_GETENT_ANTIGO": "1"}, "loja.seudominio.com.br")
 
@@ -1820,7 +1866,7 @@ async def test_getent_sem_o_s_recebe_a_pergunta_sem_opcoes(tmp_path: Path) -> No
                   "loja.seudominio.com.br")
 
     assert r.returncode == 0, _saida(r, loja)
-    assert "✓ loja.seudominio.com.br aponta para este servidor (203.0.113.10)" in r.stdout, _saida(r, loja)
+    assert f"✓ {APONTA}" in r.stdout, _saida(r, loja)
     assert (tmp_path / "ctr" / "getent.log").read_text().splitlines()[:3] == [
         "getent -A -s dns ahostsv4 loja.seudominio.com.br",
         "getent -s dns ahostsv4 loja.seudominio.com.br",
@@ -1868,7 +1914,8 @@ async def test_com_o_systemd_resolved_a_pergunta_vai_pelo_resolvectl(
         assert "Falta acertar o DNS" not in r.stdout
     perguntas = (ctr / "resolvectl.log").read_text()
     for tipo in ("A", "AAAA"):
-        assert f"resolvectl query --synthesize=no --cache=no --legend=no -t {tipo} loja.seudominio.com.br" in perguntas
+        pergunta = f"resolvectl query --synthesize=no --cache=no --legend=no -t {tipo}"
+        assert f"{pergunta} loja.seudominio.com.br" in perguntas
     assert not (ctr / "getent.log").exists()
 
 
@@ -1883,10 +1930,12 @@ async def test_resolvectl_sem_o_synthesize_deixa_a_pergunta_com_o_getent(tmp_pat
     r = _instalar(loja, env | {"FAKE_RESOLVECTL_ANTIGO": "1"}, "loja.seudominio.com.br")
 
     assert r.returncode == 0, _saida(r, loja)
-    assert "✓ loja.seudominio.com.br aponta para este servidor (203.0.113.10)" in r.stdout, _saida(r, loja)
-    assert "resolvectl --synthesize=no --cache=no --legend=no --help" in (tmp_path / "ctr" / "resolvectl.log").read_text()
-    assert "query" not in (tmp_path / "ctr" / "resolvectl.log").read_text()
-    assert "getent -A -s dns ahostsv4 loja.seudominio.com.br" in (tmp_path / "ctr" / "getent.log").read_text()
+    assert f"✓ {APONTA}" in r.stdout, _saida(r, loja)
+    resolvectl = (tmp_path / "ctr" / "resolvectl.log").read_text()
+    assert "resolvectl --synthesize=no --cache=no --legend=no --help" in resolvectl
+    assert "query" not in resolvectl
+    getent = (tmp_path / "ctr" / "getent.log").read_text()
+    assert "getent -A -s dns ahostsv4 loja.seudominio.com.br" in getent
 
 
 def _nome_no_painel(dominio: str) -> str:
@@ -1942,8 +1991,9 @@ async def test_dominio_em_maiusculas_vai_para_minusculas_venha_de_onde_vier(tmp_
     r = _instalar(loja, env, "MINHALOJA.TEC.BR")
 
     assert r.returncode == 0, _saida(r, loja)
-    assert ("Crie no painel do domínio:   Tipo A  ·  Nome @ — o registro completo é minhaloja.tec.br"
-            "  ·  Valor 203.0.113.10") in r.stdout, _saida(r, loja)
+    registro = ("Crie no painel do domínio:   Tipo A  ·  Nome @ — o registro completo é "
+                "minhaloja.tec.br  ·  Valor 203.0.113.10")
+    assert registro in r.stdout, _saida(r, loja)
     assert "https://minhaloja.tec.br/app/" in r.stdout
     dotenv = _ler_env(loja)
     assert (dotenv["DOMINIO"], dotenv["ENDERECO_PROXY"], dotenv["CORS_ORIGINS"]) == (
@@ -1961,8 +2011,9 @@ async def test_dominio_em_maiusculas_vai_para_minusculas_venha_de_onde_vier(tmp_
     de_antes = _religar(loja, env)
 
     assert de_antes.returncode == 0, _saida(de_antes, loja)
-    assert ("Crie no painel do domínio:   Tipo A  ·  Nome loja — o registro completo é "
-            "loja.minhaloja.com.br  ·  Valor 203.0.113.10") in de_antes.stdout, _saida(de_antes, loja)
+    registro = ("Crie no painel do domínio:   Tipo A  ·  Nome loja — o registro completo é "
+                "loja.minhaloja.com.br  ·  Valor 203.0.113.10")
+    assert registro in de_antes.stdout, _saida(de_antes, loja)
     assert "https://loja.minhaloja.com.br/app/" in de_antes.stdout
     dotenv = _ler_env(loja)
     assert (dotenv["DOMINIO"], dotenv["ENDERECO_PROXY"], dotenv["CORS_ORIGINS"]) == (

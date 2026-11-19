@@ -14,7 +14,14 @@ from pathlib import Path
 import pytest
 
 from tests.test_backup import RAIZ, _maquina, _modo
-from tests.test_sistema import CURL_DE_MENTIRA, _avisos, _ler_env, _mascarar, precisa_do_bash
+from tests.test_sistema import (
+    CURL_DE_MENTIRA,
+    _avisos,
+    _grupo_suplementar,
+    _ler_env,
+    _mascarar,
+    precisa_do_bash,
+)
 
 # O .env que o instalar.sh gravava antes da demonstração, numa loja com domínio.
 ENV_DA_LOJA = (
@@ -144,6 +151,27 @@ async def test_ligar_com_sudo_deixa_o_env_com_quem_instalou(tmp_path: Path) -> N
 
 
 @precisa_do_bash
+@pytest.mark.skipif(_grupo_suplementar() is None,
+                    reason="quem roda os testes não tem grupo suplementar")
+async def test_ligar_mantem_o_grupo_do_env(tmp_path: Path) -> None:
+    """A variante sem root do teste acima, para o CI: o .env num grupo suplementar de quem roda
+    (o `chgrp` que o dono do arquivo pode). Sem o `chown --reference`, o .env trocado nasce com o
+    grupo primário de quem rodou o script, e quem lia o .env pelo grupo perde o acesso."""
+    grupo = _grupo_suplementar()
+    assert grupo is not None
+    loja, env = _loja(tmp_path, ENV_DA_LOJA)
+    os.chown(loja / ".env", -1, grupo)
+
+    r = _demo(loja, env, "--ligar")
+
+    assert r.returncode == 0, _saida(r, loja)
+    assert _ler_env(loja)["COMPOSE_PROFILES"] == "demo"  # regravado, e não só lido
+    dono = (loja / ".env").stat()
+    assert (dono.st_uid, dono.st_gid) == (os.getuid(), grupo)
+    assert _modo(loja / ".env") == 0o600
+
+
+@precisa_do_bash
 async def test_mostrar_diz_endereco_senha_e_o_que_levar_a_apple(tmp_path: Path) -> None:
     loja, env = _loja(tmp_path, ENV_COM_A_DEMO.replace("ENDERECO_PROXY=loja.exemplo.com.br",
                                                        "ENDERECO_PROXY=:80").replace("PORTA_HTTP=80", "PORTA_HTTP=8080"))
@@ -163,7 +191,9 @@ async def test_mostrar_diz_endereco_senha_e_o_que_levar_a_apple(tmp_path: Path) 
 
 
 @precisa_do_bash
-async def test_mostrar_lembra_do_play_console_antes_de_desligar_o_servidor_antigo(tmp_path: Path) -> None:
+async def test_mostrar_lembra_do_play_console_antes_de_desligar_o_servidor_antigo(
+    tmp_path: Path
+) -> None:
     """As fichas das lojas apontam para as páginas legais do servidor da demonstração. O Google
     Play não passa pelo publicador: quem troca a Vercel por esta demonstração e desliga a de lá
     sem trocar as URLs no Play Console deixa a ficha apontando para páginas fora do ar. Na App
@@ -176,11 +206,13 @@ async def test_mostrar_lembra_do_play_console_antes_de_desligar_o_servidor_antig
     assert "ANTES de desligar o servidor antigo, troque no Play Console" in r.stdout
     assert "https://loja.exemplo.com.br/demo/privacidade\n" in r.stdout
     assert "https://loja.exemplo.com.br/demo/exclusao-de-dados\n" in r.stdout
-    assert "a URL de suporte segue APPLE_SERVIDOR_DEMO sozinha (ou a Variable\n  APPLE_URL_SUPORTE)" in r.stdout
+    assert ("a URL de suporte segue APPLE_SERVIDOR_DEMO sozinha (ou a Variable\n"
+            "  APPLE_URL_SUPORTE)") in r.stdout
     assert "só vale lá quando a versão com ela estiver no ar" in r.stdout
 
     # Na instalação local, nenhuma loja de apps alcança o endereço: não há o que trocar.
-    (loja / ".env").write_text(ENV_COM_A_DEMO.replace("ENDERECO_PROXY=loja.exemplo.com.br", "ENDERECO_PROXY=:80"))
+    (loja / ".env").write_text(ENV_COM_A_DEMO.replace("ENDERECO_PROXY=loja.exemplo.com.br",
+                                                      "ENDERECO_PROXY=:80"))
     sem_https = _demo(loja, env, "--mostrar")
     assert sem_https.returncode == 0, _saida(sem_https, loja)
     assert "Play Console" not in sem_https.stdout
