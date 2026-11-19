@@ -460,6 +460,15 @@ export function criarDonaDaAba({
  *
  * Os rótulos são o que a vendedora procura na tela (e o que o guia do revisor cita).
  */
+/**
+ * Os assuntos do tempo real que acordam o leitor da aba NA HORA (`ouvirNaHora`), sem a espera da
+ * rodada: "leitor" é o bipe da câmera, que tem de cair no carrinho já; "leitor_pareamento" é o
+ * celular que atendeu o chamado (ou aceitou o QR), e a área tem de dizer "ligado" já;
+ * "reconectado" é o canal de volta, que pode ter perdido os dois. Só o assunto: o que mudou, a
+ * aba busca pela rota REST.
+ */
+export const ASSUNTOS_DO_LEITOR = Object.freeze(['leitor', 'leitor_pareamento', 'reconectado']);
+
 export const ROTULOS_DO_CHAMADO = Object.freeze({
   chamar: 'Abrir no app o leitor de código',
   qrDeOutraPessoa: 'Celular de outra pessoa? Ler o QR',

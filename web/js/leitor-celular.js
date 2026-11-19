@@ -43,6 +43,7 @@ import {
   avisoDoChamadoQueAcabou,
   avisoDoFimNoComputador,
   avisoDosDescartados,
+  ASSUNTOS_DO_LEITOR,
   criarDonaDaAba,
   criarEntrega,
   intervaloDaBusca,
@@ -762,7 +763,7 @@ export function ligarLeitorCelular(raizDaMoldura) {
   moldura.querySelector('[data-leitor-selo]')?.addEventListener('click', () => void oferecerDesligar());
   // Na hora, sem a espera da rodada: o bipe ("leitor") tem de cair no carrinho já, e o
   // atendimento do chamado ou o aceite do QR ("leitor_pareamento") tem de acender a área já.
-  pararDeOuvir = ouvirNaHora(['leitor', 'leitor_pareamento', 'reconectado'], acordar);
+  pararDeOuvir = ouvirNaHora(ASSUNTOS_DO_LEITOR, acordar);
   document.addEventListener('rota-trocada', soltarJanelaSumida);
   dona();
   const id = lerId();
