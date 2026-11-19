@@ -1001,9 +1001,15 @@ navegador. A CSP é a segunda barreira contra XSS (o access token mora em memór
 existe nas telas e no recibo impresso), `img-src 'self' data: blob:` (ícone e prévia da foto),
 `connect-src 'self'` mais o WebSocket da mesma origem, `frame-ancestors 'none'`. `/docs` e
 `/redoc` ficam fora dela: o Swagger vem de CDN e só existe fora de produção. HSTS vai sempre
-(o navegador o ignora em HTTP), por um ano e sem `includeSubDomains`. `scripts/pentest.py`
-confere os três no Caddy quando `PENTEST_PROXY` aponta para ele, e no `docker/caddy/Caddyfile` quando
-não aponta. Rota nova que precise de origem de fora tem de entrar na CSP, ou o navegador a
+(o navegador o ignora em HTTP), por um ano e sem `includeSubDomains`. O proxy também põe **teto
+no corpo do pedido** (`request_body`, 10 MB, em toda rota da loja e da demo, ADR-46): o FastAPI lê
+o corpo inteiro ANTES de conferir o login — o JSON na memória, o arquivo num temporário sem teto —,
+e um `PUT .../foto` de 40 MB sem login ocupava 39 MB de disco até sair o 401. O maior corpo
+legítimo é a foto, que a API recusa acima de 5 MB e as duas pontas encolhem para 100–300 KB: até
+10 MB responde a API (422, com a frase dela); acima, o Caddy responde 413 e a API nunca recebe
+mais que isso. Na Vercel o teto é o da plataforma (4,5 MB, ADR-42). `scripts/pentest.py`
+confere os quatro no Caddy quando `PENTEST_PROXY` aponta para ele, e no `docker/caddy/Caddyfile`
+quando não aponta. Rota nova que precise de origem de fora tem de entrar na CSP, ou o navegador a
 bloqueia calado.
 
 **ADR-26 — Nome e ramo da loja no banco, e o ramo troca palavras, não dados.**
@@ -2029,7 +2035,9 @@ navegador: as duas dividem a mesma origem.
   `/demo/api/*` recebe do próprio Caddy um 503 `DEMONSTRACAO_FORA_DO_AR` em JSON, e o resto de
   `/demo/*` uma página com a mesma frase — nunca a loja de verdade no lugar, e nunca um 502 vazio:
   com a frase, o app e a tela dizem que a demonstração está desligada ou começando, em vez de um
-  erro que faria a pessoa redigitar um endereço certo.
+  erro que faria a pessoa redigitar um endereço certo. Só o erro de não alcançar a `api-demo` (502
+  a 504) vira a frase: o 413 do teto do corpo (10 MB, o mesmo da loja, ADR-25) também é erro do
+  Caddy, e passa como é — "desligada" seria mentira para quem mandou um arquivo grande demais.
 - **Banco e role próprios, sem CONNECT no real.** No MESMO Postgres (um segundo servidor de banco
   seria memória a mais numa VPS pequena), o `demo-banco` cria e converge, a cada `up`, a role
   `loja_demo` — sem superusuário, sem criar banco nem role, `CONNECTION LIMIT 20` — dona só do banco
@@ -2189,7 +2197,7 @@ demo que não vale na loja (segredo próprio), a role da demo que nem conecta no
 fictício do lado de lá. Os testes provam o isolamento em cada ponta (§7), e o job `imagem` do CI sobe
 a pilha de verdade (`testes/pilha/pilha.sh`: compose com `.env` antigo e novo, o Caddyfile nos dois
 modos, e contas, tokens, cookies e bancos da loja e da demo sem se cruzar; o pool da demo em três
-rajadas de 60 pedidos).
+rajadas de 60 pedidos e o teto do corpo nas duas, com a foto de verdade passando).
 
 ## 4. Contratos de API
 

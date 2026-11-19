@@ -205,10 +205,12 @@ conferir "demo parada: /demo/api responde 503 DEMONSTRACAO_FORA_DO_AR" \
 conferir "demo parada: a loja segue no ar" test "$(status "$BASE/api/v1/configuracao")" = 200
 dc start api-demo >/dev/null 2>&1
 
-# --- 9. Pool da demo -------------------------------------------------------------------------
+# --- 9. Pool da demo e teto do corpo no proxy -----------------------------------------------
 # A role loja_demo tem CONNECTION LIMIT 20: com o pool padrão (10 + 20) uma rajada passava de
-# 20 conexões e o excesso saía 500, em vez de esperar a vez no pool.
-echo "9. pool da demo"
+# 20 conexões e o excesso saía 500, em vez de esperar a vez no pool. E o FastAPI lê o corpo
+# inteiro ANTES de conferir o login: sem teto no Caddy, um PUT de foto gigante SEM login
+# enchia o disco (o mesmo do banco) com o temporário — na loja e na demo.
+echo "9. pool da demo e teto do corpo"
 conferir "a api-demo volta depois de parada" saudavel api-demo 240
 conferir "a api-demo roda com pool 5 + 8 (cabe no CONNECTION LIMIT 20)" \
     test "$(dc exec -T api-demo python -c \
@@ -243,6 +245,39 @@ EOF
 }
 placar=$(rajada /demo/api/v1/configuracao 60 3)
 conferir "3 rajadas de 60 GET simultâneos na demo, nenhum 500 ($placar)" test "$placar" = "200:180"
+
+# Um JPEG para a API (ela confere a assinatura): 11 MB passa do teto de 10; 200 KB é o que a
+# web e o app mandam depois de encolher a foto.
+{ printf '\377\330\377\340'; head -c $((11 * 1024 * 1024)) /dev/zero; } > "$TMP/grande.jpg"
+{ printf '\377\330\377\340'; head -c $((200 * 1024)) /dev/urandom; } > "$TMP/peca.jpg"
+put_foto() {  # put_foto <arquivo> <url> [args do curl...] → status
+    local arquivo=$1 url=$2; shift 2
+    # Sem `Expect: 100-continue`: quem ataca manda o corpo de uma vez, sem pedir licença.
+    curl -s -o "$TMP/resposta" -w '%{http_code}' -X PUT -H 'Expect:' "$@" \
+        -F "arquivo=@$arquivo;type=image/jpeg" "$url"
+}
+for raiz in "" /demo; do
+    conferir "PUT de 11 MB sem login em ${raiz}/api/v1/produtos/1/foto: 413 do proxy" \
+        test "$(put_foto "$TMP/grande.jpg" "$BASE$raiz/api/v1/produtos/1/foto")" = 413
+    conferir "o mesmo em pedaços, sem Content-Length (${raiz:-loja}): 413 do proxy" \
+        test "$(put_foto "$TMP/grande.jpg" "$BASE$raiz/api/v1/produtos/1/foto" \
+            -H 'Transfer-Encoding: chunked')" = 413
+done
+token_demo=$(login /demo dono@demo.example "$SENHA_DEMO" | json 'd.get("access_token","")')
+token_real=$(login "" dona@loja.example "$SENHA_REAL" | json 'd.get("access_token","")')
+produto_demo=$(curl -s -H "Authorization: Bearer $token_demo" \
+    "$BASE/demo/api/v1/produtos?page=1&size=1" | json 'd["items"][0]["id"]')
+categoria_real=$(curl -s -H "Authorization: Bearer $token_real" -H 'Content-Type: application/json' \
+    -d '{"nome":"Pilha"}' "$BASE/api/v1/categorias" | json 'd["id"]')
+produto_real=$(curl -s -H "Authorization: Bearer $token_real" -H 'Content-Type: application/json' \
+    -d "{\"categoria_id\":$categoria_real,\"nome\":\"Peça da pilha\",\"variantes\":[{\"tamanho\":\"U\",\"preco_custo\":\"10.00\",\"preco_venda\":\"20.00\"}]}" \
+    "$BASE/api/v1/produtos" | json 'd["id"]')
+conferir "foto de 200 KB com login passa pelo proxy (loja)" \
+    test "$(put_foto "$TMP/peca.jpg" "$BASE/api/v1/produtos/$produto_real/foto" \
+        -H "Authorization: Bearer $token_real")" = 200
+conferir "foto de 200 KB com login passa pelo proxy (demo)" \
+    test "$(put_foto "$TMP/peca.jpg" "$BASE/demo/api/v1/produtos/$produto_demo/foto" \
+        -H "Authorization: Bearer $token_demo")" = 200
 
 echo
 if [ "$FALHAS" -gt 0 ]; then

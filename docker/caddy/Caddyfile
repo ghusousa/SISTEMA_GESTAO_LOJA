@@ -6,6 +6,19 @@
 {$ENDERECO} {
 	encode gzip
 
+	# Teto do corpo do pedido, da loja e da demo, em TODA rota. O FastAPI lê o corpo inteiro
+	# ANTES de conferir o login — o JSON na memória; o arquivo, o Starlette grava num
+	# temporário sem teto: sem isto, um PUT .../foto de 40 MB SEM login ocupava 39 MB de disco
+	# até sair o 401, e o disco é o mesmo do banco. O maior corpo legítimo é a foto da peça,
+	# que a API recusa acima de 5 MB (MAX_UPLOAD_BYTES) e que a web e o app já encolhem para
+	# 100–300 KB antes de subir; o resto é JSON de poucos KB. 10 MB é o dobro do teto da API:
+	# até lá quem responde é ela, com a frase dela (422); acima, o Caddy responde 413 e a API
+	# nunca recebe mais que 10 MB — o Caddy de hoje recusa pelo Content-Length antes de passar
+	# um byte; sem ele (chunked), corta a conexão com a API no 10º MB.
+	request_body {
+		max_size 10MB
+	}
+
 	# Cabeçalhos de navegador que a API não põe — eles são do PROXY, que é quem fala com o
 	# navegador (a API já manda X-Content-Type-Options, X-Frame-Options e Referrer-Policy).
 	#
@@ -52,16 +65,24 @@
 	}
 
 	# A demo desligada (sem o profile) ou ainda semeando: resposta clara em vez de um 502
-	# vazio — e NUNCA a loja real no lugar. Só chega aqui erro do próprio Caddy (não alcançou a
-	# api-demo); um 404 da api-demo é resposta normal e passa direto. Sem matcher que case
-	# (a loja real fora do ar), o Caddy responde como sempre respondeu: o código, sem corpo.
+	# vazio — e NUNCA a loja real no lugar. Só chega aqui erro do próprio Caddy; um 404 da
+	# api-demo é resposta normal e passa direto. E só o que quer dizer "não alcancei a
+	# api-demo" (502 a 504) vira a frase: o 413 do teto do corpo também é erro do Caddy, e
+	# dizer "desligada" a quem mandou um arquivo grande demais seria mentira. Sem matcher que
+	# case (a loja real fora do ar, o 413), o Caddy responde como sempre: o código, sem corpo.
 	handle_errors {
-		@demo_api path /demo/api/*
+		@demo_api {
+			path /demo/api/*
+			expression `{err.status_code} >= 502 && {err.status_code} <= 504`
+		}
 		handle @demo_api {
 			header Content-Type "application/json; charset=utf-8"
 			respond "{\"code\":\"DEMONSTRACAO_FORA_DO_AR\",\"message\":\"A demonstração está desligada ou começando. Tente de novo em um minuto.\",\"detail\":{}}" 503
 		}
-		@demo path /demo /demo/*
+		@demo {
+			path /demo /demo/*
+			expression `{err.status_code} >= 502 && {err.status_code} <= 504`
+		}
 		handle @demo {
 			header Content-Type "text/plain; charset=utf-8"
 			respond "A demonstração está desligada ou começando. Tente de novo em um minuto." 503
