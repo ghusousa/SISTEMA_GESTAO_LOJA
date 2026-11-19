@@ -152,12 +152,15 @@ um QR, cada bipe na câmera cai no campo do leitor da tela do computador (ADR-43
       aberto, em qualquer tela, desce a faixa "O computador está chamando · Sinal 7K3": um toque
       em "Abrir o leitor" e a câmera já lê para aquele computador. Com o mesmo login em dois
       caixas, cada aba tem o seu chamado e o seu sinal, e cada pessoa abre o do sinal da tela
-      dela. O chamado vale 5 min; "Chamar de novo", "Cancelar" e "Ler o QR" ficam ao lado, e o
-      leitor USB segue funcionando (nada ali é janela). Quando a loja liga as notificações no
-      servidor (`NOTIFICACOES_PUSH=expo`; nascem desligadas), o iPhone que permitiu recebe o
-      chamado também com o app fechado — o toque na notificação abre a câmera; o computador diz
-      se a notificação saiu e, se não, por quê (nenhum celular com o app atualizado nesse login,
-      notificações desligadas no celular ou no servidor, ou a falha da vez).
+      dela. O chamado vale 5 min (vencido, some sozinho da faixa do celular); "Chamar de novo",
+      "Cancelar" e "Ler o QR" ficam ao lado, e o leitor USB segue funcionando (nada ali é janela).
+      O F5 (ou a aba fechada e reaberta) enquanto chama retoma o MESMO chamado, nunca um segundo.
+      Quando a loja liga as notificações no servidor (`NOTIFICACOES_PUSH=expo`; nascem desligadas),
+      o iPhone que permitiu recebe o chamado também com o app fechado — o toque na notificação abre
+      a câmera; o computador diz se a notificação saiu e, se não, por quê (nenhum celular com o app
+      atualizado nesse login, notificações desligadas no celular ou no servidor, falta o passo de
+      quem publica o app, ou a falha da vez), e quem cuida do servidor confere com um aviso de
+      teste (`python -m app.cli testar-push --email <login>`), que diz o que a Apple respondeu.
     - **O QR (ADR-43), para o celular de outra pessoa:** "Celular de outra pessoa? Ler o QR", ao
       lado do botão, ou "📱 Celular como leitor", no rodapé da lateral (em qualquer tela): aparece
       um QR e um código de 6 letras e números (vale 5 min; "Gerar outro" troca). Qualquer pessoa
@@ -171,8 +174,10 @@ um QR, cada bipe na câmera cai no campo do leitor da tela do computador (ADR-43
     avisa qual abrir. Enquanto a tela grava (Registrar, Fechar contagem) ou a pessoa do computador
     digita uma quantidade na lista, o código espera a vez e entra depois — nada some no meio. O
     que chegou tarde demais (mais de 2 min) o computador avisa; o celular lista o que não saiu
-    quando o leitor para, e marca "confira no computador" o que a rede não confirmou. Vale até alguém desligar (de qualquer um dos dois), sair do sistema, ou 12 h
-    depois; o F5 não desliga. Um celular lê para um computador por vez: ler o código de outro
+    quando o leitor para, e marca "confira no computador" o que a rede não confirmou. Etiqueta que
+    a câmera não lê (barras apagadas, amassadas): "Digitar código", na tela do leitor ligado, manda
+    o número ao computador do mesmo jeito. Vale até alguém desligar (de qualquer um dos dois), sair
+    do sistema, ou 12 h depois; o F5 não desliga. Um celular lê para um computador por vez: ler o código de outro
     computador (ou atender outro chamado) desliga o primeiro; outro celular com o mesmo login não
     derruba o leitor deste. Com um leitor ligado, o computador não troca de celular por cima:
     "Chamar de novo" desliga o atual antes.
@@ -206,10 +211,12 @@ um QR, cada bipe na câmera cai no campo do leitor da tela do computador (ADR-43
 - Chamado do leitor (ADR-47): só o celular do MESMO login atende, e só um toque liga (na faixa,
   no cartão da tela do leitor ou na notificação; link e QR nunca ligam sozinhos); o sinal é o
   que separa dois caixas com o mesmo login, e o QR continua sendo o vínculo estrito. O app só
-  pede a permissão de notificação quando o servidor da loja manda push, e nunca ao abrir. A
-  notificação leva só um texto fixo e o sinal — nenhum nome, venda, cliente ou endereço do
-  servidor —, e o token dela é credencial: não sai em tela, log nem backup, e some ao sair do
-  app, ao trocar a senha, ao desativar ou excluir a conta e em 30 dias sem uso.
+  pede a permissão de notificação no iPhone, quando o servidor da loja manda push, e nunca ao
+  abrir. A notificação leva só um texto fixo e o sinal — nenhum nome, venda, cliente ou endereço
+  do servidor —, e o token dela é credencial: não sai em tela, log nem backup, e some ao sair do
+  app, ao trocar a senha, ao desativar ou excluir a conta e, depois de 30 dias sem uso, na limpeza
+  de cada entrada no sistema (ou de cada registro de aparelho). O identificador da instalação do
+  app só fica no leitor enquanto ele está ligado.
 - Vendedor não recebe custo em nenhuma resposta da API.
 - Retry de rede não duplica venda, entrada, devolução nem recebimento de fiado
   (idempotência por `client_uuid`). E a mesma chave com outro pedido (outras peças, outro

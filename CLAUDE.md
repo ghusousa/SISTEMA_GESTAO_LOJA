@@ -39,6 +39,7 @@ contratos, ADRs). Mudou algo? Atualize o doc no mesmo commit.**
 .venv/bin/pytest -q                                       # testes (usa loja_test)
 .venv/bin/python -m app.cli create-admin --nome "Dona" --email x@y.com --senha ...
 .venv/bin/python scripts/e2e.py                           # cenário de um dia de loja (API no ar)
+.venv/bin/python -m app.cli testar-push --email x@y.com   # a notificação não chega? aviso de teste + recibo da Apple (ADR-47)
 
 # Stack completa em Docker (raiz do repo)
 ./instalar.sh                                             # instala e sobe tudo, com a demonstração em /demo (--sem-demo: sem ela)
@@ -74,7 +75,10 @@ publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com as telas do
   Fluxo router → service → repository. Um módulo **nunca** importa o repository de outro
   (só o service público). `relatorios` e `caixa` são exceção documentada: leem via SQL próprio.
 - `HTTPException` só no router. Domínio lança `AppError` (`app/core/exceptions.py`), traduzida
-  pelo handler global em `{code, message, detail}`.
+  pelo handler global em `{code, message, detail}`. O erro do banco não repete os parâmetros
+  (`hide_parameters=True` no engine); quem grava segredo não deixa o erro do banco subir (o
+  registro do aparelho vira 503, levantado FORA do `except`); número que não cabe no banco é 422
+  em qualquer rota (handler de `DBAPIError`; guarda em `tests/test_erros_do_banco.py`).
 - Toda listagem é paginada: `?page=&size=` → `{items, total, page, size}` — inclusive
   relatório (`/relatorios/estoque-baixo`); quem só quer o número pede `size=1` e lê `total`.
   A contagem conta só a tabela base quando os JOINs são 1:1 por FK obrigatória (ADR-31).
@@ -228,7 +232,9 @@ publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com as telas do
   se chamar `ligar()`/`desligar()` — e, se ela grava (POST que copia a lista e depois a limpa) ou
   tem campo de digitar na lista que o bipe redesenha, passa `ocupadoQuando: () => enviando ||
   digitandoEm(areaItens)`: o código de fora espera em vez de sumir. Uma aba por leitor
-  (`criarDonaDaAba`, "Duplicar aba" copia o `sessionStorage`).
+  (`criarDonaDaAba`, "Duplicar aba" copia o `sessionStorage`): quem ainda espera a resposta sobre
+  um leitor responde por ele a quem perguntou depois (hora + sorteio; a resposta leva a hora de
+  quem responde), e vence a primeira a perguntar.
   **O chamado (ADR-47)**, sem QR: "Abrir no app o leitor de código", acima do campo de leitura das
   cinco telas que leem código (tela nova com leitor: o `<div data-leitor-chamado>` antes do
   `.pdv__campo`, `ligarBotaoDoCelular` no render e o `soltar` na limpeza), chama
@@ -238,7 +244,14 @@ publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com as telas do
   atende (`/atender`, a MESMA 404 `LEITOR_CHAMADO_INVALIDO` para tudo que não serve), e o SINAL de 3
   caracteres é o que separa dois caixas com o mesmo login (a fronteira é o login; vínculo estrito é o
   QR). `substitui_id` de um ATIVO é 409 `LEITOR_JA_LIGADO`, também no QR. A instalação do app (UUID
-  no SecureStore) vai no aceite, no atender e no bipe: reenvio, bipe e TROCOU valem por instalação.
+  no SecureStore) vai no aceite, no atender e no bipe: reenvio, bipe e TROCOU valem por instalação,
+  e o id só vive com o leitor ligado (`_encerrar` o anula; o do que venceu sai no fim do próximo
+  código ou chamado, `esquecer_instalacoes`, por último e com `SKIP LOCKED`). No web, a chave do
+  chamado só vale enquanto descreve a aba e só sai do `sessionStorage` com o id do chamado já
+  guardado — o F5 durante a pergunta às outras abas não perde o chamado —, e o F5 trava a área até
+  o leitor voltar. No app, vencer não avisa ninguém (status calculado): a lista de chamados se
+  reconfirma de 30 em 30 s enquanto tem chamado e esconde o vencido pelo `vence_em`. O leitor
+  ligado tem "Digitar código", pelo MESMO `aoLer` da câmera.
   "leitor" é só o bipe; o pareamento é "leitor_pareamento". No app aberto o chamado desce como FAIXA
   (`FaixaDoChamado.tsx`, nunca modal, não pausa câmera), e ligar é sempre um toque (faixa, cartão ou
   notificação; link e QR nunca ligam sozinhos). Rótulo novo que a ficha da Apple cita entra em
@@ -257,7 +270,11 @@ publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com as telas do
   backup — os cinco `pg_dump` dos scripts levam `--exclude-table-data=notificacao_aparelhos`, e
   `pg_dump` novo leva a mesma flag (o teste de texto cobra). Ele some em `_derrubar_sessoes` (trocar
   ou redefinir a senha, desativar, excluir), no `DELETE /notificacoes/aparelho` SEM sessão (o app ao
-  sair; sem rede, uma limpeza pendente) e em 30 dias sem registro. Teste de push só com
+  sair; sem rede, uma limpeza pendente) e, passados 30 dias sem registro, na faxina do registro e
+  do login (`SKIP LOCKED`, por último). O registro roda de novo quando a configuração muda o modo do
+  push, nunca a cada religação. Um POST por aparelho à Expo (ela recusa o lote misto inteiro), e o
+  porquê da recusa vai ao log só como código; `SEM_CHAVE_DA_APPLE` é a chave APNs que falta na Expo
+  (o passo único do README do publicador). Teste de push só com
   `httpx.MockTransport` (o conftest reprova a Expo de verdade). O `expo-notifications` só carrega por
   `lib/notificacoesNativas.ts`: o export web e o Expo Go nunca o importam. Espelhos: a validação do
   token (`notificacoes/schemas.py` ↔ `tokenValido`, `lib/notificacoes.ts`), o formato do sinal
@@ -351,8 +368,9 @@ publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com as telas do
 - **Câmera**: o leitor pede a permissão ao SISTEMA ao montar (`lib/permissaoDaCamera.ts`); a
   tela do app só aparece depois de recusada — "Abrir Ajustes" quando o iOS não pergunta mais,
   "Continuar" quando ainda pergunta. Nunca uma tela do app com "Permitir" antes do alerta (5.1.1).
-- Diálogo do app (`Confirmacao`, os de pagamento): corpo num `ScrollView` com `maxHeight` 85% e os
-  botões fora da rolagem — com o Texto Maior do iOS, sem isso os botões saem da tela.
+- Diálogo do app (`Confirmacao`, os de pagamento, a caixa do "Digitar código"): corpo num `ScrollView`
+  com `maxHeight` 85% e os botões fora da rolagem — com o Texto Maior do iOS, sem isso os botões saem
+  da tela.
 
 ## Testes
 

@@ -29,9 +29,15 @@ domínio.
 Módulos e ordem de implementação (dependências primeiro):
 `core` → `auth` → `usuarios` → `catalogo` → `estoque` → `vendas` → `despesas` → `caixa` → `relatorios`
 
-`app/core/`: `config.py` (pydantic-settings), `db.py` (engine async + naming convention),
-`url_do_banco.py` (a URL do Neon em formato asyncpg, ADR-42), `security.py` (bcrypt + JWT),
-`exceptions.py` (AppError + handler), `pagination.py`, `deps.py`.
+`app/core/`: `config.py` (pydantic-settings), `db.py` (engine async + naming convention; com
+`hide_parameters=True`, o erro do banco e o `DB_ECHO` não repetem os valores do comando — um
+token ou uma senha no parâmetro iria ao log, ADR-47; os eventos `before_cursor_execute`, como os
+de `tests/planos.py`, continuam recebendo os valores), `url_do_banco.py` (a URL do Neon em formato
+asyncpg, ADR-42), `security.py` (bcrypt + JWT), `exceptions.py` (AppError + handler; e o
+número do pedido que não cabe no banco — um id ou uma página além do INTEGER/BIGINT, que o
+asyncpg recusa antes de mandar o comando — vira 422 `VALIDACAO` em qualquer rota, em vez de 500
+com traceback; o resto do erro do banco segue como antes; guarda em `tests/test_erros_do_banco.py`),
+`pagination.py`, `deps.py`.
 
 Três formas de rodar o mesmo código: a **loja** (Docker + Caddy na máquina dela, a de
 verdade); a **demonstração que sobe com ela**, no mesmo domínio, em `<domínio>/demo` — outra
@@ -404,7 +410,10 @@ força bruta (ADR-24): a contagem é por janela de 15 min. A faxina é oportunis
 bem-sucedido (raro, e já escrevendo): apaga as tentativas com mais de um dia e os
 `refresh_tokens` **vencidos** há mais de um dia. O revogado ainda dentro da validade fica — é a
 linha dele que denuncia o reuso de uma cópia roubada (ADR-12); vencido, o próprio JWT já é
-recusado pelo `exp` antes de qualquer consulta.
+recusado pelo `exp` antes de qualquer consulta. Por último, depois do flush do refresh novo, ela
+leva os aparelhos de notificação sem registro há 30 dias, com o token (ADR-47, §2.12): sem ela, a
+loja que parou de usar o app guardaria o token para sempre. Com `SKIP LOCKED`, o login nunca
+espera por ela; a porta dele na renovação da demo continua sendo `login_attempts` (ADR-46).
 
 ### 2.9 Identidade da loja
 
@@ -483,7 +492,7 @@ leitor_pareamentos(id, codigo VARCHAR(8),                 -- 6 de "23456789ABCDE
                    chamado BOOL NOT NULL DEFAULT false,   -- ADR-47: nasceu de "Abrir no app o leitor de código"
                    sinal VARCHAR(3) NULL,                 -- ADR-47: dígito-letra-dígito, só do chamado
                    client_uuid UUID NULL,                 -- ADR-47: a chave idempotente do POST do chamado
-                   aparelho_instalacao UUID NULL)         -- ADR-47: a instalação do app que aceitou/atendeu
+                   aparelho_instalacao UUID NULL)         -- ADR-47: a instalação que aceitou/atendeu; só ligado
   ck_leitor_pareamentos_encerramento  -- encerrado_em e motivo andam juntos
   ck_leitor_pareamentos_aceite        -- aceito_em, aparelho_user_id e expira_em andam juntos
   uq_leitor_pareamentos_codigo_aguardando (codigo) WHERE aceito_em IS NULL AND encerrado_em IS NULL
@@ -508,16 +517,21 @@ leitor_bipes(id BIGINT, pareamento_id FK→leitor_pareamentos CASCADE,
 O status do pareamento não é coluna: sai das datas, no servidor — ENCERRADO se `encerrado_em`;
 aceito, ATIVO até `expira_em` e EXPIRADO depois; sem aceite, AGUARDANDO até `codigo_expira_em` e
 EXPIRADO depois. As duas tabelas são de vida curta e não são histórico da loja: a faxina (a cada
-código gerado) apaga bipe com mais de 1 dia e pareamento terminado há mais de 30, e os FKs para
-`users` são CASCADE — excluir a conta de alguém não trava num pareamento de ontem.
+código gerado ou chamado) apaga bipe com mais de 1 dia e pareamento terminado há mais de 30, e os
+FKs para `users` são CASCADE — excluir a conta de alguém não trava num pareamento de ontem. O
+`aparelho_instalacao` vive menos que a linha: só enquanto o leitor está ligado. Quem encerra o
+anula (`_encerrar`), e o do pareamento que só venceu sai no fim do próximo código ou chamado
+(`esquecer_instalacoes`, 5 min depois do fim, com `SKIP LOCKED`) — o pareamento terminado fica até
+30 dias, mas sem o id do aparelho.
 
 O chamado (ADR-47) é um pareamento com `chamado = true`: o código continua sorteado (o NOT NULL e
 o UNIQUE parcial pedem), mas nunca sai em resposta nem abre o aceite por código. A
 `notificacao_aparelhos` é o registro de cada instalação do app neste servidor, com ou sem token
 de push: até 10 por login (os de registro mais recente), faxina dos sem registro há 30 dias a cada
-registro, CASCADE com a conta. O token é credencial ao portador — nunca sai em rota, log ou `repr`,
-e os `pg_dump` dos scripts levam a tabela só como estrutura (`--exclude-table-data`). Fica FORA do
-mapa do tempo real: nenhuma tela acompanha essa tabela. Nenhum índice novo (ADR-31): as leituras
+registro e a cada login (com `SKIP LOCKED`: nunca espera), CASCADE com a conta. O token é
+credencial ao portador — nunca sai em rota, log ou `repr`, e os `pg_dump` dos scripts levam a
+tabela só como estrutura (`--exclude-table-data`). Fica FORA do mapa do tempo real: nenhuma tela
+acompanha essa tabela. Nenhum índice novo (ADR-31): as leituras
 do chamado varrem tabelas pequenas; se uma medição em volume real pedir, o candidato é
 `(computador_user_id, id) WHERE chamado AND aceito_em IS NULL AND encerrado_em IS NULL`.
 
@@ -1775,7 +1789,25 @@ aba não herda). "Duplicar
 aba" copia o `sessionStorage`: antes de retomar, a aba pergunta por um `BroadcastChannel`
 (`criarDonaDaAba`; não exige HTTPS, e a loja na rede local é HTTP) se outra aba já cuida daquele
 leitor, e a cópia não retoma — senão as duas retirariam a mesma fila e os bipes se dividiriam
-entre dois carrinhos, um numa aba escondida. O roteador tira o modal do QR da tela ao trocar de
+entre dois carrinhos, um numa aba escondida. A pergunta é `{tipo: 'quem-cuida', id, quando,
+sorteio}` (`quando` é a hora dela; `sorteio`, um número ao acaso) e espera até 300 ms
+(`ESPERA_DA_DONA_MS`). Responde `eu-cuido` (1) a dona (`meu() === id`), sem hora — vale para
+todas as abas —, e (2) a aba que ainda espera a resposta da PRÓPRIA pergunta pelo mesmo leitor, a
+quem perguntou DEPOIS dela (hora maior; no mesmo milissegundo, sorteio maior); essa resposta leva
+a hora e o sorteio de quem responde, porque vai a todas as abas, e só a aceita quem perguntou
+depois — com três abas no meio, a primeira não desiste pela resposta da segunda à terceira. Vence
+a primeira a perguntar: uma aba retoma, nunca duas nem nenhuma. A garantia mora em quem recebe
+(só aceita a resposta de quem perguntou antes); a conferência da ordem em quem responde só poupa
+mensagens. Uma pergunta abandonada (a sessão caiu, ou o Sair, durante a espera) ainda responde
+pelos ms que faltam dos 300: uma cópia que pergunte nesse meio desiste — inofensivo: na queda da
+sessão, a chave do chamado fica na aba e a mesma pessoa o retoma ao entrar; no Sair, o chamado é
+encerrado no servidor. O porquê: a cópia feita durante a pergunta da origem (o F5 que retoma o
+leitor guardado, ou o reenvio da chave do chamado, ADR-47) carrega e pergunta em ~110–170 ms
+(medido no Chromium, com o servidor perto), antes de os 300 ms acabarem; a origem ainda não era
+dona e ninguém respondia, então as duas retomavam, e as leituras iam para a cópia. A pergunta de
+uma página antiga, sem `quando`, só ouve a dona, como antes: as versões convivem durante a
+atualização. Para quem usa, nada muda — a pergunta não aparece. O roteador tira o modal do QR da
+tela ao trocar de
 rota sem fechá-lo: o `rota-trocada` (e o próximo clique) fecha de vez a janela que saiu do
 documento, senão o botão ficava morto até um F5. O código gerado com a sessão saindo no meio
 não é adotado nem mostrado (e é encerrado, se ainda houver token). Sair do sistema manda o DELETE (até 3 s) ANTES do logout — o
@@ -1826,8 +1858,11 @@ leitor de código"); o da lateral fica, com o mesmo rótulo, e passa a ser o cam
 "ligar é sempre um toque" continua — tocar em "Abrir o leitor" (na faixa ou no cartão) ou na
 notificação É esse toque, e link e QR continuam sem ligar sozinhos; (e) desligar pelo celular com
 o mesmo login grava CELULAR (`?ponta=celular`); (f) o assunto "leitor" passa a ser só o bipe, e o
-pareamento ganha o seu, "leitor_pareamento"; (g) o bipe confere a instalação quando o pareamento
-tem uma (o de outra é o 404 de sempre).
+pareamento ganha o seu, "leitor_pareamento"; (g) o bipe confere a instalação enquanto o pareamento
+a tem (o de outra é o 404 de sempre); o id sai no encerramento (e, no vencido, na limpeza do código
+ou chamado seguinte), e aí o bipe tardio de qualquer instalação do login é o 409
+`LEITOR_DESLIGADO`; (h) a tela do leitor ligado ganha o "Digitar código", que manda o código
+digitado pelo mesmo caminho da câmera.
 
 **ADR-44 — Publicar o iOS por um botão do GitHub Actions, no molde do Sistema Obras.**
 *Contexto:* publicar exigia o computador do dono (`eas build`, `npm run publicar:build`,
@@ -2407,12 +2442,57 @@ o app cria, com o login da Apple; e o servidor de cada loja é dela, não de que
   ou por outra instalação) — sem oráculo; o reenvio da MESMA instalação, ainda ATIVO e dentro dos
   5 min, é 200 com o mesmo pareamento, fora do diário. Chamar e atender do mesmo login se
   enfileiram na advisory do aceite (espaço 43); o chamar trava com `FOR UPDATE` a linha que
-  substitui, para um aceite no meio esperar.
+  substitui, para um aceite no meio esperar. Número que não cabe no banco (o id do caminho, a
+  página, o `substitui_id`) é 422 `VALIDACAO` em qualquer rota — também no atender, que fora isso
+  responde o MESMO 404 para tudo; não é oráculo: o número que passa do INTEGER não existe em
+  linha nenhuma.
+- **A chave do chamado no web** (`nomeNaRaiz('leitor-celular-chamado')` no `sessionStorage`:
+  `{client_uuid, substitui_id, desde, usuario_id}`) só vale enquanto descreve a aba: é reenviada
+  (no clique, no F5, na recuperação) só se a pessoa é a mesma, se tem menos de 5 min e se trocaria
+  o MESMO AGUARDANDO que a aba tem agora (`pendenciaDaAba`); senão sai — reenviada a um servidor
+  que nunca a recebeu, criaria AGORA um chamado que ninguém pediu (com push, se ligado), e a aba
+  largaria o leitor ATIVO sem ninguém retirar a fila. Gravada ANTES do POST, ela só sai em três
+  casos: o servidor recusou (4xx); o chamado da resposta não é desta aba (outra aba cuida dele, ou
+  ele já acabou); ou em `adotarChamado`, DEPOIS de o id ir para o `sessionStorage`
+  (`leitor-celular`). **Em momento nenhum a aba fica sem a chave e sem o id.** A janela que isso
+  fecha: no reenvio (200, `notificacao` nula), a aba pergunta às outras abas quem cuida do chamado
+  (a dona da aba, ADR-43: até 300 ms sem resposta); a chave fica durante a pergunta, e o F5 — ou
+  a aba fechada e reaberta — nesse meio reenvia a MESMA chave e retoma o mesmo chamado. Antes ela
+  saía antes da pergunta e o id só entrava depois: a página nova ficava livre, e o chamado,
+  órfão — 5 min na faixa do celular, com as leituras indo para ninguém. A chave também sai em
+  `esquecer()` (Cancelar, Desligar, o chamado que venceu ou terminou), no QR novo e no leitor
+  ligado; sem resposta ou com 5xx, fica (o desvio declarado do contrato). A sessão que cai durante
+  a pergunta deixa a chave (`largarChamado` não encerra o chamado, e a mesma pessoa o retoma ao
+  entrar); o Sair a tira e encerra o chamado no servidor, se ainda houver token. O replay — do
+  clique, do F5 ou da recuperação — sempre pergunta à dona, e quando outra aba cuida a área diz
+  "Este chamado já está aberto em outra aba."; o chamado recém-criado (201) não pergunta, porque
+  só o replay pode ser de outra aba. O "Chamar de novo" que o servidor processou com a resposta
+  perdida (o AGUARDANDO virou SUBSTITUIDO pela troca que a chave pedia) é recuperado pela mesma
+  chave (a área mostra "Chamando…" por um instante no meio dela); recusado o reenvio, vale o aviso
+  de "leitores demais". O F5 com leitor guardado trava a área (`restaurando`) até o servidor dizer
+  o que vale, tentando de novo a cada 5 s com a rede fora — um clique no meio criaria um segundo
+  pareamento, e um dos dois ficaria sem ninguém. A
+  dica sem situação (o F5, o replay) segue o `notificacoes_push` da configuração: "Toque na
+  notificação…" só com o push ligado; desligado, ausente ou antes de a configuração chegar, a
+  frase da DESLIGADA. `ASSUNTOS_DO_LEITOR` (`leitor-remoto.js`) é a lista que o leitor passa a
+  `ouvirNaHora` (`leitor`, `leitor_pareamento`, `reconectado`), e o teste do tempo real a importa.
 - **A instalação do app:** um UUID aleatório no SecureStore (`lib/instalacao.ts`), sorteado de
   novo quando o app troca de servidor (servidores diferentes não recebem o mesmo identificador),
   vai no aceite, no atender e em cada bipe. O reenvio vale só para a MESMA instalação, o bipe de
   outra é o 404 de sempre (o app já o trata como leitor desligado), e o TROCOU vale por aparelho:
-  o segundo celular do mesmo login não derruba o leitor do primeiro.
+  o segundo celular do mesmo login não derruba o leitor do primeiro. **O id só fica enquanto o
+  celular é o leitor:** `_encerrar` o anula na hora (desligar no celular — também o Sair do app
+  —, no computador, TROCOU, SUBSTITUIDO, o teto de 10), e o do leitor que só VENCEU (o relógio não
+  grava nada) sai em `esquecer_instalacoes`, no fim de cada código ou chamado de qualquer login:
+  5 min depois do fim (`FOLGA_PARA_ESQUECER_A_INSTALACAO` — nenhuma transação viva ainda o vê
+  ligado), com `SKIP LOCKED` e por último, logo antes do commit. Com ela no começo, junto da
+  faxina, o código e o chamado que esperam a conta na FK do pareamento novo fechavam ciclo com a
+  exclusão da conta (que trava a conta e apaga os pareamentos dela), e o Postgres derrubava um dos
+  dois. Sem o id — o leitor encerrado, ou o vencido depois da limpeza —, o bipe tardio de
+  qualquer instalação do login é o 409 `LEITOR_DESLIGADO` (a de outra ouvia o 404; o app trata os
+  dois igual, e o login já lê o pareamento pelo GET). É o que deixa a política de privacidade dizer que o registro do aparelho
+  não fica depois que o celular deixa de ser o leitor: enquanto ele está ligado, o id entra nas
+  cópias de segurança como o resto do banco.
 - **Com o app aberto, sem push nenhum.** O assunto novo `leitor_pareamento` (criado, aceito,
   atendido, encerrado — raro) separa o pareamento do bipe (`leitor`, a cada leitura): o app ouve
   só ele e refaz `GET /leitor/chamados/abertos` (chave `['leitor','chamados']`, também na volta ao
@@ -2421,22 +2501,56 @@ o app cria, com o login da Apple; e o servidor de cada loja é dela, não de que
   e não depende de o iOS abrir um Modal sobre outro (a cobrança é `presentation: 'modal'`). Com
   leitor ligado ela só avisa ("Outro computador está chamando" + [Ver]); o Trocar fica na tela do
   leitor, que lista os chamados em cartões. Pelo WebSocket continua indo só o assunto (ADR-16): um
-  canal filtrado por usuário levando id ou sinal furaria essa regra.
+  canal filtrado por usuário levando id ou sinal furaria essa regra. **Vencer não avisa ninguém**
+  (o status é calculado; nenhuma linha muda): enquanto a lista tem chamado, ela se reconfirma de
+  30 em 30 s (`intervaloDaConferencia`; sem chamado, só os avisos, e nada roda com o app no
+  fundo), e o vencido sai da faixa, dos cartões e da linha do leitor ligado pelo `vence_em`, num
+  timer só, no vencimento do próximo (`lib/chamadoDoLeitor.ts`: `fimDoChamado`, `chamadoVivo`,
+  `proximoFim`). Com o relógio do celular adiantado — o servidor listou um chamado que o relógio
+  daqui já dava por vencido —, vale a vida do chamado contada desde a busca: um chamado válido
+  nunca some antes. Na tela do leitor ligado, as linhas de "Outro computador está chamando" ficam
+  no topo da rolagem, abaixo da câmera (entre o cabeçalho e a câmera, com três chamados no SE, o
+  "Desligar" saía da tela e a câmera pulava a cada chamado novo).
+- **O leitor ligado também digita.** A etiqueta que a câmera não lê (barras apagadas, amassadas)
+  sai do celular pelo "Digitar código" da tela do leitor ligado — o `CodigoManual` do Vender, da
+  Entrada e do Inventário, abrindo a rolagem, com o botão "Enviar" —, pelo MESMO caminho da
+  câmera: o `ler` da fila, com `client_uuid` próprio por envio e a instalação. A câmera para com a
+  caixa aberta (`pausar`, e o `ativo` do Scanner no estado da tela) e volta ao fechar, com as
+  travas recomeçando, senão a etiqueta embaixo da lente entraria sozinha; uma abertura manda um
+  código só (o segundo toque, ou o Enter junto, não repete a peça no carrinho do computador); e
+  só passa de 4 a 64 caracteres sem caractere de controle (`lib/codigoDigitado.ts`, com teste: a
+  régua do bipe no servidor, `MAX_CODIGO_LIDO` — passou dela, o 422 virava "não enviado" sem
+  dizer por quê). É também o caminho de quem recusou a câmera, que o aviso do leitor já mandava
+  usar, e do revisor sem etiqueta impressa.
 - **O registro do aparelho** (`PUT /notificacoes/aparelho`, §4.16) sai a cada sessão — e na troca
   do token, na mudança da permissão e na volta ao app depois de 1 h —, com token ou sem: é o que
-  faz `SEM_CELULAR` dizer a verdade ("nenhum app atualizado com este login"). Uma instalação é de
-  um login por vez, um token mora numa instalação só, cada login guarda até 10 aparelhos (os mais
-  recentes) e a faxina leva os sem registro há 30 dias. `DELETE /notificacoes/aparelho` é **sem
-  sessão** (o app sai, a sessão caiu, ou limpa o servidor de antes): o id é aleatório (122 bits),
-  nenhuma rota o devolve, e quem o tiver só tira aquele aparelho do push até o próximo registro.
-  Sem rede na saída, o app guarda UMA limpeza pendente e a tenta a cada abertura.
+  faz `SEM_CELULAR` dizer a verdade ("nenhum app atualizado com este login"). Sai também quando a
+  configuração que chega ao cache traz OUTRO modo do push (só no app nativo do iPhone, fora do
+  Expo Go: o servidor que liga o push recebe o token na hora, sem esperar o app ir ao fundo; a
+  religação sem mudança nunca manda PUT) e no toque em "Abrir o leitor" ou na abertura da tela do
+  leitor quando o último registro não bate com o que o aparelho pode agora (ou quando o da
+  abertura falhou). O erro do banco no registro vira 503 `NOTIFICACAO_INDISPONIVEL`, que o app
+  trata em silêncio e repete na próxima volta. Uma instalação é de um login por vez, um token mora
+  numa instalação só, cada login guarda até 10 aparelhos (os mais recentes) e a faxina — em todo
+  registro e em todo login com senha, com `SKIP LOCKED` — leva os sem registro há 30 dias: sem a do
+  login, a loja que parou de usar o app (nenhum registro novo) guardaria o token para sempre. No
+  login ela vem por último, depois do flush do refresh novo (é na FK dele que o login pode esperar
+  a exclusão da própria conta, que trava a conta e apaga os aparelhos dela), e a linha travada sai
+  na próxima. `DELETE /notificacoes/aparelho` é **sem sessão** (o app sai, a sessão caiu, ou limpa
+  o servidor de antes): o id é aleatório (122 bits), nenhuma rota o devolve, e quem o tiver só tira
+  aquele aparelho do push até o próximo registro. Sem rede na saída, o app guarda UMA limpeza
+  pendente, `{base, instalacao, em}`, que vale 30 dias (a faxina do servidor já a teria feito): a
+  do servidor de agora vai antes do registro, a de outro servidor corre ao lado sem segurar nada,
+  e só se apaga a MESMA pendente (uma saída sem rede no meio guarda a sua). A ordem do registro, do
+  esquecimento e da limpeza mora em `lib/registroDoAparelho.ts`, com teste.
 - **O push nasce DESLIGADO** (`NOTIFICACOES_PUSH=desligado`: o padrão na loja, na demo da
   instalação — `DEMO_NOTIFICACOES_PUSH` — e na Vercel). `GET /configuracao` diz
   `notificacoes_push` (`true` só com `expo`; servidor antigo não manda, e falta = `false`), e o
   app só pede a permissão e só manda o token quando ela é `true`; desligado, ele se registra do
   mesmo jeito, sem token, e nunca chama a API de permissão nem a de token da Expo. O chamado
-  devolve `notificacao: "DESLIGADA"`, e o computador diz "Com o app aberto no celular, o chamado
-  aparece lá. Ou leia o QR." — sem falar de chave, de Apple nem de quem publica. **Por quê (a
+  devolve `notificacao: "DESLIGADA"` (ou `SEM_CELULAR`, que vem antes, se nenhum app com este login
+  se registrou), e o computador diz "Com o app aberto no celular, o chamado aparece lá. Ou leia o
+  QR." — sem falar de chave, de Apple nem de quem publica. **Por quê (a
   emenda do dono ao desenho):** o push só funciona depois do passo único de quem publica — a chave
   APNs na Expo, criada com o login da Apple — e de um teste no TestFlight; travar o envio à Apple
   nesse passo seguraria a versão inteira, e ninguém deve ver um pedido de notificação que não
@@ -2444,28 +2558,54 @@ o app cria, com o login da Apple; e o servidor de cada loja é dela, não de que
   QR continua. Ligar é o `.env` — na Vercel, a variável do projeto e um Redeploy; na VPS, o `.env`
   e a api recriada —, e o app já aprovado passa a pedir a permissão no próximo "Abrir o leitor",
   sem build novo. Nada disso entra no `conferirAntesDeEnviar` do publicador.
-- **O push, quando ligado:** módulo `notificacoes` no molde da ADR-41 (`expo.py`, com `fabrica`
-  como o ponto de troca dos testes, que só usam `httpx.MockTransport`). Sai DEPOIS do commit do
-  chamado (o app aberto vê a faixa mesmo com a Expo lenta, e o toque acha o chamado gravado),
-  sem transação nem trava aberta, num POST à Expo com teto TOTAL de 4 s (`asyncio.timeout`, não
-  o de cada fase do httpx): título e texto fixos com o sinal, `data {"tipo":"leitor-chamado",
-  "sinal":"7K3"}`, `ttl` 300 — nenhum id, endereço de servidor ou dado da loja vai à Expo ou à
-  Apple. A resposta vira a situação que o computador mostra: `ENVIADA` (com quantos celulares),
-  `SEM_CELULAR`, `SEM_NOTIFICACAO` (aparelhos sem token, ou todos com o token morto), `DESLIGADA`,
-  `SEM_CHAVE_DA_APPLE` (`InvalidCredentials` num iPhone: "falta um passo de quem publica o app",
-  sem dica de dono — a chave é de quem publica, não de cada loja) ou `FALHOU` (rede, 5xx, JSON
-  estranho, o teto). O push nunca dá 5xx no chamado, e o chamado vale 5 min para um app aberto em
-  qualquer caso. `DeviceNotRegistered` anula o token, e a instalação fica (ela ainda vê o chamado
-  com o app aberto). Recibos (`getReceipts`) ficam fora: não há tarefa em segundo plano, e na
-  Vercel nada roda depois da resposta — por isso a frase de ENVIADA sempre acrescenta "ou abra o
-  app".
+- **O push, quando ligado:** módulo `notificacoes` no molde da ADR-41 (`expo.py`, com `fabrica` como
+  o ponto de troca dos testes, que só usam `httpx.MockTransport`). Sai DEPOIS do commit do chamado
+  (o app aberto vê a faixa mesmo com a Expo lenta, e o toque acha o chamado gravado), sem transação
+  nem trava aberta, em **um POST por aparelho** (no máximo 10), todos juntos dentro do mesmo teto
+  TOTAL de 4 s (`asyncio.timeout`, não o de cada fase do httpx; o que a Expo aceitou dentro dele
+  conta, e o que passou é erro): a Expo recusa o PEDIDO inteiro por causa de um item só — tokens de
+  projetos diferentes juntos dão 400 `PUSH_TOO_MANY_EXPERIENCE_IDS` —, e um registro de outro
+  projeto no login (um build de desenvolvimento de outra conta da Expo, alguém na conta
+  compartilhada da demo) deixaria sem aviso o iPhone certo. Título "Leitor de código de barras" e
+  texto fixo com o sinal ("O computador do sinal 7K3 está chamando: toque para abrir a câmera e ler
+  as etiquetas."), `data {"tipo":"leitor-chamado", "sinal":"7K3"}`, `ttl` 300 — nenhum id, endereço
+  de servidor ou dado da loja vai à Expo ou à Apple. A resposta vira a situação que o computador
+  mostra: `ENVIADA` (com quantos celulares), `SEM_CELULAR`, `SEM_NOTIFICACAO` (aparelhos sem token,
+  ou todos com o token morto), `DESLIGADA`, `SEM_CHAVE_DA_APPLE` (num iPhone, qualquer código que
+  fale de credencial, no ticket — o `InvalidCredentials` — ou no erro do PEDIDO; a tela diz "falta
+  um passo de quem publica o app", sem dica de dono — a chave é de quem publica, não de cada loja)
+  ou `FALHOU` (rede, 5xx, JSON estranho, o teto). O push nunca dá 5xx no chamado, e o chamado vale 5
+  min para um app aberto em qualquer caso. `DeviceNotRegistered` anula o token, e a instalação fica
+  (ela ainda vê o chamado com o app aberto). **O porquê vai ao log, só como código**: o chamado loga
+  a situação (`chamado do leitor: SEM_CHAVE_DA_APPLE (0 celular(es))`) e cada envio com recusa, uma
+  linha (`push da Expo: 1 de 2 aparelho(s) sem aviso (HTTP 400 PUSH_TOO_MANY_EXPERIENCE_IDS: 1)`) —
+  o código da Expo filtrado (`[A-Za-z_]{1,40}`), o HTTP com os `errors[].code` do pedido ou o nome
+  do erro de rede, nunca o `message`, que repete o token. Recibos (`getReceipts`) ficam fora do
+  chamado: não há tarefa em segundo plano, e na Vercel nada roda depois da resposta — por isso a
+  frase de ENVIADA sempre acrescenta "ou abra o app". Quem lê o recibo é o diagnóstico do dono,
+  `python -m app.cli testar-push --email <login> [--espera 60]` (`docker compose exec api python -m
+  app.cli testar-push ...` na instalação): manda um aviso de TESTE ("Teste de notificação", texto
+  fixo, `data {"tipo":"teste-de-notificacao"}`, que o app mostra como aviso comum e cujo toque só
+  abre o app) aos aparelhos do login, com o push do servidor ligado ou não, espera o recibo da
+  ENTREGA — o único lugar em que uma chave revogada aparece depois de a Expo aceitar — e diz, por
+  aparelho, o que a Expo e a Apple (ou o Google) responderam e o que fazer. Nunca imprime o token,
+  anula o token morto do recibo e sai com 0 só se a entrega foi aceita. Rede caída, DNS, proxy ou o
+  teto viram "este servidor não conseguiu falar com a Expo" (`Recibo.sem_resposta`: pelo `motivo`
+  não dá para separar — `ConnectError` e `DeviceNotRegistered` têm a mesma cara), e "a Expo recusou
+  o aviso" fica só para a recusa que veio dela; no chamado, os dois continuam `FALHOU`.
 - **O token é credencial ao portador** — quem o tiver manda QUALQUER notificação, com o nome e o
   ícone do app: nunca sai em rota, log ou `repr` (nem o `message` da Expo, que o repete); os cinco
   `pg_dump` dos scripts (backup diário, nuvem, antes de restaurar, antes de atualizar, antes de
   desinstalar) levam `--exclude-table-data=notificacao_aparelhos`, e depois de um restore cada app
   registra de novo; ele some no logout (o DELETE sem sessão), na troca ou redefinição da senha, na
-  desativação e na exclusão da conta (`_derrubar_sessoes`, e o CASCADE quando a linha sai) e em
-  30 dias sem registro. Quem tem o banco já tem o resto.
+  desativação e na exclusão da conta (`_derrubar_sessoes`, e o CASCADE quando a linha sai) e,
+  passados 30 dias sem registro, na faxina do próximo registro ou login. Quem tem o banco já tem o
+  resto. Nem o erro do banco o leva ao log: no registro, ele vira 503 `NOTIFICACAO_INDISPONIVEL`,
+  levantado FORA do `except` (sem o erro pendurado no `__context__`), e o log diz só o nome do erro
+  e o SQLSTATE — subindo, o uvicorn escreveria o comando com os parâmetros e, no UNIQUE, o DETAIL
+  do Postgres com o token por extenso. Como defesa a mais, o engine usa `hide_parameters=True`
+  (`core/db.py`): o erro do banco e o `DB_ECHO` da API inteira deixam de repetir os valores do
+  comando — o que sozinho não bastaria, porque o DETAIL não passa por ele.
 - **O toque na notificação** (`hooks/useToqueNaNotificacao.ts`) atende o chamado DAQUELE sinal,
   se ele ainda está na lista do login e a notificação tem até 5 min: o toque é o "sim". Com leitor
   ligado, não troca sozinho — destaca o chamado com [Trocar]. Com o app na frente, a notificação
@@ -2479,39 +2619,55 @@ o app cria, com o login da Apple; e o servidor de cada loja é dela, não de que
   nesta versão: sem FCM, o app nunca pede nem busca token, e o chamado chega com o app aberto.
 - **Diário (ADR-23):** atender é `LEITOR_PAREADO` ("Ligou o celular como leitor do computador
   pelo chamado #id"); chamar, registrar e esquecer o aparelho ficam fora (`_IGNORAR`) — o ato é o
-  atender. Desligar pelo celular com o mesmo login grava CELULAR (`?ponta=celular`).
+  atender, e os reenvios da chave (o F5, a recuperação) não geram linha. Desligar pelo celular com
+  o mesmo login grava CELULAR (`?ponta=celular`); o DELETE que o web faz ao largar um chamado já
+  ATIVO (o Sair no meio) grava `LEITOR_DESLIGADO`, como qualquer desligar de um celular ligado.
 - **Publicação:** o `ci.mjs preparar` liga Push Notifications no App ID antes de compilar
   (`garantirPushNoAppId`): o plugin do `expo-notifications` grava `aps-environment` em todo build, e
   num App ID sem a capacidade a assinatura quebra. App ID que não existe ainda, ou a Apple
-  recusando, viram aviso. O passo da chave APNs (interativo: `eas credentials`), o teste no
-  TestFlight e a divisão dos testes — o BrowserStack reassina o `.ipa`, então lá se provam o app
-  aberto e o QR, e a notificação só no TestFlight — estão em `mobile/publicar/README.md`
-  ("Notificações no iPhone (passo único)"). As notas da revisão não prometem push: o chamado com o
-  app aberto vem antes do QR, e a permissão aparece só como "notifications (optional)".
+  recusando, viram aviso. **O passo único do push** é de quem publica o app, com o login da Apple
+  (dois fatores): a API da Apple não cria chave de push, e o eas-cli não a cria com a chave da API
+  do App Store Connect (a dos Secrets) — por isso não cabe no Actions. São cinco pontos: (a) a chave
+  APNs no portal da Apple (Keys → "Apple Push Notifications service (APNs)", Sandbox & Production;
+  o `AuthKey_<KEYID>.p8` só baixa uma vez); (b) a chave na Expo — expo.dev → Credentials → Apple
+  Push Keys, e no projeto, iOS → o bundle → Push Notifications —, ou `npx eas-cli credentials`
+  (iOS → Push Notifications), que cria e associa sozinho; (c) `NOTIFICACOES_PUSH=expo` no servidor;
+  (d) no iPhone, a permissão no primeiro "Abrir o leitor"; (e) o diagnóstico — o `testar-push` e a
+  linha `chamado do leitor: …` do log. O passo a passo, o teste no TestFlight e a divisão dos
+  testes — o BrowserStack reassina o `.ipa`, então lá se provam o app aberto e o QR, e a
+  notificação só no TestFlight — estão em `mobile/publicar/README.md` ("Notificações no iPhone
+  (passo único)"). As notas da revisão não prometem push: o chamado com o app aberto vem antes do
+  QR, e a permissão aparece só como "notifications (optional)".
 
 *Rejeitadas:* WebSocket filtrado por usuário levando id ou sinal (fere "só o assunto"); APNs
 direto do servidor da loja (pediria a `.p8` de quem publica em cada loja; a Enhanced Push Security,
 pelo mesmo motivo); tabela paralela de chamados; push com id, endereço do servidor ou dado da loja
 (o sinal é outra coisa: 3 caracteres aleatórios que só escolhem entre os chamados abertos do
-login, no servidor do próprio app); código digitado (é o trabalho que o dono quer evitar); um
-chamado aberto por login (um caixa derrubaria o do outro); janela modal no app; teto de push por
-aparelho; esconder o botão até haver um app capaz (o botão é o pedido do dono, e o `SEM_CELULAR`
+login, no servidor do próprio app); parear por código digitado (é o trabalho que o dono quer
+evitar); um chamado aberto por login (um caixa derrubaria o do outro); janela modal no app; teto de
+push por aparelho; um POST só à Expo com os aparelhos do login (a Expo recusa o lote misto
+inteiro); esconder o botão até haver um app capaz (o botão é o pedido do dono, e o `SEM_CELULAR`
 diz a verdade com o QR ao lado); travar o envio à Apple até a chave APNs ser confirmada (a emenda).
 *Consequências:* versões cruzadas degradam sozinhas — app antigo com servidor novo ouve
-`SEM_CELULAR` (verdade: "nenhum app atualizado") e usa o QR; app novo com servidor antigo recebe
-404 nas rotas novas e o recurso some em silêncio (`ponta` e `instalacao` são ignorados lá); aba
-velha do web (JS em cache) ouve só "leitor", perde o atender na hora e cai na consulta de 2 s /
-10 s até o F5. Backup restaurado traz a tabela de aparelhos vazia: `SEM_CELULAR` até cada app
-registrar de novo (na abertura, ou na volta depois de 1 h). Na conta compartilhada da demo, todo
-aparelho registrado nela vê (e, com o push ligado, recebe) todo chamado: contido pelo teto de
-2 s, pelos 10 aparelhos, pelo texto fixo com o sinal e, na instalação, pelo TRUNCATE da
-madrugada; na Vercel, pela faxina de 30 dias e pelo DELETE da saída. Com o push ligado, o chamado
-soma até 4 s ao POST — a tela mostra "Chamando…" já no clique, e o app aberto vê a faixa antes de
-o computador mostrar o sinal (o commit vem antes do push). Sem índice novo (§2.12). A confirmar
-na primeira rodada real: que ligar a capacidade invalida o perfil e o eas o refaz com a chave da
-App Store Connect (plano B no README), e se a Expo devolve `InvalidCredentials` já no ticket — o
-que o desenho lê — ou só no recibo (aí a tela diria ENVIADA sem nada chegar; o teste no TestFlight
-com o app fechado vem antes de ligar o push).
+`SEM_CELULAR` (verdade: "nenhum app atualizado") e usa o QR; app novo com servidor antigo recebe 404
+nas rotas novas e o recurso some em silêncio (`ponta` e `instalacao` são ignorados lá): a tela do
+leitor volta ao texto da ADR-43 (o QR e o código de 6, `instrucaoDoLeitor`) e não mostra linha de
+notificação — `lerPushDoServidor` separa o campo AUSENTE (servidor antigo) do `false` —, e nada
+promete o chamado; aba velha do web (JS em cache) ouve só "leitor", perde o atender na hora e cai na
+consulta de 2 s / 10 s até o F5. Backup restaurado traz a tabela de aparelhos vazia: `SEM_CELULAR`
+até cada app registrar de novo (na abertura, ou na volta depois de 1 h). Na conta compartilhada da
+demo, todo aparelho registrado nela vê (e, com o push ligado, recebe) todo chamado: contido pelo
+teto de 2 s, pelos 10 aparelhos, pelo texto fixo com o sinal e, na instalação, pelo TRUNCATE da
+madrugada; na Vercel, pela faxina de 30 dias (no registro e no login) e pelo DELETE da saída. Com o
+push ligado, o chamado soma até 4 s ao POST — a tela mostra "Chamando…" já no clique, e o app aberto
+vê a faixa antes de o computador mostrar o sinal (o commit vem antes do push). Sem índice novo
+(§2.12). **Confirmado no iPhone do dono** (o build 6 no TestFlight, contra a Vercel com
+`NOTIFICACOES_PUSH=expo`): a faixa desce com o app aberto; o log disse `SEM_NOTIFICACAO` com o
+aparelho registrado sem token e, depois de ele permitir as notificações, `SEM_CHAVE_DA_APPLE` — o
+iPhone obteve o token (o build assinou com `aps-environment`), e a Expo aceitou o pedido e recusou o
+TICKET com `InvalidCredentials`, que é o que o desenho lê. Falta só a chave APNs (o passo único). Se
+um dia a recusa vier só no recibo da entrega (a tela diria ENVIADA sem nada chegar), o `testar-push`
+a mostra.
 
 ## 4. Contratos de API
 
@@ -2531,7 +2687,7 @@ Erros: `{"code": "...", "message": "...", "detail": {...}}`.
 | `ESTOQUE_INSUFICIENTE` | 409 | venda/ajuste deixaria o saldo negativo |
 | `OPERACAO_INVALIDA` | 409 | ex.: cancelar venda já cancelada |
 | `PAGAMENTO_DIVERGENTE` | 422 | soma dos pagamentos ≠ total |
-| `VALIDACAO` | 422 | payload inválido |
+| `VALIDACAO` | 422 | payload inválido; também o número do pedido que não cabe no banco (id do caminho, página, id no corpo além do INTEGER/BIGINT), em qualquer rota, com `detail` vazio — o asyncpg recusa o valor antes de mandar o comando, e era 500 com traceback (ADR-47) |
 | `EMISSOR_NAO_CONFIGURADO` | 409 | NFC-e sem emissor ligado no `.env`; `detail.faltando` (ADR-41) |
 | `DADOS_FISCAIS_INCOMPLETOS` | 409 | NFC-e sem NCM, CNPJ, IE ou regime; `detail.faltando`, `detail.produtos_sem_ncm` |
 | `MUITAS_TENTATIVAS` | 429 | logins errados demais na janela; `detail.retry_after` em segundos, header `Retry-After`. A conta da demonstração da instalação (`/demo`: `settings.demonstracao` e `conta_demo_protegida`) conta só o IP; na Vercel, a regra de sempre (ADR-24, ADR-46) |
@@ -2541,6 +2697,7 @@ Erros: `{"code": "...", "message": "...", "detail": {...}}`.
 | `LEITOR_CHAMADO_INVALIDO` | 404 | atender um chamado inexistente, de outro login, de QR, vencido, cancelado, substituído ou já atendido (por esta ou outra instalação) — a MESMA resposta, sem oráculo (ADR-47) |
 | `LEITOR_JA_LIGADO` | 409 | `substitui_id` (no chamado ou no QR) aponta um leitor ATIVO deste login: trocar desligaria o celular sem diário; `detail.pareamento_id`. Desligue antes (ADR-47) |
 | `LEITOR_CHAMADO_RAPIDO` | 429 | outro chamado deste login há menos de 2 s; `detail.retry_after` e header `Retry-After` — todo 429 que traz `detail.retry_after` leva o header (ADR-47) |
+| `NOTIFICACAO_INDISPONIVEL` | 503 | o banco não gravou o registro do aparelho agora (tabela travada além do teto de consulta, conexão que caiu, a conta excluída no meio). O erro do banco nunca sobe dali — levaria o token ao log —, e o app trata o 5xx do registro em silêncio e registra de novo na próxima volta (ADR-47) |
 | `DEMONSTRACAO_SEM_ESPACO` | 409 | só na demonstração da instalação (`settings.demonstracao`, foto no disco): a foto passaria do teto da pasta de fotos (`DEMO_FOTOS_MAX_BYTES`: 200 MB por padrão, ajustável no `.env`, vale depois de recriar a `api-demo`); `detail.limite_mb`. A foto de antes fica, e a renovação da madrugada esvazia a pasta (ADR-46) |
 | `CONTA_DE_DEMONSTRACAO` | 409 | numa demonstração — a Vercel ou a que sobe com a loja em `/demo` (`conta_demo_protegida`) —, excluir, rebaixar, desativar ou trocar a senha da conta `DEMO_ADMIN_EMAIL` (ADR-45, ADR-46) — antes de conferir a senha. Na loja de verdade, nunca |
 | `DEMONSTRACAO_FORA_DO_AR` | 503 | do PROXY, não da API: `/demo/api/*` com a demonstração desligada ou subindo. Corpo `{"code":"DEMONSTRACAO_FORA_DO_AR","message":"A demonstração está desligada ou começando. Tente de novo em um minuto.","detail":{}}`; o resto de `/demo/*` recebe a mesma frase numa página. Nunca a loja no lugar (ADR-46) |
@@ -2787,7 +2944,7 @@ o contrário. A instalação do app (`aparelho_instalacao`) nunca sai.
 | POST | `/leitor/pareamentos/aceitar` | celular: `{codigo, instalacao?}` (maiúsculas, espaços e hífens tanto faz; `instalacao` é o UUID da instalação do app, que o app antigo não manda) → 200 `PareamentoOut` ATIVO por 12 h; encerra (TROCOU) os outros ATIVOS deste celular — da mesma instalação ou aceitos sem instalação; sem `instalacao`, todos os do login, como antes. Inexistente, vencido, já aceito por outro, encerrado ou código de um chamado → 404 `LEITOR_CODIGO_INVALIDO`, a mesma resposta; dois celulares no mesmo código: um 200, o outro 404. O reenvio do MESMO celular (e, com `instalacao`, da mesma instalação), com o pareamento ainda ATIVO e dentro dos 5 min do código → 200 com o mesmo `PareamentoOut`, sem mudar nada e sem linha no diário |
 | GET | `/leitor/pareamentos/{id}` | `PareamentoOut` para as duas pontas; para mais ninguém, 404 |
 | DELETE | `/leitor/pareamentos/{id}?ponta=celular\|computador` | 204 de qualquer ponta. `ponta` (opcional; valor torto → 422) diz o lado quando o MESMO login está nas duas: `celular` grava CELULAR (ADR-47); sem ela, o mesmo login conta como COMPUTADOR. Já encerrado ou vencido → 204 sem mudar nada; de terceiro → 404. Só o que desligou um celular ATIVO entra no diário |
-| POST | `/leitor/bipes` | celular: `{client_uuid, pareamento_id, codigo, instalacao?}` → 201 `{id, client_uuid, pareamento_id, codigo, criado_em}`. A chave é conferida antes de tudo: reenvio idêntico → 200 com o mesmo corpo; a mesma chave com outro código, outro pareamento ou de outro celular → 409 `DUPLICADO`. `codigo` sem espaços nas pontas, 1–64, sem caractere de controle (senão 422). Pareamento que não é deste celular — ou, se ele foi ligado por uma instalação, bipe de outra (ou sem ela) — → 404; não ATIVO → 409 `LEITOR_DESLIGADO` `detail.status`; 100 pendentes → 409 `LEITOR_FILA_CHEIA` |
+| POST | `/leitor/bipes` | celular: `{client_uuid, pareamento_id, codigo, instalacao?}` → 201 `{id, client_uuid, pareamento_id, codigo, criado_em}`. A chave é conferida antes de tudo: reenvio idêntico → 200 com o mesmo corpo; a mesma chave com outro código, outro pareamento ou de outro celular → 409 `DUPLICADO`. `codigo` sem espaços nas pontas, 1–64, sem caractere de controle (senão 422). Pareamento que não é deste celular — ou, se ele está ligado por uma instalação, bipe de outra (ou sem ela) — → 404; não ATIVO → 409 `LEITOR_DESLIGADO` `detail.status` (sem o id da instalação — o leitor encerrado, ou o vencido depois da limpeza —, o bipe tardio de qualquer instalação do login ouve este 409); 100 pendentes → 409 `LEITOR_FILA_CHEIA` |
 | POST | `/leitor/chamados` | computador (ADR-47): `{client_uuid, substitui_id?}` → 201 `{pareamento: PareamentoOut AGUARDANDO com chamado e sinal, notificacao: ENVIADA\|SEM_CELULAR\|SEM_NOTIFICACAO\|DESLIGADA\|SEM_CHAVE_DA_APPLE\|FALHOU, celulares}`. `celulares`: em ENVIADA, os aparelhos que a Expo aceitou; em SEM_NOTIFICACAO e DESLIGADA, os que têm o app com este login (veem o chamado com ele aberto); nos outros, 0. Reenvio da mesma chave pelo mesmo login → 200 `{pareamento (como está agora), notificacao: null, celulares: 0}`, sem push de novo; chave de outro login → 409 `DUPLICADO`. Outro chamado deste login há menos de 2 s → 429 `LEITOR_CHAMADO_RAPIDO` com `Retry-After`. `substitui_id` como no QR (ATIVO → 409 `LEITOR_JA_LIGADO`). O push sai depois do commit, com teto total de 4 s, e nunca dá 5xx: falhou, vira `FALHOU` |
 | GET | `/leitor/chamados/abertos` | celular (ADR-47), paginada (`size` padrão e teto 10, o teto de vivos por login): `{items: [{id, sinal, criado_em, vence_em}], total, page, size}` — os chamados do PRÓPRIO login que ainda esperam (sem aceite, sem fim e dentro dos 5 min), do mais novo ao mais velho. Nunca o código nem nomes |
 | POST | `/leitor/chamados/{id}/atender` | celular (ADR-47): `{instalacao}` (obrigatória) → 200 `PareamentoOut` ATIVO por 12 h (o mesmo login nas duas pontas), sem código; encerra (TROCOU) os outros ATIVOS desta instalação (e os aceitos sem instalação). Inexistente, de outro login, de QR, vencido, cancelado, substituído ou já atendido (por esta ou por outra instalação) → 404 `LEITOR_CHAMADO_INVALIDO`, sempre o mesmo corpo. O reenvio da mesma instalação, ainda ATIVO e dentro dos 5 min do chamado → 200 com o mesmo pareamento, fora do diário |
@@ -2797,7 +2954,7 @@ o contrário. A instalação do app (`aparelho_instalacao`) nunca sai.
 
 | método | rota | papel | notas |
 |---|---|---|---|
-| PUT | `/notificacoes/aparelho` | qualquer logado | `{instalacao, plataforma: ios\|android, token?}` → 204. `token` tem três estados: AUSENTE mantém o que o servidor tem (o app não falou com a Expo agora), `null` apaga (sem permissão, Android sem FCM, Expo Go, push desligado no servidor) e texto grava. Texto: aparado, 1–200, `ExponentPushToken[…]` ou `ExpoPushToken[…]`, sem espaço nem caractere de controle (o `isExpoPushToken` do SDK); fora disso, 422 `VALIDACAO`. Numa transação, em SQL Core (não avisa o tempo real): o mesmo token em outra instalação sai; upsert pela instalação (um login por vez); o login fica com os 10 de registro mais recente; a faxina leva os sem registro há 30 dias |
+| PUT | `/notificacoes/aparelho` | qualquer logado | `{instalacao, plataforma: ios\|android, token?}` → 204. `token` tem três estados: AUSENTE mantém o que o servidor tem (o app não falou com a Expo agora), `null` apaga (sem permissão, Android sem FCM, Expo Go, push desligado no servidor) e texto grava. Texto: aparado, 1–200, `ExponentPushToken[…]` ou `ExpoPushToken[…]`, sem espaço nem caractere de controle (o `isExpoPushToken` do SDK); fora disso, 422 `VALIDACAO`. Numa transação, em SQL Core (não avisa o tempo real): o mesmo token em outra instalação sai; upsert pela instalação (um login por vez); o login fica com os 10 de registro mais recente; a faxina leva os sem registro há 30 dias (`SKIP LOCKED`; ela roda também no login). O banco que não grava agora → 503 `NOTIFICACAO_INDISPONIVEL`, e o log diz só o nome do erro e o SQLSTATE (a corrida de duas instalações com o mesmo token tem uma nova tentativa antes) |
 | DELETE | `/notificacoes/aparelho` | **sem sessão** | `{instalacao}` → 204 SEMPRE (inexistente também); 422 com corpo torto. O app chama ao sair, depois de a sessão cair, ou para limpar o servidor de antes |
 
 Nenhuma rota devolve o token nem a instalação. O push em si não tem rota: sai do `POST
@@ -2856,25 +3013,50 @@ caixa do dia, sem o resumo do mês. Guarda por capacidade no `_layout`.
   chamando · Sinal 7K3" com [Abrir o leitor] e [✕], em `ComFaixasNoTopo`; os rótulos moram aqui
   porque a ficha da Apple os cita e o publicador confere), `lib/chamadoDoLeitor.ts` (com teste: o
   que a faixa mostra — nada na tela do leitor, "Outro computador está chamando" com leitor ligado,
-  "N computadores" com vários — e o contraste da cor dela com a hora clara e a escura),
-  `hooks/useChamadosDoLeitor.ts` (`['leitor','chamados']`, refeito no assunto `leitor_pareamento`,
-  no "conectado" e na volta ao app; servidor antigo sem a rota = lista vazia) e
-  `hooks/useToqueNaNotificacao.ts` (o toque atende o chamado DAQUELE sinal, com até 5 min). A tela
-  do leitor lista os chamados abertos em cartões e atende; `LeitorPareado` mostra o sinal e o
-  "Outro computador está chamando" com [Trocar]. Trocar de computador põe os bipes pendentes do
-  anterior em "não enviado" (não vão ao novo).
+  "N computadores" com vários — e o contraste da cor dela com a hora clara e a escura; o prazo de
+  cada chamado pelo `vence_em`, `fimDoChamado`/`chamadoVivo`/`proximoFim`, com a vida contada desde
+  a busca quando o relógio do celular está adiantado; `intervaloDaConferencia`, 30 s com chamado
+  na lista; e `instrucaoDoLeitor`, o texto da tela do leitor, que volta ao da ADR-43 com servidor
+  antigo), `hooks/useChamadosDoLeitor.ts` (`['leitor','chamados']`, refeito no assunto
+  `leitor_pareamento`, no "conectado", na volta ao app e de 30 em 30 s enquanto há chamado — vencer
+  não avisa ninguém —; devolve os `vivos`, com um timer só no vencimento do próximo; servidor
+  antigo sem a rota = lista vazia) e `hooks/useToqueNaNotificacao.ts` (o toque atende o chamado
+  DAQUELE sinal, com até 5 min). A tela do leitor lista os chamados abertos em cartões e atende;
+  `LeitorPareado` mostra o sinal, o "Digitar código" (o `CodigoManual`, com "Enviar") e, no topo
+  da rolagem abaixo da câmera, o "Outro computador está chamando" com [Trocar]. Trocar de
+  computador põe os bipes pendentes do anterior em "não enviado" (não vão ao novo).
+- `lib/codigoDigitado.ts` (com teste): a parte sem tela do "Digitar código" (`CodigoManual`) — o
+  que dá para mandar (de 4 a 64 caracteres, sem os espaços das pontas e sem caractere de controle:
+  a régua do bipe no servidor, que o teste lê do `schemas.py`) e uma abertura, um código, com cada
+  `pausar` da câmera com o seu `retomar`, mesmo se quem recebe falhar. A caixa (todas as telas):
+  o texto rola e o campo e os botões não, com `maxHeight` 85% — no SE com o teclado aberto e o
+  texto 3×, o título saía por cima e os botões por baixo do teclado.
 - `lib/instalacao.ts`: o id desta instalação do app (UUID no SecureStore, `instalacao-do-app`; no
   export web, um por carga da página), sorteado de novo quando o endereço do servidor muda. Vai no
   aceite, no atender, em cada bipe, no registro e no esquecimento.
 - `lib/notificacoes.ts` (com teste): as regras puras do push — `ehChamadoDoLeitor`,
-  `respostaAindaVale` (5 min), sem banner com o app na frente, `pushDoServidor` (o
-  `notificacoes_push` da configuração; falta = `false`), `comoRegistrar`, `situacaoNaTela` e
-  `tokenValido`, espelho da validação do servidor. `lib/pushDoLeitor.ts` liga isso ao sistema e à
-  API: registra a cada sessão (e na troca do token, da permissão e na volta depois de 1 h), pede a
-  permissão só no caminho do leitor, só no iPhone e só com o push do servidor ligado, e esquece a
-  instalação na saída (`DELETE` sem sessão, antes do logout; sem rede, UMA limpeza pendente no
-  SecureStore). O token nunca vai para log. `lib/notificacoesNativas.ts` é o único lugar que
-  carrega o `expo-notifications`, e só onde há módulo nativo — nunca no export web nem no Expo Go.
+  `respostaAindaVale` (5 min), sem banner com o app na frente, `lerPushDoServidor` (o
+  `notificacoes_push` da configuração em três estados: `ligado`, `desligado` e `servidor-antigo`,
+  o campo AUSENTE, que não é `false`; `pushDoServidor` é o booleano), `comoRegistrar`,
+  `registrarPelaConfiguracao` (a configuração com OUTRO modo do push registra na hora, só no iPhone
+  fora do Expo Go), `situacaoNaTela` (recebe o modo do push; com servidor antigo, nenhuma linha),
+  `destinoDaLimpeza` (a limpeza pendente: descartar depois de `VALIDADE_DA_LIMPEZA_MS`, 30 dias, ou
+  com data absurda; antes do registro, se é do servidor de agora; ao lado, se é de outro) e
+  `tokenValido`, espelho da validação do servidor. `lib/registroDoAparelho.ts` (com teste,
+  `criarRegistroDoAparelho`, no molde do `criarFila`) guarda a ordem do registro, do esquecimento e
+  da limpeza: a pendente é `{base, instalacao, em}`, a do servidor de agora vai antes do registro,
+  a de outro corre ao lado sem segurar nada, e só se apaga a MESMA pendente; e `conferir` registra
+  de novo quando o último registro não bate com o que o aparelho pode agora. `lib/pushDoLeitor.ts`
+  só liga isso ao sistema, ao cofre e à API: registra a cada sessão (e na troca do token, da
+  permissão, na volta depois de 1 h e quando a configuração muda o modo do push — um vigia do
+  QueryCache, só no app nativo; a religação sem mudança não manda PUT), pede a permissão só no
+  caminho do leitor, só no iPhone e só com o push do servidor ligado, e esquece a instalação na
+  saída (`DELETE` sem sessão, antes do logout; sem rede, UMA limpeza pendente no SecureStore). O
+  token nunca vai para log. `lib/notificacoesNativas.ts` é o único lugar que carrega o
+  `expo-notifications`, e só onde há módulo nativo — nunca no export web nem no Expo Go. Duas
+  constantes do app espelham a API: `VIDA_DO_CHAMADO_MS` (5 min, `lib/chamadoDoLeitor.ts`) =
+  `VALIDADE_DO_CHAMADO_S` (`notificacoes/service.py`), e `VALIDADE_DA_LIMPEZA_MS` (30 dias) =
+  `VIDA_DO_APARELHO` (`notificacoes/repository.py`): mudou lá, muda aqui.
 
 - `lib/areaSegura.ts` (com teste): a área segura de cada iPhone (iOS 15.1+, do SE de 4,7" ao Pro
   Max de 6,9"). A barra de abas tira altura e respiro de baixo de `medidasDaBarraDeAbas(insets
@@ -2921,8 +3103,8 @@ módulos ES em `js/`.
 | `js/ui.js` | Template `html` com escape automático, modal, avisos, paginação, formatação pt-BR, campo de dinheiro |
 | `js/dinheiro.js` | Espelho de `mobile/src/lib/money.ts`. Centavos inteiros; **se mudar lá, mude aqui** |
 | `js/leitor.js` | Captura do leitor USB (teclado) e foco permanente no campo de leitura. O último `criarLeitor` ligado é o da tela; `entregarCodigoDeFora` entrega a ele o bipe do celular, respeitando o `ocupadoQuando` da tela (gravando, ou `digitandoEm` a lista) (ADR-43) |
-| `js/leitor-remoto.js` | Espelho de `mobile/src/lib/leitorRemoto.ts` (teste em `testes/web/leitor-remoto.test.mjs`): o convite do QR do celular-leitor, o código normalizado e formatado, `mesmoServidor` e o prazo de 120 s do bipe; e, só do web, o ritmo da retirada, `umaPorVez`, a fila de entrega à tela (`criarEntrega`), o aviso dos descartados e a dona da aba (`criarDonaDaAba`) (ADR-43). O chamado (ADR-47), puro e com teste: `ROTULOS_DO_CHAMADO` ("Abrir no app o leitor de código", que o publicador confere aqui), `estadoDoChamado` (livre, pedindo, chamando, qr, ligado), `oQueMostrar`, `avisoDaNotificacao` (a frase de cada situação do push, sem dica de dono) e `avisoDoChamadoQueAcabou` |
-| `js/leitor-celular.js`, `js/leitor-celular-janela.js` | O celular como leitor (ADR-43): botão e selo da lateral (o botão é o QR), retirada da fila na hora do aviso (`ouvirNaHora` do `tempo-real.js`, com `leitor`, `leitor_pareamento` e `reconectado`) e o modal do QR. `js/qr.js` desenha o QR em SVG pelo DOM com `js/vendor/qrcode.js` (qrcode-generator 1.4.4, MIT, copiado inteiro). O chamado (ADR-47) usa o MESMO `pareamento` da aba: `chamarCelular` grava a chave (`nomeNaRaiz('leitor-celular-chamado')`, no `sessionStorage`) ANTES do POST — o F5 no meio reenvia a mesma chave —, `chamarDeNovo` desliga antes o ATIVO (DELETE, com diário) e `cancelarEspera` cancela o AGUARDANDO |
+| `js/leitor-remoto.js` | Espelho de `mobile/src/lib/leitorRemoto.ts` (teste em `testes/web/leitor-remoto.test.mjs`): o convite do QR do celular-leitor, o código normalizado e formatado, `mesmoServidor` e o prazo de 120 s do bipe; e, só do web, o ritmo da retirada, `umaPorVez`, a fila de entrega à tela (`criarEntrega`), o aviso dos descartados e a dona da aba (`criarDonaDaAba`: a pergunta `quem-cuida` leva a hora e um sorteio, e quem ainda espera a resposta sobre o mesmo leitor responde por ele a quem perguntou depois — vence a primeira a perguntar) (ADR-43). O chamado (ADR-47), puro e com teste: `ROTULOS_DO_CHAMADO` ("Abrir no app o leitor de código", que o publicador confere aqui), `estadoDoChamado` (livre, pedindo, chamando, qr, ligado), `oQueMostrar`, `avisoDaNotificacao` (a frase de cada situação do push, sem dica de dono; sem situação, "Toque na notificação…" só com o push do servidor ligado), `avisoDoChamadoQueAcabou` e `ASSUNTOS_DO_LEITOR`, os assuntos que o leitor ouve na hora (`leitor`, `leitor_pareamento`, `reconectado`) |
+| `js/leitor-celular.js`, `js/leitor-celular-janela.js` | O celular como leitor (ADR-43): botão e selo da lateral (o botão é o QR), retirada da fila na hora do aviso (`ouvirNaHora` do `tempo-real.js`, com `leitor`, `leitor_pareamento` e `reconectado`) e o modal do QR. `js/qr.js` desenha o QR em SVG pelo DOM com `js/vendor/qrcode.js` (qrcode-generator 1.4.4, MIT, copiado inteiro). O chamado (ADR-47) usa o MESMO `pareamento` da aba: `chamarCelular` grava a chave (`nomeNaRaiz('leitor-celular-chamado')`, no `sessionStorage`) ANTES do POST — o F5 no meio reenvia a mesma chave — e ela só sai com o id do chamado já guardado (`adotarChamado`), com o chamado de outra aba ou já acabado, ou com a recusa do servidor; só vale enquanto descreve a aba (`pendenciaDaAba`). Clique, F5 e recuperação passam pelo mesmo `pedirChamado`, e o F5 trava a área (`restaurando`) até o leitor guardado voltar. `chamarDeNovo` desliga antes o ATIVO (DELETE, com diário) e `cancelarEspera` cancela o AGUARDANDO |
 | `js/leitor-chamado.js` | `ligarBotaoDoCelular(caixa)` (ADR-47): a área `[data-leitor-chamado]` acima do campo de leitura das cinco telas que leem código (PDV, Devolução, Entrada, Inventário, Condicional nova) — "Abrir no app o leitor de código", o sinal, a dica do push e os botões, por delegação de `data-acao` (a CSP não tem inline). Nada modal: o leitor USB e a entrega seguem; o clique devolve o foco ao `[data-leitor]` |
 | `js/exclusao-de-conta.js` | Espelho de `mobile/src/lib/exclusaoDeConta.ts` (teste em `testes/web/exclusao-de-conta.test.mjs`): o que some e o que fica, em quem a lista mostra "Excluir conta" e onde vai a recusa. `views/conta.js` exclui a própria conta (modal com a senha; deu certo, `encerrarSessaoLocal` + `#/entrar?conta=excluida`), `views/usuarios-acoes.js` exclui a de outra pessoa (ADR-45) |
 | `js/grafico.js` | Barras e proporções em SVG escrito à mão — sem biblioteca, sem CDN |
@@ -2979,7 +3161,24 @@ push só com `httpx.MockTransport` (uma rede de segurança no conftest reprova a
 chamado já está gravado quando o push sai, nenhuma transação fica aberta durante o envio (outra
 conexão consegue `LOCK ... NOWAIT`), o teto é TOTAL, nada da loja vai na mensagem, e o token não
 aparece em log, `repr` nem rota; desligado no `.env`, nenhuma chamada à rede; trocar a senha e
-desativar esquecem os aparelhos; os `pg_dump` dos scripts levam a tabela sem os dados · exclusão de conta (ADR-45): a
+desativar esquecem os aparelhos; os `pg_dump` dos scripts levam a tabela sem os dados; um POST
+por aparelho (o token de outro projeto não cala o iPhone certo, e o teto total vale para todos),
+`SEM_CHAVE_DA_APPLE` também pelo erro de pedido, o porquê só como código no log e o `testar-push`
+(o recibo da entrega, a rede caída que não é recusa da Expo, nunca o token na saída); o erro do
+banco no registro é 503, sem o token no log; número além do INTEGER/BIGINT é 422 em qualquer rota
+(`test_erros_do_banco.py`); o id da instalação sai quando o leitor desliga ou é trocado, e o do
+que venceu sai no próximo código ou chamado; e a faxina dos aparelhos roda no login — nas duas,
+sem esperar trava e sem impasse com a exclusão da conta (os testes reproduzem o impasse da ordem
+ingênua). No web (`testes/web/`): a chave do chamado só vale enquanto descreve a aba e só sai com
+o id guardado — o F5 durante a pergunta às outras abas retoma o mesmo chamado (com um
+`BroadcastChannel` de mentira que faz a pergunta esperar como no navegador, `abasConversando`; o
+teste que simula o F5 com o canal ligado chama `abas.fecharAsAbertas()`, senão a pergunta da
+página "morta" ainda responderia, o que o navegador não faz); a dona da aba com duas e três abas
+perguntando juntas (uma retoma, nunca duas nem nenhuma); e a
+área do chamado no DOM (`leitor-chamado-dom.test.mjs`: o nome do celular entra como texto, e
+botão apagado não age). No app (`npm test`): o chamado vencido sai pelo `vence_em`, o registro do
+aparelho e a limpeza pendente na ordem certa (`registroDoAparelho.test.ts`) e o "Digitar código"
+do leitor ligado (`codigoDigitado.test.ts`) · exclusão de conta (ADR-45): a
 própria conta sai com a senha certa e derruba as sessões; a errada é 422 e a sessão segue; o único
 dono leva 409 e dois donos saindo juntos deixam um; quem já vendeu também sai (a venda fica com o
 nome, o e-mail fica livre); o diário ganha a linha sem `user_id` e com o nome congelado ·
