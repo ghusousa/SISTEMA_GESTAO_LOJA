@@ -596,17 +596,27 @@ def _preparar_na_vercel() -> None:
     _semear_e_marcar(Origem.VERCEL, admin, vendedora)
 
 
-def _preparar_na_instalacao() -> None:
-    """A demo que sobe com a loja (ADR-46): a carga, mais a conta e o nome conferidos a cada
-    subida — é o que deixa a demonstração "vir pronta", sem ninguém fazer nada à mão."""
+def _contas_da_instalacao() -> tuple[dict[str, str], dict[str, str]]:
+    """O dono e a vendedora da demo que sobe com a loja, validados — ou a parada, com a frase.
+
+    Preparo e renovação chamam isto logo depois das duas chaves, ANTES da trava e de qualquer
+    escrita. A renovação já zerou as tabelas para só então descobrir a DEMO_ADMIN_SENHA
+    faltando (ou curta) no .env: a demo ficava vazia, sem a conta do revisor, e a frase ainda
+    dizia "nada foi feito".
+    """
     contas = contas_da_demonstracao(os.environ, Origem.INSTALACAO)
     if contas is None:
         raise SystemExit(
             "Faltam DEMO_ADMIN_EMAIL e DEMO_ADMIN_SENHA no ambiente da demonstração: nada foi "
             "feito. Elas moram no .env da loja; ./demo.sh --ligar gera as que faltam."
         )
-    admin, vendedora = contas
+    return contas
 
+
+def _preparar_na_instalacao(admin: dict[str, str], vendedora: dict[str, str]) -> None:
+    """A demo que sobe com a loja (ADR-46): a carga, mais a conta e o nome conferidos a cada
+    subida — é o que deixa a demonstração "vir pronta", sem ninguém fazer nada à mão. As
+    contas chegam validadas por `_contas_da_instalacao`."""
     estado = asyncio.run(_ler_estado())
     if estado is Estado.VAZIA:
         asyncio.run(_marcar(Origem.INSTALACAO, MARCO_INICIO))
@@ -642,8 +652,9 @@ def preparar_demonstracao(origem: Origem | str) -> None:
     motivo = motivo_para_recusar()
     if motivo:
         raise SystemExit(motivo)
+    admin, vendedora = _contas_da_instalacao()
     with _uma_de_cada_vez():
-        _preparar_na_instalacao()
+        _preparar_na_instalacao(admin, vendedora)
 
 
 def renovar_demonstracao() -> None:
@@ -651,12 +662,15 @@ def renovar_demonstracao() -> None:
 
     O seed conta as datas a partir do dia da carga: sem renovar, em uma semana os relatórios
     de hoje e da semana ficam vazios e quem testa vê uma loja parada. Só a origem instalação
-    renova (na Vercel, zerar é DROP SCHEMA + Redeploy, à mão).
+    renova (na Vercel, zerar é DROP SCHEMA + Redeploy, à mão). As contas são conferidas antes
+    do TRUNCATE: com elas inválidas no .env, a renovação para sem tocar em nada e a demo de
+    ontem segue no ar, com a conta do revisor.
     """
     motivo = motivo_para_recusar()
     if motivo:
         raise SystemExit(motivo)
+    admin, vendedora = _contas_da_instalacao()
     with _uma_de_cada_vez():
         tabelas = asyncio.run(_zerar())
         _passo(f"demonstração zerada ({tabelas} tabelas); semeando de novo")
-        _preparar_na_instalacao()
+        _preparar_na_instalacao(admin, vendedora)

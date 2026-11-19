@@ -362,6 +362,32 @@ async def test_com_as_duas_chaves_semeia_converge_e_renova(
     assert tuple(loja) == ("Loja de Demonstração", "ROUPAS")
 
 
+async def test_renovar_com_a_conta_invalida_para_antes_de_zerar(
+    banco_da_demo: str, tmp_path: Path
+) -> None:
+    """O .env perdeu a DEMO_ADMIN_SENHA, ou ganhou uma curta: a renovação da madrugada para
+    ANTES do TRUNCATE, e a demo de ontem segue no ar com a conta do revisor. Zerar primeiro a
+    deixava vazia (0 usuários) com a frase dizendo "nada foi feito"."""
+    await _marcar_o_banco()
+    feito = _rodar("preparar-demonstracao", _da_demo(), tmp_path)
+    assert feito.returncode == 0, _sem_segredo(feito)[-3000:]
+    retrato = tuple((await _consultar(RETRATO))[0])
+    assert retrato[0] == 2 and retrato[1] == 10 and retrato[3] > 100
+
+    curta = "Curta-7"  # 7 caracteres: a régua da API pede 8
+    sem_senha = _ambiente(LOJA_DEMONSTRACAO="1", DEMO_ADMIN_EMAIL=EMAIL_DO_DONO)
+    senha_curta = _ambiente(
+        LOJA_DEMONSTRACAO="1", DEMO_ADMIN_EMAIL=EMAIL_DO_DONO, DEMO_ADMIN_SENHA=curta
+    )
+    for ambiente, frase in ((sem_senha, "nada foi feito"), (senha_curta, "nada foi gravado")):
+        renovou = _rodar("renovar-demonstracao", ambiente, tmp_path)
+        saida = _sem_segredo(renovou)
+        assert curta not in saida, "a saída da CLI levou a senha"
+        assert renovou.returncode == 1, saida[-3000:]
+        assert frase in renovou.stderr and "zerada" not in renovou.stdout
+        assert tuple((await _consultar(RETRATO))[0]) == retrato
+
+
 async def test_preparo_espera_a_renovacao_que_esta_rodando(
     banco_da_demo: str, tmp_path: Path
 ) -> None:
