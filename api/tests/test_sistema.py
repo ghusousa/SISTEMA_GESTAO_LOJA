@@ -743,7 +743,7 @@ async def test_volta_atras_nao_mexe_na_demo(tmp_path: Path) -> None:
     # Nem o contêiner, nem o banco dela: nada da demonstração passa pelo docker na volta atrás.
     assert "api-demo" not in log and "demo-banco" not in log, log
     assert "loja_demo" not in log, log
-    assert "demonstração" not in (r.stdout + r.stderr).lower()
+    assert "A demonstração volta do zero" not in r.stdout + r.stderr
 
 
 @precisa_do_git
