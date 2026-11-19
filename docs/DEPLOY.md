@@ -193,17 +193,27 @@ server {
     listen 80;
     server_name api.sualoja.com.br;
 
-    # Teto do corpo: acima do padrão do Nginx (1 MB) para a foto passar (a API aceita até 5 MiB),
-    # mas nunca sem teto (0): a API lê o corpo inteiro ANTES de conferir o login, e um envio
-    # gigante sem login encheria o disco. O teto vale por pedido (N conexões seguram N vezes
-    # ele), e por isso o Caddy do instalador o põe POR ROTA: 6 MB no PUT .../produtos/<id>/foto
-    # e 2 MB no resto, que é JSON. Para o mesmo aqui: 2M neste bloco e um `location` só da foto
-    # (~ ^/api/v1/produtos/[0-9]+/foto$) com 6M e o mesmo proxy_pass.
-    client_max_body_size 6M;
+    # Teto do corpo POR ROTA, como o Caddy do instalador põe, e nunca sem teto (0): as rotas de
+    # JSON leem o corpo inteiro ANTES de conferir o login, e o teto vale por pedido (N conexões
+    # seguram N vezes ele). 2M neste bloco, que é o JSON; a foto tem o `location` dela, abaixo.
+    client_max_body_size 2M;
     gzip on;
     gzip_types application/json application/javascript text/css text/html;
 
     location / {
+        proxy_pass http://unix:/run/loja/api.sock;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # O envio da foto da peça (PUT .../produtos/<id>/foto), o único arquivo: 6M, a foto que a
+    # API aceita (até 5 MiB) mais o envelope do multipart. Ela confere o login antes de ler o
+    # corpo, mas, com login, lê o envio inteiro antes de recusar a foto grande. O Nginx não
+    # separa por método, e neste caminho só existe o PUT.
+    location ~ ^/api/v1/produtos/[0-9]+/foto$ {
+        client_max_body_size 6M;
         proxy_pass http://unix:/run/loja/api.sock;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
