@@ -74,7 +74,7 @@ sortear() {
 }
 
 # Toda resposta do teclado passa por aqui. O fim da entrada sem resposta nenhuma é erro, e não
-# "a resposta vazia": sem terminal (`./instalar.sh < /dev/null`, um agendador, um ssh sem -t),
+# "a resposta vazia": com a entrada fechada (`./instalar.sh < /dev/null`, um agendador),
 # o `read` volta na hora, toda vez — o padrão entrava calado e o laço do e-mail, que não tem
 # padrão, repetia "e-mail inválido." para sempre. A última linha sem o Enter no fim ainda vale:
 # o `read` a entrega, e só então diz que a entrada acabou.
