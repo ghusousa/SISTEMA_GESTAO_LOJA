@@ -725,11 +725,34 @@ DEMO_JWT="$(valor_no_env DEMO_JWT_SECRET)"
 DEMO_EMAIL="$(valor_no_env DEMO_ADMIN_EMAIL)"
 DEMO_SENHA="$(valor_no_env DEMO_ADMIN_SENHA)"
 
+# E o resto do .env de antes, também lido aqui. O --forcar regrava pelo modelo e leva adiante o
+# que o modelo não escreve — a NFC-e (FISCAL_*, FOCUSNFE_*: só o .env a liga, ADR-41), o
+# DEMO_MEMORIA, qualquer linha que alguém pôs à mão — e a cópia de fora e os avisos, quando
+# esta rodada não trouxer outros. Sumiam calados: a NFC-e voltava a "desligado", as vendas
+# seguiam sem nota, a cópia de fora parava e a demonstração voltava a 512m. O valor vai como
+# estava escrito (aspas e tudo), sem passar pelo valor_no_env.
+ENV_ANTES=""
+if [ "$FORCAR" -eq 1 ] && [ -f .env ]; then ENV_ANTES="$(cat .env 2>/dev/null || true)"; fi
+cru_de_antes() { printf '%s\n' "$ENV_ANTES" | grep -E "^$1=" | tail -1 | cut -d= -f2- || true; }
+BACKUP_ANTES="$(cru_de_antes BACKUP_REMOTO)"
+NOTIFICAR_ANTES="$(cru_de_antes NOTIFICAR_URL)"
+NOTIFICAR_MANTIDO=0
+
+# As linhas CHAVE= do .env de antes cuja chave o .env recém-gravado não tem, na ordem em que
+# estavam e com o valor exato. As da demonstração ficam de fora: sobre elas o modelo decide.
+linhas_que_o_modelo_nao_escreve() {
+    [ -n "$ENV_ANTES" ] || return 0
+    printf '%s\n' "$ENV_ANTES" | awk -F= '
+        NR == FNR { if ($0 ~ /^[A-Za-z_][A-Za-z0-9_]*=/) novo[$1] = 1; next }
+        /^[A-Za-z_][A-Za-z0-9_]*=/ && !($1 in novo) &&
+            $1 !~ /^(DEMO_SENHA_BANCO|DEMO_JWT_SECRET|DEMO_ADMIN_EMAIL|DEMO_ADMIN_SENHA)$/' .env -
+}
+
 # ------------------------------------------------------------------ perguntas
 
 if [ -f .env ] && [ "$FORCAR" -eq 0 ]; then
     alerta "Já existe um .env — a instalação vai reaproveitar as configurações dele."
-    alerta "Para começar do zero, rode com --forcar (isto NÃO apaga os dados do banco)."
+    alerta "Para refazer a configuração, rode com --forcar (isto NÃO apaga os dados do banco)."
     # shellcheck disable=SC1091
     set -a; . ./.env; set +a
     # O que é da demonstração o docker compose lê do .env, e não do ambiente: exportada daqui,
@@ -805,7 +828,11 @@ else
     echo "  avisa pelo ntfy, um app gratuito (Android e iPhone). Instale-o, toque em '+' e"
     echo "  assine um tópico com nome difícil de adivinhar — quem souber o nome lê os avisos."
     echo "  Sugestão de tópico: loja-$(sortear 12 | tr '[:upper:]' '[:lower:]')"
-    perguntar "Tópico do ntfy (vazio = os avisos ficam só no registro do servidor)" "" NOTIFICAR_URL
+    if [ -n "$NOTIFICAR_ANTES" ]; then
+        perguntar "Tópico do ntfy (vazio = fica o tópico de antes)" "" NOTIFICAR_URL
+    else
+        perguntar "Tópico do ntfy (vazio = os avisos ficam só no registro do servidor)" "" NOTIFICAR_URL
+    fi
 fi
 
 # Só o nome do tópico também vale: vira o endereço no ntfy.sh, que é o que o notificar.sh usa.
@@ -857,6 +884,10 @@ if [ "$REAPROVEITADO" -eq 0 ]; then
         if [ -z "$DEMO_SENHA" ]; then DEMO_SENHA="$(sortear 20)"; SENHA_DEMO_NOVA=1; fi
         if [ -z "$DEMO_BANCO" ] || [ -z "$DEMO_SENHA" ]; then morrer "não consegui sortear as senhas da demonstração."; fi
     fi
+    # Os avisos de antes ficam quando esta rodada não trouxe outro tópico (é o --forcar).
+    if [ -z "$NOTIFICAR_URL" ] && [ -n "$NOTIFICAR_ANTES" ]; then
+        NOTIFICAR_URL="$NOTIFICAR_ANTES"; NOTIFICAR_MANTIDO=1
+    fi
 
     # O DNS ANTES de gravar o .env: a espera por ele não tem teto e convida a sair (Ctrl+C para
     # ir acertar o painel, o SSH que cai). Interrompida com o .env já gravado, a próxima rodada o
@@ -883,7 +914,7 @@ TIMEZONE_LOJA=$FUSO
 # Para onde o ./backup.sh manda a cópia de fora do servidor. Qualquer destino do rclone
 # (rclone.org): gdrive:loja-backups, s3:meu-bucket/loja, b2:loja... Vazio = a cópia fica
 # só neste servidor, e morre junto com ele. Ela sai CIFRADA: ./backup.sh --mostrar-chave.
-BACKUP_REMOTO=
+BACKUP_REMOTO=$BACKUP_ANTES
 
 # Para onde vão os avisos (loja fora do ar, disco, backup, atualização que falhou): o
 # endereço de um tópico do ntfy. Vazio = os avisos ficam só no journal deste servidor.
@@ -906,8 +937,23 @@ FIM
             printf 'COMPOSE_PROFILES=%s\n' "$PERFIS"
         fi
     } >> .env
+    # O que o modelo não escreve vem do .env de antes, no fim.
+    LEVADAS="$(linhas_que_o_modelo_nao_escreve)"
+    if [ -n "$LEVADAS" ]; then
+        printf '\n%s\n%s\n' "# Do .env de antes: o modelo acima não as escreve, e o ./instalar.sh --forcar as manteve." \
+            "$LEVADAS" >> .env
+    fi
     chmod 600 .env
     certo ".env gravado (só você consegue ler)"
+    # Quais ficaram, pelo nome: o valor pode ser segredo (o FOCUSNFE_TOKEN é).
+    MANTIDAS=()
+    if [ -n "$BACKUP_ANTES" ]; then MANTIDAS+=(BACKUP_REMOTO); fi
+    if [ "$NOTIFICAR_MANTIDO" -eq 1 ]; then MANTIDAS+=(NOTIFICAR_URL); fi
+    while IFS= read -r chave; do MANTIDAS+=("$chave"); done \
+        < <(printf '%s\n' "$LEVADAS" | cut -d= -f1 | awk 'NF && !visto[$0]++')
+    if [ "${#MANTIDAS[@]}" -gt 0 ]; then
+        certo "do .env de antes, mantidas: $(printf '%s\n' "${MANTIDAS[@]}" | juntar)"
+    fi
 fi
 
 # Quem já tinha a loja e roda o instalador de novo: o .env fica como está, e só ganha o que
@@ -1191,8 +1237,9 @@ ligar_rotinas() {
             ;;
     esac
     # O aviso de teste só quando o tópico acabou de ser informado: religar a loja (rodar o
-    # instalador de novo com o .env de antes) não precisa apitar o celular toda vez.
-    if [ -n "${NOTIFICAR_URL:-}" ] && [ "$REAPROVEITADO" -eq 0 ]; then
+    # instalador de novo com o .env de antes), ou o --forcar que manteve o tópico de antes, não
+    # precisa apitar o celular toda vez.
+    if [ -n "${NOTIFICAR_URL:-}" ] && [ "$REAPROVEITADO" -eq 0 ] && [ "$NOTIFICAR_MANTIDO" -eq 0 ]; then
         if ./notificar.sh --testar >/dev/null 2>&1; then
             certo "aviso de teste enviado para $NOTIFICAR_URL — confira o celular"
         else

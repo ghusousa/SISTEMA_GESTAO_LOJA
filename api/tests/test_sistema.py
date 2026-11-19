@@ -1185,6 +1185,61 @@ async def test_forcar_mantem_as_senhas_da_demo(tmp_path: Path) -> None:
     assert "veja com ./demo.sh --mostrar" in r.stdout
 
 
+# O que o dono pôs no .env e o modelo do instalador não escreve: a NFC-e (ADR-41: só o .env a
+# liga), o teto de memória da demonstração e uma linha à mão (com aspas, como veio).
+DO_DONO = {
+    "FISCAL_EMISSOR": "focusnfe", "FOCUSNFE_TOKEN": "tokenDoEmissorFiscal0123456789abc",
+    "FOCUSNFE_AMBIENTE": "producao", "FISCAL_EMITIR_AUTOMATICO": "true",
+    "DEMO_MEMORIA": "768m", "LINHA_A_MAO": '"com aspas = e espaço"',
+}
+# E o que o modelo escreve vazio quando a rodada não traz outro: a cópia de fora e os avisos.
+DO_DONO_NO_MODELO = {"BACKUP_REMOTO": "gdrive:loja-backups", "NOTIFICAR_URL": "https://ntfy.sh/loja-de-antes"}
+
+
+@precisa_do_bash
+async def test_forcar_leva_adiante_o_que_o_modelo_nao_escreve(tmp_path: Path) -> None:
+    """O --forcar (o caminho que o ./demo.sh --mostrar indica para pôr um domínio) refazia o .env
+    pelo modelo e só levava as DEMO_*: a NFC-e voltava a "desligado" calada e as vendas seguiam
+    sem nota, a cópia de fora e os avisos paravam, e a demonstração voltava a 512m. Agora o que
+    o modelo não escreve vem junto, com o valor exato, e a saída diz quais — só os nomes."""
+    loja, env = _instalador(tmp_path)
+    assert _instalar(loja, env, "192.168.0.10").returncode == 0
+    texto = (loja / ".env").read_text()
+    for chave, valor in DO_DONO_NO_MODELO.items():
+        assert f"\n{chave}=\n" in texto
+        texto = texto.replace(f"\n{chave}=\n", f"\n{chave}={valor}\n")
+    (loja / ".env").write_text(texto + "".join(f"{c}={v}\n" for c, v in DO_DONO.items()))
+
+    r = _instalar(loja, env, "loja.exemplo.com.br", "--forcar")
+
+    assert r.returncode == 0, _saida(r, loja)
+    depois = _ler_env(loja)
+    assert depois["DOMINIO"] == "loja.exemplo.com.br"
+    linhas = (loja / ".env").read_text().splitlines()
+    for chave, valor in (DO_DONO | DO_DONO_NO_MODELO).items():
+        assert depois[chave] == valor, chave
+        assert sum(linha.startswith(f"{chave}=") for linha in linhas) == 1, chave
+    mantidas = next(linha for linha in r.stdout.splitlines() if "do .env de antes, mantidas:" in linha)
+    assert set(mantidas.split("mantidas:")[1].replace(",", " ").split()) == set(DO_DONO | DO_DONO_NO_MODELO)
+    # Os nomes, nunca os valores: o token do emissor fiscal é segredo.
+    assert DO_DONO["FOCUSNFE_TOKEN"] not in r.stdout + r.stderr
+    # O tópico de antes não foi informado agora: nada de apitar o celular.
+    assert "Avisos da loja ligados" not in _avisos(tmp_path)
+
+    # De novo, com um tópico novo: ele vale no lugar do de antes, e nada se duplica.
+    de_novo = _instalar(loja, env, "loja.exemplo.com.br", "--forcar", "--avisos", "loja-nova")
+
+    assert de_novo.returncode == 0, _saida(de_novo, loja)
+    depois = _ler_env(loja)
+    assert depois["NOTIFICAR_URL"] == "https://ntfy.sh/loja-nova"
+    linhas = (loja / ".env").read_text().splitlines()
+    for chave, valor in DO_DONO.items():
+        assert depois[chave] == valor, chave
+        assert sum(linha.startswith(f"{chave}=") for linha in linhas) == 1, chave
+    assert depois["BACKUP_REMOTO"] == DO_DONO_NO_MODELO["BACKUP_REMOTO"]
+    assert "Avisos da loja ligados" in _avisos(tmp_path)
+
+
 @precisa_do_bash
 async def test_religar_sem_loja_chega_ao_fim_e_ganha_a_demo(tmp_path: Path) -> None:
     """O caminho que reaproveita o .env morria em "LOJA: unbound variable" depois do `up`:

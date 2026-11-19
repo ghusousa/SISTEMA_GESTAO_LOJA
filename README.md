@@ -215,7 +215,8 @@ e já aponta para o seu IP — o HTTPS sai sozinho do mesmo jeito:
 ./instalar.sh --dominio 203.0.113.10.sslip.io     # troque pelo IP do seu servidor
 ```
 
-Num servidor que já foi instalado pelo IP, acrescente `--forcar` (os dados do banco ficam).
+Num servidor que já foi instalado pelo IP, acrescente `--forcar` (os dados do banco ficam, e o
+que você pôs no `.env` à mão — a NFC-e, por exemplo — também).
 
 ### Sem perguntas (automação)
 
@@ -230,10 +231,13 @@ Num servidor que já foi instalado pelo IP, acrescente `--forcar` (os dados do b
 ```
 
 Outras opções: `--senha-banco`, `--fuso`, `--porta-http`, `--porta-https`, `--avisos TOPICO`
-(o tópico do ntfy), `--forcar` (refaz o `.env` do zero — menos as senhas da demonstração, que
-ficam: a da conta dela é a que está na Apple), `--sem-demo` (sem a demonstração) e `--sem-docker`
-(não instala o Docker automaticamente). Rodar o instalador de novo é seguro: sem `--forcar`, ele
-reaproveita a configuração e só religa o que estiver parado.
+(o tópico do ntfy), `--forcar` (refaz o `.env` pelo modelo, com domínio, portas, fuso e o segredo
+do login de novo — e mantém o resto: as senhas da demonstração, porque a da conta dela é a que está
+na Apple; toda linha que o modelo não escreve, como a NFC-e (`FISCAL_*`, `FOCUSNFE_*`) e o
+`DEMO_MEMORIA`, com o valor exato; e a cópia de fora (`BACKUP_REMOTO`) e os avisos (`NOTIFICAR_URL`)
+quando a rodada não traz outros. A saída diz, pelo nome, o que ficou), `--sem-demo` (sem a
+demonstração) e `--sem-docker` (não instala o Docker automaticamente). Rodar o instalador de novo é
+seguro: sem `--forcar`, ele reaproveita a configuração e só religa o que estiver parado.
 
 ### O dia a dia
 
