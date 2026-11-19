@@ -12,6 +12,7 @@ import { PODE, pode, titulo } from './permissoes.js';
 import { conectarTempoReal, desconectarTempoReal } from './tempo-real.js';
 import { html, confirmar, cru, aviso } from './ui.js';
 import { carregarLoja, loja, aoMudarLoja } from './loja.js';
+import { ligarFaixaDaDemonstracao } from './faixa-demonstracao.js';
 import { naRaiz } from './raiz.js';
 import { desligarLeitorCelular, ligarLeitorCelular, pararLeitorCelular } from './leitor-celular.js';
 
@@ -370,6 +371,8 @@ sessao.inscrever(({ usuario }) => {
 
 // O nome da loja é lido sem sessão: a tela de entrada já abre com ele. Não esperamos a
 // resposta para iniciar o roteador — a loja sem nome é um detalhe, a loja sem PDV não é.
+// Na mesma leitura vem se esta é a demonstração (ADR-46), que ganha a faixa no topo.
+ligarFaixaDaDemonstracao();
 carregarLoja();
 aoMudarLoja((config) => {
   document.querySelectorAll('[data-nome-loja]').forEach((el) => {
