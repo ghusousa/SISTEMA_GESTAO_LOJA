@@ -5,7 +5,14 @@
  *
  * A câmera é o `Scanner` de sempre, com as mesmas travas de `lib/leitura.ts` (e a vibração
  * de sucesso dele a cada leitura aceita). A tela confere o pareamento a cada 15 s enquanto
- * está na frente de alguém: o computador pode ter desligado, ou as 12 h passado.
+ * está na frente de alguém: o computador pode ter desligado, ou as 12 h passado — e na hora,
+ * quando o tempo real avisa que um pareamento mudou (`leitor_pareamento`).
+ *
+ * Ligado pelo chamado do computador (ADR-47), mostra o sinal ("Lendo para o computador do
+ * sinal 7K3"). Outro computador chamando este login aparece numa linha com [Trocar]: a faixa
+ * do topo só avisa, e trocar é aqui, onde se vê para quem as leituras vão agora. Sem diálogo:
+ * a câmera segue lendo, e o que não tiver saído para o computador anterior fica na lista como
+ * "não enviado" (`leitorStore.ligar`).
  */
 
 import { useQuery } from '@tanstack/react-query';
@@ -16,9 +23,12 @@ import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { leitor } from '@/api/endpoints';
 import type { Pareamento } from '@/api/tipos';
+import { ROTULOS_DO_CHAMADO } from '@/components/FaixaDoChamado';
 import { Scanner, type ScannerRef } from '@/components/Scanner';
 import { Botao, Cartao, useRespiroDeBaixo } from '@/components/ui';
+import { useChamadosDoLeitor, type AtenderChamado } from '@/hooks/useChamadosDoLeitor';
 import { useLoja } from '@/hooks/useLoja';
+import { sinalValido } from '@/lib/notificacoes';
 import { chaves } from '@/lib/queryClient';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
 import {
@@ -88,9 +98,54 @@ interface Props {
   pareamento: Pareamento;
   /** Tela em foco e app na frente: só assim a câmera e a consulta ligam. */
   visivel: boolean;
+  /** O atender da tela do leitor (o Trocar). */
+  atendimento: AtenderChamado;
+  /** O sinal do chamado que a pessoa tocou na notificação com o leitor ligado: em destaque. */
+  destaque: string | null;
+  /** O toque numa notificação cujo chamado já acabou (ou a busca que não respondeu). */
+  avisoDoToque: string | null;
 }
 
-export function LeitorPareado({ pareamento, visivel }: Props) {
+/**
+ * Outro computador chamando este login, com o leitor ligado: uma linha por chamado, cada uma
+ * com o seu sinal e o [Trocar]. O que a pessoa tocou na notificação vem em destaque.
+ */
+function OutrosChamando({
+  atendimento,
+  destaque,
+  avisoDoToque,
+}: {
+  atendimento: AtenderChamado;
+  destaque: string | null;
+  avisoDoToque: string | null;
+}) {
+  const { data } = useChamadosDoLeitor();
+  const chamados = (data ?? []).filter((c) => sinalValido(c.sinal));
+  const aviso = atendimento.aviso ?? avisoDoToque;
+  if (chamados.length === 0 && !aviso) return null;
+  return (
+    <View style={s.outros}>
+      {chamados.map((chamado) => (
+        <View key={chamado.id} style={[s.outro, chamado.sinal === destaque && s.outroDestaque]}>
+          <Text style={s.outroTexto}>
+            {ROTULOS_DO_CHAMADO.outro} (sinal <Text style={s.outroSinal}>{chamado.sinal}</Text>)
+          </Text>
+          <Botao
+            titulo={ROTULOS_DO_CHAMADO.trocar}
+            variante="secundario"
+            carregando={atendimento.atendendoId === chamado.id}
+            desabilitado={atendimento.atendendo && atendimento.atendendoId !== chamado.id}
+            // Sem pedir a permissão de notificação aqui: a câmera está montada (5.1.1).
+            onPress={() => atendimento.atender(chamado.id, { pedirPermissao: false })}
+          />
+        </View>
+      ))}
+      {!!aviso && <Text style={s.outroAviso}>{aviso}</Text>}
+    </View>
+  );
+}
+
+export function LeitorPareado({ pareamento, visivel, atendimento, destaque, avisoDoToque }: Props) {
   const loja = useLoja();
   const bipes = useLeitorStore((e) => e.bipes);
   const ler = useLeitorStore((e) => e.ler);
@@ -166,8 +221,12 @@ export function LeitorPareado({ pareamento, visivel }: Props) {
         <Text style={s.titulo} numberOfLines={2}>
           Ligado ao computador de {pareamento.computador_nome}
         </Text>
+        {pareamento.chamado && sinalValido(pareamento.sinal) && (
+          <Text style={s.sinal}>Lendo para o computador do sinal {pareamento.sinal}</Text>
+        )}
         {!!ate && <Text style={s.ate}>até {ate}</Text>}
       </View>
+      <OutrosChamando atendimento={atendimento} destaque={destaque} avisoDoToque={avisoDoToque} />
 
       <View style={s.cameraArea}>
         {visivel ? (
@@ -217,7 +276,29 @@ const s = StyleSheet.create({
     gap: espaco.xs,
   },
   titulo: { fontSize: fonte.media, fontWeight: '700', color: cores.primaria },
+  // `primariaClara`, e não o azul da faixa: sobre o fundo claro do cabeçalho ele não dá 4,5:1.
+  sinal: { fontSize: fonte.base, fontWeight: '700', color: cores.primariaClara },
   ate: { fontSize: fonte.pequena, color: cores.textoSuave },
+  outros: {
+    paddingHorizontal: espaco.lg,
+    paddingVertical: espaco.sm,
+    gap: espaco.sm,
+    backgroundColor: cores.superficie,
+  },
+  outro: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: espaco.sm,
+    borderRadius: raio.sm,
+    paddingHorizontal: espaco.sm,
+    paddingVertical: espaco.xs,
+  },
+  outroDestaque: { borderWidth: 2, borderColor: cores.chamadoDoLeitor, backgroundColor: cores.primariaFraca },
+  outroTexto: { flex: 1, minWidth: 160, fontSize: fonte.base, color: cores.texto, fontWeight: '600' },
+  outroSinal: { fontWeight: '800', color: cores.primariaClara, letterSpacing: 1 },
+  outroAviso: { fontSize: fonte.pequena, color: cores.perigo },
   cameraArea: { height: '42%', backgroundColor: '#000' },
   cameraParada: { flex: 1, backgroundColor: '#000' },
   conteudo: { padding: espaco.lg, gap: espaco.md },
