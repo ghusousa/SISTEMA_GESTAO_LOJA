@@ -148,6 +148,39 @@ test('hostDoEndereco mostra só o que identifica o servidor', () => {
   assert.equal(hostDoEndereco('lixo'), 'lixo');
 });
 
+test('mesmoServidor compara a base inteira: a raiz conta (ADR-46)', () => {
+  // A demonstração mora em /demo no MESMO host da loja: o código de uma não é da outra.
+  assert.equal(
+    mesmoServidor('https://loja.exemplo/api/v1', 'https://loja.exemplo/demo/api/v1'),
+    false,
+  );
+  assert.equal(
+    mesmoServidor('https://loja.exemplo/demo/api/v1', 'https://loja.exemplo/api/v1'),
+    false,
+  );
+  assert.equal(
+    mesmoServidor('https://loja.exemplo/demo/api/v1', 'https://loja.exemplo/demonstracao/api/v1'),
+    false,
+  );
+  assert.equal(
+    mesmoServidor('https://loja.exemplo/demo/api/v1', 'https://loja.exemplo/demo/api/v1'),
+    true,
+  );
+  // A base da API e a do servidor se comparam: o "/api/..." e a barra do fim não contam.
+  assert.equal(mesmoServidor('https://LOJA.exemplo/demo/api/v1/', 'https://loja.exemplo:443/demo'), true);
+});
+
+test('mesmoServidor: convite de loopback não acusa pelo host, mas a raiz conta', () => {
+  assert.equal(mesmoServidor('http://localhost/demo/api/v1', 'https://loja.exemplo/demo/api/v1'), true);
+  assert.equal(mesmoServidor('http://localhost/demo/api/v1', 'https://loja.exemplo/api/v1'), false);
+});
+
+test('hostDoEndereco mostra a raiz junto: loja e demonstração dividem o host', () => {
+  assert.equal(hostDoEndereco('https://Loja.Exemplo/demo/api/v1'), 'loja.exemplo/demo');
+  assert.equal(hostDoEndereco('https://loja.exemplo/demo'), 'loja.exemplo/demo');
+  assert.equal(hostDoEndereco('http://192.168.0.10:8000/demo/api/v1/'), '192.168.0.10:8000/demo');
+});
+
 test('venceu: o bipe vale por dois minutos, como no servidor', () => {
   assert.equal(PRAZO_DO_BIPE_MS, 120_000);
   const bipe = { lidoEm: 1_000_000 };
