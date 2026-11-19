@@ -982,6 +982,45 @@ if (!REAIS) {
     conferir(e.anexos[video]?.estado === 'COMPLETE' && Object.keys(e.anexos).length === 1, 'o vídeo ficou, sozinho: o guia não entrou no lugar dele');
   });
 
+  // A Apple que não termina de processar dentro da espera: o vídeo continua UPLOAD_COMPLETE.
+  const videoQueNaoTerminaDeProcessar = (mock) => {
+    const [video] = mock.anexosNaRevisao([{ nome: 'screen-recording.mp4', dados: BYTES_DO_VIDEO, estado: 'UPLOAD_COMPLETE' }]);
+    Object.defineProperty(mock.estado.anexos[video], 'estado', { get: () => 'UPLOAD_COMPLETE', set: () => {}, enumerable: true, configurable: true });
+    return video;
+  };
+
+  await cenario('Um anexo só: vídeo que a Apple ainda processa depois da espera, rodada sem vídeo — ele fica (o guia não entra no lugar)', async ({ conferir, guardar }) => {
+    const mock = await subirMock();
+    const primeira = await publicar([], { porta: mock.porta, capturas: baseSintetica });
+    guardar(primeira.saida);
+    const e = mock.estado;
+    const video = videoQueNaoTerminaDeProcessar(mock);
+    const reservasAntes = contar(e, 'POST /v1/appStoreReviewAttachments');
+    const segunda = await publicar([], { porta: mock.porta, capturas: baseSintetica });
+    guardar(segunda.saida);
+    await mock.fechar();
+    conferir(segunda.codigo === 0, 'a rodada (só a ficha) terminou sem erro');
+    conferir(Boolean(e.anexos[video]) && !e.anexosApagados.includes(video), 'o vídeo que a Apple ainda processa ficou');
+    conferir(contar(e, 'POST /v1/appStoreReviewAttachments') === reservasAntes && Object.keys(e.anexos).length === 1, 'o guia não subiu no lugar dele: um anexo só');
+    conferir(notasDe(e).includes('1) SCREEN RECORDING: attachment "screen-recording.mp4"') && !notasDe(e).includes('app-review-guide.pdf'), 'as notas citam o vídeo e não prometem o guia');
+    conferir(segunda.saida.includes('a Apple ainda a processa; ela fica'), 'o log diz que a gravação ainda está sendo processada e fica');
+  });
+
+  await cenario('Um anexo só: o mesmo vídeo ainda processando, com --enviar — para antes de escrever, diz que a Apple ainda o processa, e ele fica', async ({ conferir, guardar }) => {
+    const mock = await subirMock();
+    const primeira = await publicar([], { porta: mock.porta, capturas: baseSintetica });
+    guardar(primeira.saida);
+    const e = mock.estado;
+    const video = videoQueNaoTerminaDeProcessar(mock);
+    const segunda = await publicar(['--enviar'], { porta: mock.porta, capturas: baseSintetica });
+    guardar(segunda.saida);
+    await mock.fechar();
+    conferir(segunda.codigo === 1 && e.envios.length === 0, 'parou: nada foi enviado para revisão');
+    conferir(Boolean(e.anexos[video]) && !e.anexosApagados.includes(video), 'o vídeo ficou');
+    conferir(segunda.saida.includes('ainda está sendo processada pela Apple'), 'a falta diz que a gravação ainda está sendo processada (e não "sem a gravação")');
+    conferir(!segunda.saida.includes('Sem a gravação de tela que a Apple pediu'), 'não manda passar o vídeo de novo');
+  });
+
   await cenario('Um anexo só: o vídeo novo falha no envio — pendência clara (a revisão ficou sem anexo), nada enviado, e a rodada seguinte sobe', async ({ conferir, guardar }) => {
     const mock = await subirMock({ falharUploadDoAnexo: 'screen-recording.mp4' });
     const primeira = await publicar([], { porta: mock.porta, capturas: baseSintetica });

@@ -391,7 +391,7 @@ Lembrete: o app conversa com o servidor da sua própria loja. As funções novas
 
 ## 5. FICHA DE PRIVACIDADE (App Privacy) — o único formulário SEM API
 
-> A API 4.6 da Apple não tem rota para esta ficha: é a única parte que nenhum programa preenche (a outra coisa fora do alcance da API é criar o registro do app). Responda UMA vez na tela com a tabela abaixo; depois ela vale para as próximas versões. O publicador lembra disso no resumo de toda rodada e, se a Apple recusar o envio por causa dela, mostra a mensagem.
+> A API 4.6.1 da Apple não tem rota para esta ficha: é a única parte que nenhum programa preenche (a outra coisa fora do alcance da API é criar o registro do app). Responda UMA vez na tela com a tabela abaixo; depois ela vale para as próximas versões. O publicador lembra disso no resumo de toda rodada e, se a Apple recusar o envio por causa dela, mostra a mensagem.
 
 **Resposta global: "Sim, coletamos dados deste app."**
 **Dados usados para rastrear você: NENHUM.** Nenhum tipo de dado responde "Sim" a rastreamento — não há SDK de terceiros, IDFA, publicidade nem *data broker*. Logo, sem prompt de ATT.

@@ -94,7 +94,8 @@ before loading a new one" — foi o que parou a rodada nº 8, de 19/11/2026, sub
 vídeo lá). O publicador escolhe um (`escolherAnexo`, em `anexos.mjs`), nesta ordem: o vídeo novo
 desta rodada (`--video-revisao`); senão, o vídeo que já está anexado e processado (`COMPLETE` —
 um vídeo bom nunca sai para o guia entrar; o que a Apple ainda processa é esperado antes da
-escolha); senão, o guia PDF. As notas citam só ele. Na troca (`trocarAnexo`): se o que está lá é
+escolha e, se ainda não terminou, fica do mesmo jeito — com `--enviar`, a rodada para e diz para
+rodar de novo em alguns minutos); senão, o guia PDF. As notas citam só ele. Na troca (`trocarAnexo`): se o que está lá é
 exatamente o escolhido (mesmo nome, mesmo MD5, processado), ele fica e os outros saem; senão,
 TODOS os que estão lá saem ANTES e o escolhido sobe — reserva → bytes nas partes que a Apple
 devolve → confirma com o MD5 → espera o processamento. Entre o apagar e o subir a revisão fica sem

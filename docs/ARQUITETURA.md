@@ -1832,7 +1832,7 @@ token). *Consequências:* publicar é um clique por rodada (build; depois, revis
 os segredos são os mesmos do Obras e moram no GitHub, nunca no repositório nem no log
 (`ci.test.mjs` procura a senha e a chave na saída). O CI roda `ci.test.mjs` e `rodar.mjs`.
 *Ficha completa (nov/2026):* o dono pediu não fazer nada no site da Apple, então o publicador
-passou a responder tudo o que a API 4.6 alcança, conferido contra a especificação OFICIAL:
+passou a responder tudo o que a API 4.6.1 alcança, conferido contra a especificação OFICIAL:
 **classificação etária completa** — as perguntas da `AgeRatingDeclaration` (24 na 4.6, 26 na
 4.6.1; frequência NONE, sim/não false, inclusive as novas: conteúdo gerado por usuário, conversa,
 rede social, anúncios, verificação de idade, controle parental, caixa de recompensa, saúde, armas;
@@ -1865,7 +1865,7 @@ teto de 150 min) ou etiqueta `ios-v<versão>[-N]` (regex ancorada; tem de bater 
 `app.json`) — a etiqueta existe porque o botão `workflow_dispatch` só aparece depois que o
 arquivo chega na branch padrão; compila com `--wait` (o envio automático do EAS sobe o
 binário), e roda `publicar.mjs --enviar --aguardar-build 60`; sem ficha ou sem o app na Apple,
-para ANTES de compilar. **O que a API 4.6 não cobre** — e nenhum programa faz: criar o
+para ANTES de compilar. **O que a API 4.6.1 não cobre** — e nenhum programa faz: criar o
 registro do app (não existe `POST /v1/apps`) e a ficha "Privacidade do App" (não há rota); o
 resumo lembra das duas. A Apple de mentira (`teste/mock-asc.mjs`) confere toda rota, parâmetro
 e corpo contra `teste/esquema-asc.mjs`, recorte gerado da especificação oficial por
@@ -1889,8 +1889,9 @@ só (rodada nº 8, 19/11/2026):* a Apple aceita UM anexo por detalhe de revisão
 volta 409 `STATE_ERROR` ("There can be max of 1 attachment, please delete the existing attachment
 before loading a new one") —, e o publicador subia o guia E o vídeo, o novo antes de apagar o
 velho. Agora escolhe um (`escolherAnexo`): o vídeo novo da rodada; senão, o vídeo já anexado e
-processado (`COMPLETE`; o que a Apple ainda processa é esperado antes da escolha — um vídeo bom
-nunca sai para o guia entrar); senão, o guia. Na troca (`trocarAnexo`), o que já está lá igual
+processado (`COMPLETE`; o que a Apple ainda processa é esperado antes da escolha e, se não
+terminar, fica assim mesmo — um vídeo bom nunca sai para o guia entrar; com `--enviar`, a rodada
+para e manda rodar de novo); senão, o guia. Na troca (`trocarAnexo`), o que já está lá igual
 (mesmo nome, mesmo MD5, processado) fica e os outros saem; senão TODOS saem ANTES e o escolhido
 sobe — a janela sem anexo é aceita, e o envio que falha vira pendência dizendo que a revisão
 ficou sem anexo (a reserva pela metade sai; o `--enviar` não manda a revisão; a rodada seguinte

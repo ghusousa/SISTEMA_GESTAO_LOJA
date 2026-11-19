@@ -290,6 +290,12 @@ async function conferirAntesDeEnviar({ asc, app, versaoDoApp, situacao, args, ap
   // processada, ou o guia — e com o guia no lugar dela a revisão não sai.
   if (anexo.tipo === 'video' && !anexo.existente) {
     relatorio.ok(`gravação de tela: ${anexo.nome} (${mb(anexo.dados.length)}), ${soConferir ? 'conferida — sobe na rodada de envio' : 'sobe nesta rodada'}`);
+  } else if (anexo.tipo === 'video' && anexo.processando) {
+    faltas.push([
+      'video',
+      `A gravação de tela já anexada (${anexo.nome}) ainda está sendo processada pela Apple: rode de novo em alguns ` +
+        'minutos. Ela fica e é o anexo da revisão; nada precisa subir de novo.',
+    ]);
   } else if (anexo.tipo === 'video') {
     relatorio.ok(`gravação de tela já anexada na Apple: ${anexo.nome} — fica`);
   } else {
@@ -1021,7 +1027,9 @@ async function publicar() {
       (anexo.tipo === 'guia'
         ? 'o guia PDF, sem gravação de tela nesta rodada nem anexada'
         : anexo.existente
-          ? 'a gravação de tela que já está anexada'
+          ? anexo.processando
+            ? 'a gravação de tela que já está anexada (a Apple ainda a processa; ela fica)'
+            : 'a gravação de tela que já está anexada'
           : 'a gravação de tela desta rodada'),
   );
   if (args.enviar || args.conferirEnvio) {

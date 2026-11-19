@@ -8,8 +8,8 @@
  * ("There can be max of 1 attachment, please delete the existing attachment before loading a
  * new one" — a rodada nº 8 parou nele, subindo o guia ao lado do vídeo). Por isso a rodada
  * escolhe um só (escolherAnexo), e as notas citam só ele (ficha.mjs): o vídeo novo desta
- * rodada; senão, o vídeo que já está anexado e processado — um vídeo bom nunca sai para o guia
- * entrar; senão, o guia.
+ * rodada; senão, o vídeo que já está anexado — processado, ou ainda processando depois da espera
+ * (videoNaRevisao): um vídeo bom nunca sai para o guia entrar; senão, o guia.
  *
  * Trocar (trocarAnexo): o que já está lá IGUAL ao escolhido (mesmo nome, mesmo MD5, processado)
  * fica, e os outros saem. Senão, TODOS os que estão lá saem ANTES e o escolhido sobe: reservar
@@ -189,14 +189,35 @@ export function videoAnexado(anexos) {
 }
 
 /**
+ * O vídeo que está na revisão: o processado; senão, o que a Apple ainda processa
+ * (UPLOAD_COMPLETE) mesmo depois da espera. Este também fica: os bytes já estão com a Apple, e
+ * trocá-lo pelo guia jogaria fora a gravação que a revisão pede. O que falhou ou nem subiu
+ * (FAILED, AWAITING_UPLOAD) não conta.
+ */
+function videoNaRevisao(anexos) {
+  return (
+    videoAnexado(anexos) ??
+    anexos.find((a) => ehVideo(a.attributes?.fileName) && estadoDoAnexo(a) === 'UPLOAD_COMPLETE') ??
+    null
+  );
+}
+
+/**
  * O ÚNICO anexo da revisão (ver o topo): o vídeo novo desta rodada; senão, o vídeo que já está
  * anexado e processado (fica como está: `existente`, sem os bytes); senão, o guia PDF.
  * Devolve { tipo: 'video' | 'guia', nome, dados?, md5?, existente? }.
  */
 export function escolherAnexo({ video = null, guia, anexos = [] }) {
   if (video) return { tipo: 'video', nome: video.nome, dados: video.dados, md5: video.md5 };
-  const jaAnexado = videoAnexado(anexos);
-  if (jaAnexado) return { tipo: 'video', nome: jaAnexado.attributes.fileName, existente: jaAnexado };
+  const jaAnexado = videoNaRevisao(anexos);
+  if (jaAnexado) {
+    return {
+      tipo: 'video',
+      nome: jaAnexado.attributes.fileName,
+      existente: jaAnexado,
+      processando: estadoDoAnexo(jaAnexado) !== 'COMPLETE',
+    };
+  }
   return { tipo: 'guia', nome: guia.nome, dados: guia.dados, md5: guia.md5 };
 }
 
@@ -219,8 +240,10 @@ async function apagarAnexo(asc, anexo) {
  */
 export async function trocarAnexo(asc, { detalheId, escolhido, existentes, esperaMs, relatorio }) {
   const processado = (a) => estadoDoAnexo(a) === 'COMPLETE';
+  // O vídeo que já estava lá fica também se a Apple ainda o processa (ver videoNaRevisao).
+  const naApple = (a) => processado(a) || estadoDoAnexo(a) === 'UPLOAD_COMPLETE';
   const igual = escolhido.existente
-    ? existentes.find((a) => a.id === escolhido.existente.id && processado(a))
+    ? existentes.find((a) => a.id === escolhido.existente.id && naApple(a))
     : existentes.find(
         (a) => a.attributes?.fileName === escolhido.nome && a.attributes?.sourceFileChecksum === escolhido.md5 && processado(a),
       );
@@ -237,7 +260,7 @@ export async function trocarAnexo(asc, { detalheId, escolhido, existentes, esper
         sobras.push(`${nomeDoAnexo(outro)} (${erro.message})`);
       }
     }
-    return { id: igual.id, mantido: true, apagados, sobras, processando: false };
+    return { id: igual.id, mantido: true, apagados, sobras, processando: !processado(igual) };
   }
   if (escolhido.existente) {
     // Sem os bytes, o vídeo que sumiu entre o começo da rodada e agora não tem como voltar daqui.
