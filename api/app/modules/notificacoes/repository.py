@@ -90,16 +90,27 @@ class NotificacoesRepository:
         )
 
     async def faxina(self, vida: timedelta = VIDA_DO_APARELHO) -> None:
-        """Apaga da tabela inteira os aparelhos sem registro há mais que `vida`."""
+        """Apaga da tabela inteira os aparelhos sem registro há mais que `vida`.
+
+        `SKIP LOCKED`: a faxina nunca espera. Ela roda no login, que não pode parar atrás do
+        registro de um aparelho calado que voltou agora (o upsert dele trava a linha, e o
+        registro já a tira do prazo); e dois registros assim, cada um apagando a linha que o
+        outro trava, não se abraçam. A linha travada sai na próxima faxina.
+        """
+        calados = (
+            select(_APARELHOS.c.id)
+            .where(_APARELHOS.c.visto_em < func.now() - vida)
+            .with_for_update(skip_locked=True)
+        )
         await self.session.execute(
-            delete(_APARELHOS).where(_APARELHOS.c.visto_em < func.now() - vida)
+            delete(_APARELHOS).where(_APARELHOS.c.id.in_(calados.scalar_subquery()))
         )
 
     async def do_usuario(self, user_id: int, limite: int = APARELHOS_POR_LOGIN) -> list[Aparelho]:
         """Os aparelhos do login, do registro mais recente ao mais velho.
 
-        O que passou dos 30 dias fica de fora mesmo antes da faxina (que roda no registro):
-        aparelho calado há um mês não recebe chamado.
+        O que passou dos 30 dias fica de fora mesmo antes da faxina (que roda no registro e
+        no login): aparelho calado há um mês não recebe chamado.
         """
         linhas = await self.session.execute(
             select(_APARELHOS.c.plataforma, _APARELHOS.c.token)

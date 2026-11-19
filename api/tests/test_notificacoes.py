@@ -28,7 +28,7 @@ from app.modules.notificacoes import service as notificacoes_service
 from app.modules.notificacoes.expo import Mensagem, Recibo
 from app.modules.notificacoes.models import AparelhoDeNotificacao
 from app.modules.notificacoes.repository import NotificacoesRepository
-from tests.test_leitor import _sql
+from tests.test_leitor import _alguem_esperando_trava, _sql
 
 ROTA = "/notificacoes/aparelho"
 
@@ -200,6 +200,141 @@ async def test_aparelho_sem_uso_ha_30_dias_sai_na_faxina(
 
     await _registrar(client, auth_vendedor, ativo)
     assert [i for i, *_ in await _aparelhos()] == [str(ativo)]
+
+
+async def _calar(instalacao: uuid.UUID) -> None:
+    await _sql(
+        "UPDATE notificacao_aparelhos SET visto_em = now() - interval '31 days' "
+        "WHERE instalacao = :i",
+        i=instalacao,
+    )
+
+
+async def _entrar(client: AsyncClient, email: str) -> None:
+    r = await client.post("/auth/login", json={"email": email, "senha": "senha1234"})
+    assert r.status_code == 200, r.text
+
+
+async def test_aparelho_calado_ha_30_dias_sai_no_login_sem_registro_novo(
+    client, admin, auth_admin, auth_vendedor
+) -> None:
+    """A loja que parou de usar o app não registra mais aparelho nenhum, e a faxina do
+    registro não roda: é a do login que leva o token calado há 30 dias. O recente fica."""
+    calado, recente = uuid.uuid4(), uuid.uuid4()
+    await _registrar(client, auth_admin, calado, token=_token("calado"))
+    await _registrar(client, auth_vendedor, recente, token=_token("recente"))
+    await _calar(calado)
+
+    await _entrar(client, admin.email)
+    assert [(i, t) for i, _, _, t in await _aparelhos()] == [(str(recente), _token("recente"))]
+
+
+async def test_faxina_do_login_nao_espera_a_linha_travada(client, admin, auth_admin) -> None:
+    """O login nunca para atrás da faxina. A linha calada que alguém trava agora (o registro
+    do aparelho que voltou: o upsert dela já a tira do prazo) fica para a próxima, e o login
+    passa direto em vez de esperar a outra transação."""
+    calado = uuid.uuid4()
+    await _registrar(client, auth_admin, calado, token=_token("voltando"))
+    await _calar(calado)
+
+    async with engine.connect() as outra, outra.begin():
+        await outra.execute(
+            text("SELECT 1 FROM notificacao_aparelhos WHERE instalacao = :i FOR UPDATE"),
+            {"i": calado},
+        )
+        await asyncio.wait_for(_entrar(client, admin.email), timeout=5)
+    assert [i for i, *_ in await _aparelhos()] == [str(calado)]
+
+    # Solta a trava: o próximo login leva.
+    await _entrar(client, admin.email)
+    assert await _aparelhos() == []
+
+
+async def test_login_durante_a_exclusao_da_propria_conta_nao_se_abraca_com_a_faxina(
+    client, vendedor, auth_admin, auth_vendedor, monkeypatch
+) -> None:
+    """A vendedora entra enquanto o dono exclui a conta dela, que tem um aparelho calado há
+    30 dias. A exclusão trava a conta e depois apaga os aparelhos dela; o login pega a conta
+    pela FK do refresh novo. Se a faxina do login segurasse o aparelho calado antes disso,
+    cada um esperaria o outro e o Postgres derrubaria um (500). Por isso ela roda por último,
+    depois do flush: o login só espera a exclusão terminar."""
+    from app.modules.usuarios.repository import UsuarioRepository
+    from tests.test_leitor import _cliente
+
+    calado = uuid.uuid4()
+    await _registrar(client, auth_vendedor, calado, token=_token("calado"))
+    await _calar(calado)
+    # Com histórico (um fechamento de caixa), a linha da conta fica: o ramo do
+    # `_derrubar_sessoes`, que apaga os aparelhos com a conta já travada.
+    await _sql(
+        "INSERT INTO cash_closings (closing_date, user_id, total_expected, total_counted) "
+        "VALUES (current_date, :u, 0, 0)",
+        u=vendedor.id,
+    )
+
+    travou, seguir = asyncio.Event(), asyncio.Event()
+    travar_viva = UsuarioRepository.travar_viva
+
+    async def travar_e_parar(self, user_id: int) -> bool:
+        achou = await travar_viva(self, user_id)
+        travou.set()
+        await asyncio.wait_for(seguir.wait(), timeout=10)
+        return achou
+
+    monkeypatch.setattr(UsuarioRepository, "travar_viva", travar_e_parar)
+
+    async def excluir() -> httpx.Response:
+        async with _cliente() as c:
+            return await c.delete(f"/usuarios/{vendedor.id}", headers=auth_admin)
+
+    async def entrar() -> httpx.Response:
+        async with _cliente() as c:
+            return await c.post("/auth/login", json={"email": vendedor.email, "senha": "senha1234"})
+
+    exclusao = asyncio.create_task(excluir())
+    await asyncio.wait_for(travou.wait(), timeout=10)
+    login = asyncio.create_task(entrar())
+    # O login para na conta travada (a FK do refresh novo); só então a exclusão segue.
+    await _alguem_esperando_trava()
+    seguir.set()
+    excluiu, entrou = await asyncio.wait_for(asyncio.gather(exclusao, login), timeout=30)
+    assert excluiu.status_code == 204, excluiu.text
+    assert entrou.status_code == 200, entrou.text
+    assert await _aparelhos() == []
+
+
+async def test_dois_aparelhos_calados_voltando_juntos_nao_se_abracam(
+    client, auth_admin, auth_vendedor, monkeypatch
+) -> None:
+    """Dois aparelhos calados há 30 dias voltam ao mesmo tempo: cada registro trava a linha
+    dele (o upsert) e a faxina dele quer apagar a do outro, que para ela ainda está calada.
+    Esperando uma pela outra, as duas se abraçavam e uma caía em 503; a faxina pula a linha
+    travada, e as duas gravam."""
+    from tests.test_leitor import _cliente
+
+    a, b = uuid.uuid4(), uuid.uuid4()
+    await _registrar(client, auth_admin, a, token=_token("a"))
+    await _registrar(client, auth_vendedor, b, token=_token("b"))
+    await _calar(a)
+    await _calar(b)
+
+    # As duas passam do upsert antes de qualquer uma chegar à faxina.
+    barreira = asyncio.Barrier(2)
+    podar = NotificacoesRepository.podar_do_usuario
+
+    async def com_encontro(self, *args, **kwargs) -> None:
+        await podar(self, *args, **kwargs)
+        await asyncio.wait_for(barreira.wait(), timeout=10)
+
+    monkeypatch.setattr(NotificacoesRepository, "podar_do_usuario", com_encontro)
+
+    async def voltar(auth: dict[str, str], instalacao: uuid.UUID, nome: str):
+        async with _cliente() as c:
+            return await _registrar(c, auth, instalacao, token=_token(nome))
+
+    r1, r2 = await asyncio.gather(voltar(auth_admin, a, "a"), voltar(auth_vendedor, b, "b"))
+    assert (r1.status_code, r2.status_code) == (204, 204), (r1.text, r2.text)
+    assert {i for i, *_ in await _aparelhos()} == {str(a), str(b)}
 
 
 async def test_esquecer_sem_sessao(client, auth_admin) -> None:

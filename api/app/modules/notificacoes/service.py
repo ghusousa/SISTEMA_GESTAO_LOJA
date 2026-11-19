@@ -142,6 +142,12 @@ class NotificacoesService:
         chama faz o commit, junto com o resto."""
         await self.repo.apagar_do_usuario(user_id)
 
+    async def faxina(self) -> None:
+        """Os aparelhos sem registro há 30 dias saem, com o token. Roda em todo registro e na
+        faxina do login: sem ela, a loja que parou de usar o app (nenhum registro novo)
+        guardaria o token para sempre. Nunca espera trava; quem chama faz o commit."""
+        await self.repo.faxina()
+
     async def avisar_chamado_do_leitor(
         self, user_id: int, sinal: str, *, validade_s: int = VALIDADE_DO_CHAMADO_S
     ) -> ResultadoDoAviso:

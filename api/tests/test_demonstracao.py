@@ -631,8 +631,9 @@ _ENTRADAS_DA_API = {
     "requisição com login": (
         "users", "products", "categories", "product_variants", "stock_balances"
     ),
-    # conta as tentativas, confere a senha, faz a faxina (refresh vencido, diário velho), grava
-    "login": ("login_attempts", "users", "refresh_tokens", "audit_log"),
+    # conta as tentativas, confere a senha, faz a faxina (refresh vencido, diário velho, o
+    # aparelho calado há 30 dias), grava
+    "login": ("login_attempts", "users", "refresh_tokens", "audit_log", "notificacao_aparelhos"),
     # trava o refresh token e só então lê a conta
     "renovação da sessão": ("refresh_tokens", "users"),
     # o chamado do leitor (ADR-47): o crachá, e depois a faxina e o chamado novo
