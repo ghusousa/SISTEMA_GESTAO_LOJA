@@ -54,7 +54,9 @@ in full...") só fica com o guia anexado; com o vídeo, ela sai e o item 1 cita 
   página, `Accept: text/html`. A de suporte FORA do servidor da demo que não abre daqui vira
   aviso no resumo, sem segurar o envio: página de terceiro pode recusar robô — e o "Pronto para
   a revisão" diz "privacidade (suporte: ver o aviso)", não "privacidade e suporte"); há rota
-  para o leitor pelo celular e para a exclusão da própria conta (deploy na mesma versão); e a conta
+  para o leitor pelo celular, para o chamado dele (ADR-47: "Abrir no app o leitor de código";
+  só a lista dos abertos, que não chama celular nenhum) e para a exclusão da própria conta (deploy
+  na mesma versão); e a conta
   demo é **protegida** lá (ADR-45: não se exclui, não perde o papel nem troca de senha — senão
   o revisor que cria outro dono apaga a conta das notas no meio da revisão). Tudo pela API
   pública do sistema, a mesma do app; a sessão aberta para conferir é encerrada. A conferência
@@ -78,7 +80,15 @@ dono a outra pessoa (`Mais > Usuários > (pessoa) > Mudar papel`, também no app
 protegida no servidor de demonstração — as notas pedem ao revisor que crie uma conta de
 funcionário e a exclua. A ficha **para antes de
 falar com a Apple** se citar tela que o app deste commit não tem (`TELAS_CITADAS` em
-`ficha.mjs`: rótulo citado → arquivo do app que o mostra; rótulo novo nas notas = uma linha lá).
+`ficha.mjs`: rótulo citado → arquivo do app que o mostra; rótulo novo nas notas = uma linha lá),
+e o CI reprova antes disso (`revisao.test.mjs` confere cada rótulo no código do commit).
+
+O **leitor pelo celular** nas notas e no guia é o do chamado (ADR-47), antes do QR: no navegador
+do computador, com a MESMA conta do app, "Abrir no app o leitor de código"; no app aberto, a faixa
+"O computador está chamando" → "Abrir o leitor". O QR fica como alternativa
+(`Mais > Leitor do computador > "Ler o QR do computador"`). As notas não prometem notificação —
+o push nasce desligado no servidor (ver "Notificações no iPhone", abaixo) — e só citam a
+permissão, opcional; o guia conta como ela funciona quando a loja liga.
 
 **O guia PDF** (`revisao/app-review-guide.pdf`, em inglês, os sete itens por extenso e os
 prints; é o anexo da revisão só enquanto não há vídeo, e por isso não diz que a gravação está
@@ -220,6 +230,57 @@ com o `EXPO_TOKEN` e põe no resumo o link do .ipa do último build da LOJA que 
 BrowserStack reassina todo .ipa enviado (a documentação dele recomenda ad hoc; o da loja é a
 tentativa mais barata, porque já existe). Mora num arquivo à parte porque o formulário do
 "Publicar iOS" já está no limite de 10 entradas do `workflow_dispatch` — o `ci.test.mjs` confere.
+
+### Notificações no iPhone (passo único)
+
+O chamado do leitor (ADR-47: na venda do computador, "Abrir no app o leitor de código" chama o
+app do mesmo login) funciona **sem notificação**: com o app aberto, a faixa "O computador está
+chamando" desce em 1–2 s e "Abrir o leitor" liga a câmera; o QR continua. A notificação é o
+extra — o chamado chega também com o app fechado — e por isso o servidor nasce com ela
+**desligada** (`NOTIFICACOES_PUSH=desligado`): o app só pede a permissão quando o servidor diz que
+ela funciona (`GET /configuracao` → `notificacoes_push`), e ninguém vê um pedido de notificação
+que não chegaria. **Nada disto trava o envio à Apple**: o revisor testa o chamado com o app
+aberto e o QR, e as notas não prometem push.
+
+O que já é automático: o `ci.mjs preparar` liga a capacidade **Push Notifications** no App ID
+antes de compilar (`garantirPushNoAppId`, saída `push_no_app_id`: `ligado`, `ligou`,
+`sem-bundle` ou `falhou`). O plugin do `expo-notifications` grava `aps-environment` no app em
+todo build, e num App ID sem a capacidade a assinatura quebra. App ID que ainda não existe no
+portal, ou a Apple recusando (chave sem permissão), viram aviso: o eas tenta de novo no build.
+Ligar a capacidade invalida os perfis desse App ID; o eas refaz os que não estão ativos, e o
+ad hoc já usa `--refresh-ad-hoc-provisioning-profile`. **Plano B**, se o build ainda reclamar de
+`aps-environment`: `npx eas-cli credentials -p ios` → production → Provisioning Profile → apagar,
+e compilar de novo. No primeiro `.ipa` com notificações, `codesign -d --entitlements :- <app>`
+mostra `aps-environment` `production`.
+
+O que só quem publica o app faz, **uma vez** (a chave é do time da Apple, não de cada loja):
+
+1. **A chave APNs.** developer.apple.com → Certificates, Identifiers & Profiles → **Keys** → "+" →
+   marque **Apple Push Notifications service (APNs)** → baixe a `.p8` (a Apple só deixa baixar
+   UMA vez) e anote o **Key ID** e o **Team ID** (o `apple_team_id` do `padroes.json`).
+2. **Entregar à Expo.** Num computador com Node, dentro de `mobile/`: `npx eas-cli login` e
+   `npx eas-cli credentials -p ios` → production → **Push Notifications** → suba a `.p8` (ou deixe
+   o eas criar uma, entrando com a conta da Apple). Tem de ser interativo: o eas recusa este passo
+   com `--non-interactive`, e a chave da App Store Connect (a dos Secrets) não serve para ele —
+   por isso não dá para fazer no Actions. A chave vale para sandbox e produção (TestFlight, App
+   Store e o `.ipa` ad hoc) e não vence.
+3. **Testar no TestFlight**, num iPhone de verdade, contra um servidor com o push ligado
+   (`NOTIFICACOES_PUSH=expo`; na demonstração da instalação, `DEMO_NOTIFICACOES_PUSH=expo`, que só
+   vale para ela): toque em "Abrir o leitor" e permita as notificações; feche o app; no
+   computador, "Abrir no app o leitor de código". A notificação tem de chegar, com o mesmo sinal
+   do computador, e o toque abre a câmera. Se o computador disser que o iPhone ainda não recebe as
+   notificações ("falta um passo de quem publica o app"), a Expo não tem a chave: volte ao passo 2.
+4. **Depois do teste no TestFlight, ligue `NOTIFICACOES_PUSH=expo` no servidor** de cada loja —
+   na Vercel, a variável do projeto (Settings → Environment Variables) e um Redeploy; numa VPS ou
+   no computador da loja, a linha no `.env` da raiz e `docker compose up -d api` (vale ao recriar
+   a api; a demo da instalação tem a sua, `DEMO_NOTIFICACOES_PUSH`, e o `api-demo`). O app já
+   aprovado passa a pedir a permissão no próximo "Abrir o leitor", **sem build novo**.
+
+**Onde se testa o quê.** No BrowserStack, o `.ipa` é reassinado para os aparelhos de lá (por isso
+qualquer iPhone registrado serve ao perfil ad hoc), e notificação de app reassinado não é prova:
+lá se testam o chamado com o **app aberto** (a faixa, o sinal, "Abrir o leitor") e o **QR**. A
+notificação com o app fechado — e o toque nela abrindo a câmera — se prova no **TestFlight**,
+num iPhone da loja.
 
 ### Uma vez só: segredos e variáveis do repositório
 
@@ -406,7 +467,7 @@ o novo subir; o guia igual fica e a sobra ao lado sai; vídeo novo com o guia l�
 as notas o citam; vídeo já anexado numa rodada sem vídeo — ele fica e o guia sai; vídeo ainda
 processando — espera e fica; falha no envio — pendência dizendo que a revisão ficou sem anexo, e a
 rodada seguinte sobe); servidor demo fora do combinado (não-dono, código, leitor,
-exclusão, privacidade, senha, fora do ar); o suporte de fora que não abre daqui (aviso, e o
+o chamado do leitor, exclusão, privacidade, senha, fora do ar); o suporte de fora que não abre daqui (aviso, e o
 "Pronto" manda ver o aviso) e um aviso da conferência que não é do suporte (o "Pronto" segue
 dando o suporte por conferido: quem o põe é o gancho `teste/aviso-a-mais.mjs`, carregado com
 `--import`); `--conferir-envio`; versão já enviada; falha no upload
@@ -423,10 +484,16 @@ mudou, e pergunta de idade nova quebra o teste até ganhar resposta em `classifi
 `revisao.test.mjs` confere as peças da resposta: o vídeo (cabeçalho, tamanho, download que não
 deixa nada pela metade), a escolha e a troca do anexo (a ordem vídeo novo → vídeo anexado → guia;
 o que está lá sai antes de o novo subir; o que não sai impede a subida), a lista de aparelhos
-(formato), as telas citadas, as notas (os sete itens, os dois caminhos da exclusão, só o anexo que
-vai estar lá, até 4000 no pior caso com o vídeo e com o guia) e que o **guia PDF commitado é o das
-entradas de agora**. `ci.test.mjs` confere o preparo do Actions: segredos fora do log, a versão
-já enviada dita antes de compilar e os iPhones do perfil de teste.
+(formato), as telas citadas (na árvore de mentira e no código DESTE commit: cada rótulo de
+`TELAS_CITADAS` tem de estar no arquivo do app ou do web), as notas (os sete itens, os dois
+caminhos da exclusão, só o anexo que vai estar lá, até 4000 no pior caso com o vídeo e com o guia,
+o chamado do leitor antes do QR e nenhuma promessa de push), que a política de privacidade conta
+os serviços que as notas e o guia contam (Expo e APNs inclusive) e que o **guia PDF commitado é o
+das entradas de agora**. `ci.test.mjs` confere o preparo do Actions: segredos fora do log, a versão
+já enviada dita antes de compilar, os iPhones do perfil de teste e o Push Notifications no App ID
+(já ligado não escreve; desligado, liga uma vez, com o corpo da especificação; App ID que não
+existe — só a extensão de prefixo parecido — ou chave sem permissão viram aviso, e o preparar
+segue).
 
 Os testes rodam no CI, e o `--reais` também, depois de `node publicar/capturas/compor.mjs
 --conferir` (as capturas commitadas nos bytes, contra as cenas do gerador). Variáveis que

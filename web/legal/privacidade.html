@@ -16,7 +16,7 @@
   <header>
     <p class="marca">Gestão de Loja</p>
     <h1>Política de privacidade</h1>
-    <p class="vigencia">Em vigor desde 24 de agosto de 2026. Atualizada em 19 de novembro de 2026: a demonstração também pode subir junto com a loja, no servidor dela. Em 18 de novembro: a própria pessoa exclui a sua conta de dentro do aplicativo.</p>
+    <p class="vigencia">Em vigor desde 24 de agosto de 2026. Atualizada em 19 de novembro de 2026: o computador da loja pode chamar o leitor de código de barras no celular, com notificações opcionais quando a loja as liga; e a demonstração também pode subir junto com a loja, no servidor dela. Em 18 de novembro: a própria pessoa exclui a sua conta de dentro do aplicativo.</p>
   </header>
 <h2>Antes de tudo: quem é responsável pelos seus dados</h2>
 
@@ -95,6 +95,16 @@
   <li><strong>Leitura de código de barras</strong>: a câmera funciona como leitor. A imagem é processada no próprio aparelho, em tempo real, apenas para extrair o número da etiqueta. <strong>Nenhum vídeo é gravado, guardado ou enviado.</strong></li>
 </ul>
 
+<h3>6. Registro do aparelho para o chamado do leitor e notificações (opcionais)</h3>
+
+<p>O computador da loja pode chamar o celular de quem está no balcão para virar o leitor de código de barras dele (o botão "Abrir no app o leitor de código"). Para isso:</p>
+
+<ul>
+  <li><strong>Registro do aparelho</strong>: ao entrar, o aplicativo informa ao servidor da loja um <em>identificador aleatório desta instalação do app</em> (criado no próprio aparelho, sem relação com o número de série, a conta da Apple ou do Google, nem com outro identificador do sistema) e a plataforma (iOS ou Android), ligados ao seu login. Serve para o computador saber se há um celular com o app atualizado para chamar, e para o leitor ligado aceitar só as leituras deste aparelho. Com o app aberto, o chamado aparece numa faixa no topo da tela, e só liga a câmera se você tocar em "Abrir o leitor".</li>
+  <li><strong>Notificações, quando a loja liga as notificações</strong> no servidor dela — e só então: o aplicativo pede a permissão de notificação e, se você permitir, obtém do serviço de notificações da Expo um <em>token do aparelho</em> (o endereço para onde o aviso é entregue) e o envia ao servidor da loja, que o guarda junto do seu login. O token serve só para o aviso "O computador está chamando" chegar com o app fechado: título e texto fixos, com um sinal aleatório de 3 caracteres que também aparece na tela do computador. <strong>O aviso não leva nome, venda, cliente, nome da loja, endereço do servidor nem nenhum outro dado.</strong></li>
+  <li>Com as notificações desligadas na loja (o padrão), ou se você recusar a permissão, o aplicativo não pede o token à Expo, o servidor da loja não envia aviso nenhum, e o chamado aparece só com o app aberto. A leitura pelo QR continua funcionando nos dois casos.</li>
+</ul>
+
 <h3>O que o aplicativo NÃO faz</h3>
 
 <ul>
@@ -110,7 +120,7 @@
 
 <ul>
   <li><strong>Autenticar</strong> quem entra no sistema e aplicar as permissões do papel de cada um.</li>
-  <li><strong>Operar a loja</strong>: registrar vendas, controlar estoque, emitir devoluções e vales, lançar despesas, fechar o caixa e gerar relatórios.</li>
+  <li><strong>Operar a loja</strong>: registrar vendas, controlar estoque, emitir devoluções e vales, lançar despesas, fechar o caixa e gerar relatórios — inclusive chamar o celular de quem está no balcão para ler os códigos de barras para o computador.</li>
   <li><strong>Controlar o crediário</strong>: saber quem comprou a prazo, quanto deve, o que já pagou e o que foi devolvido.</li>
   <li><strong>Proteger o sistema</strong>: barrar tentativas repetidas de adivinhar senha e manter o registro de auditoria para o dono investigar erros, divergências de caixa ou uso indevido.</li>
   <li><strong>Dar suporte técnico</strong>, quando a loja pedir ajuda ao fornecedor do software.</li>
@@ -126,6 +136,7 @@
   <li><strong>Vendas, notas de operação e movimentos financeiros</strong>: cumprimento de obrigação legal, fiscal e contábil (art. 7º, II), e exercício regular de direitos (art. 7º, VI).</li>
   <li><strong>Auditoria, tentativas de login e IP</strong>: cumprimento de obrigação legal de guarda de registros e, principalmente, legítimo interesse na segurança da informação e na prevenção a fraude (art. 7º, II e IX).</li>
   <li><strong>Fotos de peças</strong>: legítimo interesse da loja na organização do catálogo (art. 7º, IX). Se aparecer uma pessoa na foto, a loja precisa de base legal própria para isso — o recomendado é simplesmente não fotografar pessoas.</li>
+  <li><strong>Registro do aparelho e token de notificação</strong>: legítimo interesse da loja em fazer o leitor de código de barras chegar ao celular de quem está no balcão (art. 7º, IX). As notificações dependem ainda de duas escolhas: a da loja, que as liga no servidor, e a sua, que permite ou não no aparelho — e pode desligar a qualquer momento nas configurações dele.</li>
 </ul>
 
 <p>O aplicativo não trata dados pessoais sensíveis (art. 5º, II) nem dados de crianças e adolescentes de forma intencional.</p>
@@ -134,22 +145,24 @@
 
 <p><strong>Com ninguém.</strong> Os dados ficam no servidor da própria loja e não são enviados a parceiros comerciais, anunciantes, redes sociais, bureaus de análise, empresas de analytics ou qualquer terceiro.</p>
 
-<p>Há apenas três exceções previsíveis, e todas dependem da loja:</p>
+<p>Há apenas quatro exceções previsíveis, e todas dependem da loja:</p>
 
 <ul>
   <li><strong>Suporte técnico</strong>: se a loja pedir ajuda, um técnico do fornecedor pode acessar o servidor dela para resolver o problema, seguindo as instruções da loja e apenas pelo tempo necessário. É a atuação como operador descrita no início.</li>
   <li><strong>Infraestrutura contratada pela loja</strong>: se a loja mantém o servidor em um provedor de hospedagem, esse provedor é um operador contratado por ela. Quem escolhe e responde por ele é a loja. É o caso das demonstrações do aplicativo (dados fictícios, para teste e para a revisão das lojas de aplicativos): a que sobe junto com uma loja, em <em>/demo</em> no endereço dela, roda no mesmo servidor, com um banco próprio e separado do da loja; a hospedada na Vercel roda com o banco no Neon e as fotos das peças no Vercel Blob.</li>
+  <li><strong>Notificações do leitor (opcional, quando a loja liga as notificações)</strong>: o aplicativo registra o aparelho no serviço de notificações da Expo (Expo Push, da 650 Industries, Inc.) — com o token do aparelho, um identificador da instalação do app e o identificador do aplicativo —, e o servidor da loja usa esse token só para avisar "O computador está chamando", com texto fixo e um sinal aleatório de 3 caracteres. O aviso passa pela Expo e pelo serviço de notificações da Apple (APNs), que o entrega ao iPhone. Nenhum dado da loja, de venda ou de cliente vai junto. Com as notificações desligadas na loja, ou recusadas no aparelho, nada disso acontece.</li>
   <li><strong>Ordem legal</strong>: cumprimento de determinação de autoridade judicial ou administrativa competente.</li>
 </ul>
 
-<p>Não há transferência internacional de dados promovida pelo aplicativo. Se a loja optar por hospedar o servidor fora do Brasil, essa decisão e as garantias correspondentes (arts. 33 a 36 da LGPD) são responsabilidade dela.</p>
+<p>Fora as notificações opcionais do leitor — o token do aparelho e o aviso de texto fixo passam pela Expo e pela Apple, nos Estados Unidos (arts. 33 a 36 da LGPD), e só quando a loja liga as notificações e você as permite —, não há transferência internacional de dados promovida pelo aplicativo. Se a loja optar por hospedar o servidor fora do Brasil, essa decisão e as garantias correspondentes são responsabilidade dela.</p>
 
 <h2>Permissões do aparelho e por que são pedidas</h2>
 
 <ul>
   <li><strong>Câmera</strong> — para ler o código de barras das etiquetas e para fotografar peças do catálogo. A permissão é pedida na primeira vez que você abre o leitor ou tira uma foto, e pode ser negada: nesse caso, dá para digitar o código à mão e cadastrar a peça sem imagem.</li>
   <li><strong>Fotos e mídia</strong> — para escolher uma imagem já existente no aparelho como foto de uma peça. O app acessa apenas o arquivo que você selecionar, não a sua galeria inteira.</li>
-  <li><strong>Internet / rede</strong> — para conversar com o servidor da sua loja, que é para onde vão todos os dados. Fora ele, o app só faz um teste de conexão para saber se o aparelho está on-line: um pedido vazio ao endereço <em>generate_204</em> do Google, feito pela biblioteca de rede do React Native (NetInfo), sem nenhum dado seu ou da loja.</li>
+  <li><strong>Internet / rede</strong> — para conversar com o servidor da sua loja, que é para onde vão todos os dados. Fora ele, o app só faz um teste de conexão para saber se o aparelho está on-line: um pedido vazio ao endereço <em>generate_204</em> do Google, feito pela biblioteca de rede do React Native (NetInfo), sem nenhum dado seu ou da loja. E, quando a loja liga as notificações e você as permite, o registro do aparelho no serviço de notificações da Expo (veja "Com quem os dados são compartilhados").</li>
+  <li><strong>Notificações (opcional)</strong> — só quando a loja liga as notificações no servidor dela, e só para o chamado do leitor chegar com o app fechado. O pedido aparece no caminho do leitor (ao tocar em "Abrir o leitor" ou abrir "Leitor do computador"), nunca ao abrir o app. Pode ser negada: o chamado continua aparecendo com o app aberto, e o QR continua.</li>
 </ul>
 
 <p>Você pode revogar qualquer permissão a qualquer momento nas configurações do sistema operacional do aparelho.</p>
@@ -166,6 +179,7 @@
   <li><strong>Permissão por papel aplicada no servidor</strong>: custo, lucro, despesas e auditoria não são apenas escondidos da tela — eles simplesmente não são enviados a quem não tem direito de vê-los.</li>
   <li><strong>Auditoria</strong>: como toda alteração fica registrada com autor, data, IP e papel, o dono consegue reconstruir o que aconteceu e detectar uso indevido.</li>
   <li><strong>Saída limpa</strong>: ao sair da conta, o app apaga tokens, carrinho, conferências e cache locais, para que a próxima pessoa não herde nada da anterior.</li>
+  <li><strong>Token de notificação guardado como credencial</strong>: quem tivesse o token poderia mandar avisos ao aparelho, então ele nunca sai do servidor da loja por tela ou rota nenhuma, não aparece nos registros (logs) e fica fora dos backups.</li>
 </ul>
 
 <p>Nenhum sistema é infalível. A segurança também depende de práticas da loja: senha forte e única, aparelho com bloqueio de tela, atualizações em dia, backups protegidos e desativação imediata da conta de quem sai. Em caso de incidente de segurança relevante, <strong>é a loja, como controladora, que deve comunicar os titulares afetados e a ANPD</strong> (art. 48).</p>
@@ -179,6 +193,7 @@
   <li><strong>Clientes do crediário</strong>: enquanto houver relação de compra a prazo e pelo prazo necessário à cobrança e à prescrição das dívidas.</li>
   <li><strong>Vendas, pagamentos, devoluções e despesas</strong>: pelos prazos fiscais e contábeis aplicáveis, em regra 5 anos, podendo ser maiores conforme a legislação.</li>
   <li><strong>Tentativas de login</strong>: usadas em janela de 15 minutos para a trava de segurança; o sistema apaga sozinho as que passaram de um dia, e as de uma conta excluída saem junto com ela.</li>
+  <li><strong>Registro do aparelho e token de notificação</strong>: saem quando você sai da conta no app (com conexão; sem ela, o app tenta de novo na próxima abertura), quando a sua senha é trocada ou redefinida, quando a conta é desativada ou excluída, e sozinhos depois de 30 dias sem o app ser usado. Cada login guarda no máximo 10 aparelhos, os mais recentes. O token que o serviço de notificações diz não valer mais é apagado na hora. Nunca entram nos backups da loja.</li>
   <li><strong>Auditoria</strong>: mantida pelo período que a loja definir como necessário para prestação de contas e apuração de incidentes. Por natureza, linhas de auditoria não são editadas — é isso que as torna confiáveis.</li>
 </ul>
 
@@ -217,7 +232,7 @@
 <p>Não existe autocadastro — as contas são criadas pela loja —, mas <strong>qualquer pessoa exclui a própria conta de dentro do aplicativo</strong>, em <strong>Mais > Minha conta > Excluir minha conta</strong>, confirmando com a senha. O passo a passo está na página <a href="exclusao-de-dados">Exclusão de conta e de dados</a>.</p>
 
 <ul>
-  <li><strong>Funcionário</strong>: exclua a sua conta no aplicativo (Mais > Minha conta > Excluir minha conta) ou peça ao dono ou ao gerente, que a excluem em Mais > Usuários. A exclusão é imediata — e-mail, senha e sessões deixam de existir e o acesso é bloqueado em todos os aparelhos. Os registros das operações que você realizou permanecem, com o seu nome congelado, porque fazem parte da contabilidade e da auditoria da loja.</li>
+  <li><strong>Funcionário</strong>: exclua a sua conta no aplicativo (Mais > Minha conta > Excluir minha conta) ou peça ao dono ou ao gerente, que a excluem em Mais > Usuários. A exclusão é imediata — e-mail, senha, sessões e o registro dos aparelhos para as notificações deixam de existir, e o acesso é bloqueado em todos os aparelhos. Os registros das operações que você realizou permanecem, com o seu nome congelado, porque fazem parte da contabilidade e da auditoria da loja.</li>
   <li><strong>Cliente do crediário</strong>: peça à loja a exclusão do seu cadastro. Ela deve atender, ressalvado o que precisar ser mantido enquanto houver dívida em aberto ou prazo legal de guarda.</li>
   <li><strong>Pedido pelo canal do fornecedor</strong>: se você não tem como falar com a loja, escreva para <strong>ghusousa@gmail.com</strong> e o pedido será encaminhado à loja responsável.</li>
   <li><strong>Dados no aparelho</strong>: desinstalar o aplicativo remove do celular os tokens guardados no cofre do sistema e qualquer rascunho local. Não remove nada do servidor da loja — para isso vale o que está acima.</li>
