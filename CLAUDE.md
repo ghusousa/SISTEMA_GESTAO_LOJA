@@ -29,6 +29,9 @@ contratos, ADRs). Mudou algo? Atualize o doc no mesmo commit.**
 ./atualizar.sh --ignorar-ci                               # sobe sem CI verde (o --sim nunca sobe)
 ./vigia.sh / --automatico                                 # /health, disco e backup; avisa (5 em 5 min)
 ./notificar.sh --testar                                   # aviso de teste no ntfy (NOTIFICAR_URL)
+./demo.sh --mostrar                                       # a demonstração em <domínio>/demo: endereço, conta, senha, o que levar à Apple
+./demo.sh --ligar / --desligar [--apagar]                 # liga (completa o .env) / desliga (dados ficam; --apagar leva banco, fotos, senhas)
+./demo.sh --renovar / --automatico                        # dados fictícios de volta ao começo agora / toda madrugada (04:30, timer)
 
 # API (dentro de api/)
 .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0    # servidor
@@ -38,7 +41,7 @@ contratos, ADRs). Mudou algo? Atualize o doc no mesmo commit.**
 .venv/bin/python scripts/e2e.py                           # cenário de um dia de loja (API no ar)
 
 # Stack completa em Docker (raiz do repo)
-./instalar.sh                                             # instala e sobe tudo
+./instalar.sh                                             # instala e sobe tudo, com a demonstração em /demo (--sem-demo: sem ela)
 docker compose logs -f api                                # acompanhar
 docker compose exec api python -m app.cli create-admin ...  # novo admin
 ./desinstalar.sh --manter-dados                           # desligar preservando o banco
@@ -106,14 +109,17 @@ publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com as telas do
   meta), e as `login_attempts` do e-mail saem junto (`AuthService.esquecer_tentativas`). O domínio
   `excluida.example` da marca é recusado no cadastro. Autor que some no ato:
   `congelar_autor(request, user)`. `web/js/exclusao-de-conta.js` ↔ `mobile/src/lib/exclusaoDeConta.ts`.
-  Na Vercel, a conta `DEMO_ADMIN_EMAIL` (a das notas da Apple) não se exclui, não perde o papel, não
-  é desativada nem troca de senha — 409 `CONTA_DE_DEMONSTRACAO`, ANTES da senha (o publicador
-  confere com uma senha aleatória) —, e o Redeploy a recria se faltar. Sem resposta (status 0) a
-  tela não diz "não foi excluída": a próxima tentativa lê o 401 pela renovação (`depoisDaIncerta`).
+  Numa demonstração (Vercel ou `/demo`: `settings.conta_demo_protegida`), a conta `DEMO_ADMIN_EMAIL`
+  (a das notas da Apple) não se exclui, não perde o papel, não é desativada nem troca de senha — 409
+  `CONTA_DE_DEMONSTRACAO`, ANTES da senha (o publicador confere com uma senha aleatória) —, e quem
+  sobe a demo a recria (Redeploy; na instalação, cada subida da `api-demo` converge a conta). Sem
+  resposta (status 0) a tela não diz "não foi excluída": a próxima tentativa lê o 401 pela
+  renovação (`depoisDaIncerta`).
 - **Força bruta (ADR-24)**: o login conta as falhas recentes por e-mail e por IP
   (`login_attempts`, janela de 15 min) e responde 429 com `Retry-After` quando passa do teto.
   A resposta de e-mail real e falso é idêntica — a trava não vaza se a conta existe, nem pelo
-  tempo: e-mail inexistente confere contra `HASH_DE_MENTIRA`. A contagem é serializada por
+  tempo: e-mail inexistente confere contra `HASH_DE_MENTIRA`. A conta protegida da demonstração
+  conta só o IP (o e-mail dela é público nas notas da Apple). A contagem é serializada por
   e-mail (`pg_advisory_xact_lock`), senão uma rajada paralela fura o teto. bcrypt **nunca**
   direto numa rota async: `hash_senha_async`/`verificar_senha_async` (thread), ou o login
   congela a loja inteira.
@@ -124,12 +130,21 @@ publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com as telas do
   sem inline — atributo `onclick=""` em template é bloqueado; use delegação (`data-*`). Origem
   de fora nova (CDN, imagem) tem de entrar na CSP. O pentest confere no proxy com
   `PENTEST_PROXY=http://...`, ou no Caddyfile sem ele.
-- **Vercel (ADR-42)** é a 2ª forma de rodar, só demonstração (Root Directory `api/`, Neon): tudo atrás
+- **Vercel (ADR-42)** é a forma de rodar sem Docker, só demonstração (Root Directory `api/`, Neon): tudo atrás
   de `settings.vercel` (`VERCEL=1`, a Vercel põe) — sem ela nada muda. Lá, sem `JWT_SECRET`, o segredo
   do login é o HMAC da senha do banco do Neon (`segredo_derivado_do_banco`; senha fraca ou sem banco: não sobe). A CSP/HSTS de lá mora no
-  `api/vercel.json`: mudou o Caddyfile, mude ele (`test_vercel.py` compara). Build: `scripts/vercel_build.py`.
+  `api/vercel.json`: mudou o Caddyfile, mude ele (`test_vercel.py` compara). Build: `scripts/vercel_build.py`,
+  que chama o preparo compartilhado com a demo da instalação (`app/demonstracao.py`).
   A carga da demo é RETOMÁVEL (marcos `DEMONSTRACAO_*` no `audit_log`): passo novo no
   `seed_demo.popular()` usa `chave("rotulo")` fixa ou busca antes de criar, senão a retomada duplica.
+- **Demonstração em `/demo` (ADR-46)**: a `api-demo` é a mesma imagem com `LOJA_DEMONSTRACAO=1` e
+  `PREFIXO=/demo` (o `app.main` a monta sob o prefixo), banco/role `loja_demo` sem CONNECT no `loja` e
+  `DEMO_JWT_SECRET` próprio (o token só leva o id). Caminho absoluto gerado no servidor lê
+  `request.scope["root_path"]` (redirect, `Path` do cookie, auditoria); no app e no publicador, a
+  base junta por texto, nunca `new URL('/x', base)`. Semear ou zerar exige as DUAS chaves:
+  `settings.demonstracao` e o marco `loja.demonstracao = 'sim'` do banco. No compose, serviço da demo
+  só usa `${X:-}` (nunca `:?`), a `api-demo` tem `pull_policy: never` e nenhum serviço da loja
+  depende da demo: ela nunca derruba a loja (Compose 2.3 a 5.8).
 - Tempo real: `WS /api/v1/tempo-real`. Quem avisa é o commit do SQLAlchemy
   (`core/eventos.py`), não os services — mudou tabela, sai aviso. O que trafega é o
   ASSUNTO ("estoque"), nunca o dado: a tela refaz a consulta pela rota REST, e o filtro
@@ -251,6 +266,9 @@ publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com as telas do
 - Dinheiro em centavos (`js/dinheiro.js`, **espelho de `mobile/src/lib/money.ts` — mudou lá, mude aqui**).
 - Toda listagem pagina no servidor; filtros vão para a query da URL (`trocarConsulta`), para o F5 não perder.
 - Refresh token **só** em cookie httpOnly; access token só em memória. Nunca `localStorage`.
+- **Raiz da página (ADR-46)**: a mesma pasta serve a loja (`/app/`) e a demo (`/demo/app/`). Caminho
+  do servidor só por `naRaiz()`, foto por `enderecoDaFoto()`, chave de storage/canal por `nomeNaRaiz()`
+  (`js/raiz.js`); `testes/web/sem-endereco-absoluto.test.mjs` reprova `/api/v1` absoluto.
 - Leitor USB é teclado (`js/leitor.js`): rajada de dígitos + Enter. Campo do PDV marcado `data-leitor`.
 - **Um campo, duas entradas**: o mesmo `data-leitor` aceita bipe E nome. Letras abrem a lista
   (`js/busca-peca.js`, espelho de `mobile/src/components/BuscarPeca.tsx`); com ela aberta o

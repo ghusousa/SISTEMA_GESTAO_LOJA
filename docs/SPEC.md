@@ -263,13 +263,52 @@ cada bipe na câmera cai no campo do leitor da tela do computador (ADR-43).
 - Falha fiscal nunca impede vender; e venda com NFC-e autorizada só se cancela se a nota for
   cancelada antes, no emissor.
 - A credencial do emissor fiscal mora no `.env` do servidor: nunca no banco, nunca numa rota.
+- A conta da demonstração nunca entra na loja de verdade, e nada da demonstração — dados, fotos,
+  segredos, sessão — chega à loja, nem o contrário. Apagar e semear em massa só acontece no banco
+  marcado como demonstração; o da loja nunca é semeado nem zerado.
+- A demonstração nunca derruba, atrasa nem desfaz a loja: a instalação e a atualização decidem pela
+  loja, e a demonstração que falha só avisa.
+
+## Instalação e demonstração
+
+O dono instala o sistema numa máquina dele (o computador da loja ou uma VPS) com um comando,
+`./instalar.sh`, e termina com tudo no ar — nada feito à mão:
+
+- **O endereço.** Com um domínio (`loja.seudominio.com.br`), o HTTPS sai sozinho. O instalador
+  confere o DNS antes de subir e, se faltar, diz o registro exato a criar no painel do domínio
+  (Tipo A · Nome · Valor) — e o que apagar, se um registro leva a outra máquina. Sem domínio, só na
+  rede da loja (HTTP); IP público é recusado.
+- **A loja.** A conta do dono, a cópia diária do banco, o vigia e os avisos no celular.
+- **A demonstração**, ligada por padrão: uma segunda loja, só com dados fictícios, em
+  `loja.seudominio.com.br/demo`, com a conta de dono pronta — `dono@demo.example` e uma senha
+  sorteada, mostrada no fim da instalação e depois por `./demo.sh --mostrar`. Serve à revisão da
+  App Store e a quem quer conhecer o sistema sem ver a loja. Toda tela dela traz a faixa "Loja de
+  demonstração — os dados são fictícios.", e os dados voltam ao começo toda madrugada (04:30, no
+  fuso da loja). `--sem-demo` a deixa de fora; `./demo.sh --ligar` e `--desligar` mudam depois, e
+  uma loja instalada antes dela a ganha com `./demo.sh --ligar`.
+
+O que a demonstração garante — é o pedido do dono: "esse usuário só pode fazer tudo no demo, e no
+real nada":
+
+- a conta da demonstração não entra na loja de verdade, e a da loja não entra na demonstração;
+  nem o login de uma vale na outra, no mesmo navegador ou no app;
+- a demonstração não lê nem grava nada da loja: banco, fotos, segredos e sessão são dela; ela não
+  emite NFC-e e não entra no backup da loja;
+- a conta de dono da demonstração não pode ser excluída, rebaixada, desativada nem ter a senha
+  trocada, e quem errar a senha dela de propósito não a tranca para o revisor;
+- a demonstração nunca derruba a loja: se ela falhar ao instalar, atualizar ou renovar, a loja
+  segue no ar e o dono é avisado.
+
+A demonstração da Vercel (ADR-42) continua como está: é a outra forma de mostrar o sistema, sem
+máquina nenhuma, e a revisão da Apple pode usar qualquer uma das duas.
 
 ## Fora do escopo do v1
 
 Funcionamento offline com sincronização (v2 — já preparado pelo `client_uuid`), NF-e (modelo 55,
 inclusive a de devolução), NFC-e nos regimes Normal e Simples com excesso de sublimite, CPF na
-nota, fidelidade e pontos, múltiplas lojas, e-commerce, limite de desconto por
-vendedor, sessões de inventário compartilhadas no servidor, contagem cega, foto por variante,
+nota, fidelidade e pontos, múltiplas lojas (a demonstração em `/demo` não é uma segunda loja de
+verdade: é uma vitrine de dados fictícios, sem nada em comum com a loja), e-commerce, limite de
+desconto por vendedor, sessões de inventário compartilhadas no servidor, contagem cega, foto por variante,
 notificações push, parcelamento do crediário em datas fixas (hoje é dívida única, recebida em
 qualquer valor), cobrança automática por mensagem.
 
