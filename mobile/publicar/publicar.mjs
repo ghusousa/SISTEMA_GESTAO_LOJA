@@ -323,9 +323,9 @@ async function conferirAntesDeEnviar({ asc, app, versaoDoApp, situacao, args, ap
         'Settings → Environment Variables). Sem ela o revisor não entra, e o servidor de demonstração não foi conferido.',
     ]);
   } else {
-    // A base guarda o caminho (<domínio>/demo, ADR-46): a privacidade que mora debaixo do
-    // servidor vai junto para a base da conferência, e a de outro lugar (outra URL na ficha)
-    // é conferida onde está.
+    // A base guarda o caminho (<domínio>/demo, ADR-46): a privacidade e o suporte que moram
+    // debaixo do servidor vão juntos para a base da conferência, e os de outro lugar (outra
+    // URL na ficha) são conferidos onde estão.
     const base = (process.env.PUBLICAR_DEMO_BASE || config.url_servidor_demo).replace(/\/+$/, '');
     const privacidade = trocarBase(config.url_privacidade, config.url_servidor_demo, base);
     const demo = await conferirServidorDemo({
@@ -335,6 +335,7 @@ async function conferirAntesDeEnviar({ asc, app, versaoDoApp, situacao, args, ap
       senha: config.senha_demo,
       codigo: config.codigo_demo,
       urlPrivacidade: privacidade,
+      urlSuporte: trocarBase(config.url_suporte, config.url_servidor_demo, base),
     });
     for (const c of demo.conferidos) relatorio.ok(c);
     demo.problemas.forEach((p, i) => faltas.push([`demo-${i}`, p]));
@@ -351,7 +352,7 @@ async function conferirAntesDeEnviar({ asc, app, versaoDoApp, situacao, args, ap
   }
   relatorio.feito(
     'Pronto para a revisão: aparelhos testados, gravação de tela, guia em dia, só Brasil, e servidor de demonstração ' +
-      'conferido (no ar, conta de dono e protegida, código de barras com estoque, privacidade, leitor e exclusão de conta)',
+      'conferido (no ar, conta de dono e protegida, código de barras com estoque, privacidade e suporte, leitor e exclusão de conta)',
   );
 }
 

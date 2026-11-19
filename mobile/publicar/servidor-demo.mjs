@@ -11,7 +11,8 @@
  *     nunca confere, e espera a recusa da conta da demonstração;
  *   - o código de barras das notas existe E tem peças para vender (as notas mandam vender;
  *     com o saldo zerado, o PDV recusa a peça);
- *   - a política de privacidade abre (a URL da ficha);
+ *   - a política de privacidade abre (a URL da ficha), e a URL de suporte também, quando é
+ *     outra página (sem APPLE_URL_SUPORTE, ela é a mesma privacidade);
  *   - as duas coisas que as notas mandam testar têm rota lá: o leitor pelo celular (ADR-43) e
  *     a exclusão da própria conta (ADR-45). Servidor com deploy velho = revisor sem a tela.
  *
@@ -86,7 +87,7 @@ const comoFalhou = (r) => (r.status ? `HTTP ${r.status}${r.json?.code ? ` ${r.js
  * chamadas vão (o próprio servidor da demo; o teste aponta para um servidor de mentira) e
  * `servidor`, o endereço que aparece nas frases.
  */
-export async function conferirServidorDemo({ base, servidor = base, email, senha, codigo, urlPrivacidade, tempoMs = ESPERA_MS }) {
+export async function conferirServidorDemo({ base, servidor = base, email, senha, codigo, urlPrivacidade, urlSuporte, tempoMs = ESPERA_MS }) {
   const problemas = [];
   const conferidos = [];
   const opcoes = { tempoMs };
@@ -210,6 +211,19 @@ export async function conferirServidorDemo({ base, servidor = base, email, senha
       problemas.push(
         `A política de privacidade da ficha não abre (${comoFalhou(pagina)}). A Apple exige a URL no ar (5.1.1(i)): ` +
           'confira APPLE_URL_PRIVACIDADE ou o servidor de demonstração, que a serve em /privacidade.',
+      );
+    }
+  }
+  // Sem APPLE_URL_SUPORTE o suporte É a privacidade (já aberta acima); outra página também
+  // vai à ficha e também tem de estar no ar — senão ninguém percebe que ela caiu.
+  if (urlSuporte && urlSuporte !== urlPrivacidade) {
+    const suporte = await chamar(urlSuporte, opcoes);
+    if (suporte.status === 200 && /text\/html/i.test(suporte.tipo)) {
+      conferidos.push('a página de suporte abre');
+    } else {
+      problemas.push(
+        `A URL de suporte da ficha não abre (${comoFalhou(suporte)}). A Apple exige a página de suporte no ar (1.5): ` +
+          'confira APPLE_URL_SUPORTE — vazia, ela é a política de privacidade do servidor de demonstração.',
       );
     }
   }

@@ -92,6 +92,8 @@ test('montar: diz quais nomes faltam e nunca põe a ficha sem a chave', () => {
   assert.equal(soChave.temFicha, false);
   // Senha da demo e telefone: só a revisão exige — nunca seguram a ficha.
   assert.ok(!soChave.faltandoFicha.includes('APPLE_DEMO_PASSWORD'));
+  // A URL de suporte também não: sem Variable, ela sai do servidor da demo (como a privacidade).
+  assert.ok(!soChave.faltandoFicha.includes('APPLE_URL_SUPORTE'), soChave.faltandoFicha.join());
   assert.deepEqual(soChave.faltandoRevisao, ['APPLE_TELEFONE_CONTATO', 'APPLE_DEMO_PASSWORD']);
 
   const quebrada = montar({ ...CHAVE, ASC_KEY_P8: 'não é chave' });
@@ -138,7 +140,9 @@ test('padroes.json: nada secreto, e a ficha sobe só com ASC_KEY_ID + ASC_KEY_P8
   assert.match(padroes.apple_team_id, /^[A-Z0-9]{10}$/);
   assert.ok(['INDIVIDUAL', 'COMPANY_OR_ORGANIZATION'].includes(padroes.apple_team_type));
   assert.ok(ean13Valido(padroes.codigo_demo), `codigo_demo ${padroes.codigo_demo} não é um EAN-13 válido`);
-  assert.match(padroes.url_suporte, /^https:\/\//);
+  // O suporte não mora aqui: fixado num servidor, ele ficava para trás quando APPLE_SERVIDOR_DEMO
+  // trocava (o link da App Store caía junto com o servidor antigo). Outra página: a Variable.
+  assert.equal(padroes.url_suporte, undefined, 'url_suporte no padroes.json não segue o servidor da demo');
 
   const so = montar({ ASC_KEY_ID: 'TESTE123', ASC_KEY_P8: P8 }, padroes);
   assert.equal(so.temChave, true, 'o issuer vem do padroes.json');
@@ -205,6 +209,50 @@ test('config.json local copiado do modelo: vazio e texto de exemplo caem no padr
     const c = lerConfig();
     assert.equal(c.nome_contato, 'Outra Pessoa');
     assert.equal(c.telefone_contato, '+55 21 99999-0000');
+  } finally {
+    for (const [k, v] of [['PUBLICAR_CONFIG', antes.config], ['PUBLICAR_PADROES', antes.padroes]]) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+});
+
+test('URL de suporte sem Variable: <servidor da demo>/privacidade — troca junto com o servidor, e na Vercel é a de antes', () => {
+  const pasta = mkdtempSync(join(tmpdir(), 'suporte-'));
+  writeFileSync(join(pasta, 'chave-apple.p8'), `${P8}\n`);
+  const padroes = lerPadroes(PADROES_DO_REPO);
+  const antes = { config: process.env.PUBLICAR_CONFIG, padroes: process.env.PUBLICAR_PADROES };
+  // O caminho do GitHub Actions: o config.json que o ci.mjs grava, lido pelo publicar.mjs.
+  const lido = (env) => {
+    const r = montar({ ASC_KEY_ID: 'TESTE123', ASC_KEY_P8: P8, ...env }, padroes);
+    assert.equal(r.temFicha, true, `faltando: ${r.faltandoFicha.join()}`);
+    const caminho = join(pasta, 'config.json');
+    writeFileSync(caminho, JSON.stringify(r.config));
+    process.env.PUBLICAR_CONFIG = caminho;
+    return lerConfig();
+  };
+  try {
+    process.env.PUBLICAR_PADROES = PADROES_DO_REPO;
+    // Sem Variable nenhuma (a demo da Vercel): a mesma URL que o padroes.json guardava antes.
+    const vercel = lido({});
+    assert.equal(vercel.url_suporte, 'https://loja-tria.vercel.app/privacidade');
+    assert.equal(vercel.url_privacidade, vercel.url_suporte);
+    // O que o ./demo.sh --mostrar manda levar (ADR-46): o suporte vai junto com a privacidade.
+    // Antes ele ficava na Vercel, e desligá-la depois da troca derrubava o link da App Store.
+    for (const servidor of ['https://loja.minhaloja.com.br/demo', 'https://loja.minhaloja.com.br/demo/']) {
+      const c = lido({ APPLE_SERVIDOR_DEMO: servidor, APPLE_EMAIL_DEMO: 'dono@demo.example' });
+      assert.equal(c.url_suporte, 'https://loja.minhaloja.com.br/demo/privacidade', servidor);
+      assert.equal(c.url_privacidade, 'https://loja.minhaloja.com.br/demo/privacidade', servidor);
+    }
+    // Outra página de suporte: a Variable vence, e trocar de servidor não a mexe.
+    const propria = lido({ APPLE_SERVIDOR_DEMO: 'https://loja.minhaloja.com.br/demo', APPLE_URL_SUPORTE: 'https://minhaloja.com.br/contato' });
+    assert.equal(propria.url_suporte, 'https://minhaloja.com.br/contato');
+    // Na máquina do dono: o config.json do modelo, com o suporte vazio e o servidor da loja.
+    const modelo = JSON.parse(readFileSync(join(MOBILE, 'publicar', 'config.exemplo.json'), 'utf8'));
+    const local = join(pasta, 'config-local.json');
+    writeFileSync(local, JSON.stringify({ ...modelo, key_id: 'TESTE123', url_servidor_demo: 'https://loja.minhaloja.com.br/demo' }));
+    process.env.PUBLICAR_CONFIG = local;
+    assert.equal(lerConfig().url_suporte, 'https://loja.minhaloja.com.br/demo/privacidade');
   } finally {
     for (const [k, v] of [['PUBLICAR_CONFIG', antes.config], ['PUBLICAR_PADROES', antes.padroes]]) {
       if (v === undefined) delete process.env[k];

@@ -169,7 +169,8 @@ writeFileSync(
     issuer_id: '00000000-0000-0000-0000-000000000000',
     arquivo_p8: 'chave-apple.p8',
     email_suporte: 'suporte@teste.dev',
-    url_suporte: 'https://demo-da-loja.teste.dev',
+    // Outra página que não a privacidade (APPLE_URL_SUPORTE): a conferência abre as duas.
+    url_suporte: 'https://demo-da-loja.teste.dev/suporte',
     nome_contato: 'Dona Teste',
     telefone_contato: '+55 11 91234-5678',
     titular_copyright: 'Loja Teste',
@@ -337,6 +338,7 @@ await cenario(
     const loc = Object.values(e.versaoLocs).find((l) => l.versao === 'VER1')?.atributos ?? {};
     conferir([...(loc.description ?? '')].length > 1000 && !loc.description.includes('{{'), 'descrição inteira, sem marcador sobrando');
     conferir(loc.description?.includes('suporte@teste.dev') && loc.description?.includes('https://demo-da-loja.teste.dev/privacidade'), 'descrição com o e-mail de suporte e a política de privacidade');
+    conferir(loc.supportUrl === 'https://demo-da-loja.teste.dev/suporte', 'URL de suporte do config.json (outra página que não a privacidade)');
     conferir(loc.keywords === lerFicha('palavras-chave.txt') && [...loc.keywords].length <= 100, 'palavras-chave (até 100)');
     conferir(loc.promotionalText === lerFicha('texto-promocional.txt') && [...loc.promotionalText].length <= 170, 'texto promocional (até 170)');
     conferir(loc.whatsNew === undefined, 'sem "Novidades" na primeira versão');
@@ -360,8 +362,8 @@ await cenario(
     conferirAnexo(conferir, e, 'screen-recording.mp4', readFileSync(VIDEO));
     const demo = chamadasDaDemo(antesDaDemo);
     conferir(
-      ['GET /health', 'POST /api/v1/auth/login', 'GET /api/v1/variantes/codigo-barras/7890000000000', 'GET /api/v1/leitor/pareamentos/0', 'DELETE /api/v1/usuarios/me', 'POST /api/v1/auth/logout', 'GET /privacidade'].every((c) => demo.includes(c)),
-      'servidor de demonstração conferido: no ar, login de dono, código, leitor, exclusão, privacidade (e a sessão encerrada)',
+      ['GET /health', 'POST /api/v1/auth/login', 'GET /api/v1/variantes/codigo-barras/7890000000000', 'GET /api/v1/leitor/pareamentos/0', 'DELETE /api/v1/usuarios/me', 'POST /api/v1/auth/logout', 'GET /privacidade', 'GET /suporte'].every((c) => demo.includes(c)),
+      'servidor de demonstração conferido: no ar, login de dono, código, leitor, exclusão, privacidade, suporte (e a sessão encerrada)',
     );
     const exclusoes = DEMO.chamadas.slice(antesDaDemo).filter((c) => c.metodo === 'DELETE' && c.caminho === '/api/v1/usuarios/me');
     conferir(
@@ -602,7 +604,7 @@ if (!REAIS) {
 
   await cenario('Servidor de demonstração fora do combinado: --enviar recusado, com cada problema', async ({ conferir, guardar }) => {
     const casos = [
-      [{ papel: 'GERENTE', codigos: [], semLeitor: true, semExclusao: true, privacidade: 404 }, ['não de dono', 'não existe no servidor de demonstração', 'não tem o leitor pelo celular', 'não tem a exclusão da própria conta', 'política de privacidade da ficha não abre'], 'conta não-dono, código, leitor, exclusão e privacidade'],
+      [{ papel: 'GERENTE', codigos: [], semLeitor: true, semExclusao: true, privacidade: 404, suporte: 404 }, ['não de dono', 'não existe no servidor de demonstração', 'não tem o leitor pelo celular', 'não tem a exclusão da própria conta', 'política de privacidade da ficha não abre', 'URL de suporte da ficha não abre'], 'conta não-dono, código, leitor, exclusão, privacidade e suporte'],
       [{ senha: 'outra-senha' }, ['não entra no servidor de demonstração', 'APPLE_DEMO_PASSWORD', './demo.sh --mostrar', 'Redeploy da demo a recria'], 'senha da demo errada (ou conta excluída lá)'],
       [{ protegida: false }, ['não está protegida no servidor de demonstração', 'DEMO_ADMIN_EMAIL', './demo.sh --mostrar', './atualizar.sh'], 'conta demo sem a proteção'],
       [{ saldo: 2 }, ['tem 2 peça(s) em estoque', 'Reponha pela Entrada', './demo.sh --renovar'], 'código demo quase sem estoque'],
@@ -629,7 +631,8 @@ if (!REAIS) {
     // fora do /demo, e qualquer chamada que perder o caminho cai lá.
     const comCaminho = join(PASTA_CONFIG, 'config-demo-da-loja.json');
     const config = JSON.parse(readFileSync(join(PASTA_CONFIG, 'config.json'), 'utf8'));
-    writeFileSync(comCaminho, JSON.stringify({ ...config, url_servidor_demo: 'https://loja.teste.dev/demo/' }));
+    // Sem APPLE_URL_SUPORTE: o suporte sai do servidor novo, como a privacidade.
+    writeFileSync(comCaminho, JSON.stringify({ ...config, url_suporte: '', url_servidor_demo: 'https://loja.teste.dev/demo/' }));
     const demo = await subirDemoFalso({ prefixo: '/demo' });
     const mock = await subirMock();
     const { codigo, saida } = await publicar(['--enviar', ...COM_VIDEO], {
@@ -645,6 +648,7 @@ if (!REAIS) {
     conferir(infoPt(e, 'INFO1')?.privacyPolicyUrl === 'https://loja.teste.dev/demo/privacidade', 'a URL de privacidade da ficha é a da DEMO (com o /demo)');
     const loc = Object.values(e.versaoLocs).find((l) => l.versao === 'VER1')?.atributos ?? {};
     conferir(loc.description?.includes('https://loja.teste.dev/demo/privacidade'), 'a descrição leva a privacidade com o /demo');
+    conferir(loc.supportUrl === 'https://loja.teste.dev/demo/privacidade', 'a URL de suporte da ficha segue o servidor (a da demo, com o /demo — não a da Vercel)');
     const notas = e.revisoes.VER1?.atributos.notes ?? '';
     conferir(notas.includes('Server: https://loja.teste.dev/demo\n'), 'as notas mandam o revisor ao endereço com o /demo (sem a barra do fim)');
     const feitas = demo.chamadas.map((c) => `${c.metodo} ${c.cheio}`);
@@ -676,6 +680,8 @@ if (!REAIS) {
     conferir(!('demoAccountPassword' in rev) && !('contactPhone' in rev), 'senha e telefone vazios não vão à Apple (ela guarda o que tinha)');
     conferir(rev.demoAccountName === padroes.email_demo && rev.contactEmail === padroes.email_suporte, 'conta demo e e-mail de contato do padroes.json');
     conferir(versao?.copyright?.includes(padroes.titular_copyright), 'copyright do padroes.json');
+    const textos = Object.values(mock.estado.versaoLocs).find((l) => l.versao === 'VER1')?.atributos ?? {};
+    conferir(textos.supportUrl === 'https://loja-tria.vercel.app/privacidade', 'URL de suporte: a privacidade da demo da Vercel, a mesma de antes');
     conferir(mock.estado.envios.length === 0, 'nada enviado para revisão');
 
     const envio = await publicar(['--enviar', ...COM_VIDEO], { porta: mock.porta, capturas: baseSintetica, env: { PUBLICAR_CONFIG: soChave } });

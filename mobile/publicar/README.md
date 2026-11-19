@@ -48,12 +48,13 @@ As notas citam a lista e o vídeo por marcadores (`{{APARELHOS_TESTADOS}}`, `{{A
 - o servidor de demonstração não está como as notas dizem: `GET /health` no ar; a conta demo
   entra e é de **dono**; o código de barras demo existe e tem ao menos 3 peças em estoque (as
   notas mandam vender, e o PDV recusa peça sem estoque: reponha pela Entrada na demo); a
-  política de privacidade abre; há rota para o leitor pelo celular e para a exclusão da própria
-  conta (deploy na mesma versão); e a conta demo é **protegida** lá (ADR-45: não se exclui, não
-  perde o papel nem troca de senha — senão o revisor que cria outro dono apaga a conta das notas
-  no meio da revisão). Tudo pela API pública do sistema, a mesma do app; a sessão aberta para
-  conferir é encerrada. A conferência da exclusão manda corpo vazio (a validação recusa antes de
-  a rota rodar) e, para a proteção, uma senha aleatória: a recusa da conta da demonstração vem
+  política de privacidade abre (e a URL de suporte, quando é outra página); há rota para o
+  leitor pelo celular e para a exclusão da própria conta (deploy na mesma versão); e a conta
+  demo é **protegida** lá (ADR-45: não se exclui, não perde o papel nem troca de senha — senão
+  o revisor que cria outro dono apaga a conta das notas no meio da revisão). Tudo pela API
+  pública do sistema, a mesma do app; a sessão aberta para conferir é encerrada. A conferência
+  da exclusão manda corpo vazio (a validação recusa antes de a rota rodar) e, para a proteção,
+  uma senha aleatória: a recusa da conta da demonstração vem
   antes de a senha ser conferida, e uma senha que nunca confere não exclui nada. Nenhuma
   mensagem leva a senha da demo. Login recusado (401): confira `APPLE_EMAIL_DEMO` e
   `APPLE_DEMO_PASSWORD` contra o servidor — na demonstração que sobe com a loja (ADR-46),
@@ -219,7 +220,7 @@ da revisão:
 | `APPLE_DEMO_PASSWORD` | a senha da conta demo do revisor: na demonstração que sobe com a loja, a que `./demo.sh --mostrar` mostra (na máquina dela); na Vercel, a de `DEMO_ADMIN_SENHA`. **Ou, sem Secret:** o workflow **"Senha da conta demo na Apple"** (`senha-demo.yml`, entrada mascarada no log antes de qualquer uso) grava a senha no campo "Senha" da revisão na Apple, e o publicador passa a usar a que está lá | só a revisão |
 
 **O que não é segredo já está no repositório**, em `publicar/padroes.json`: o Issuer ID da chave,
-o time da Apple (Team ID e tipo), nome e e-mail de contato, URL de suporte, copyright, conta
+o time da Apple (Team ID e tipo), nome e e-mail de contato, copyright, conta
 demo e código de barras dela (o EAN da primeira camiseta do seed, `7890000000000`). Nunca ponha
 senha, chave ou token nesse arquivo — o teste do `ci.mjs` recusa. Para trocar um valor sem mexer
 no código, crie uma **Variable** de mesmo nome, que vence o padrão (o `ASC_ISSUER_ID` e o telefone
@@ -229,10 +230,11 @@ podem ser Variable ou Secret; o resto, só Variable — Secret com esses nomes �
 |---|---|
 | `ASC_ISSUER_ID` (Variable ou Secret) | `issuer_id` |
 | `APPLE_TEAM_ID`, `APPLE_TEAM_TYPE` | `apple_team_id`, `apple_team_type` |
-| `APPLE_EMAIL_SUPORTE`, `APPLE_URL_SUPORTE`, `APPLE_NOME_CONTATO`, `APPLE_COPYRIGHT` | contato, suporte e copyright |
+| `APPLE_EMAIL_SUPORTE`, `APPLE_NOME_CONTATO`, `APPLE_COPYRIGHT` | contato e copyright |
 | `APPLE_EMAIL_DEMO`, `APPLE_CODIGO_DEMO` | conta demo (perfil **dono**) e um código de barras que exista nela |
 | `APPLE_SERVIDOR_DEMO` | `https://loja-tria.vercel.app` (a demo da Vercel). A que sobe com a loja: `https://<domínio>/demo`, com o caminho |
-| `APPLE_URL_PRIVACIDADE`, `APPLE_URL_ETIQUETAS_DEMO` | `<servidor demo>/privacidade` e nenhum |
+| `APPLE_URL_PRIVACIDADE`, `APPLE_URL_SUPORTE` | as duas `<servidor demo>/privacidade` — não moram no `padroes.json`: trocam junto com `APPLE_SERVIDOR_DEMO` |
+| `APPLE_URL_ETIQUETAS_DEMO` | nenhum |
 | `APPLE_TELEFONE_CONTATO` (Variable ou Secret: é dado pessoal) | nenhum: só a revisão pede, e só se a Apple ainda não tiver um telefone (de um envio anterior) |
 
 Sem a senha da demo e sem telefone a **ficha sobe** (as notas dizem "(pending)") e o
@@ -252,11 +254,17 @@ uma loja só de dados fictícios, isolada de qualquer loja de verdade. São duas
   (`DEMO_ADMIN_EMAIL`/`DEMO_ADMIN_SENHA`) nasce no build de lá.
 
 Esse servidor **fica no ar depois da revisão**: ele também serve a política de privacidade da
-ficha (`<servidor>/privacidade`, com o caminho) — desligá-lo derrubaria o link da App Store
-(5.1.1(i)). Trocar de servidor (da Vercel para a demo da loja) é rodar a ficha com as Variables
-novas, conferir que a privacidade abre no endereço novo, e só então desligar o antigo. Para
-morar noutro endereço permanente, preencha `APPLE_URL_PRIVACIDADE`. Antes as notas mandavam o
-revisor para `sistemaobras.com.br`, que hoje é o site do Sistema Obras — a revisão voltaria.
+ficha (`<servidor>/privacidade`, com o caminho), que sem `APPLE_URL_SUPORTE` é também a URL de
+suporte — desligá-lo derrubaria os dois links da App Store (5.1.1(i) e 1.5). Trocar de servidor
+(da Vercel para a demo da loja) é rodar a ficha com as Variables novas: a URL de suporte segue
+sozinha, como a privacidade (ou a Variable `APPLE_URL_SUPORTE`, se o dono quiser outra página),
+e a conferência do `--enviar` abre as duas no endereço novo. **Antes de desligar o servidor
+antigo**, troque também no Play Console as URLs de privacidade e de exclusão de dados
+(`<servidor novo>/privacidade` e `<servidor novo>/exclusao-de-dados`, `docs/LOJAS-DE-APP.md`):
+o Google Play não passa pelo publicador, e a ficha de lá ficaria apontando para o servidor
+desligado. Só então desligue o antigo. Para morar noutro endereço permanente, preencha
+`APPLE_URL_PRIVACIDADE` e `APPLE_URL_SUPORTE`. Antes as notas mandavam o revisor para
+`sistemaobras.com.br`, que hoje é o site do Sistema Obras — a revisão voltaria.
 
 **Primeira vez da loja na Apple:** o registro do app (lá em cima) tem de existir — se o primeiro
 build sair antes disso, ele fica na Expo: crie o app e rode com **enviar** marcado. Com a chave

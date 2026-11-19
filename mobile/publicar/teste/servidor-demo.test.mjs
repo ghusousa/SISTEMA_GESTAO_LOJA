@@ -7,7 +7,8 @@
  * O que não pode quebrar: o caminho do endereço chega inteiro a toda rota que o publicador
  * confere e à URL de privacidade (junção por texto — new URL('/x', base) apaga o /demo e
  * confere a LOJA no lugar da demonstração), e o que não é base de servidor para na config,
- * antes de ir às notas que o revisor lê.
+ * antes de ir às notas que o revisor lê. A URL de suporte que não é a privacidade também é
+ * aberta: a ficha publica as duas.
  */
 
 import { test } from 'node:test';
@@ -81,6 +82,33 @@ test('conferência na demo em /demo: toda rota sai debaixo do caminho, e nada va
     }
   } finally {
     await demo.fechar();
+  }
+});
+
+test('URL de suporte: outra página também tem de abrir; a mesma da privacidade abre uma vez só', async () => {
+  const demo = await subirDemoFalso({ prefixo: '/demo' });
+  try {
+    const base = `${demo.base}/demo`;
+    // O padrão: o suporte é a própria privacidade do servidor (ci.mjs/ficha.mjs) — já conferida.
+    const mesma = await conferirServidorDemo({ ...CONTA, base, urlPrivacidade: `${base}/privacidade`, urlSuporte: `${base}/privacidade` });
+    assert.deepEqual(mesma.problemas, []);
+    assert.equal(demo.chamadas.filter((c) => c.cheio === '/demo/privacidade').length, 1, 'a privacidade abriu mais de uma vez');
+    // APPLE_URL_SUPORTE com outra página: a Apple quer o suporte no ar tanto quanto a privacidade.
+    const outra = await conferirServidorDemo({ ...CONTA, base, urlPrivacidade: `${base}/privacidade`, urlSuporte: `${base}/suporte` });
+    assert.deepEqual(outra.problemas, []);
+    assert.ok(outra.conferidos.includes('a página de suporte abre'), outra.conferidos.join(' | '));
+    assert.ok(demo.chamadas.some((c) => c.metodo === 'GET' && c.cheio === '/demo/suporte'), 'o suporte não foi aberto');
+  } finally {
+    await demo.fechar();
+  }
+  const fora = await subirDemoFalso({ suporte: 404 });
+  try {
+    const r = await conferirServidorDemo({ ...CONTA, base: fora.base, urlPrivacidade: `${fora.base}/privacidade`, urlSuporte: `${fora.base}/suporte` });
+    assert.match(r.problemas.join('\n'), /URL de suporte da ficha não abre \(HTTP 404\)/);
+    assert.match(r.problemas.join('\n'), /APPLE_URL_SUPORTE/);
+    assert.ok(r.conferidos.includes('a política de privacidade abre'), 'a privacidade continua conferida à parte');
+  } finally {
+    await fora.fechar();
   }
 });
 

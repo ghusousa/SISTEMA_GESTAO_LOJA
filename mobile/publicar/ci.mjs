@@ -51,7 +51,6 @@ export { SERVIDOR_DEMO_PADRAO };
  */
 export const CAMPOS_DA_FICHA = [
   ['APPLE_EMAIL_SUPORTE', 'email_suporte'],
-  ['APPLE_URL_SUPORTE', 'url_suporte'],
   ['APPLE_NOME_CONTATO', 'nome_contato'],
   ['APPLE_TELEFONE_CONTATO', 'telefone_contato'],
   ['APPLE_COPYRIGHT', 'titular_copyright'],
@@ -129,7 +128,10 @@ export function montar(env, padroes = {}) {
     arquivo_p8: 'chave-apple.p8',
     url_etiquetas_demo: valor('APPLE_URL_ETIQUETAS_DEMO', 'url_etiquetas_demo'),
     url_servidor_demo: valor('APPLE_SERVIDOR_DEMO', 'url_servidor_demo') || SERVIDOR_DEMO_PADRAO,
+    // Vazias, as duas viram <servidor>/privacidade no publicar.mjs (lerConfig), depois de o
+    // endereço do servidor ser conferido — e trocam junto com APPLE_SERVIDOR_DEMO.
     url_privacidade: valor('APPLE_URL_PRIVACIDADE', 'url_privacidade'),
+    url_suporte: valor('APPLE_URL_SUPORTE', 'url_suporte'),
   };
   for (const [variavel, campo] of CAMPOS_DA_FICHA) config[campo] = valor(variavel, campo);
   // O time da Apple (para a Expo montar certificado e perfil sozinha): nada secreto.
