@@ -83,6 +83,8 @@ _REGRAS: list[tuple[str, re.Pattern[str], str, str, str | None]] = [
     # celular como leitor do computador (ADR-43): ligar e desligar. Os bipes não entram
     # (ver `_IGNORAR`); o que entra é a venda, a entrada ou a devolução que vem depois.
     ("POST", re.compile(r"^/leitor/pareamentos/aceitar$"), "LEITOR_PAREADO", "Ligou o celular como leitor de código de barras de um computador", "leitor"),
+    # O chamado do computador (ADR-47): ligar é atender, como aceitar o código é ligar.
+    ("POST", re.compile(r"^/leitor/chamados/(\d+)/atender$"), "LEITOR_PAREADO", "Ligou o celular como leitor do computador pelo chamado #{id}", "leitor"),
     ("DELETE", re.compile(r"^/leitor/pareamentos/(\d+)$"), "LEITOR_DESLIGADO", "Desligou o celular-leitor #{id}", "leitor"),
     # sessão
     ("POST", re.compile(r"^/auth/logout$"), "LOGOUT", "Saiu do sistema", None),
@@ -101,6 +103,12 @@ _IGNORAR = [
     ("POST", re.compile(r"^/leitor/pareamentos$")),
     ("POST", re.compile(r"^/leitor/bipes$")),
     ("POST", re.compile(r"^/leitor/pareamentos/\d+/retirar$")),
+    # Chamar o celular (ADR-47) é como gerar o código: só um pedido na tela, e o ato é o
+    # atender. O registro do aparelho para as notificações é manutenção do app (a cada
+    # sessão), e o DELETE dele nem tem sessão — nenhum dos dois é ato da loja.
+    ("POST", re.compile(r"^/leitor/chamados$")),
+    ("PUT", re.compile(r"^/notificacoes/aparelho$")),
+    ("DELETE", re.compile(r"^/notificacoes/aparelho$")),
 ]
 
 

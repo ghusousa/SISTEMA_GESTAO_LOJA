@@ -85,9 +85,14 @@ class Assunto(StrEnum):
     """Conta de fornecedor lançada, corrigida, paga ou excluída."""
 
     LEITOR = "leitor"
-    """Celular-leitor pareado, desligado ou com bipe novo esperando o computador (ADR-43).
-    Só o assunto: o código lido NUNCA vai no aviso — o computador retira pela rota REST,
-    que confere de quem é o pareamento. A retirada não avisa (seria eco sem fim)."""
+    """Bipe novo do celular-leitor esperando o computador (ADR-43). Frequente: sai a cada
+    leitura. Só o assunto: o código lido NUNCA vai no aviso — o computador retira pela rota
+    REST, que confere de quem é o pareamento. A retirada não avisa (seria eco sem fim)."""
+
+    LEITOR_PAREAMENTO = "leitor_pareamento"
+    """Pareamento do celular-leitor criado (código ou chamado), aceito/atendido ou encerrado.
+    Raro; é o que o app ouve para buscar os chamados dele pela rota REST (ADR-47). Só o
+    assunto: nunca o id, o código, o sinal nem quem foi chamado."""
 
 
 @dataclass(slots=True)
@@ -217,7 +222,10 @@ ASSUNTO_POR_TABELA: dict[str, Assunto] = {
     "consignments": Assunto.CONDICIONAIS,
     "consignment_items": Assunto.CONDICIONAIS,
     "payables": Assunto.CONTAS_PAGAR,
-    "leitor_pareamentos": Assunto.LEITOR,
+    # Separados de propósito (ADR-47): o app acompanha os pareamentos (o chamado do
+    # computador) e não os bipes, que saem um por leitura. `notificacao_aparelhos` fica de
+    # fora: nenhuma tela a acompanha.
+    "leitor_pareamentos": Assunto.LEITOR_PAREAMENTO,
     "leitor_bipes": Assunto.LEITOR,
 }
 

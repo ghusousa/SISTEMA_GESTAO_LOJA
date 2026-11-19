@@ -309,10 +309,25 @@ async def test_email_some_das_linhas_antigas_do_diario(
     ) == 1
 
 
+async def _registrar_aparelho(client: AsyncClient, auth: dict[str, str]) -> None:
+    """O app dela registrou o celular para o chamado do leitor (ADR-47), com token de push."""
+    r = await client.put(
+        "/notificacoes/aparelho",
+        headers=auth,
+        json={
+            "instalacao": str(uuid.uuid4()),
+            "plataforma": "ios",
+            "token": f"ExponentPushToken[{uuid.uuid4().hex}]",
+        },
+    )
+    assert r.status_code == 204, r.text
+
+
 async def test_pareamento_do_leitor_some_junto(
     client: AsyncClient, admin: User, vendedor: User, session: AsyncSession
 ) -> None:
-    """O celular dela lia para o computador do dono: o pareamento não sobra órfão."""
+    """O celular dela lia para o computador do dono: o pareamento não sobra órfão. E o
+    registro do celular para as notificações (com o token de push) vai junto, pelo CASCADE."""
     auth_dono, _ = await _entrar(client, admin.email)
     auth, _ = await _entrar(client, vendedor.email)
     criado = await client.post("/leitor/pareamentos", headers=auth_dono, json=None)
@@ -321,9 +336,16 @@ async def test_pareamento_do_leitor_some_junto(
         "/leitor/pareamentos/aceitar", headers=auth, json={"codigo": criado.json()["codigo"]}
     )
     assert aceito.status_code == 200, aceito.text
+    await _registrar_aparelho(client, auth)
+    await _registrar_aparelho(client, auth_dono)
 
     assert (await _excluir_a_minha(client, auth)).status_code == 204
     assert await _contar(session, "SELECT count(*) FROM leitor_pareamentos") == 0
+    assert await _contar(
+        session, "SELECT count(*) FROM notificacao_aparelhos WHERE user_id = :i", i=vendedor.id
+    ) == 0
+    # O do dono continua: a exclusão é de uma conta só.
+    assert await _contar(session, "SELECT count(*) FROM notificacao_aparelhos") == 1
 
 
 # ------------------------------------------------------------------ quem já vendeu
@@ -340,9 +362,17 @@ async def test_quem_ja_vendeu_tambem_exclui_e_a_venda_fica_com_o_nome(
     venda_id = await _vender(client, auth_dono, auth)
     pc = await client.post("/leitor/pareamentos", headers=auth, json=None)
     assert pc.status_code == 201, pc.text
+    chamado = await client.post(
+        "/leitor/chamados", headers=auth, json={"client_uuid": str(uuid.uuid4())}
+    )
+    assert chamado.status_code == 201, chamado.text
+    await _registrar_aparelho(client, auth)
 
     resp = await _excluir_a_minha(client, auth)
     assert resp.status_code == 204, resp.text
+    # A linha ficou (a venda a prende), mas o registro do celular não: o token de push é da
+    # conta, e sai pelo mesmo caminho das sessões (`_derrubar_sessoes`).
+    assert await _contar(session, "SELECT count(*) FROM notificacao_aparelhos") == 0
 
     # Ninguém entra: nem com o crachá, nem com o refresh, nem com e-mail e senha.
     assert (await client.get("/auth/me", headers=auth)).status_code == 401
