@@ -39,7 +39,7 @@ from scripts import vercel_build, vercel_instalar
 RAIZ = PASTA_API.parent
 VERCEL_JSON = json.loads((PASTA_API / "vercel.json").read_text(encoding="utf-8"))
 PYPROJECT = tomllib.loads((PASTA_API / "pyproject.toml").read_text(encoding="utf-8"))
-CADDYFILE = (RAIZ / "docker" / "Caddyfile").read_text(encoding="utf-8")
+CADDYFILE = (RAIZ / "docker" / "caddy" / "Caddyfile").read_text(encoding="utf-8")
 
 
 def _diretivas(csp: str) -> dict[str, set[str]]:

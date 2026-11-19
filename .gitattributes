@@ -14,7 +14,7 @@
 # Estes rodam DENTRO de containers Linux: LF sempre, mesmo no Windows.
 *.sh            text eol=lf
 Dockerfile      text eol=lf
-docker/Caddyfile text eol=lf
+docker/caddy/Caddyfile text eol=lf
 *.yml           text eol=lf
 *.yaml          text eol=lf
 

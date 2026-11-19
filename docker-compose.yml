@@ -93,7 +93,11 @@ services:
     environment:
       ENDERECO: ${ENDERECO_PROXY:-:80}
     volumes:
-      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      # A PASTA, não o arquivo: o `git reset --hard` da atualização troca o Caddyfile por um
+      # arquivo novo (inode novo), e um arquivo montado sozinho continua mostrando o VELHO ao
+      # contêiner até ele ser recriado — o `caddy reload` "dava certo" sem mudar nada. Com a
+      # pasta montada, o contêiner enxerga o arquivo novo na hora (ADR-46).
+      - ./docker/caddy:/etc/caddy:ro
       # Guardam o certificado: sem isso o Let's Encrypt seria pedido de novo a cada
       # reinício, e ele tem limite de emissões por semana.
       - certificados:/data

@@ -160,7 +160,7 @@ contrato de `PUT /produtos/{id}/foto` são os mesmos em todos os casos.
   byte sair, igual em todos os modos — só o teto muda na Vercel.
 - **Quem mostra aceita as duas formas**: a web põe `foto_url` direto no `src` (relativo resolve
   na origem da página, absoluto passa); o app passa por `lib/enderecoDaFoto.ts` (relativo ganha
-  o servidor do aparelho, `http(s)://` passa como está). CSP: o `docker/Caddyfile` não muda —
+  o servidor do aparelho, `http(s)://` passa como está). CSP: o `docker/caddy/Caddyfile` não muda —
   na loja a foto é `'self'`; na Vercel quem libera `https://*.public.blob.vercel-storage.com` no
   `img-src` é o `vercel.json`.
 
@@ -970,7 +970,7 @@ da loja), e toda resposta sai com `X-Content-Type-Options: nosniff`, `X-Frame-Op
 `Referrer-Policy: strict-origin-when-cross-origin`. Não é segurança de verdade — é não entregar
 de graça o que o atacante teria de descobrir sozinho. A checagem é uma propriedade só
 (`config.py`), para "estamos em produção?" ter uma resposta e não várias.
-CSP, HSTS e `Permissions-Policy` moram no **proxy** (`docker/Caddyfile`), que é quem fala com o
+CSP, HSTS e `Permissions-Policy` moram no **proxy** (`docker/caddy/Caddyfile`), que é quem fala com o
 navegador. A CSP é a segunda barreira contra XSS (o access token mora em memória): `script-src
 'self'` sem `'unsafe-inline'` — o único atributo de evento que existia (`onclick` do
 `erroBloco`) virou delegação em `ui.js` —, `style-src 'self' 'unsafe-inline'` (estilo inline
@@ -978,7 +978,7 @@ existe nas telas e no recibo impresso), `img-src 'self' data: blob:` (ícone e p
 `connect-src 'self'` mais o WebSocket da mesma origem, `frame-ancestors 'none'`. `/docs` e
 `/redoc` ficam fora dela: o Swagger vem de CDN e só existe fora de produção. HSTS vai sempre
 (o navegador o ignora em HTTP), por um ano e sem `includeSubDomains`. `scripts/pentest.py`
-confere os três no Caddy quando `PENTEST_PROXY` aponta para ele, e no `docker/Caddyfile` quando
+confere os três no Caddy quando `PENTEST_PROXY` aponta para ele, e no `docker/caddy/Caddyfile` quando
 não aponta. Rota nova que precise de origem de fora tem de entrar na CSP, ou o navegador a
 bloqueia calado.
 
