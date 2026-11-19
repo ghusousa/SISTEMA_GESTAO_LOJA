@@ -80,11 +80,25 @@ export function comportamentoNoPrimeiroPlano(dados: unknown): Comportamento {
 }
 
 /**
+ * O modo do push no servidor, como o `GET /configuracao` diz:
+ * - `ligado`: `notificacoes_push: true`;
+ * - `desligado`: o campo veio, sem `true` (servidor da ADR-47 com o push desligado, o padrão);
+ * - `servidor-antigo`: o campo NÃO veio — servidor de antes da ADR-47, que nem tem o chamado.
+ *   A tela do leitor não promete nada nele: o chamado não existe lá (só o QR).
+ */
+export type PushDoServidor = 'ligado' | 'desligado' | 'servidor-antigo';
+
+export function lerPushDoServidor(configuracao: { notificacoes_push?: unknown } | null | undefined): PushDoServidor {
+  if (!configuracao || !('notificacoes_push' in configuracao)) return 'servidor-antigo';
+  return configuracao.notificacoes_push === true ? 'ligado' : 'desligado';
+}
+
+/**
  * O servidor manda push? Só com `true` de verdade: servidor antigo não manda o campo, e na
  * dúvida o app não pede permissão para algo que não vai chegar.
  */
 export function pushDoServidor(configuracao: { notificacoes_push?: unknown } | null | undefined): boolean {
-  return configuracao?.notificacoes_push === true;
+  return lerPushDoServidor(configuracao) === 'ligado';
 }
 
 interface Aparelho {
@@ -133,22 +147,31 @@ export function comoRegistrar({ permissao, ...aparelho }: Aparelho & { permissao
 /**
  * A linha das notificações na tela do leitor (Mais → Leitor do computador).
  * - `lendo`: ainda sem saber (a configuração ou a permissão não chegou) — nada na tela;
+ * - `servidor-antigo`: servidor de antes da ADR-47 — nada na tela: lá não há chamado nenhum;
  * - `servidor-sem-push`: o servidor da loja não manda push — o chamado vem com o app aberto;
  * - `sem-suporte`: Android, Expo Go, web — idem, por causa do aparelho;
  * - `pedir`: o sistema já perguntou na abertura da tela; se a pessoa só fechou o alerta, a
  *   linha some até a próxima vez (sem tela do app com "Permitir": 5.1.1);
  * - `liberada` e `abrir-ajustes` (recusada: só os Ajustes do aparelho ligam de novo).
  */
-export type SituacaoNaTela = 'lendo' | 'servidor-sem-push' | 'sem-suporte' | 'pedir' | 'liberada' | 'abrir-ajustes';
+export type SituacaoNaTela =
+  | 'lendo'
+  | 'servidor-antigo'
+  | 'servidor-sem-push'
+  | 'sem-suporte'
+  | 'pedir'
+  | 'liberada'
+  | 'abrir-ajustes';
 
 export function situacaoNaTela({
-  pushNoServidor,
+  push,
   permissao,
   ...aparelho
-}: Omit<Aparelho, 'pushNoServidor'> & { pushNoServidor: boolean | null; permissao: Permissao | null }): SituacaoNaTela {
-  if (pushNoServidor === null) return 'lendo';
-  if (!pushNoServidor) return 'servidor-sem-push';
-  if (!podeReceberPush({ ...aparelho, pushNoServidor })) return 'sem-suporte';
+}: Omit<Aparelho, 'pushNoServidor'> & { push: PushDoServidor | null; permissao: Permissao | null }): SituacaoNaTela {
+  if (push === null) return 'lendo';
+  if (push === 'servidor-antigo') return 'servidor-antigo';
+  if (push === 'desligado') return 'servidor-sem-push';
+  if (!podeReceberPush({ ...aparelho, pushNoServidor: true })) return 'sem-suporte';
   if (permissao === null) return 'lendo';
   if (permissao === 'liberada') return 'liberada';
   return permissao === 'negada' ? 'abrir-ajustes' : 'pedir';
@@ -168,6 +191,8 @@ export function avisoDasNotificacoes(situacao: SituacaoNaTela): { texto: string;
       return { texto: 'Neste aparelho o chamado só aparece com o app aberto.', botao: null };
     case 'servidor-sem-push':
       return { texto: 'O chamado do computador aparece aqui com o app aberto.', botao: null };
+    // Servidor antigo: prometer o chamado seria mentir — lá só existe o QR.
+    case 'servidor-antigo':
     default:
       return null;
   }
@@ -250,3 +275,4 @@ export function precisaRegistrarDeNovo({
   if (push !== null && push !== ultimo.push) return true;
   return permissao !== null && permissao !== ultimo.permissao;
 }
+

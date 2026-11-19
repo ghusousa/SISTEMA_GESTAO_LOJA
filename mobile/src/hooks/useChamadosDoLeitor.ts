@@ -6,15 +6,21 @@
  * assunto `leitor_pareamento` do tempo real, a cada "conectado" e volta ao app (o tempo real
  * recarrega o que está na tela) e no push que chega com o app na frente. Servidor de antes da
  * ADR-47 (404 sem `code`): lista vazia, e ninguém pergunta de novo até a próxima sessão.
+ *
+ * Vencer (5 min) não avisa ninguém — o status é calculado das datas, nenhuma linha muda —, então
+ * com chamado na lista o servidor a reconfirma de 30 em 30 s, e o que venceu sai da tela na hora
+ * pelo `vence_em` (`lib/chamadoDoLeitor.ts`, com teste): o relógio daqui anda no vencimento do
+ * próximo.
  */
 
 import { useMutation, useQuery } from '@tanstack/react-query';
 import axios from 'axios';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { codigoDoErro, mensagemDoErro } from '@/api/client';
 import { leitor } from '@/api/endpoints';
 import type { ChamadoAberto, ErroApi } from '@/api/tipos';
+import { chamadosVivos, intervaloDaConferencia, proximoFim } from '@/lib/chamadoDoLeitor';
 import { idDaInstalacao } from '@/lib/instalacao';
 import { pedirPermissaoNoToque, tirarDaCentral } from '@/lib/pushDoLeitor';
 import { chaves, queryClient } from '@/lib/queryClient';
@@ -37,16 +43,53 @@ export async function buscarChamadosAbertos(): Promise<ChamadoAberto[]> {
   }
 }
 
-export function useChamadosDoLeitor() {
+const SEM_CHAMADOS: readonly ChamadoAberto[] = [];
+
+/**
+ * O "agora" de quem mostra os chamados: anda sozinho no instante em que o próximo deles sai da
+ * tela (`proximoFim`) — um relógio só, sem bater de segundo em segundo na raiz do app.
+ */
+function useRelogioDoVencimento(chamados: readonly ChamadoAberto[], buscadoEm: number): number {
+  const [agora, setAgora] = useState(() => Date.now());
+  useEffect(() => {
+    const fim = proximoFim(chamados, { agora, buscadoEm });
+    if (fim === null) return undefined;
+    // `agora` pode ser de antes da lista: o que já passou dispara na hora (espera 0).
+    const relogio = setTimeout(() => setAgora(Date.now()), Math.max(0, fim - Date.now()) + 50);
+    return () => clearTimeout(relogio);
+  }, [chamados, buscadoEm, agora]);
+  return agora;
+}
+
+export interface ChamadosDoLeitor {
+  /** A lista como veio na última conferência do servidor. */
+  chamados: readonly ChamadoAberto[];
+  /** Só os que ainda valem pelo relógio daqui: os cartões e a linha do leitor ligado. */
+  vivos: readonly ChamadoAberto[];
+  /** O relógio (anda no vencimento do próximo) e o instante da lista: a faixa decide com eles. */
+  agora: number;
+  buscadoEm: number;
+}
+
+export function useChamadosDoLeitor(): ChamadosDoLeitor {
   const logado = useAuthStore((e) => !!e.usuario);
   const semRota = useLeitorStore((e) => e.servidorSemChamados);
-  return useQuery({
+  const { data, dataUpdatedAt } = useQuery({
     queryKey: chaves.chamadosDoLeitor,
     queryFn: buscarChamadosAbertos,
     enabled: logado && !semRota,
     staleTime: 0,
     retry: false,
+    // Vencer não avisa ninguém: com chamado na lista, o servidor reconfirma (para no fundo).
+    refetchInterval: (consulta) => intervaloDaConferencia(consulta.state.data),
   });
+  const chamados = data ?? SEM_CHAMADOS;
+  const agora = useRelogioDoVencimento(chamados, dataUpdatedAt);
+  const vivos = useMemo(
+    () => chamadosVivos(chamados, { agora, buscadoEm: dataUpdatedAt }),
+    [chamados, agora, dataUpdatedAt],
+  );
+  return { chamados, vivos, agora, buscadoEm: dataUpdatedAt };
 }
 
 /** O 404 do atender é o mesmo para tudo que não serve: venceu, foi cancelado, outro atendeu. */

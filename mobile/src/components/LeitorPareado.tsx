@@ -13,6 +13,11 @@
  * do topo só avisa, e trocar é aqui, onde se vê para quem as leituras vão agora. Sem diálogo:
  * a câmera segue lendo, e o que não tiver saído para o computador anterior fica na lista como
  * "não enviado" (`leitorStore.ligar`).
+ *
+ * Entre o cabeçalho e a câmera (42% da tela) não entra nada que cresça: as linhas dos outros
+ * chamados (até 10 por login), o alerta, os bipes e o "Desligar" moram na rolagem de baixo.
+ * Com três chamados abertos no iPhone SE, as linhas lá em cima espremiam a lista e empurravam
+ * o "Desligar" para fora da tela — e a câmera pulava para baixo a cada chamado novo.
  */
 
 import { useQuery } from '@tanstack/react-query';
@@ -107,8 +112,9 @@ interface Props {
 }
 
 /**
- * Outro computador chamando este login, com o leitor ligado: uma linha por chamado, cada uma
- * com o seu sinal e o [Trocar]. O que a pessoa tocou na notificação vem em destaque.
+ * Outro computador chamando este login, com o leitor ligado: uma linha por chamado que ainda
+ * vale, cada uma com o seu sinal e o [Trocar]. O que a pessoa tocou na notificação vem em
+ * destaque. Mora no topo da rolagem, logo abaixo da câmera (ver o cabeçalho do arquivo).
  */
 function OutrosChamando({
   atendimento,
@@ -119,12 +125,12 @@ function OutrosChamando({
   destaque: string | null;
   avisoDoToque: string | null;
 }) {
-  const { data } = useChamadosDoLeitor();
-  const chamados = (data ?? []).filter((c) => sinalValido(c.sinal));
+  const { vivos } = useChamadosDoLeitor();
+  const chamados = vivos.filter((c) => sinalValido(c.sinal));
   const aviso = atendimento.aviso ?? avisoDoToque;
   if (chamados.length === 0 && !aviso) return null;
   return (
-    <View style={s.outros}>
+    <Cartao estilo={s.outros}>
       {chamados.map((chamado) => (
         <View key={chamado.id} style={[s.outro, chamado.sinal === destaque && s.outroDestaque]}>
           <Text style={s.outroTexto}>
@@ -141,7 +147,7 @@ function OutrosChamando({
         </View>
       ))}
       {!!aviso && <Text style={s.outroAviso}>{aviso}</Text>}
-    </View>
+    </Cartao>
   );
 }
 
@@ -226,7 +232,6 @@ export function LeitorPareado({ pareamento, visivel, atendimento, destaque, avis
         )}
         {!!ate && <Text style={s.ate}>até {ate}</Text>}
       </View>
-      <OutrosChamando atendimento={atendimento} destaque={destaque} avisoDoToque={avisoDoToque} />
 
       <View style={s.cameraArea}>
         {visivel ? (
@@ -243,6 +248,8 @@ export function LeitorPareado({ pareamento, visivel, atendimento, destaque, avis
       </View>
 
       <ScrollView contentContainerStyle={[s.conteudo, { paddingBottom: respiroDeBaixo }]}>
+        {/* Na rolagem, e não acima da câmera: quantos forem, o "Desligar" continua ao alcance. */}
+        <OutrosChamando atendimento={atendimento} destaque={destaque} avisoDoToque={avisoDoToque} />
         {!!alerta && (
           <Cartao estilo={s.alerta}>
             <Text style={s.alertaTexto}>{alerta}</Text>
@@ -279,12 +286,7 @@ const s = StyleSheet.create({
   // `primariaClara`, e não o azul da faixa: sobre o fundo claro do cabeçalho ele não dá 4,5:1.
   sinal: { fontSize: fonte.base, fontWeight: '700', color: cores.primariaClara },
   ate: { fontSize: fonte.pequena, color: cores.textoSuave },
-  outros: {
-    paddingHorizontal: espaco.lg,
-    paddingVertical: espaco.sm,
-    gap: espaco.sm,
-    backgroundColor: cores.superficie,
-  },
+  outros: { gap: espaco.sm },
   outro: {
     flexDirection: 'row',
     flexWrap: 'wrap',

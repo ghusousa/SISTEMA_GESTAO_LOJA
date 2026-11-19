@@ -20,6 +20,11 @@
  * As notificações: a permissão é pedida aqui na abertura (sem leitor ligado, sem câmera), só
  * no iPhone, só se o servidor manda push e só se nunca decidida. A linha do fim da tela diz o
  * efeito; recusada, oferece "Abrir Ajustes" — a régua da câmera (5.1.1).
+ *
+ * Servidor de antes da ADR-47: lá o computador não chama ninguém. Com a rota dos chamados dando
+ * 404 sem `code` (`servidorSemChamados`), a tela volta ao texto da ADR-43 (o QR e o código) e
+ * esconde a linha das notificações; a configuração sem `notificacoes_push` também já a cala
+ * (`situacaoNaTela` → `servidor-antigo`).
  */
 
 import { useMutation } from '@tanstack/react-query';
@@ -40,6 +45,7 @@ import {
   type AtenderChamado,
 } from '@/hooks/useChamadosDoLeitor';
 import { useTelaVisivel } from '@/hooks/useTelaVisivel';
+import { instrucaoDoLeitor } from '@/lib/chamadoDoLeitor';
 import { urlDaApi } from '@/lib/enderecoDoServidor';
 import { idDaInstalacao } from '@/lib/instalacao';
 import {
@@ -182,7 +188,10 @@ function SemPareamento({
   // (Filtra fora do seletor: array novo a cada leitura da store faria o zustand 5 girar.)
   const bipes = useLeitorStore((e) => e.bipes);
   const naoSairam = bipes.filter((b) => b.estado === 'nao-enviado' || b.estado === 'sem-confirmacao');
-  const { data: chamados } = useChamadosDoLeitor();
+  // Só os que ainda valem: o vencido levaria ao "O chamado venceu ou já foi atendido.".
+  const { vivos: chamados } = useChamadosDoLeitor();
+  // Servidor de antes da ADR-47: nada chama este celular, e a tela não promete o chamado.
+  const servidorSemChamados = useLeitorStore((e) => e.servidorSemChamados);
   // Pedir a permissão de notificação na abertura, mas não por cima de quem chegou pelo link do
   // QR com o código preenchido: essa pessoa veio tocar em "Ligar".
   const [podePedir] = useState(() => !normalizarCodigo(params.c));
@@ -309,7 +318,7 @@ function SemPareamento({
   return (
     <ScrollView contentContainerStyle={s.conteudo} keyboardShouldPersistTaps="handled">
       {/* Primeiro, o que o computador está pedindo agora: um cartão por chamado aberto. */}
-      <CartoesDoChamado chamados={chamados ?? []} atendimento={atendimento} />
+      <CartoesDoChamado chamados={chamados} atendimento={atendimento} />
       {!!avisoDoChamado && (
         <Cartao
           estilo={s.cartaoAviso}
@@ -340,12 +349,7 @@ function SemPareamento({
 
       <Cartao>
         <Text style={s.titulo}>Usar o celular como leitor</Text>
-        <Text style={s.texto}>
-          No computador, entre com o mesmo login e toque em “Abrir no app o leitor de código”:
-          o chamado aparece aqui, com o mesmo sinal da tela de lá. Para o celular de outra
-          pessoa, leia o QR do computador. Depois de ligado, cada peça bipada aqui cai na tela
-          do computador, como no leitor de código de barras.
-        </Text>
+        <Text style={s.texto}>{instrucaoDoLeitor({ servidorComChamado: !servidorSemChamados })}</Text>
       </Cartao>
 
       {!!erro && (
@@ -392,8 +396,9 @@ function SemPareamento({
         </View>
       )}
 
-      {/* Por último: o computador alcança este celular com o app fechado? */}
-      {linhaDasNotificacoes && (
+      {/* Por último: o computador alcança este celular com o app fechado? (Não no servidor
+          antigo: lá não há chamado nenhum para alcançar.) */}
+      {!servidorSemChamados && linhaDasNotificacoes && (
         <View style={s.notificacoes}>
           <Text style={s.notificacoesTexto}>{linhaDasNotificacoes.texto}</Text>
           {linhaDasNotificacoes.botao && (

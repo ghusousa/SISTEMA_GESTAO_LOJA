@@ -4,14 +4,24 @@
  */
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import test from 'node:test';
 
 import {
+  chamadosVivos,
+  chamadoVivo,
+  CONFERENCIA_DOS_CHAMADOS_MS,
+  fimDoChamado,
   haQuantoTempo,
+  instrucaoDoLeitor,
+  intervaloDaConferencia,
   naTelaDoLeitor,
   oQueAFaixaMostra,
+  proximoFim,
   razaoDeContraste,
   ROTA_DO_LEITOR,
+  VIDA_DO_CHAMADO_MS,
 } from './chamadoDoLeitor';
 import { cores } from './tema';
 
@@ -103,4 +113,150 @@ test('a medida de contraste confere com os casos conhecidos', () => {
   assert.equal(razaoDeContraste(cores.demonstracao, '#FFFFFF').toFixed(1), '5.0');
   assert.equal(razaoDeContraste(cores.demonstracao, '#000000').toFixed(1), '4.2');
   assert.throws(() => razaoDeContraste('azul', '#FFFFFF'));
+});
+
+// ------------------------------------------------------------------ o chamado que vence
+
+/** Um chamado de verdade: o servidor dá 5 min (`vence_em`), e vencer não avisa ninguém. */
+const CRIADO = Date.parse('2026-11-19T12:00:00.000Z');
+const VENCE = CRIADO + VIDA_DO_CHAMADO_MS;
+const DE_VERDADE = {
+  id: 41,
+  sinal: '7K3',
+  criado_em: new Date(CRIADO).toISOString(),
+  vence_em: new Date(VENCE).toISOString(),
+};
+
+test('o chamado que venceu sai da faixa, sem esperar aviso do servidor (vencer não muda linha)', () => {
+  const buscadoEm = CRIADO + 2_000; // a lista chegou 2 s depois do chamado
+  assert.deepEqual(oQueAFaixaMostra({ ...LIVRE, chamados: [DE_VERDADE], agora: VENCE - 1, buscadoEm }), {
+    tipo: 'um',
+    chamado: UM,
+    ids: [41],
+  });
+  assert.equal(oQueAFaixaMostra({ ...LIVRE, chamados: [DE_VERDADE], agora: VENCE, buscadoEm }), null, 'no instante do vencimento');
+  assert.equal(oQueAFaixaMostra({ ...LIVRE, chamados: [DE_VERDADE], agora: VENCE + 10_000, buscadoEm }), null);
+  // Sem `buscadoEm`, o relógio daqui é tido por certo.
+  assert.equal(oQueAFaixaMostra({ ...LIVRE, chamados: [DE_VERDADE], agora: VENCE + 1 }), null);
+});
+
+test('com um chamado vencido e outro valendo, a faixa mostra só o que vale (e o ✕ dispensa só ele)', () => {
+  const novo = {
+    id: 42,
+    sinal: '2B9',
+    criado_em: new Date(CRIADO + 4 * 60_000).toISOString(),
+    vence_em: new Date(VENCE + 4 * 60_000).toISOString(),
+  };
+  assert.deepEqual(
+    oQueAFaixaMostra({ ...LIVRE, chamados: [DE_VERDADE, novo], agora: VENCE + 1_000, buscadoEm: CRIADO + 4 * 60_000 + 500 }),
+    { tipo: 'um', chamado: OUTRO, ids: [42] },
+  );
+  // Com o leitor ligado, o "Outro computador está chamando" também não conta o vencido.
+  assert.equal(
+    oQueAFaixaMostra({ ...LIVRE, chamados: [DE_VERDADE], leitorLigado: true, agora: VENCE + 1_000, buscadoEm: CRIADO }),
+    null,
+  );
+});
+
+test('relógio do celular adiantado: o `vence_em` não serve, e vale a vida do chamado desde a busca', () => {
+  // O servidor listou o chamado, mas o relógio daqui já o dava por vencido na hora da busca:
+  // está adiantado. Esconder pelo `vence_em` sumiria com um chamado que ainda vale.
+  const buscadoEm = VENCE + 10 * 60_000; // relógio 10 min adiantado
+  assert.equal(chamadoVivo(DE_VERDADE, { agora: buscadoEm + 1_000, buscadoEm }), true);
+  assert.equal(fimDoChamado(DE_VERDADE, buscadoEm), buscadoEm + VIDA_DO_CHAMADO_MS);
+  // Passada a vida inteira desde a busca, venceu de certeza — com qualquer relógio.
+  assert.equal(chamadoVivo(DE_VERDADE, { agora: buscadoEm + VIDA_DO_CHAMADO_MS, buscadoEm }), false);
+});
+
+test('chamado sem prazo legível fica: quem decide é a próxima conferência do servidor', () => {
+  assert.equal(chamadoVivo({ vence_em: 'amanhã' }, { agora: VENCE * 2 }), true);
+  assert.equal(chamadoVivo({}, { agora: VENCE * 2 }), true);
+  assert.equal(fimDoChamado({ vence_em: null }), null);
+  // Sem `criado_em`, a vida é a do servidor (5 min).
+  assert.equal(fimDoChamado({ vence_em: DE_VERDADE.vence_em }, VENCE + 1), VENCE + 1 + VIDA_DO_CHAMADO_MS);
+});
+
+test('os cartões e a linha do leitor ligado usam só os que valem', () => {
+  const vivo = { ...DE_VERDADE, id: 50, vence_em: new Date(VENCE + 60_000).toISOString() };
+  assert.deepEqual(
+    chamadosVivos([DE_VERDADE, vivo], { agora: VENCE + 1, buscadoEm: CRIADO }).map((c) => c.id),
+    [50],
+  );
+});
+
+test('o relógio da tela anda no vencimento do próximo que vale (um timer só, sem tique por segundo)', () => {
+  const depois = { ...DE_VERDADE, id: 51, vence_em: new Date(VENCE + 90_000).toISOString() };
+  assert.equal(proximoFim([depois, DE_VERDADE], { agora: CRIADO + 1_000, buscadoEm: CRIADO }), VENCE);
+  assert.equal(proximoFim([depois, DE_VERDADE], { agora: VENCE, buscadoEm: CRIADO }), VENCE + 90_000, 'o que já venceu não conta');
+  assert.equal(proximoFim([DE_VERDADE], { agora: VENCE + 1, buscadoEm: CRIADO }), null);
+  assert.equal(proximoFim([], { agora: CRIADO }), null);
+});
+
+test('com chamado na lista, o servidor reconfirma de 30 em 30 s; sem chamado, só os avisos', () => {
+  assert.equal(CONFERENCIA_DOS_CHAMADOS_MS, 30_000);
+  assert.equal(intervaloDaConferencia([DE_VERDADE]), 30_000);
+  assert.equal(intervaloDaConferencia([]), false);
+  assert.equal(intervaloDaConferencia(undefined), false);
+  assert.equal(intervaloDaConferencia(null), false);
+});
+
+test('a lista dos chamados liga a reconferência e devolve o relógio (a faixa decide com ele)', () => {
+  // A regra acima só vale se o hook a usar: sem o refetchInterval, o chamado vencido volta a
+  // ficar na faixa até o próximo aviso — e o resto da suíte e o tsc seguem verdes.
+  const gancho = readFileSync(join(__dirname, '..', 'hooks', 'useChamadosDoLeitor.ts'), 'utf8');
+  assert.match(gancho, /refetchInterval:\s*\(\s*(\w+)\s*\)\s*=>\s*intervaloDaConferencia\(\s*\1\.state\.data\s*\)/);
+  const faixa = readFileSync(join(__dirname, '..', 'components', 'FaixaDoChamado.tsx'), 'utf8');
+  const chamada = /oQueAFaixaMostra\(\{([\s\S]*?)\}\)/.exec(faixa);
+  assert.ok(chamada, 'a faixa não chama mais oQueAFaixaMostra: a guarda não provaria nada');
+  assert.match(chamada[1], /\bagora\b/, 'a faixa decide sem o relógio: o vencido fica nela');
+  assert.match(chamada[1], /\bbuscadoEm\b/);
+});
+
+// ------------------------------------------------------------------ servidor antigo
+
+test('servidor antigo (sem a rota dos chamados): a tela do leitor ensina o QR, não o botão que lá não existe', () => {
+  const antigo = instrucaoDoLeitor({ servidorComChamado: false });
+  assert.match(antigo, /QR/);
+  assert.match(antigo, /código de 6 letras e números/);
+  assert.doesNotMatch(antigo, /Abrir no app o leitor de código|chamado|sinal/i);
+  const novo = instrucaoDoLeitor({ servidorComChamado: true });
+  assert.match(novo, /“Abrir no app o leitor de código”/);
+  assert.match(novo, /mesmo sinal/);
+  assert.match(novo, /QR/, 'o celular de outra pessoa continua pelo QR');
+});
+
+test('a tela do leitor escolhe o texto pelo servidor e esconde a linha das notificações no antigo', () => {
+  const tela = readFileSync(join(__dirname, '..', 'app', '(app)', 'mais', 'leitor.tsx'), 'utf8');
+  assert.match(tela, /instrucaoDoLeitor\(\{\s*servidorComChamado:\s*!servidorSemChamados\s*\}\)/);
+  assert.match(tela, /\{!servidorSemChamados && linhaDasNotificacoes && \(/);
+  assert.match(tela, /const servidorSemChamados = useLeitorStore\(\(e\) => e\.servidorSemChamados\)/);
+});
+
+// ------------------------------------------------------------------ o leitor ligado no iPhone SE
+
+/** O JSX que `LeitorPareado` devolve: do `return (` da função até o fim dela. */
+function retornoDoLeitorPareado(fonte: string): string {
+  const inicio = fonte.indexOf('export function LeitorPareado(');
+  assert.ok(inicio >= 0, 'LeitorPareado sumiu: a guarda não provaria nada');
+  const corpo = fonte.slice(inicio);
+  const ret = corpo.indexOf('return (');
+  return corpo.slice(ret, corpo.indexOf('\n}\n', ret));
+}
+
+test('leitor ligado: entre o cabeçalho e a câmera não entra nada que cresça; os outros chamados ficam na rolagem', () => {
+  // No SE (375 × 667), com 3 chamados abertos do mesmo login, as linhas acima da câmera de 42%
+  // espremiam a lista e mandavam o "Desligar" para fora da tela. Na rolagem, quantos forem, ele
+  // continua ao alcance — e a câmera não pula a cada chamado novo.
+  const jsx = retornoDoLeitorPareado(
+    readFileSync(join(__dirname, '..', 'components', 'LeitorPareado.tsx'), 'utf8'),
+  );
+  const fimDoCabecalho = jsx.indexOf('{!!ate &&');
+  const camera = jsx.indexOf('style={s.cameraArea}');
+  const rolagem = jsx.indexOf('<ScrollView');
+  assert.ok(fimDoCabecalho > 0 && camera > fimDoCabecalho && rolagem > camera, 'a ordem cabeçalho → câmera → rolagem mudou');
+  const entre = jsx.slice(jsx.indexOf('</View>', fimDoCabecalho) + '</View>'.length, jsx.lastIndexOf('<View', camera));
+  assert.doesNotMatch(entre, /<[A-Z]/, `há um componente entre o cabeçalho e a câmera:\n${entre}`);
+  const dentro = jsx.slice(rolagem, jsx.indexOf('</ScrollView>'));
+  assert.match(dentro, /<OutrosChamando\b/, 'os outros chamados não estão na rolagem');
+  assert.match(dentro, /titulo="Desligar"/, 'o "Desligar" saiu da rolagem');
 });

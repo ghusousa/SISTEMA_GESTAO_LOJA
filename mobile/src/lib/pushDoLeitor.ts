@@ -33,6 +33,7 @@ import {
   comportamentoNoPrimeiroPlano,
   ehChamadoDoLeitor,
   lerPermissao,
+  lerPushDoServidor,
   podeReceberPush,
   precisaRegistrarDeNovo,
   pushDoServidor,
@@ -40,6 +41,7 @@ import {
   tokenValido,
   trocaDoTokenDoAparelho,
   type Permissao,
+  type PushDoServidor,
   type SituacaoNaTela,
   type UltimoRegistro,
 } from '@/lib/notificacoes';
@@ -79,7 +81,7 @@ function respondeu(erro: unknown): boolean {
 // ------------------------------------------------------------------ o servidor manda push?
 
 /** `null`: não deu para saber agora (sem rede, servidor fora do ar). */
-async function pushNoServidor(): Promise<boolean | null> {
+async function modoNoServidor(): Promise<PushDoServidor | null> {
   try {
     const configuracao = await queryClient.fetchQuery({
       queryKey: chaves.configuracao,
@@ -87,19 +89,29 @@ async function pushNoServidor(): Promise<boolean | null> {
       staleTime: FRESCOR_DA_CONFIGURACAO_MS,
       retry: false,
     });
-    return pushDoServidor(configuracao);
+    return lerPushDoServidor(configuracao);
   } catch {
     return null;
   }
+}
+
+async function pushNoServidor(): Promise<boolean | null> {
+  const modo = await modoNoServidor();
+  return modo === null ? null : modo === 'ligado';
 }
 
 /**
  * O mesmo, sem ir à rede quando o app já tem a configuração (a faixa e as telas a mantêm, e o
  * tempo real a refaz a cada volta ao app): o toque em "Abrir o leitor" não pode ficar esperando.
  */
-async function pushPeloCache(): Promise<boolean | null> {
+async function modoPeloCache(): Promise<PushDoServidor | null> {
   const emCache = queryClient.getQueryData<ConfiguracaoPublica>(chaves.configuracao);
-  return emCache ? pushDoServidor(emCache) : pushNoServidor();
+  return emCache ? lerPushDoServidor(emCache) : modoNoServidor();
+}
+
+async function pushPeloCache(): Promise<boolean | null> {
+  const modo = await modoPeloCache();
+  return modo === null ? null : modo === 'ligado';
 }
 
 // ------------------------------------------------------------------ registro
@@ -281,14 +293,16 @@ export async function pedirPermissaoNoToque(): Promise<void> {
  */
 export async function situacaoNoLeitor({ pedir }: { pedir: boolean }): Promise<SituacaoNaTela> {
   try {
-    const push = await pushPeloCache();
+    // O modo inteiro: o servidor antigo (sem o campo) não ganha linha nenhuma na tela.
+    const modo = await modoPeloCache();
+    const push = modo === 'ligado';
     const N = modulo();
-    if (push === null || !N || !podeReceberPush({ ...aparelho(), pushNoServidor: push })) {
-      return situacaoNaTela({ ...aparelho(), pushNoServidor: push, permissao: null });
+    if (modo === null || !N || !podeReceberPush({ ...aparelho(), pushNoServidor: push })) {
+      return situacaoNaTela({ ...aparelho(), push: modo, permissao: null });
     }
     let permissao = await permissaoDoSistema(N);
     if (pedir && permissao === 'indefinida') permissao = (await pedirAoSistema(N)) ?? permissao;
-    return situacaoNaTela({ ...aparelho(), pushNoServidor: push, permissao });
+    return situacaoNaTela({ ...aparelho(), push: modo, permissao });
   } catch {
     return 'lendo';
   }

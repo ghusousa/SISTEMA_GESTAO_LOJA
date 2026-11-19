@@ -15,6 +15,7 @@ import {
   ehChamadoDoLeitor,
   instanteDaNotificacao,
   lerPermissao,
+  lerPushDoServidor,
   MAX_TOKEN,
   podeReceberPush,
   PRAZO_DA_RESPOSTA_MS,
@@ -132,20 +133,49 @@ test('servidor sem push (E1): registra sem token mesmo com a permissão dada', (
 
 test('a linha da tela do leitor, estado por estado', () => {
   const ios = { plataforma: 'ios', expoGo: false };
-  assert.equal(situacaoNaTela({ ...ios, pushNoServidor: null, permissao: null }), 'lendo');
-  assert.equal(situacaoNaTela({ ...ios, pushNoServidor: false, permissao: null }), 'servidor-sem-push');
-  assert.equal(situacaoNaTela({ ...ios, pushNoServidor: false, permissao: 'liberada' }), 'servidor-sem-push');
-  assert.equal(situacaoNaTela({ ...ios, pushNoServidor: true, permissao: null }), 'lendo');
-  assert.equal(situacaoNaTela({ ...ios, pushNoServidor: true, permissao: 'liberada' }), 'liberada');
-  assert.equal(situacaoNaTela({ ...ios, pushNoServidor: true, permissao: 'negada' }), 'abrir-ajustes');
-  assert.equal(situacaoNaTela({ ...ios, pushNoServidor: true, permissao: 'indefinida' }), 'pedir');
+  assert.equal(situacaoNaTela({ ...ios, push: null, permissao: null }), 'lendo');
+  assert.equal(situacaoNaTela({ ...ios, push: 'desligado', permissao: null }), 'servidor-sem-push');
+  assert.equal(situacaoNaTela({ ...ios, push: 'desligado', permissao: 'liberada' }), 'servidor-sem-push');
+  assert.equal(situacaoNaTela({ ...ios, push: 'ligado', permissao: null }), 'lendo');
+  assert.equal(situacaoNaTela({ ...ios, push: 'ligado', permissao: 'liberada' }), 'liberada');
+  assert.equal(situacaoNaTela({ ...ios, push: 'ligado', permissao: 'negada' }), 'abrir-ajustes');
+  assert.equal(situacaoNaTela({ ...ios, push: 'ligado', permissao: 'indefinida' }), 'pedir');
   for (const aparelho of [
     { plataforma: 'android', expoGo: false },
     { plataforma: 'ios', expoGo: true },
     { plataforma: 'web', expoGo: false },
   ]) {
-    assert.equal(situacaoNaTela({ ...aparelho, pushNoServidor: true, permissao: null }), 'sem-suporte');
+    assert.equal(situacaoNaTela({ ...aparelho, push: 'ligado', permissao: null }), 'sem-suporte');
   }
+});
+
+test('o modo do push: campo AUSENTE é servidor antigo, diferente de `false` (servidor novo sem push)', () => {
+  assert.equal(lerPushDoServidor({ notificacoes_push: true }), 'ligado');
+  assert.equal(lerPushDoServidor({ notificacoes_push: false }), 'desligado');
+  // Veio, mas torto: o servidor é novo, e o push não está ligado.
+  for (const valor of ['true', 1, null, undefined]) {
+    assert.equal(lerPushDoServidor({ notificacoes_push: valor }), 'desligado', String(valor));
+  }
+  assert.equal(lerPushDoServidor({}), 'servidor-antigo');
+  assert.equal(lerPushDoServidor({ nome: 'Loja', segmento: 'ROUPAS' } as { notificacoes_push?: unknown }), 'servidor-antigo');
+});
+
+test('servidor antigo (sem o campo): a tela do leitor não promete o chamado — nenhuma linha', () => {
+  // App novo, VPS ainda sem a ADR-47: lá o computador nem tem o botão do chamado.
+  const ios = { plataforma: 'ios', expoGo: false };
+  for (const aparelho of [ios, { plataforma: 'android', expoGo: false }, { plataforma: 'web', expoGo: false }]) {
+    for (const permissao of [null, 'liberada', 'negada', 'indefinida'] as const) {
+      const situacao = situacaoNaTela({ ...aparelho, push: lerPushDoServidor({}), permissao });
+      assert.equal(situacao, 'servidor-antigo', `${aparelho.plataforma}/${permissao}`);
+      assert.equal(avisoDasNotificacoes(situacao), null);
+    }
+  }
+  // O servidor novo com o push desligado continua dizendo a verdade: com o app aberto, chega.
+  assert.equal(
+    avisoDasNotificacoes(situacaoNaTela({ ...ios, push: lerPushDoServidor({ notificacoes_push: false }), permissao: null }))
+      ?.texto,
+    'O chamado do computador aparece aqui com o app aberto.',
+  );
 });
 
 test('o texto da linha: recusada leva aos Ajustes; o resto só informa; pedir e lendo não mostram nada', () => {
@@ -236,3 +266,4 @@ test('volta ao app: registra de novo só quando há motivo', () => {
   assert.equal(precisaRegistrarDeNovo({ ...igual, permissao: 'negada' }), true, 'foi aos Ajustes');
   assert.equal(precisaRegistrarDeNovo({ ...igual, push: null, permissao: null }), false, 'não saber não é motivo');
 });
+
