@@ -154,7 +154,10 @@ contrato de `PUT /produtos/{id}/foto` são os mesmos em todos os casos.
   ligado), no máximo 4 MB: a função recusa corpo acima de 4,5 MB com o 413
   `FUNCTION_PAYLOAD_TOO_LARGE` dela, sem o JSON da API (doc: *functions/limitations*, "Request
   body size"); os 0,5 MB que sobram são o envelope do multipart. O `limite_mb` do 422 diz o teto
-  que vale. A web e o app já encolhem a foto para 100 a 300 KB antes de subir.
+  que vale. A web e o app já encolhem a foto para 100 a 300 KB antes de subir. Na demo da
+  instalação, 409 `DEMONSTRACAO_SEM_ESPACO` acima do teto: o da pasta de fotos inteira
+  (`DEMO_FOTOS_MAX_BYTES`, 200 MB por padrão, ajustável no `.env`), que a renovação esvazia
+  (ADR-46).
 - **Login antes do corpo**: a rota não declara o arquivo (`File()`). Com ele, o FastAPI lia o
   multipart inteiro — e o Starlette gravava o arquivo num temporário — ANTES de resolver as
   dependências: um envio sem login era gravado todo para só então dar 401. O crachá
@@ -2082,8 +2085,11 @@ navegador: as duas dividem a mesma origem.
   o `FotosDaDemonstracao`: antes de gravar ele soma o que `MEDIA_DIR/produtos` OCUPA — o bloco
   inteiro de cada arquivo, senão milhões de "fotos" de 9 bytes passariam pelo teto enchendo o disco
   e os inodes — e recusa com 409 `DEMONSTRACAO_SEM_ESPACO` a foto que passaria de
-  `DEMO_FOTOS_MAX_BYTES` (200 MB). Medir e gravar são um passo só (`asyncio.Lock` do processo; a
-  `api-demo` é um processo só — com N, o teto passaria de no máximo N-1 fotos). A renovação esvazia
+  `DEMO_FOTOS_MAX_BYTES` — 200 MB por padrão; o compose passa à `api-demo` o valor do `.env`
+  (`${DEMO_FOTOS_MAX_BYTES:-209715200}`: vazio não vira número e a demo não subiria), e o valor
+  novo vale depois de recriar a `api-demo` (`./demo.sh --ligar`). Medir e gravar são um passo só
+  (`asyncio.Lock` do processo; a `api-demo` é um processo só — com N, o teto passaria de no máximo
+  N-1 fotos). A renovação esvazia
   a pasta (abaixo), e o teto volta a zero toda madrugada. Na loja e no Blob, nada disso.
 - **A API sob o prefixo.** `LOJA_DEMONSTRACAO=1` liga `settings.demonstracao`; `PREFIXO=/demo`
   (vazio, ou `/[a-z0-9-]+` sem barra no fim — o resto é recusado no boot, nunca "consertado": um
@@ -2245,7 +2251,7 @@ Erros: `{"code": "...", "message": "...", "detail": {...}}`.
 | `LEITOR_CODIGO_INVALIDO` | 404 | código do leitor pelo celular inexistente, vencido, já aceito por outro ou encerrado — a MESMA resposta (ADR-43) |
 | `LEITOR_DESLIGADO` | 409 | bipe num pareamento que não está ATIVO; `detail.status` diz qual (ADR-43) |
 | `LEITOR_FILA_CHEIA` | 409 | 100 bipes esperando o computador retirar (ADR-43) |
-| `DEMONSTRACAO_SEM_ESPACO` | 409 | só na demonstração da instalação (`settings.demonstracao`, foto no disco): a foto passaria do teto da pasta de fotos (`DEMO_FOTOS_MAX_BYTES`, 200 MB); `detail.limite_mb`. A foto de antes fica, e a renovação da madrugada esvazia a pasta (ADR-46) |
+| `DEMONSTRACAO_SEM_ESPACO` | 409 | só na demonstração da instalação (`settings.demonstracao`, foto no disco): a foto passaria do teto da pasta de fotos (`DEMO_FOTOS_MAX_BYTES`: 200 MB por padrão, ajustável no `.env`, vale depois de recriar a `api-demo`); `detail.limite_mb`. A foto de antes fica, e a renovação da madrugada esvazia a pasta (ADR-46) |
 | `CONTA_DE_DEMONSTRACAO` | 409 | numa demonstração — a Vercel ou a que sobe com a loja em `/demo` (`conta_demo_protegida`) —, excluir, rebaixar, desativar ou trocar a senha da conta `DEMO_ADMIN_EMAIL` (ADR-45, ADR-46) — antes de conferir a senha. Na loja de verdade, nunca |
 | `DEMONSTRACAO_FORA_DO_AR` | 503 | do PROXY, não da API: `/demo/api/*` com a demonstração desligada ou subindo. Corpo `{"code":"DEMONSTRACAO_FORA_DO_AR","message":"A demonstração está desligada ou começando. Tente de novo em um minuto.","detail":{}}`; o resto de `/demo/*` recebe a mesma frase numa página. Nunca a loja no lugar (ADR-46) |
 
@@ -2283,7 +2289,7 @@ com o valor atual. No `PATCH`, ausente = não mexe, `meta_diaria: null` tira a m
 | GET | `/produtos` | todos | `?q=&categoria_id=` · `q` acha por nome (sem acento, como `/variantes`) ou código da grade; custo só para quem tem VER_DINHEIRO |
 | POST | `/produtos` | A/V | produto + `variantes[]` (com `estoque_inicial?` → gera ENTRADA na mesma transação) |
 | GET/PATCH/DELETE | `/produtos/{id}` | A/V · A · A | detalhe traz variantes com saldo; DELETE só com saldo zero, conferido com grade e saldos travados (ADR-30) |
-| PUT | `/produtos/{id}/foto` | A/V | multipart, campo `arquivo` (um arquivo só; mais de um, 400), lido só DEPOIS do login (sem login, 401 sem ler o envio); no disco salva em `media/produtos/` (caminho relativo), com `BLOB_READ_WRITE_TOKEN` no Vercel Blob público (URL absoluta, a antiga é apagada se for do mesmo ambiente). Teto 5 MB (4 MB na Vercel); 503 `FOTO_NAO_GUARDADA` se não guardou, inclusive na Vercel sem Blob (§2.2, ADR-42) |
+| PUT | `/produtos/{id}/foto` | A/V | multipart, campo `arquivo` (um arquivo só; mais de um, 400), lido só DEPOIS do login (sem login, 401 sem ler o envio); no disco salva em `media/produtos/` (caminho relativo), com `BLOB_READ_WRITE_TOKEN` no Vercel Blob público (URL absoluta, a antiga é apagada se for do mesmo ambiente). Teto 5 MB (4 MB na Vercel); na demo da instalação, 409 `DEMONSTRACAO_SEM_ESPACO` acima do teto da pasta de fotos (`DEMO_FOTOS_MAX_BYTES`, ADR-46); 503 `FOTO_NAO_GUARDADA` se não guardou, inclusive na Vercel sem Blob (§2.2, ADR-42) |
 | POST | `/produtos/{id}/variantes` | A/V | adiciona variante a produto existente |
 | PATCH/DELETE | `/variantes/{id}` | A | DELETE só com saldo zero, conferido com peça e saldo travados (ADR-30) |
 | GET | `/versao` | A/V | commit instalado, quando foi conferido e se há versão nova; lê `docker/estado/versao.json` |
