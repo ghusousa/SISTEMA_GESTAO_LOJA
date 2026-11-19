@@ -304,6 +304,14 @@ export const ROTAS = {
       }
     }
   },
+  "GET /v1/territories": {
+    "parametros": {
+      "fields[territories]": {},
+      "limit": {
+        "maximo": 200
+      }
+    }
+  },
   "POST /v2/appAvailabilities": {
     "corpo": "AppAvailabilityV2CreateRequest"
   },

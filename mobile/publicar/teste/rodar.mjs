@@ -326,8 +326,10 @@ await cenario(
     conferir(NAO_SAO_PERGUNTAS.every((p) => !(p in idade)), 'kidsAgeBand e os ajustes manuais de idade ficaram intocados');
     conferir(idade.userGeneratedContent === false && idade.messagingAndChat === false && idade.gunsOrOtherWeapons === 'NONE', 'perguntas novas respondidas (conteúdo de usuário, conversa, armas...)');
     conferir(
-      JSON.stringify(e.disponibilidadeCriada) === JSON.stringify({ availableInNewTerritories: false, territorios: [{ id: 'BRA', available: true }] }),
-      'disponibilidade criada: só Brasil, sem países novos',
+      e.disponibilidadeCriada?.availableInNewTerritories === false &&
+        e.disponibilidadeCriada.territorios.length === 3 &&
+        e.disponibilidadeCriada.territorios.every((t) => t.available === (t.id === 'BRA')),
+      'disponibilidade criada com TODOS os territórios (seguindo a paginação): só o Brasil à venda, sem países novos',
     );
     const versao = e.versoes.find((v) => v.id === 'VER1');
     conferir(versao?.versionString === VERSAO && versao?.releaseType === 'AFTER_APPROVAL', `versão ${VERSAO} do app.json, liberada depois de aprovada`);
@@ -717,7 +719,7 @@ if (!REAIS) {
     conferir(/⚠ Capturas iPhone 6,9" \(extra\) falharam/.test(saida), 'aviso claro do 6,9"');
     conferir(!conjuntoDoTipo(e, 'APP_IPHONE_67') && e.conjuntosApagados.length === 1, 'o conjunto 6,9" pela metade foi tirado');
     conferirConjunto(conferir, e, 'APP_IPHONE_65', join(baseSintetica, 'iphone-6.5'));
-    conferir(e.disponibilidadeCriada?.territorios?.[0]?.id === 'BRA', 'disponibilidade criada também quando a Apple responde "sem dado" (200 com null)');
+    conferir(e.disponibilidadeCriada?.territorios?.find((t) => t.id === 'BRA')?.available === true, 'disponibilidade criada também quando a Apple responde "sem dado" (200 com null)');
     conferir(e.envios[0]?.estado === 'WAITING_FOR_REVIEW', 'ENVIADO para revisão mesmo assim');
   });
 

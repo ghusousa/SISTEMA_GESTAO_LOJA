@@ -1762,8 +1762,11 @@ sozinho e vira aviso; pergunta que a Apple criar depois da 4.6 (vieram duas em 1
 volta em branco e vira pendência com o nome, e a recusa do envio aparece inteira
 (`associatedErrors`) — a rodada seguinte retoma o envio que ficou aberto; **direitos de
 conteúdo** = não usa conteúdo de terceiros; **disponibilidade** só no Brasil
-(`POST /v2/appAvailabilities`, território em `included` com id local `${...}`,
-`availableInNewTerritories: false` — app em pt-BR, com PIX e NFC-e) e só quando a conta ainda
+(`POST /v2/appAvailabilities` com TODOS os territórios de `GET /v1/territories` em `included`,
+cada um com id local `${...}` e `available` só no Brasil — a Apple recusa a criação que traz só
+os que ficam à venda (409 "expects an included resource ... id 'ARG'", visto na 1ª rodada real),
+e a Apple de mentira agora exige o mesmo; `availableInNewTerritories: false` — app em pt-BR, com
+PIX e NFC-e) e só quando a conta ainda
 não tem: a que existe fica como está; **capturas em dois conjuntos**: 6,5" (`APP_IPHONE_65`,
 1242×2688) OBRIGATÓRIO — em ago/2026 o formulário só aceitou ele — e 6,9" (`APP_IPHONE_67`,
 1320×2868) extra: pasta ausente, imagem fora do padrão ou falha viram aviso, e o conjunto pela
