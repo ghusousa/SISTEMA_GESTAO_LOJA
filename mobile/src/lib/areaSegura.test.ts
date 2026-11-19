@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import test from 'node:test';
 
 import {
@@ -122,4 +124,37 @@ test('teclado debaixo das faixas: o KeyboardAvoidingView desconta a altura delas
   assert.equal(deslocamentoDoTeclado(44.2), 45);
   assert.equal(deslocamentoDoTeclado(Number.NaN), 0);
   assert.equal(deslocamentoDoTeclado(-1), 0);
+});
+
+/** Cada abertura `<KeyboardAvoidingView ...>` do arquivo — até o `>` fora de `{...}` —, sem comentário. */
+function aberturasDoKav(fonte: string): string[] {
+  const aberturas: string[] = [];
+  for (let i = fonte.indexOf('<KeyboardAvoidingView'); i !== -1; i = fonte.indexOf('<KeyboardAvoidingView', i + 1)) {
+    let chaves = 0;
+    let fim = i;
+    for (; fim < fonte.length && !(fonte[fim] === '>' && chaves === 0); fim += 1) {
+      if (fonte[fim] === '{') chaves += 1;
+      else if (fonte[fim] === '}') chaves -= 1;
+    }
+    aberturas.push(fonte.slice(i, fim + 1).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, ''));
+  }
+  return aberturas;
+}
+
+test('a entrada liga o desconto: o KeyboardAvoidingView de (auth)/login.tsx passa a altura medida das faixas', () => {
+  // A conta de cima só vale se a tela a usar. Sem o offset na entrada, a demonstração volta a
+  // esconder atrás do teclado a altura da faixa — e o resto da suíte e o tsc seguem verdes.
+  // A tela "Conectar à loja" não entra: no iOS ela é folha modal nativa, fora das faixas.
+  const login = readFileSync(join(__dirname, '..', 'app', '(auth)', 'login.tsx'), 'utf8');
+  const kavs = aberturasDoKav(login);
+  assert.ok(kavs.length > 0, 'a entrada não tem mais KeyboardAvoidingView: a guarda não provaria nada');
+  for (const kav of kavs) {
+    const offset = /\bkeyboardVerticalOffset=\{\s*deslocamentoDoTeclado\(\s*([A-Za-z_$][\w$]*)\s*\)\s*\}/.exec(kav);
+    assert.ok(offset, `KeyboardAvoidingView da entrada sem keyboardVerticalOffset={deslocamentoDoTeclado(...)}:\n${kav}`);
+    assert.match(
+      login,
+      new RegExp(`\\bconst\\s+${offset[1].replaceAll('$', '\\$')}\\s*=\\s*useAlturaDasFaixas\\(\\s*\\)`),
+      `${offset[1]} não é a altura medida das faixas (useAlturaDasFaixas())`,
+    );
+  }
 });

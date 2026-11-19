@@ -297,8 +297,11 @@ publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com as telas do
   tela. Barra de abas: `medidasDaBarraDeAbas` (`lib/areaSegura.ts`, com teste — `height` fixa faz
   o React Navigation esquecer o indicador de início). Rodapé, botão flutuante e pé de Modal de
   tela cheia: `useRespiroDeBaixo()`; topo de Modal de tela cheia: `useRespiroDeCima()`
-  (`components/ui.tsx`). O export web não tem recorte: a auditoria emula a área segura pelo
-  DevTools (`Emulation.setSafeAreaInsetsOverride`).
+  (`components/ui.tsx`). `KeyboardAvoidingView` de tela debaixo das faixas do topo (a entrada):
+  `keyboardVerticalOffset={deslocamentoDoTeclado(alturaDasFaixas)}`, com a altura medida por
+  `useAlturaDasFaixas()` (a guarda em `lib/areaSegura.test.ts` lê a `login.tsx`); folha modal
+  nativa (a do servidor) e `<Modal>` de tela cheia não descontam. O export web não tem recorte:
+  a auditoria emula a área segura pelo DevTools (`Emulation.setSafeAreaInsetsOverride`).
 - Frase nunca leva `textTransform: 'capitalize'` (vira "Novembro De 2026"): `primeiraMaiuscula`
   e `plural` de `lib/texto.ts`, no lugar do "peça(s)".
 - **Barra de status**: a raiz é CLARA (texto branco sobre o cabeçalho azul). Tela clara sem
