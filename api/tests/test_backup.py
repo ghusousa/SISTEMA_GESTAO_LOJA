@@ -510,6 +510,55 @@ async def test_faxina_da_nuvem_so_apaga_as_copias_dela(
     assert any(n.startswith("loja-nuvem-") for n in ficaram)  # a de agora fica
 
 
+#: O rclone que não consegue enviar: anota para onde vai o stderr dele (o arquivo que o `2>`
+#: do backup.sh abriu) e falha como o Drive cheio falha. O resto é o rclone de mentira.
+MOTIVO_DO_DRIVE = "googleapi: Error 403: The user's Drive storage quota has been exceeded."
+RCLONE_QUE_NAO_ENVIA = rf"""#!/usr/bin/env bash
+if [ "$1" = --config ] && [ "$3" = copyto ]; then
+    readlink /proc/self/fd/2 > "$FAKE_CTR/stderr-do-rclone"
+    echo "ERROR : Attempt 3/3 failed with 1 errors" >&2
+    echo "Failed to copyto: {MOTIVO_DO_DRIVE}" >&2
+    exit 1
+fi
+exec "$(dirname "$0")/rclone-de-mentira" "$@"
+"""
+
+
+@precisa_da_maquina
+@pytest.mark.skipif(not Path("/proc/self/fd").is_dir(), reason="lê o stderr do rclone no /proc")
+async def test_envio_que_falha_diz_o_motivo_sem_caminho_fixo_no_tmp(
+    session: AsyncSession, tmp_path: Path
+) -> None:
+    """O motivo ia para `/tmp/rclone.err`, um caminho fixo e de todos: criado antes por outro
+    usuário (o root do timer, uma rodada dos testes), o `2>` falhava, e o script dizia "NÃO
+    consegui enviar para o Drive" com o rclone bom. O motivo vai a um temporário do próprio
+    processo, que some no fim — e continua chegando ao terminal e à tela."""
+    await _ligar_backup(session)
+    temporarios = tmp_path / "tmp"
+    temporarios.mkdir()
+    env = _maquina(tmp_path, TMPDIR=str(temporarios))
+    rclone = tmp_path / "bin" / "rclone"
+    rclone.rename(tmp_path / "bin" / "rclone-de-mentira")
+    rclone.write_text(RCLONE_QUE_NAO_ENVIA)
+    rclone.chmod(0o755)
+
+    r = _backup_sh(tmp_path, env, "--nuvem")
+
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "NÃO consegui enviar para o Drive" in r.stderr
+    assert MOTIVO_DO_DRIVE in r.stdout
+    destino = Path((tmp_path / "ctr" / "stderr-do-rclone").read_text().strip())
+    assert destino != Path("/tmp/rclone.err")
+    assert destino.parent == temporarios.resolve(), destino
+    assert not destino.exists()  # e não fica para trás
+    linha = (
+        await session.execute(text("SELECT ultimo_ok, ultimo_erro FROM backup_config"))
+    ).one()
+    assert linha.ultimo_ok is False
+    assert linha.ultimo_erro.startswith("Não subiu para o Drive: ")
+    assert MOTIVO_DO_DRIVE in linha.ultimo_erro
+
+
 @precisa_da_maquina
 async def test_restaurar_copia_de_antes_de_uma_migration_deixa_a_api_subir(
     tmp_path: Path, banco_descartavel: str

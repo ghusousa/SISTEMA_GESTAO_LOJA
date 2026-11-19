@@ -538,9 +538,14 @@ copiar_para_nuvem() {
     ok "cópia gerada ($(du -h "$arquivo" | cut -f1)) — e ela abre"
 
     # ---------------------------------------------------------------- para o Drive
+    # O motivo de uma falha do rclone vai para um temporário DESTE processo, que some na saída.
+    # Num caminho fixo (`/tmp/rclone.err`), o arquivo era de quem o criou primeiro: criado por
+    # outro usuário, o `2>` falhava, e a cópia saía "NÃO consegui enviar" com o rclone bom.
+    ERROS_DO_RCLONE="$(mktemp "${TMPDIR:-/tmp}/loja-rclone.XXXXXX")"
+    trap 'rm -f "$ERROS_DO_RCLONE"' EXIT
     if ! rclone --config "$CONF_RCLONE" copyto "$arquivo" "loja:$pasta/loja-$carimbo.dump" \
-            2>/tmp/rclone.err; then
-        local motivo; motivo="$(tail -2 /tmp/rclone.err 2>/dev/null | tr '\n' ' ')"
+            2>"$ERROS_DO_RCLONE"; then
+        local motivo; motivo="$(tail -2 "$ERROS_DO_RCLONE" 2>/dev/null | tr '\n' ' ')"
         anotar_backup false "$bytes" NULL "Não subiu para o Drive: ${motivo:-erro do rclone}"
         erro "NÃO consegui enviar para o Drive. A cópia só existe neste servidor."
         printf '  %s\n' "$motivo"
