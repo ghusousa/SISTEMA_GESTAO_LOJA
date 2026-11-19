@@ -14,6 +14,9 @@ O que se prende:
   vendas para hoje (igual à primeira carga) e levando as fotos de quem testou, põe preparo e
   renovação em fila — e nunca imprime senha nem a URL do banco;
 - com a conta inválida no .env, a renovação para ANTES de zerar: a demo de ontem fica;
+- a renovação trava primeiro as portas da API (`login_attempts`, `refresh_tokens`, `users`),
+  na ordem em que ela as pega: a requisição que já passou por uma porta termina sem impasse,
+  e o TRUNCATE conclui na primeira tentativa;
 - o TRUNCATE que perde a vez para a API (impasse, tabela ocupada) volta inteiro e se repete.
 
 O banco da demo daqui imita o da instalação: um papel SEM superusuário, dono só do próprio
@@ -255,6 +258,28 @@ async def _consultar(sql: str, *args):
         return await conexao.fetch(sql, *args)
     finally:
         await conexao.close()
+
+
+async def _na_demo() -> asyncpg.Connection:
+    """Uma conexão no banco da demo, do lado de fora (a API, quem vigia)."""
+    return await asyncpg.connect(
+        host=_BASE.host, port=_BASE.port or 5432, user=_BASE.username,
+        password=_BASE.password, database=BANCO_DA_DEMO,
+    )
+
+
+async def _esperar_a_trava(vigia: asyncpg.Connection, tabela: str, acabou) -> None:
+    """Até a renovação parar na trava de `tabela` (que a requisição segura)."""
+    prazo = time.monotonic() + 120
+    while not await vigia.fetchval(
+        "SELECT count(*) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation "
+        "WHERE l.database = (SELECT oid FROM pg_database WHERE datname = current_database()) "
+        "AND c.relname = $1 AND l.mode = 'AccessExclusiveLock' AND NOT l.granted",
+        tabela,
+    ):
+        assert not acabou(), f"a renovação acabou sem esperar a trava de {tabela}"
+        assert time.monotonic() < prazo, f"a renovação nunca parou na trava de {tabela}"
+        await asyncio.sleep(0.01)
 
 
 #: O retrato da demo: o que a carga gravou, tabela por tabela, e os números que somam.
@@ -539,6 +564,104 @@ async def test_zerar_repete_no_impasse_e_desiste_sem_zerar(
     with pytest.raises(DBAPIError):
         await demonstracao._zerar(pausa_s=0.001)
     assert len(esperas) == 1
+
+
+async def test_renovacao_com_a_requisicao_no_cracha_conclui_sem_impasse(
+    banco_da_demo: str, tmp_path: Path
+) -> None:
+    """Toda requisição com login pega `users` primeiro (o crachá, `get_current_user`) e só
+    depois o que veio ler, segurando as travas até acabar. O TRUNCATE travava em ordem
+    alfabética e chegava a `users` quase no fim, já com `products` na mão: a requisição pedia
+    `products`, e o Postgres derrubava um dos dois — uma tentativa perdida (40P01) toda vez e,
+    quando a vítima era a requisição, um 500. Com as portas da API travadas primeiro, ele espera
+    em `users` sem segurar o que ela vai ler: a requisição termina, e a renovação conclui na
+    primeira tentativa."""
+    await _marcar_o_banco()
+    feito = _rodar("preparar-demonstracao", _da_demo(), tmp_path)
+    assert feito.returncode == 0, _sem_segredo(feito)[-3000:]
+    retrato = tuple((await _consultar(RETRATO))[0])
+
+    requisicao, vigia = await _na_demo(), await _na_demo()
+    try:
+        transacao = requisicao.transaction()
+        await transacao.start()
+        await requisicao.fetchval("SELECT count(*) FROM users")  # o crachá
+        processo = await asyncio.create_subprocess_exec(
+            sys.executable, "-m", "app.cli", "renovar-demonstracao",
+            cwd=PASTA_API, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env={
+                # Espera longa: aqui, só um impasse faria o TRUNCATE perder a vez.
+                **_da_demo(DEMO_RENOVAR_ESPERA_DA_TRAVA_MS="60000"),
+                "MEDIA_DIR": str(tmp_path / "media"),
+            },
+        )
+        await _esperar_a_trava(vigia, "users", lambda: processo.returncode is not None)
+        # O que a requisição veio ler (a lista de produtos), com o TRUNCATE parado na porta.
+        lidos = await asyncio.wait_for(requisicao.fetchval(
+            "SELECT count(*) FROM products p LEFT JOIN categories c ON c.id = p.category_id"
+        ), timeout=30)
+        assert lidos == retrato[1]
+        await transacao.rollback()  # a requisição acabou
+        saida, erros = await asyncio.wait_for(processo.communicate(), timeout=600)
+    finally:
+        await requisicao.close()
+        await vigia.close()
+    renovou = subprocess.CompletedProcess([], processo.returncode, saida.decode(), erros.decode())
+    texto = _sem_segredo(renovou)
+    assert renovou.returncode == 0, texto[-3000:]
+    perdeu_a_vez = [
+        linha for linha in texto.splitlines() if "tentando de novo" in linha or "40P01" in linha
+    ]
+    assert perdeu_a_vez == []
+    assert "demonstração semeada" in renovou.stdout
+    assert tuple((await _consultar(RETRATO))[0]) == retrato
+
+
+#: Como a API entra no banco: as tabelas na ordem em que cada caminho as pega, segurando cada
+#: trava até o fim da transação (`core/deps.py`, `modules/auth/service.py`).
+_ENTRADAS_DA_API = {
+    # o crachá (`get_current_user`) e depois a lista de produtos
+    "requisição com login": (
+        "users", "products", "categories", "product_variants", "stock_balances"
+    ),
+    # conta as tentativas, confere a senha, faz a faxina (refresh vencido, diário velho), grava
+    "login": ("login_attempts", "users", "refresh_tokens", "audit_log"),
+    # trava o refresh token e só então lê a conta
+    "renovação da sessão": ("refresh_tokens", "users"),
+}
+
+
+async def test_zerar_trava_as_portas_na_ordem_em_que_a_api_entra(banco_da_demo: str) -> None:
+    """Para cada caminho da API: a requisição pega a primeira tabela, o TRUNCATE chega e para
+    na trava dela, e a requisição segue pegando as outras sem esperar por ele; quando ela
+    acaba, ele zera na primeira tentativa. Prende a ordem das portas: em ordem alfabética,
+    `users` vinha depois de `products` e `audit_log` antes de `login_attempts` (o crachá e o
+    login se abraçavam com ele); `users` antes de `login_attempts` abraçaria o login, e
+    `refresh_tokens` depois de `users`, a renovação da sessão."""
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from app import demonstracao
+
+    await _marcar_o_banco()
+    engine = create_async_engine(_url_da_demo())
+    requisicao, vigia = await _na_demo(), await _na_demo()
+    try:
+        for caminho, tabelas in _ENTRADAS_DA_API.items():
+            transacao = requisicao.transaction()
+            await transacao.start()
+            await requisicao.execute(f"SELECT 1 FROM {tabelas[0]} LIMIT 1")
+            zerar = asyncio.create_task(demonstracao._zerar_uma_vez(engine, 60_000))
+            await _esperar_a_trava(vigia, tabelas[0], zerar.done)
+            for tabela in tabelas[1:]:
+                await asyncio.wait_for(
+                    requisicao.execute(f"SELECT 1 FROM {tabela} LIMIT 1"), timeout=30
+                )
+            await transacao.rollback()
+            assert await asyncio.wait_for(zerar, timeout=60) > 0, caminho
+    finally:
+        await requisicao.close()
+        await vigia.close()
+        await engine.dispose()
 
 
 async def test_preparo_espera_a_renovacao_que_esta_rodando(

@@ -473,11 +473,22 @@ async def _dar_nome_a_loja() -> None:
         await engine.dispose()
 
 
-#: Quando o TRUNCATE da renovação tenta de novo (ADR-46). Ele trava as tabelas uma a uma, em
-#: ordem alfabética (`categories` antes de `products`), e a API que está atendendo trava na
-#: ordem da consulta (`products JOIN categories`): cada um espera o outro, e o Postgres
-#: derruba um dos dois (impasse) — ou a leitura demora mais que a espera da trava. Nos dois
-#: casos a transação inteira volta: nada foi zerado, e repetir é seguro.
+#: As portas da API: por onde toda requisição entra no banco, na ordem em que ela as pega (e
+#: segura até o fim da transação). O login conta as tentativas (`login_attempts`) antes de ler
+#: a conta; a renovação da sessão trava o refresh token (`refresh_tokens`) antes de ler a conta;
+#: o resto passa pelo crachá (`get_current_user`, `users`) e só depois lê o que veio buscar. O
+#: TRUNCATE da renovação trava as tabelas uma a uma, e estas vão primeiro, nesta ordem: a
+#: requisição que já passou por uma porta termina sem esbarrar nele (ele ainda não pegou nada
+#: do que ela vai ler), e a que chega depois espera na porta sem segurar nada. Em ordem
+#: alfabética, `users` vinha quase no fim: com o crachá na mão, a requisição pedia `products`,
+#: que o TRUNCATE já tinha, e o Postgres derrubava um dos dois — às vezes a requisição, com 500.
+PORTAS_DA_API = ("login_attempts", "refresh_tokens", "users")
+#: Quando o TRUNCATE da renovação tenta de novo (ADR-46): impasse com quem entrou sem passar
+#: por uma porta (a transação que uma rota abre depois de um commit no meio da requisição, como
+#: a da foto depois do login) ou espera além do prazo da trava — a leitura lenta, ou a releitura
+#: de uma mutação enquanto a auditoria grava o diário por outra conexão (a borda espera `users`
+#: atrás do TRUNCATE, que espera a releitura: um ciclo que o Postgres não vê). Nos dois casos a
+#: transação inteira volta: nada foi zerado, e repetir é seguro.
 _PERDEU_A_VEZ = {
     "40P01": "impasse com uma leitura da API",
     "55P03": "tabela ocupada pela API além da espera",
@@ -487,7 +498,8 @@ TENTATIVAS_DO_ZERAR = 5
 PAUSA_DO_ZERAR_S = 1.0
 #: Quanto cada trava de tabela pode esperar (`lock_timeout`), em milissegundos. Sem prazo, o
 #: TRUNCATE ficaria na fila atrás de uma leitura lenta — e, atrás dele, a API inteira.
-#: `DEMO_RENOVAR_ESPERA_DA_TRAVA_MS` troca (os testes encurtam).
+#: `DEMO_RENOVAR_ESPERA_DA_TRAVA_MS` troca, mas só os testes a usam: na instalação ela não chega
+#: à `api-demo` (o `environment` dela no compose é escrito à mão, e o `demo.sh` não passa `-e`).
 ESPERA_DA_TRAVA_MS = 5000
 
 
@@ -512,8 +524,9 @@ def _espera_da_trava_ms() -> int:
 async def _zerar(
     *, tentativas: int = TENTATIVAS_DO_ZERAR, pausa_s: float = PAUSA_DO_ZERAR_S
 ) -> int:
-    """TRUNCATE de todas as tabelas do schema public menos `alembic_version`, repetido quando
-    perde a vez para a API que está atendendo (`_PERDEU_A_VEZ`).
+    """TRUNCATE de todas as tabelas do schema public menos `alembic_version`, com as portas da
+    API travadas primeiro (`PORTAS_DA_API`), repetido quando ainda assim perde a vez para a API
+    que está atendendo (`_PERDEU_A_VEZ`).
 
     Cada trava espera no máximo `ESPERA_DA_TRAVA_MS`; impasse (40P01) ou espera vencida
     (55P03) desfazem a transação inteira, e a próxima tentativa vem depois de uma pausa que
@@ -558,9 +571,11 @@ async def _zerar_uma_vez(engine: AsyncEngine, espera_da_trava_ms: int) -> int:
     """Uma tentativa do TRUNCATE, numa transação só.
 
     Confere o marco do banco NA MESMA transação do TRUNCATE: entre a conferência da CLI e
-    aqui não há janela em que outro banco passe por demonstração. As sequências voltam ao
-    começo (as das colunas pelo RESTART IDENTITY; as soltas, como a do código interno de
-    barras, uma a uma): a demo renovada é igual à primeira.
+    aqui não há janela em que outro banco passe por demonstração. Trava as portas da API antes
+    do resto, na ordem de `PORTAS_DA_API` — o `LOCK TABLE` trava uma a uma, na ordem dada
+    (documentado; a do TRUNCATE, não). As sequências voltam ao começo (as das colunas pelo
+    RESTART IDENTITY; as soltas, como a do código interno de barras, uma a uma): a demo
+    renovada é igual à primeira.
     """
     from sqlalchemy import text
 
@@ -581,6 +596,11 @@ async def _zerar_uma_vez(engine: AsyncEngine, espera_da_trava_ms: int) -> int:
                 )
             )
         ).scalars().all()
+        portas = [f"public.{t}" for t in PORTAS_DA_API if t in tabelas]
+        if portas:
+            await conn.execute(
+                text(f"LOCK TABLE {', '.join(portas)} IN ACCESS EXCLUSIVE MODE")
+            )
         if tabelas:
             lista = ", ".join(f"public.{t}" for t in tabelas)
             await conn.execute(text(f"TRUNCATE {lista} RESTART IDENTITY CASCADE"))

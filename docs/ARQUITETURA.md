@@ -2156,12 +2156,25 @@ navegador: as duas dividem a mesma origem.
   faz TRUNCATE de todas as tabelas do schema `public` menos `alembic_version` (`RESTART IDENTITY
   CASCADE`), apaga os arquivos de `MEDIA_DIR/produtos` (a pasta e o `MEDIA_DIR`, onde o volume está
   montado, ficam) e prepara de novo. O TRUNCATE disputa as travas das tabelas com a API que está
-  atendendo — ele trava em ordem alfabética (`categories` antes de `products`), a leitura na ordem
-  da consulta (`products JOIN categories`), e o Postgres derruba um dos dois —: cada trava espera
-  no máximo 5 s (`lock_timeout`; `DEMO_RENOVAR_ESPERA_DA_TRAVA_MS` troca) e, em impasse (40P01) ou
-  espera vencida (55P03), a transação inteira volta — nada foi zerado — e se repete, até 5
-  tentativas, com pausa que dobra (1, 2, 4, 8 s), avisando na saída. As fotos só saem depois de um
-  TRUNCATE que deu certo. Os dois comandos exigem as DUAS chaves — o contêiner se diz
+  atendendo, e trava uma a uma. Em ordem alfabética, chegava a `users` quase no fim: a requisição
+  que já tinha passado pelo crachá (`get_current_user` lê `users` primeiro e segura a trava até o
+  fim) pedia `products`, que ele já tinha, e o Postgres derrubava um dos dois — às vezes a
+  requisição, com 500. Por isso ele trava antes as **portas da API**, na ordem em que ela as pega
+  (`PORTAS_DA_API`: `login_attempts`, que o login conta antes de ler a conta; `refresh_tokens`, que
+  a renovação da sessão trava antes de ler a conta; `users`), num `LOCK TABLE` — que trava na
+  ordem dada; a do TRUNCATE não é documentada —, e só então o resto: quem já passou por uma porta
+  termina sem esbarrar nele, e quem chega depois espera na porta sem segurar nada. Com três
+  navegadores pedindo a lista de produtos sem parar, 8 renovações em 8 sem impasse, sem repetição
+  e sem 5xx (antes, repetição em 4 das 8 e 23 respostas 500). A repetição fica como rede para
+  quem entra sem passar por uma porta — a transação que a rota abre depois de um commit no meio da
+  requisição: a da foto, depois do login, e a releitura de uma mutação enquanto a auditoria grava o
+  diário por outra conexão (a borda espera `users` atrás do TRUNCATE, que espera a releitura: um
+  ciclo que o Postgres não vê, desfeito pelo prazo da trava) —: cada trava espera no máximo 5 s
+  (`lock_timeout`; só os testes a encurtam, com `DEMO_RENOVAR_ESPERA_DA_TRAVA_MS`, que na
+  instalação não chega à `api-demo`) e, em impasse (40P01) ou espera vencida (55P03), a transação
+  inteira volta — nada foi zerado — e se repete, até 5 tentativas, com pausa que dobra (1, 2, 4,
+  8 s), avisando na saída. As fotos só saem depois de um TRUNCATE que deu certo. Os dois comandos
+  exigem as DUAS chaves — o contêiner se diz
   demonstração (`settings.demonstracao`) E o banco também (o marco `loja.demonstracao`) —, porque o
   banco de uma loja recém-instalada está vazio, que é exatamente o "pode semear" da carga: uma
   variável copiada por engano para o contêiner da loja não basta para tocar no banco dela. Sem as
@@ -2688,8 +2701,9 @@ demonstração ao lado da loja (ADR-46): token assinado com o segredo da demo é
 e renovação), a role `loja_demo` não conecta no banco `loja`, preparar e renovar sem as duas
 chaves (variável e marco do banco) saem com erro sem tocar em nada, a carga da instalação semeia e
 converge a conta do revisor, a renovação zera, apaga as fotos e semeia de novo (com a conta
-inválida no `.env`, para antes de zerar; o TRUNCATE que perde a vez para a API se repete; e o
-preparo espera a renovação que está rodando), as
+inválida no `.env`, para antes de zerar; o TRUNCATE trava antes as portas da API, e a requisição
+que já passou pelo crachá, o login e a renovação da sessão terminam sem impasse com ele; o que
+ainda perde a vez se repete; e o preparo espera a renovação que está rodando), as
 fotos da demo têm teto (envios juntos não o furam; a foto minúscula conta o bloco), a conta
 protegida da instalação não trava pelo e-mail (a da Vercel e as outras, sim; e o IP trava
 todas), o cookie da demo vive e morre em `/demo/api/v1/auth`, a auditoria classifica sob `/demo`, fora do
