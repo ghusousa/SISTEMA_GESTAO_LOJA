@@ -97,10 +97,14 @@ async function chamar(url, { metodo = 'GET', token, corpo, tempoMs = ESPERA_MS, 
 const comoFalhou = (r) => (r.status ? `HTTP ${r.status}${r.json?.code ? ` ${r.json.code}` : ''}` : `sem resposta: ${r.erro}`);
 
 /**
- * Confere tudo e devolve { problemas: [frases], conferidos: [frases], avisos: [frases] }:
+ * Confere tudo e devolve { problemas: [frases], conferidos: [frases], avisos: [frases], suporte }:
  * problema segura o envio; aviso, não. `base` é para onde as chamadas vão (o próprio servidor
  * da demo; o teste aponta para um servidor de mentira) e `servidor`, o endereço que aparece
- * nas frases.
+ * nas frases. `suporte` diz o que houve com a URL de suporte — quem resume lê daqui, nunca da
+ * contagem de avisos, que pode ganhar outro: 'mesma-da-privacidade' (sem outra página, ela é
+ * a privacidade, conferida à parte), 'abriu', 'nao-abriu' (debaixo do servidor da demo: é
+ * problema), 'aviso' (fora dele, não abriu daqui) ou 'nao-conferido' (parou antes, no /health
+ * ou no login).
  */
 export async function conferirServidorDemo({ base, servidor = base, email, senha, codigo, urlPrivacidade, urlSuporte, tempoMs = ESPERA_MS }) {
   const problemas = [];
@@ -115,7 +119,7 @@ export async function conferirServidorDemo({ base, servidor = base, email, senha
         'O revisor não conseguiria nem conectar: confira que ele está no ar (na loja instalada, ./demo.sh --mostrar ' +
         'diz o endereço e se ela responde; na Vercel, o deploy) e rode de novo.',
     );
-    return { problemas, conferidos, avisos };
+    return { problemas, conferidos, avisos, suporte: 'nao-conferido' };
   }
   conferidos.push(`${servidor}/health no ar`);
 
@@ -132,7 +136,7 @@ export async function conferirServidorDemo({ base, servidor = base, email, senha
           ? 'o login está travado por tentativas erradas; espere 15 min'
           : comoFalhou(login);
     problemas.push(`A conta demo (${email}) não entra no servidor de demonstração: ${motivo}.`);
-    return { problemas, conferidos, avisos };
+    return { problemas, conferidos, avisos, suporte: 'nao-conferido' };
   }
   const token = login.json.access_token;
   const papel = login.json.usuario?.papel;
@@ -236,22 +240,26 @@ export async function conferirServidorDemo({ base, servidor = base, email, senha
   // servidor da demo, é página do sistema e segura o envio como a privacidade. Fora dele (a
   // página de contato do dono, de terceiro), o "não abre" daqui pode ser falso — proteção
   // contra robô, negociação de conteúdo — e o envio não para por isso: vira aviso, no resumo.
+  let suporte = 'mesma-da-privacidade';
   if (urlSuporte && urlSuporte !== urlPrivacidade) {
-    const suporte = await chamar(urlSuporte, comoPagina);
-    if (suporte.status === 200 && /text\/html/i.test(suporte.tipo)) {
+    const pagina = await chamar(urlSuporte, comoPagina);
+    if (pagina.status === 200 && /text\/html/i.test(pagina.tipo)) {
       conferidos.push('a página de suporte abre');
+      suporte = 'abriu';
     } else if (debaixoDe(urlSuporte, base)) {
       problemas.push(
-        `A URL de suporte da ficha não abre (${comoFalhou(suporte)}). A Apple exige a página de suporte no ar (1.5): ` +
+        `A URL de suporte da ficha não abre (${comoFalhou(pagina)}). A Apple exige a página de suporte no ar (1.5): ` +
           'confira APPLE_URL_SUPORTE — vazia, ela é a mesma URL da política de privacidade.',
       );
+      suporte = 'nao-abriu';
     } else {
       avisos.push(
-        `A URL de suporte da ficha (${urlSuporte}) não abriu daqui (${comoFalhou(suporte)}). Ela mora fora do servidor de ` +
+        `A URL de suporte da ficha (${urlSuporte}) não abriu daqui (${comoFalhou(pagina)}). Ela mora fora do servidor de ` +
           'demonstração, então o envio segue; mas a Apple exige a página de suporte no ar (1.5): abra-a no navegador e, ' +
           'se não abrir, corrija APPLE_URL_SUPORTE (vazia, ela é a mesma URL da política de privacidade).',
       );
+      suporte = 'aviso';
     }
   }
-  return { problemas, conferidos, avisos };
+  return { problemas, conferidos, avisos, suporte };
 }

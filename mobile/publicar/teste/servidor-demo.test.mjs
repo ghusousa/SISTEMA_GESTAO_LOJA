@@ -68,6 +68,7 @@ test('conferência na demo em /demo: toda rota sai debaixo do caminho, e nada va
     });
     assert.deepEqual(r.problemas, []);
     assert.ok(r.conferidos.includes('https://loja.teste.dev/demo/health no ar'), r.conferidos.join(' | '));
+    assert.equal(r.suporte, 'mesma-da-privacidade', 'sem URL de suporte, ela é a privacidade');
     assert.deepEqual(demo.chamadas.filter((c) => c.naLoja).map((c) => `${c.metodo} ${c.cheio}`), [], 'chamada na loja da raiz');
     const feitas = demo.chamadas.map((c) => `${c.metodo} ${c.cheio}`);
     for (const rota of [
@@ -93,11 +94,13 @@ test('URL de suporte: outra página também tem de abrir; a mesma da privacidade
     // O padrão: o suporte é a própria privacidade do servidor (ci.mjs/ficha.mjs) — já conferida.
     const mesma = await conferirServidorDemo({ ...CONTA, base, urlPrivacidade: `${base}/privacidade`, urlSuporte: `${base}/privacidade` });
     assert.deepEqual(mesma.problemas, []);
+    assert.equal(mesma.suporte, 'mesma-da-privacidade');
     assert.equal(demo.chamadas.filter((c) => c.cheio === '/demo/privacidade').length, 1, 'a privacidade abriu mais de uma vez');
     // APPLE_URL_SUPORTE com outra página: a Apple quer o suporte no ar tanto quanto a privacidade.
     const outra = await conferirServidorDemo({ ...CONTA, base, urlPrivacidade: `${base}/privacidade`, urlSuporte: `${base}/suporte` });
     assert.deepEqual(outra.problemas, []);
     assert.ok(outra.conferidos.includes('a página de suporte abre'), outra.conferidos.join(' | '));
+    assert.equal(outra.suporte, 'abriu');
     assert.ok(demo.chamadas.some((c) => c.metodo === 'GET' && c.cheio === '/demo/suporte'), 'o suporte não foi aberto');
   } finally {
     await demo.fechar();
@@ -109,6 +112,7 @@ test('URL de suporte: outra página também tem de abrir; a mesma da privacidade
     assert.match(r.problemas.join('\n'), /URL de suporte da ficha não abre \(HTTP 404\)/);
     assert.match(r.problemas.join('\n'), /APPLE_URL_SUPORTE/);
     assert.deepEqual(r.avisos, []);
+    assert.equal(r.suporte, 'nao-abriu');
     assert.ok(r.conferidos.includes('a política de privacidade abre'), 'a privacidade continua conferida à parte');
   } finally {
     await fora.fechar();
@@ -137,6 +141,7 @@ test('URL de suporte FORA do servidor da demo: pedida como página; a que não a
     assert.deepEqual(abre.problemas, [], 'a página que o navegador abre não pode virar "não abre"');
     assert.deepEqual(abre.avisos, []);
     assert.ok(abre.conferidos.includes('a página de suporte abre'), abre.conferidos.join(' | '));
+    assert.equal(abre.suporte, 'abriu');
     assert.match(pedidos.at(-1).aceita, /^text\/html/, 'o suporte não foi pedido como página');
     const privacidade = demo.chamadas.find((c) => c.cheio === '/demo/privacidade');
     assert.match(privacidade?.aceita ?? '', /^text\/html/, 'a privacidade não foi pedida como página');
@@ -145,6 +150,8 @@ test('URL de suporte FORA do servidor da demo: pedida como página; a que não a
     assert.deepEqual(caiu.problemas, [], 'a página de fora que não abre daqui segurou o envio');
     assert.match(caiu.avisos.join('\n'), /URL de suporte da ficha \(http:\/\/127\.0\.0\.1:\d+\/saiu\) não abriu daqui \(HTTP 404\)/);
     assert.match(caiu.avisos.join('\n'), /APPLE_URL_SUPORTE/);
+    // O campo do suporte, para quem resume não tirar isso da contagem de avisos (que pode ganhar outro).
+    assert.equal(caiu.suporte, 'aviso');
     assert.ok(caiu.conferidos.includes('a política de privacidade abre'), 'a privacidade continua conferida à parte');
   } finally {
     await demo.fechar();
@@ -167,6 +174,7 @@ test('o endereço sem o /demo cai na loja de verdade, e a conferência recusa (n
     const r = await conferirServidorDemo({ ...CONTA, base: demo.base, servidor: 'https://loja.teste.dev' });
     assert.ok(demo.chamadas.length > 0 && demo.chamadas.every((c) => c.naLoja), 'tudo foi à raiz');
     assert.match(r.problemas.join('\n'), /não entra no servidor de demonstração/);
+    assert.equal(r.suporte, 'nao-conferido', 'a conferência parou no login, antes das páginas');
     assert.ok(!r.problemas.join('\n').includes(CONTA.senha), 'a senha não aparece');
   } finally {
     await demo.fechar();

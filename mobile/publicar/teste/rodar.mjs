@@ -18,7 +18,7 @@ import { createHash, generateKeyPairSync } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { deflateSync } from 'node:zlib';
 import { NAO_SAO_PERGUNTAS, RESPOSTAS } from '../classificacao.mjs';
 import { TELAS_CITADAS, telasQueFaltam } from '../ficha.mjs';
@@ -187,15 +187,16 @@ const DEMO = await subirDemoFalso();
 /**
  * Roda publicar.mjs com o ambiente limpo (nada de GITHUB_*, PUBLICAR_* ou ASC_* herdado:
  * rodando dentro do Actions, o teste não pode escrever no resumo da execução de verdade).
+ * `node` vai antes do publicar.mjs (o `--import` de um gancho de teste).
  */
-function publicar(args, { porta, capturas, env = {} }) {
+function publicar(args, { porta, capturas, env = {}, node = [] }) {
   const limpo = Object.fromEntries(
     Object.entries(process.env).filter(([k]) => !/^(GITHUB_|PUBLICAR_|ASC_|RUNNER_)/.test(k)),
   );
   return new Promise((resolver) => {
     // spawn assíncrono, nunca spawnSync: o mock roda NESTE processo, e o síncrono congelaria
     // o loop — o publicador perguntaria e ninguém responderia.
-    const filho = spawn(process.execPath, [join(MOBILE, 'publicar', 'publicar.mjs'), ...args], {
+    const filho = spawn(process.execPath, [...node, join(MOBILE, 'publicar', 'publicar.mjs'), ...args], {
       env: {
         ...limpo,
         ASC_BASE: `http://127.0.0.1:${porta ?? 9}`,
@@ -688,6 +689,29 @@ if (!REAIS) {
     );
     const loc = Object.values(e.versaoLocs).find((l) => l.versao === 'VER1')?.atributos ?? {};
     conferir(loc.supportUrl === 'https://127.0.0.1:1/contato', 'a ficha leva a página do dono');
+  });
+
+  await cenario('Outro aviso da conferência do servidor, que não é do suporte: o "Pronto" segue dando o suporte por conferido', async ({ conferir, guardar }) => {
+    // Hoje o único aviso da conferência é o do suporte de fora; um aviso novo ali não pode virar
+    // "suporte: ver o aviso" com a página de suporte no ar. O gancho (teste/aviso-a-mais.mjs) põe
+    // um aviso a mais na volta da conferência, e o resumo tem de ler o campo do suporte.
+    const mock = await subirMock();
+    const { codigo, saida } = await publicar(['--enviar', ...COM_VIDEO], {
+      porta: mock.porta,
+      capturas: baseSintetica,
+      node: ['--import', pathToFileURL(join(MOBILE, 'publicar', 'teste', 'aviso-a-mais.mjs')).href],
+    });
+    guardar(saida);
+    const e = mock.estado;
+    await mock.fechar();
+    conferir(codigo === 0 && e.envios.length === 1, 'enviado para revisão: o aviso a mais não segurou o envio');
+    conferir(/ {2}⚠ Aviso a mais da conferência do servidor de demonstração/.test(saida), 'o aviso a mais saiu (o gancho entrou)');
+    conferir(/ {2}✔ a página de suporte abre\n/.test(saida), 'a página de suporte (outra que não a privacidade) abriu');
+    const pronto = saida.split('\n').filter((linha) => linha.includes('Pronto para a revisão'));
+    conferir(
+      pronto.length > 0 && pronto.every((linha) => linha.includes('privacidade e suporte,') && !linha.includes('ver o aviso')),
+      'o "Pronto para a revisão" dá o suporte por conferido: o aviso a mais não é dele',
+    );
   });
 
   await cenario('Só a chave no GitHub (o resto do padroes.json): a ficha sobe sem senha da demo nem telefone; o --enviar pede os dois', async ({ conferir, guardar }) => {

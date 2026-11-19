@@ -385,7 +385,10 @@ com outros países (`--enviar` recusado, "Brazil only"); Apple que não aceita a
 inglês; rodada sem 6,9" apagando o conjunto velho; preço (pago primeiro, grátis na 2ª página,
 sem grátis, lista vazia); `--enviar` recusado sem aparelhos e sem vídeo (nenhuma escrita na
 Apple); só a ficha com "(pending)"; servidor demo fora do combinado (não-dono, código, leitor,
-exclusão, privacidade, senha, fora do ar); `--conferir-envio`; versão já enviada; falha no upload
+exclusão, privacidade, senha, fora do ar); o suporte de fora que não abre daqui (aviso, e o
+"Pronto" manda ver o aviso) e um aviso da conferência que não é do suporte (o "Pronto" segue
+dando o suporte por conferido: quem o põe é o gancho `teste/aviso-a-mais.mjs`, carregado com
+`--import`); `--conferir-envio`; versão já enviada; falha no upload
 do vídeo; falha no 6,9"; pergunta recusada; perguntas novas exigidas no envio; limite de espera
 estourado; tela citada que o app não tem; imagem com alfa; senha que a Apple ecoa num erro; app
 inexistente; opção inválida. A Apple de mentira **cobra como a de verdade**: toda rota,
