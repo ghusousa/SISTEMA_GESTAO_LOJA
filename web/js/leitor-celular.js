@@ -29,6 +29,8 @@
  * A chave do chamado (`client_uuid`) também vai ao `sessionStorage`, ANTES do POST: o F5 no meio
  * — ou a rede que cai sem resposta — reenvia a MESMA chave, e o servidor devolve o chamado que
  * já criou em vez de deixá-lo órfão (atendível pelo celular, sem nenhuma aba retirando a fila).
+ * Com a resposta, ela só sai depois de o id do chamado estar guardado: o reenvio ainda pergunta
+ * às outras abas quem cuida dele (até 300 ms), e o F5 nesse meio só acha o chamado pela chave.
  * Ela só vale enquanto descreve a aba: a aba que seguiu adiante (Cancelar, o QR, o chamado que
  * acabou, o leitor ligado) a esquece — reenviada depois a um servidor que nunca a recebeu, ela
  * criaria AGORA um chamado que ninguém pediu, e a aba largaria o leitor que tem.
@@ -454,9 +456,9 @@ async function chamar() {
  * - `erro`: sem chamado. Recusado (4xx), a chave sai; sem resposta ou 5xx, ela fica: o POST pode
  *   ter chegado;
  * - `outra-aba`: o reenvio achou o chamado que outra aba já cuida (a cópia de "Duplicar aba"
- *   herda a pendência) — uma aba por leitor, e esta não o adota;
- * - `acabou`: o reenvio achou um chamado que já terminou;
- * - `vivo`: AGUARDANDO ou ATIVO, para `adotarChamado`.
+ *   herda a pendência) — uma aba por leitor, e esta não o adota. A chave sai;
+ * - `acabou`: o reenvio achou um chamado que já terminou. A chave sai;
+ * - `vivo`: AGUARDANDO ou ATIVO, para `adotarChamado` — que tira a chave depois de guardar o id.
  */
 async function pedirChamado(pedido) {
   const minha = geracao;
@@ -481,11 +483,14 @@ async function pedirChamado(pedido) {
     largarChamado(r.pareamento, pedido);
     return { tipo: 'saiu' };
   }
-  guardarPendencia(null);
   const p = r.pareamento;
   const vivo = p.status === 'AGUARDANDO' || p.status === 'ATIVO';
   // Só o replay (`notificacao` nula: a chave já tinha criado este chamado) pode ser de outra
-  // aba; o chamado que nasce agora ninguém mais conhece.
+  // aba; o chamado que nasce agora ninguém mais conhece. A chave continua na aba durante a
+  // pergunta (até 300 ms quando nenhuma outra responde): o id ainda não está lá, e o F5 — ou a
+  // aba fechada e reaberta — que caísse aqui sem ela acharia a aba livre, com o chamado no
+  // servidor e na faixa do celular, sem ninguém retirando a fila. A sessão que sai no meio deixa
+  // a chave para `largarChamado` decidir, como antes da pergunta.
   const deOutraAba = vivo && r.notificacao == null && (await dona().outraCuida(p.id));
   if (minha !== geracao) {
     if (!deOutraAba) largarChamado(p, pedido);
@@ -493,9 +498,13 @@ async function pedirChamado(pedido) {
   }
   pedindo = false;
   trocando = false;
-  if (deOutraAba) return { tipo: 'outra-aba', p, pedido };
-  if (!vivo) return { tipo: 'acabou', p, pedido };
+  if (deOutraAba || !vivo) {
+    // O chamado não é desta aba (outra cuida dele, ou ele já acabou): a chave não leva a nada.
+    guardarPendencia(null);
+    return { tipo: deOutraAba ? 'outra-aba' : 'acabou', p, pedido };
+  }
   const notificacao = r.notificacao ? { situacao: r.notificacao, celulares: r.celulares ?? 0 } : null;
+  // Vivo e desta aba: a chave sai em `adotarChamado`, depois de o id ir para o `sessionStorage`.
   return { tipo: 'vivo', p, notificacao };
 }
 
@@ -513,16 +522,22 @@ function largarChamado(p, pedido) {
   void api.delete(`/leitor/pareamentos/${p.id}`).catch(() => {});
 }
 
-/** O chamado da resposta vira o leitor desta aba: o AGUARDANDO ("chamando") ou o já atendido. */
+/**
+ * O chamado da resposta vira o leitor desta aba: o AGUARDANDO ("chamando") ou o já atendido. A
+ * chave sem resposta sai só aqui, com o id dele já guardado (`adotar`): em momento nenhum a aba
+ * fica sem as duas, e o F5 sempre acha o chamado — pelo id ou, até aqui, pela chave.
+ */
 function adotarChamado({ p, notificacao }) {
   janela?.fechar();
   if (p.status === 'ATIVO') {
-    // O reenvio achou o chamado que o celular já atendeu: é o leitor desta aba.
+    // O reenvio achou o chamado que o celular já atendeu: é o leitor desta aba (`adotar` de um
+    // ligado guarda o id e tira a chave).
     ligou(p);
     return;
   }
   ultimaNotificacao = notificacao;
   adotar(p);
+  guardarPendencia(null);
   // Já: o celular com o app aberto pode ter atendido enquanto a notificação saía.
   acordar();
 }
