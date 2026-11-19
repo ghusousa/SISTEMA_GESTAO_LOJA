@@ -86,7 +86,7 @@ const eOsNomes = (nomes) => nomes.map((nome) => `|${escapar(nome)}`).join('');
  * Antes de um nome que é ele mesmo: nem pedaço de outro nome (`itens` não termina no apelido
  * `s`) nem propriedade de outro objeto, com espaço depois do ponto ou sem (`obj.s`, `obj ?. s`).
  */
-const NOME_PROPRIO = '(?<![\\w$]|\\.\\s*)';
+const NOME_PROPRIO = '(?<![\\w$]|\\.[^\\S\\n]*)';
 
 /**
  * O guarda do navegador no lugar de quem recebe o método, o colchete ou o ponto:
@@ -161,14 +161,27 @@ function ateOFimDoValor(valor) {
 }
 /** Os ramos de um valor, sem espaço nem parênteses: ele mesmo e cada lado de `?:`, `||`, `??` e `&&`. */
 const ramos = (valor) => valor.split(/\?\?|\|\||&&|\?(?!\.)|:/).map((ramo) => ramo.replace(/[\s()]/g, ''));
+/**
+ * Só o que o valor pode SER: cada lado de `?:` sem a condição, cada lado de `||` e `??`, e o
+ * último de `&&`. Em `s && s.getItem(k)` e em `s ? s.getItem(k) : ''` o valor é o que o getItem
+ * devolve, não o guarda — seguir a condição faria do valor lido um apelido do guarda.
+ */
+const ramosDoValor = (valor) => {
+  const interrogacao = valor.search(/(?<!\?)\?(?![.?])/);
+  const semCondicao = interrogacao >= 0 ? valor.slice(interrogacao + 1) : valor;
+  return semCondicao
+    .split(/\?\?|\|\||:/)
+    .map((parte) => parte.split('&&').at(-1))
+    .map((ramo) => ramo.replace(/[\s()]/g, ''));
+};
 /** O valor dá a janela (`window`, `globalThis`, `self` ou um apelido dela), ele ou um ramo dele? */
 function daAJanela(valor, { janelas }) {
   const janela = new RegExp(`^(?:window|globalThis|self${eOsNomes(janelas)})$`);
   return ramos(valor).some((ramo) => janela.test(ramo));
 }
 /**
- * O valor dá o próprio guarda? Ele, ou um ramo de `?:`, `||`, `??` e `&&`, com parênteses ou
- * sem: `window.sessionStorage`, `w['localStorage']` (com `const w = window`),
+ * O valor dá o próprio guarda? Ele, ou um ramo do que ele pode ser (`ramosDoValor`), com
+ * parênteses ou sem: `window.sessionStorage`, `w['localStorage']` (com `const w = window`),
  * `sessao ? sessionStorage : localStorage`, `sessionStorage || localStorage`,
  * `(window.localStorage)` — ou um apelido já conhecido (`const b = a`, com `const a = localStorage`).
  */
@@ -177,14 +190,14 @@ function daOGuarda(valor, { apelidos, janelas }) {
   const guarda = new RegExp(
     `^(?:(?:${janela}\\??\\.)?(?:session|local)Storage|${janela}(?:\\?\\.)?\\[(['"\`])(?:session|local)Storage\\1\\]${eOsNomes(apelidos)})$`,
   );
-  return ramos(valor).some((ramo) => guarda.test(ramo));
+  return ramosDoValor(valor).some((ramo) => guarda.test(ramo));
 }
 /**
  * Cada `nome = valor` do arquivo, declarado ou não (nunca `obj.nome =`, `==` ou `=>`), também o
  * segundo de `const a = 1, b = 2` e o padrão de um parâmetro (`function f(g = localStorage)`):
  * a busca não consome o valor, que vai só até onde acaba (`ateOFimDoValor`).
  */
-const ATRIBUICAO = /(?<![\w$]|\.\s*)([A-Za-z_$][\w$]*)\s*=(?![=>])(?=\s*([^;\n]*))/g;
+const ATRIBUICAO = /(?<![\w$]|\.[^\S\n]*)([A-Za-z_$][\w$]*)\s*=(?![=>])(?=\s*([^;\n]*))/g;
 const atribuicoesDe = (codigo) => [...codigo.matchAll(ATRIBUICAO)].map(([, nome, valor]) => [nome, ateOFimDoValor(valor)]);
 /**
  * O padrão de uma desestruturação declarada (`const { localStorage: guarda } = window`, com um
@@ -417,6 +430,11 @@ test('a varredura reprova o que o ADR-46 corrigiu, e não o que está certo (sem
     'js/janela-guardada-entre-aspas.js': "const CHAVE = nomeNaRaiz('x');\nconst w = window;\nw['localStorage'].setItem('formato', v);",
     'js/apelido-pela-janela-guardada.js': "const CHAVE = nomeNaRaiz('x');\nconst w = window;\nconst s = w['sessionStorage'];\ns['leitor'] = v;",
     'js/apelido-de-apelido-sem-raiz.js': 'const a = localStorage;\nconst b = a;\nb.setItem(CHAVE, v);',
+    // A linha de cima que termina em ponto (um comentário) não esconde o apelido da de baixo.
+    'js/apelido-depois-de-ponto-final.js':
+      "const CHAVE = nomeNaRaiz('x');\nconst s = window.sessionStorage; // a aba guarda o leitor.\ns.setItem('leitor', id);",
+    'js/reatribuido-depois-de-ponto-final.js':
+      "const CHAVE = nomeNaRaiz('x');\nlet s;\niniciar(); // a aba.\ns = sessionStorage;\ns['formato'] = v;",
     // A foto da API direto no src: na demo, o /media/... vai à loja e dá 404 (ADR-42/46).
     'js/foto-src.js': 'export function f(img, item) { img.src = item.foto_url; }',
     'js/foto-src-quebrado.js': 'img.src =\n  item.foto_url;',
@@ -472,6 +490,11 @@ test('a varredura reprova o que o ADR-46 corrigiu, e não o que está certo (sem
       'const nome = s.nome + s[0];',
     'js/espaco-depois-do-ponto.js':
       "const CHAVE = nomeNaRaiz('x');\nconst s = sessionStorage;\ns.setItem(CHAVE, v);\nconst nome = obj. s.nome;\nconst primeira = obj ?. s[0];",
+    // O valor LIDO do guarda não é o guarda: `s && s.getItem(...)` e `s ? s.getItem(...) : ''`.
+    'js/valor-lido-do-guarda.js':
+      "const CHAVE = nomeNaRaiz('x');\nconst s = window.sessionStorage;\nconst salvo = s && s.getItem(CHAVE);\n" +
+      "const partes = salvo.split(',');\nconst outro = s ? s.getItem(CHAVE) : '';\nconst primeira = outro[0];\n" +
+      "const lido = window.localStorage && window.localStorage.getItem(CHAVE);\nlido.split(',');",
     'js/apelido-de-parametro.js':
       "const CHAVE = nomeNaRaiz('x');\nconst a = window.sessionStorage;\na.setItem(CHAVE, v);\nfunction primeiro(a) {\n  const b = a;\n  return b[0];\n}",
     'js/foto.js':
