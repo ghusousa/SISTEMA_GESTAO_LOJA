@@ -271,7 +271,10 @@ put_foto() {  # put_foto <arquivo> <url> [args do curl...] → status
     curl -s -o "$TMP/resposta" -w '%{http_code}' -X PUT -H 'Expect:' "$@" \
         -F "arquivo=@$arquivo;type=image/jpeg" "$url"
 }
+token_demo=$(login /demo dono@demo.example "$SENHA_DEMO" | json 'd.get("access_token","")')
+token_real=$(login "" dona@loja.example "$SENHA_REAL" | json 'd.get("access_token","")')
 for raiz in "" /demo; do
+    token=$token_real; [ -z "$raiz" ] || token=$token_demo
     # Na demo, 413 e nunca 503: o corpo grande não é "demonstração desligada".
     conferir "JSON de 3 MB sem login em ${raiz}/api/v1/auth/login: 413 do proxy" \
         test "$(curl -s -o "$TMP/resposta" -w '%{http_code}' -H 'Expect:' \
@@ -279,12 +282,13 @@ for raiz in "" /demo; do
             "$BASE$raiz/api/v1/auth/login")" = 413
     conferir "PUT de 7 MB sem login em ${raiz}/api/v1/produtos/1/foto: 413 do proxy" \
         test "$(put_foto "$TMP/grande.jpg" "$BASE$raiz/api/v1/produtos/1/foto")" = 413
-    conferir "o mesmo em pedaços, sem Content-Length (${raiz:-loja}): 413 do proxy" \
+    # Em pedaços e COM login: a rota da foto confere o login antes de ler o corpo, então sem
+    # ele a API responde 401 sem ler nada e o proxy nunca chega a cortar. Com ele, a API lê o
+    # multipart e o proxy corta nos 6 MB.
+    conferir "o mesmo em pedaços, sem Content-Length e com login (${raiz:-loja}): 413 do proxy" \
         test "$(put_foto "$TMP/grande.jpg" "$BASE$raiz/api/v1/produtos/1/foto" \
-            -H 'Transfer-Encoding: chunked')" = 413
+            -H 'Transfer-Encoding: chunked' -H "Authorization: Bearer $token")" = 413
 done
-token_demo=$(login /demo dono@demo.example "$SENHA_DEMO" | json 'd.get("access_token","")')
-token_real=$(login "" dona@loja.example "$SENHA_REAL" | json 'd.get("access_token","")')
 produto_demo=$(curl -s -H "Authorization: Bearer $token_demo" \
     "$BASE/demo/api/v1/produtos?page=1&size=1" | json 'd["items"][0]["id"]')
 categoria_real=$(curl -s -H "Authorization: Bearer $token_real" -H 'Content-Type: application/json' \
