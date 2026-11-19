@@ -281,8 +281,10 @@ SENHA_DO_DONO = "Senha-Do-Dono-123"
 
 #: O banco da Vercel tem dono próprio (como o `neondb_owner` do Neon), com uma senha que só
 #: existe aqui: é ela que o teste procura no log. A do banco de teste ("postgres") aparece em
-#: todo lugar e não provaria nada.
-PAPEL_DO_BANCO = "loja_vercel_teste"
+#: todo lugar e não provaria nada. O nome deriva do banco de teste: papel é do servidor
+#: inteiro, e duas suítes lado a lado (bancos diferentes, um Postgres só) apagavam uma os
+#: bancos da outra — a faxina leva TODO banco deste papel.
+PAPEL_DO_BANCO = f"{make_url(settings.database_url).database}_vercel_papel"
 SENHA_DO_BANCO = f"Senha-Do-Banco-{secrets.token_hex(6)}"
 
 

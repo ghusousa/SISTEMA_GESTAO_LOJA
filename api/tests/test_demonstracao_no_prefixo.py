@@ -126,6 +126,24 @@ def test_o_envoltorio_repassa_o_lifespan_e_o_root_path() -> None:
     assert eventos == ["subiu", "desceu"]
 
 
+def test_o_tempo_real_abre_sob_o_prefixo() -> None:
+    """A tela da demo liga em `/demo/api/v1/tempo-real`: a porta abre ali (e, sem crachá,
+    recusa como sempre). Fora do prefixo nem abre. Só a recusa, que não chega ao banco: o
+    `TestClient` roda noutro event loop (ver test_tempo_real.py)."""
+    from starlette.websockets import WebSocketDisconnect
+
+    with TestClient(montar_no_prefixo(api, "/demo")) as cliente:
+        with pytest.raises(WebSocketDisconnect) as recusa:
+            with cliente.websocket_connect("/demo/api/v1/tempo-real") as ws:
+                ws.send_json({"tipo": "entrar", "token": "isto-nao-e-um-token"})
+                ws.receive_json()
+        assert recusa.value.code == 4401  # a recusa da rota: ela foi achada sob o prefixo
+        with pytest.raises(WebSocketDisconnect) as fora:
+            with cliente.websocket_connect("/api/v1/tempo-real"):
+                pass
+        assert fora.value.code != 4401
+
+
 async def test_configuracao_diz_se_e_a_demonstracao(
     demo: AsyncClient, client: AsyncClient, auth_admin: dict[str, str], monkeypatch
 ) -> None:

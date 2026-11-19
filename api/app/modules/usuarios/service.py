@@ -230,8 +230,9 @@ class UsuarioService:
         A senha confirma que é ela, e não um celular destravado na mão de outra pessoa; a
         errada é `SenhaIncorreta` (422), nunca 401 — o 401 derrubaria a sessão que a senha
         só devia confirmar. O único dono ativo não sai: a loja ficaria sem quem administra
-        a equipe, o backup e o diário; ele passa o papel a outra pessoa antes. Na Vercel, a
-        conta do dono da demonstração não sai nunca (`_proteger_conta_da_demonstracao`).
+        a equipe, o backup e o diário; ele passa o papel a outra pessoa antes. Na
+        demonstração (a Vercel ou a que sobe com a loja em `/demo`), a conta do dono das
+        notas não sai nunca (`_proteger_conta_da_demonstracao`).
         """
         self._proteger_conta_da_demonstracao(user)
         if not await verificar_senha_async(senha, user.password_hash):

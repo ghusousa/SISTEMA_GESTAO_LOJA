@@ -305,7 +305,10 @@ def _uma_de_cada_vez() -> Iterator[None]:
                 )
             yield
         finally:
-            laco.run_until_complete(conexao.close())
+            try:
+                laco.run_until_complete(conexao.close(timeout=10))
+            except Exception:  # noqa: BLE001 — conexão que já caiu levou a trava junto
+                conexao.terminate()
     finally:
         laco.close()
 
