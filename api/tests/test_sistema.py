@@ -7,6 +7,7 @@ testes prendem.
 
 import base64
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -1181,6 +1182,26 @@ async def test_religar_sem_loja_chega_ao_fim_e_ganha_a_demo(tmp_path: Path) -> N
     # A senha nasceu agora: aparece uma vez.
     assert r.stdout.count(dotenv["DEMO_ADMIN_SENHA"]) == 1
     assert "compose up -d demo-banco api-demo" in (tmp_path / "ctr" / "docker.log").read_text()
+
+
+@precisa_do_bash
+@pytest.mark.skipif(os.geteuid() != 0, reason="só o root dá um arquivo a outro dono (no CI, o runner não é root)")
+async def test_religar_com_sudo_deixa_o_env_com_quem_instalou(tmp_path: Path) -> None:
+    """O espelho do demo.sh: completar o .env com a demonstração troca o arquivo, e um `sudo
+    ./instalar.sh` numa loja instalada pelo usuário comum o deixava de root — o docker compose
+    dele parava em "permission denied". O dono e o grupo de antes ficam, e o modo, 600."""
+    loja, env = _instalador(tmp_path)
+    (loja / ".env").write_text(ENV_DE_ANTES)
+    (loja / ".env").chmod(0o600)
+    os.chown(loja / ".env", 4242, 4343)
+
+    r = _religar(loja, env)
+
+    assert r.returncode == 0, _saida(r, loja)
+    assert _ler_env(loja)["COMPOSE_PROFILES"] == "demo"  # regravado, e não só lido
+    dono = (loja / ".env").stat()
+    assert (dono.st_uid, dono.st_gid) == (4242, 4343)
+    assert _modo(loja / ".env") == 0o600
 
 
 @precisa_do_bash

@@ -247,11 +247,15 @@ valor_no_env() { grep -E "^$1=" .env 2>/dev/null | tail -1 | cut -d= -f2- | tr -
 tem_no_env()   { grep -qE "^$1=" .env 2>/dev/null; }
 
 # A cópia que vira o .env nasce ao lado dele, 600, e o substitui de uma vez: nem um instante
-# com senha legível, nem um .env pela metade se a máquina cair no meio.
+# com senha legível, nem um .env pela metade se a máquina cair no meio. E com o dono do .env
+# de antes: o arquivo novo seria de quem roda o script, e um `sudo` deixava o .env de root —
+# o docker compose, o ./atualizar.sh e o ./backup.sh de quem instalou a loja paravam em
+# "permission denied". Sem o chown do GNU (o Mac), segue como antes.
 TEMPORARIO=""
 trap 'if [ -n "${TEMPORARIO:-}" ]; then rm -f -- "$TEMPORARIO"; fi' EXIT
 trocar_o_env() {  # o novo conteúdo já está em $TEMPORARIO
     chmod 600 "$TEMPORARIO"
+    if [ -e .env ]; then chown --reference=.env "$TEMPORARIO" 2>/dev/null || true; fi
     mv -f "$TEMPORARIO" .env
     TEMPORARIO=""
 }

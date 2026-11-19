@@ -6,9 +6,12 @@ com docker, curl e systemctl de mentira no PATH e as unidades numa DIR_SYSTEMD d
 banco da demonstração nunca existe aqui: o SQL dele só é anotado no docker.log.
 """
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
 
 from tests.test_backup import RAIZ, _maquina, _modo
 from tests.test_sistema import CURL_DE_MENTIRA, _avisos, _ler_env, _mascarar, precisa_do_bash
@@ -119,6 +122,25 @@ async def test_ligar_nunca_usa_o_segredo_da_loja(tmp_path: Path) -> None:
     dotenv = _ler_env(loja)
     assert dotenv["DEMO_JWT_SECRET"] != dotenv["JWT_SECRET"] == "j" * 48
     assert dotenv["DEMO_ADMIN_SENHA"] == SENHA_DA_DEMO  # a senha da Apple não muda
+
+
+@precisa_do_bash
+@pytest.mark.skipif(os.geteuid() != 0, reason="só o root dá um arquivo a outro dono (no CI, o runner não é root)")
+async def test_ligar_com_sudo_deixa_o_env_com_quem_instalou(tmp_path: Path) -> None:
+    """O .env era trocado pelo temporário com `mv`, e o novo ficava de quem rodou o script: um
+    `sudo ./demo.sh --ligar` numa loja instalada pelo usuário comum deixava o .env de root, e o
+    docker compose, o ./atualizar.sh e o ./backup.sh desse usuário paravam em "permission
+    denied". O dono (e o grupo) de antes ficam, e o modo continua 600."""
+    loja, env = _loja(tmp_path, ENV_DA_LOJA)
+    os.chown(loja / ".env", 4242, 4343)
+
+    r = _demo(loja, env, "--ligar")
+
+    assert r.returncode == 0, _saida(r, loja)
+    assert _ler_env(loja)["COMPOSE_PROFILES"] == "demo"  # regravado, e não só lido
+    dono = (loja / ".env").stat()
+    assert (dono.st_uid, dono.st_gid) == (4242, 4343)
+    assert _modo(loja / ".env") == 0o600
 
 
 @precisa_do_bash
