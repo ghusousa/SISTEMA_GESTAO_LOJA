@@ -9,7 +9,10 @@
  */
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { enderecoDaFoto, naRaiz, nomeNaRaiz, raizDaPagina, raizDoCaminho } from '../../web/js/raiz.js';
 
@@ -100,6 +103,19 @@ test('enderecoDaFoto: a foto do disco ganha a raiz, a URL absoluta do Blob passa
   assert.equal(enderecoDaFoto('/media/produtos/7.jpg'), '/demo/media/produtos/7.jpg');
   naPagina('https://loja.exemplo/app/');
   assert.equal(enderecoDaFoto('/media/produtos/7.jpg'), '/media/produtos/7.jpg');
+});
+
+test('a ADR-42 manda a tela nova pela mesma porta: foto da API só por enderecoDaFoto', () => {
+  // Quem escreve uma tela com foto segue a ARQUITETURA: se ela mandasse pôr o foto_url direto
+  // no src, o /media/... da API da demo iria à loja, na raiz do domínio, e a foto daria 404.
+  const doc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'docs', 'ARQUITETURA.md'), 'utf8');
+  const item = doc
+    .split('\n- ')
+    .find((trecho) => trecho.startsWith('**Quem mostra aceita as duas formas**'))
+    ?.split('\n\n')[0];
+  assert.ok(item, 'a ADR-42 perdeu o item "Quem mostra aceita as duas formas"');
+  assert.match(item, /a web passa por `enderecoDaFoto\(\)`/);
+  assert.doesNotMatch(item, /direto no `src`/);
 });
 
 // ------------------------------------------------------- a ligação de verdade

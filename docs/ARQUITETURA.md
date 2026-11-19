@@ -165,8 +165,9 @@ contrato de `PUT /produtos/{id}/foto` são os mesmos em todos os casos.
   sozinho puxa mais quatro pacotes 0.x e roda sobre `httpx2`, onde o `httpx.MockTransport` dos
   testes não entra. A validação do envio (extensão, teto, assinatura) roda antes de qualquer
   byte sair, igual em todos os modos — só o teto muda na Vercel.
-- **Quem mostra aceita as duas formas**: a web põe `foto_url` direto no `src` (relativo resolve
-  na origem da página, absoluto passa); o app passa por `lib/enderecoDaFoto.ts` (relativo ganha
+- **Quem mostra aceita as duas formas**: a web passa por `enderecoDaFoto()` (`web/js/raiz.js`),
+  que põe a raiz da página no caminho relativo (`/demo/media/...` na demonstração, ADR-46) e
+  deixa passar a URL absoluta do Blob; o app passa por `lib/enderecoDaFoto.ts` (relativo ganha
   o servidor do aparelho, `http(s)://` passa como está). CSP: o `docker/caddy/Caddyfile` não muda —
   na loja a foto é `'self'`; na Vercel quem libera `https://*.public.blob.vercel-storage.com` no
   `img-src` é o `vercel.json`.
