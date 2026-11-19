@@ -17,6 +17,7 @@
 
 import { acessoAtual } from './api.js';
 import { criarCanal } from './canal.js';
+import { naRaiz } from './raiz.js';
 
 /** Silêncio que fecha a rodada. Espelho de `JANELA_RAJADA` em `mobile/src/lib/avisos.ts`. */
 const JANELA_RAJADA = 1000;
@@ -132,9 +133,11 @@ function redesenharTudo() {
 }
 
 function urlDoCanal() {
-  // Mesma origem da página: a API serve o /app, então não há segundo endereço a manter.
+  // Mesma origem da página: a API serve o /app, então não há segundo endereço a manter. O
+  // caminho sai da raiz (ADR-46): o canal da demo é o `/demo/api/v1/tempo-real` dela — o da
+  // loja recusaria o token da demo (outro segredo), e a tela ficaria religando para sempre.
   const protocolo = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${protocolo}//${location.host}/api/v1/tempo-real`;
+  return `${protocolo}//${location.host}${naRaiz('/api/v1/tempo-real')}`;
 }
 
 /** O socket da ligação de agora: a queda de um velho não desmente o "conectado" do novo. */

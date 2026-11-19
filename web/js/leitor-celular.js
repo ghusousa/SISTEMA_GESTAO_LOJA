@@ -33,10 +33,16 @@ import {
   intervaloDaBusca,
   umaPorVez,
 } from './leitor-remoto.js';
+import { nomeNaRaiz } from './raiz.js';
 import { canalConectado, ouvirNaHora } from './tempo-real.js';
 import { aviso, avisarErro, confirmar } from './ui.js';
 
-const CHAVE = 'leitor-celular';
+/**
+ * O nome da chave do `sessionStorage` e do `BroadcastChannel`. Com a raiz (ADR-46): loja e
+ * demo dividem a origem, e a aba que vai da loja para a demo não pode retomar lá o leitor
+ * pareado aqui, nem as abas de uma responder pelas da outra. Na loja, o de sempre.
+ */
+const CHAVE = nomeNaRaiz('leitor-celular');
 /** Enquanto o código espera o celular, a aba pergunta a cada 2 s se alguém aceitou. */
 const ESPERA_DO_ACEITE_MS = 2000;
 /** O `retirar` entrega no máximo 50 bipes por vez; veio cheio, pode ter sobrado. */
@@ -63,7 +69,7 @@ const entrega = criarEntrega({
 let donaDaAba = null;
 function dona() {
   donaDaAba ??= criarDonaDaAba({
-    canal: typeof BroadcastChannel === 'function' ? new BroadcastChannel('leitor-celular') : null,
+    canal: typeof BroadcastChannel === 'function' ? new BroadcastChannel(CHAVE) : null,
     meu: () => pareamento?.id ?? null,
   });
   return donaDaAba;

@@ -15,16 +15,22 @@
  *    requisição com o erro de rede e deixa sessão e carrinho onde estavam.
  */
 
+import { naRaiz } from './raiz.js';
 import { sessao } from './store.js';
 
-const BASE = '/api/v1';
+/**
+ * A API desta página: `/api/v1` na loja, `/demo/api/v1` na demonstração (ADR-46). Nunca o
+ * `/api/v1` seco — na página da demo ele é a API da LOJA, no mesmo domínio.
+ */
+const base = () => naRaiz('/api/v1');
 
 /**
- * A base da API por inteiro ("https://loja.exemplo/api/v1"): mesma origem da página, que é
- * servida pela própria API. Vai no convite do celular-leitor, para o app saber de qual
- * servidor o código é.
+ * A base da API por inteiro ("https://loja.exemplo/api/v1", ou ".../demo/api/v1"): mesma
+ * origem da página, que é servida pela própria API. Vai no convite do celular-leitor, para
+ * o app saber de qual servidor o código é — o caminho junto, porque a loja e a demo têm o
+ * mesmo host.
  */
-export const baseDaApi = () => new URL(BASE, location.href).href;
+export const baseDaApi = () => new URL(base(), location.href).href;
 
 let accessToken = null;
 let renovacaoEmCurso = null;
@@ -72,7 +78,7 @@ async function bruto(metodo, caminho, { corpo, formData, semAuth = false } = {})
 
   let resposta;
   try {
-    resposta = await fetch(BASE + caminho, {
+    resposta = await fetch(base() + caminho, {
       method: metodo,
       headers,
       body: formData ?? (corpo !== undefined ? JSON.stringify(corpo) : undefined),

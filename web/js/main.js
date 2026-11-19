@@ -12,6 +12,7 @@ import { PODE, pode, titulo } from './permissoes.js';
 import { conectarTempoReal, desconectarTempoReal } from './tempo-real.js';
 import { html, confirmar, cru, aviso } from './ui.js';
 import { carregarLoja, loja, aoMudarLoja } from './loja.js';
+import { naRaiz } from './raiz.js';
 import { desligarLeitorCelular, ligarLeitorCelular, pararLeitorCelular } from './leitor-celular.js';
 
 /* ------------------------------------------------------------------------- telas */
@@ -170,7 +171,7 @@ function molduraHtml(usuario) {
           <div class="lateral__versao" data-versao hidden></div>
           <a class="lateral__versao is-atencao" data-backup href="#/backup" style="text-decoration:none;color:inherit" hidden></a>
           <a class="lateral__versao is-atencao" data-contas href="#/contas-pagar" style="text-decoration:none;color:inherit" hidden></a>
-          <a class="lateral__privacidade" href="/privacidade" target="_blank" rel="noopener">Privacidade</a>
+          <a class="lateral__privacidade" href="${naRaiz('/privacidade')}" target="_blank" rel="noopener">Privacidade</a>
         </div>
       </nav>
       <main class="conteudo" id="conteudo"></main>
