@@ -1019,9 +1019,9 @@ existe nas telas e no recibo impresso), `img-src 'self' data: blob:` (ícone e p
 (o navegador o ignora em HTTP), por um ano e sem `includeSubDomains`. O proxy também põe **teto
 no corpo do pedido, por rota** (`request_body`, na loja e na demo, ADR-46): as rotas de JSON leem
 o corpo inteiro, na memória, ANTES de conferir o login; a da foto confere o login antes de ler
-(§2.2) — até essa mudança, o arquivo ia num temporário sem teto, e um `PUT .../foto` de 40 MB
-sem login ocupava 39 MB de disco até sair o 401 —, mas, com login, o envio inteiro ainda vai ao
-temporário antes de a API recusar a foto grande. E o teto vale por pedido:
+(§2.2) — sem conferir o login antes, o arquivo ia num temporário sem teto, e um `PUT .../foto`
+de 40 MB sem login ocupava 39 MB de disco até sair o 401 —, mas, com login, o envio inteiro ainda
+vai ao temporário antes de a API recusar a foto grande. E o teto vale por pedido:
 N conexões abertas, segurando o último byte, seguram N vezes ele (com 10 MB em toda rota, 20 JSON
 no login sem conta levaram a API da loja de 91 para 290 MiB). Por isso cada rota tem o menor que
 lhe cabe: **6 MB** no `PUT .../produtos/{id}/foto`, o único arquivo — a API recusa a foto acima

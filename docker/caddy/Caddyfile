@@ -8,7 +8,7 @@
 
 	# Teto do corpo do pedido, da loja e da demo, POR ROTA. As rotas de JSON leem o corpo
 	# inteiro, na memória, ANTES de conferir o login. A da foto confere o login antes de ler
-	# (até essa mudança, o Starlette gravava o arquivo num temporário sem teto, e um
+	# (sem conferir o login antes, o Starlette gravava o arquivo num temporário sem teto, e um
 	# PUT .../foto de 40 MB SEM login ocupava 39 MB de disco até sair o 401 — o disco do
 	# banco), mas, com login, o Starlette ainda grava o envio inteiro antes de a API recusar a
 	# foto grande. E o teto vale por PEDIDO: N conexões abertas, segurando o último byte,

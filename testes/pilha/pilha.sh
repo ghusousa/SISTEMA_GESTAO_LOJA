@@ -216,9 +216,9 @@ dc start api-demo >/dev/null 2>&1
 # --- 9. Pool da demo e teto do corpo no proxy -----------------------------------------------
 # A role loja_demo tem CONNECTION LIMIT 20: com o pool padrão (10 + 20) uma rajada passava de
 # 20 conexões e o excesso saía 500, em vez de esperar a vez no pool. E as rotas de JSON leem o
-# corpo inteiro ANTES de conferir o login. A da foto confere o login antes de ler (até essa
-# mudança, um PUT gigante SEM login enchia de temporário o disco, o mesmo do banco), mas, com
-# login, lê o envio inteiro antes de recusar a foto grande. O teto do Caddy vale na loja e na
+# corpo inteiro ANTES de conferir o login. A da foto confere o login antes de ler (sem conferir
+# o login antes, um PUT gigante SEM login enchia de temporário o disco, o mesmo do banco), mas,
+# com login, lê o envio inteiro antes de recusar a foto grande. O teto do Caddy vale na loja e na
 # demo, e vale por pedido (N conexões seguram N vezes ele), então é POR ROTA: 6 MB no envio da
 # foto, 2 MB em todo o resto, que é JSON.
 echo "9. pool da demo e teto do corpo"

@@ -1,11 +1,13 @@
 """Teto do corpo do pedido no proxy (ADR-25 e ADR-46): o Caddyfile e quem o confere.
 
-O FastAPI lê o corpo inteiro ANTES de conferir o login, e o teto do Caddy vale por pedido: N
-conexões abertas seguram N vezes ele. Por isso o teto é POR ROTA — 6 MB no envio da foto, 2 MB
-em todo o resto, que é JSON. Sem proxy no ar, o pentest (`api/scripts/pentest.py`) confere o
-`docker/caddy/Caddyfile`, e tem de lê-lo como o Caddy lê: comentário não conta, `request_body`
-aninhado num `handle /demo/*` não cobre a loja, e o tamanho vem nas unidades do go-humanize
-(decimal, k/ki, com ou sem "b"). Quem prova o Caddy de verdade é `testes/pilha/pilha.sh`.
+As rotas de JSON leem o corpo inteiro ANTES de conferir o login; a da foto confere o login antes,
+mas o arquivo de quem entrou vai inteiro a um temporário antes de a API medir. E o teto do Caddy
+vale por pedido: N conexões abertas seguram N vezes ele. Por isso o teto é POR ROTA — 6 MB no
+envio da foto, 2 MB em todo o resto, que é JSON. Sem proxy no ar, o pentest
+(`api/scripts/pentest.py`) confere o `docker/caddy/Caddyfile`, e tem de lê-lo como o Caddy lê:
+comentário não conta, `request_body` aninhado num `handle /demo/*` não cobre a loja, e o tamanho
+vem nas unidades do go-humanize (decimal, k/ki, com ou sem "b"). Quem prova o Caddy de verdade é
+`testes/pilha/pilha.sh`.
 """
 import ast
 import re
