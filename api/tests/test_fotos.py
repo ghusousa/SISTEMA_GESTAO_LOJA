@@ -869,6 +869,33 @@ async def test_com_login_o_corpo_e_lido_depois_sem_conexao_presa(
     ]
 
 
+async def test_envio_aceita_um_arquivo_e_ate_4_campos_de_texto(
+    client, auth_admin, produto, disco
+) -> None:
+    """O que a §2.2 e a tabela de rotas prometem: um arquivo e até 4 campos de texto ao lado
+    (o app e a web mandam só o arquivo); mais, 400 — no formato e com a frase do Starlette,
+    como todo multipart que a rota recusa, e não no `{code, message, detail}` da API."""
+    caminho = f"/produtos/{produto['id']}/foto"
+    arquivo = {"arquivo": ("x.png", PNG, "image/png")}
+
+    quatro = await client.put(
+        caminho, headers=auth_admin, files=arquivo, data={f"c{i}": "x" for i in range(4)}
+    )
+    assert quatro.status_code == 200, quatro.text
+
+    cinco = await client.put(
+        caminho, headers=auth_admin, files=arquivo, data={f"c{i}": "x" for i in range(5)}
+    )
+    assert cinco.status_code == 400
+    assert cinco.json() == {"detail": "Too many fields. Maximum number of fields is 4."}
+
+    dois = await client.put(caminho, headers=auth_admin, files=[
+        ("arquivo", ("a.png", PNG, "image/png")), ("arquivo", ("b.png", PNG, "image/png")),
+    ])
+    assert dois.status_code == 400
+    assert dois.json() == {"detail": "Too many files. Maximum number of files is 1."}
+
+
 def test_a_documentacao_do_envio_continua_com_o_campo_arquivo() -> None:
     """A rota lê o multipart ela mesma (depois do login); a documentação continua dizendo o
     que enviar."""
