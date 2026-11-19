@@ -82,6 +82,12 @@ const PADRAO = {
   precos: 'gratis-primeiro',
   itemNaoAceitaResolved: false, // esta Apple recusa o PATCH resolved (e reenvia sem ele)
   aparelhos: [], // aparelhos já registrados na conta (GET /v1/devices)
+  // O App ID do app no portal (Certificates, Identifiers & Profiles): as capacidades já ligadas
+  // (ex.: ['PUSH_NOTIFICATIONS']), ou null = ainda não registrado (o app nunca compilou). Mora
+  // sempre ao lado de outro de prefixo parecido (a extensão, com push ligado): o
+  // filter[identifier] da Apple casa pelo começo do identificador.
+  capacidadesDoAppId: [],
+  recusarCapacidade: false, // chave sem permissão no portal: o POST da capacidade volta 403
 };
 
 // ---------------------------------------------------------------- validação do esquema
@@ -275,6 +281,13 @@ export function subirMock(opcoesDoTeste = {}) {
     buildPreso: {}, // versaoId -> buildId
     envios: [], // {id, estado, platform, itens: [{id, versao, estado, resolvido}], tentativas}
     aparelhos: o.aparelhos.map((a, i) => ({ id: `DEV${i + 1}`, platform: 'IOS', status: 'ENABLED', ...a })),
+    // App IDs do portal: {id, identifier, name, capacidades: [{id, tipo}]}.
+    bundles: [
+      ...(o.capacidadesDoAppId === null
+        ? []
+        : [{ id: 'BID1', identifier: 'com.gestaoloja.app', name: 'Gestao de Loja', capacidades: o.capacidadesDoAppId.map((tipo) => ({ id: `BID1_${tipo}`, tipo })) }]),
+      { id: 'BID2', identifier: 'com.gestaoloja.app.widget', name: 'Extensao', capacidades: [{ id: 'BID2_PUSH_NOTIFICATIONS', tipo: 'PUSH_NOTIFICATIONS' }] },
+    ],
     recusas: [], // {rota, status, erros, simulada}
     requisicoes: [],
   };
@@ -868,6 +881,36 @@ export function subirMock(opcoesDoTeste = {}) {
       estado.aparelhos.push(novo);
       const { id, ...attributes } = novo;
       return [201, { data: { type: 'devices', id, attributes } }];
+    },
+    // ------------------------------------------------ App ID (capacidades: o push do ADR-47)
+    'GET /v1/bundleIds': ({ url }) => {
+      const prefixo = url.searchParams.get('filter[identifier]');
+      // Como a Apple: o filtro casa pelo começo (a extensão vem junto com o app).
+      const lista = estado.bundles.filter((b) => !prefixo || b.identifier.startsWith(prefixo));
+      const incluir = (url.searchParams.get('include') ?? '').split(',').includes('bundleIdCapabilities');
+      const capacidade = (c) => ({ type: 'bundleIdCapabilities', id: c.id, attributes: { capabilityType: c.tipo, settings: null } });
+      const resposta = {
+        data: lista.map((b) => ({
+          type: 'bundleIds',
+          id: b.id,
+          attributes: { name: b.name, identifier: b.identifier, platform: 'IOS', seedId: '7C4RPFMC9G' },
+          relationships: {
+            bundleIdCapabilities: incluir ? { data: b.capacidades.map(({ id }) => ({ type: 'bundleIdCapabilities', id })) } : {},
+          },
+        })),
+      };
+      if (incluir) resposta.included = lista.flatMap((b) => b.capacidades.map(capacidade));
+      return [200, resposta];
+    },
+    'POST /v1/bundleIdCapabilities': ({ corpo }) => {
+      if (o.recusarCapacidade) return erro(403, 'FORBIDDEN_ERROR', 'The API key in use does not allow this request');
+      const tipo = corpo.data.attributes.capabilityType;
+      const b = estado.bundles.find((x) => x.id === corpo.data.relationships.bundleId.data.id);
+      if (!b) return erro(404, 'NOT_FOUND', 'App ID inexistente', '/data/relationships/bundleId');
+      if (b.capacidades.some((c) => c.tipo === tipo)) return erro(409, 'ENTITY_ERROR.ATTRIBUTE.INVALID', `${tipo} já está ligado neste App ID`, '/data/attributes/capabilityType');
+      const nova = { id: `${b.id}_${tipo}`, tipo };
+      b.capacidades.push(nova);
+      return [201, { data: { type: 'bundleIdCapabilities', id: nova.id, attributes: { capabilityType: tipo, settings: null } } }];
     },
   };
 

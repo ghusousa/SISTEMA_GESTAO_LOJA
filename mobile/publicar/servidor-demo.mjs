@@ -16,8 +16,9 @@
  *     como página (Accept: text/html, como o navegador). O suporte FORA do servidor da demo
  *     (a página de contato do dono, de terceiro) que não abre daqui vira aviso, não pendência:
  *     proteção contra robô ou negociação de conteúdo dariam um "não abre" falso;
- *   - as duas coisas que as notas mandam testar têm rota lá: o leitor pelo celular (ADR-43) e
- *     a exclusão da própria conta (ADR-45). Servidor com deploy velho = revisor sem a tela.
+ *   - o que as notas mandam testar tem rota lá: o leitor pelo celular (ADR-43), o chamado dele
+ *     pelo botão "Abrir no app o leitor de código" (ADR-47) e a exclusão da própria conta
+ *     (ADR-45). Servidor com deploy velho = revisor sem a tela.
  *
  * Antes, nada disso era conferido: senha trocada, código digitado errado ou banco recarregado
  * só apareciam dias depois, numa recusa por 2.1. Agora cada falha vira pendência e o envio não
@@ -180,6 +181,19 @@ export async function conferirServidorDemo({ base, servidor = base, email, senha
       problemas.push(
         `O servidor de demonstração não tem o leitor pelo celular (${comoFalhou(leitor)}), que as notas mandam testar: ` +
           `${ATUALIZE_A_DEMO}.`,
+      );
+    }
+
+    // O chamado do leitor (ADR-47): as notas mandam clicar em "Abrir no app o leitor de código",
+    // que o web só tem com a rota dos chamados no deploy. A lista dos abertos só LÊ — o POST
+    // chamaria os celulares da conta demo —, e responde a página mesmo vazia.
+    const chamados = await chamar(em(base, '/api/v1/leitor/chamados/abertos?size=1'), { ...opcoes, token });
+    if (chamados.status === 200 && Array.isArray(chamados.json?.items)) {
+      conferidos.push('o chamado do leitor ("Abrir no app o leitor de código") tem rota no servidor');
+    } else {
+      problemas.push(
+        `O servidor de demonstração não tem o chamado do leitor (${comoFalhou(chamados)}), que as notas mandam testar ` +
+          `("Abrir no app o leitor de código"): ${ATUALIZE_A_DEMO}.`,
       );
     }
 

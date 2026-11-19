@@ -144,8 +144,9 @@ function telasDeMentira({ sem = [] } = {}) {
 }
 const TELAS_DO_APP = telasDeMentira();
 {
-  // Só um aviso (não reprova): o app DESTE commit já tem tudo o que a ficha cita? Numa branch
-  // que ainda não recebeu uma tela citada, a publicação de verdade pararia — e diria qual.
+  // Aqui, só um aviso: o app DESTE commit já tem tudo o que a ficha cita? Numa branch que ainda
+  // não recebeu uma tela citada, a publicação de verdade pararia — e diria qual. Quem reprova é o
+  // revisao.test.mjs ("cada rótulo de TELAS_CITADAS está no arquivo DESTE commit"), no CI.
   const textos = Object.fromEntries(
     readdirSync(join(MOBILE, 'publicar', 'ficha'))
       .filter((n) => n.endsWith('.txt'))
@@ -376,8 +377,8 @@ await cenario(
     );
     const demo = chamadasDaDemo(antesDaDemo);
     conferir(
-      ['GET /health', 'POST /api/v1/auth/login', 'GET /api/v1/variantes/codigo-barras/7890000000000', 'GET /api/v1/leitor/pareamentos/0', 'DELETE /api/v1/usuarios/me', 'POST /api/v1/auth/logout', 'GET /privacidade', 'GET /suporte'].every((c) => demo.includes(c)),
-      'servidor de demonstração conferido: no ar, login de dono, código, leitor, exclusão, privacidade, suporte (e a sessão encerrada)',
+      ['GET /health', 'POST /api/v1/auth/login', 'GET /api/v1/variantes/codigo-barras/7890000000000', 'GET /api/v1/leitor/pareamentos/0', 'GET /api/v1/leitor/chamados/abertos', 'DELETE /api/v1/usuarios/me', 'POST /api/v1/auth/logout', 'GET /privacidade', 'GET /suporte'].every((c) => demo.includes(c)),
+      'servidor de demonstração conferido: no ar, login de dono, código, leitor, chamado, exclusão, privacidade, suporte (e a sessão encerrada)',
     );
     conferir(/✔ Pronto para a revisão: .*privacidade e suporte,/.test(saida), 'o "Pronto para a revisão" dá o suporte por conferido: a página abriu');
     const exclusoes = DEMO.chamadas.slice(antesDaDemo).filter((c) => c.metodo === 'DELETE' && c.caminho === '/api/v1/usuarios/me');
@@ -629,7 +630,8 @@ if (!REAIS) {
 
   await cenario('Servidor de demonstração fora do combinado: --enviar recusado, com cada problema', async ({ conferir, guardar }) => {
     const casos = [
-      [{ papel: 'GERENTE', codigos: [], semLeitor: true, semExclusao: true, privacidade: 404, suporte: 404 }, ['não de dono', 'não existe no servidor de demonstração', 'não tem o leitor pelo celular', 'não tem a exclusão da própria conta', 'política de privacidade da ficha não abre', 'URL de suporte da ficha não abre'], 'conta não-dono, código, leitor, exclusão, privacidade e suporte'],
+      [{ papel: 'GERENTE', codigos: [], semLeitor: true, semExclusao: true, privacidade: 404, suporte: 404 }, ['não de dono', 'não existe no servidor de demonstração', 'não tem o leitor pelo celular', 'não tem o chamado do leitor', 'não tem a exclusão da própria conta', 'política de privacidade da ficha não abre', 'URL de suporte da ficha não abre'], 'conta não-dono, código, leitor, chamado, exclusão, privacidade e suporte'],
+      [{ semChamado: true }, ['não tem o chamado do leitor', 'Abrir no app o leitor de código', './atualizar.sh'], 'demo com o leitor por QR, sem o chamado (deploy anterior ao ADR-47)'],
       [{ senha: 'outra-senha' }, ['não entra no servidor de demonstração', 'APPLE_DEMO_PASSWORD', './demo.sh --mostrar', 'Redeploy da demo a recria'], 'senha da demo errada (ou conta excluída lá)'],
       [{ protegida: false }, ['não está protegida no servidor de demonstração', 'DEMO_ADMIN_EMAIL', './demo.sh --mostrar', './atualizar.sh'], 'conta demo sem a proteção'],
       [{ saldo: 2 }, ['tem 2 peça(s) em estoque', 'Reponha pela Entrada', './demo.sh --renovar'], 'código demo quase sem estoque'],
@@ -678,8 +680,8 @@ if (!REAIS) {
     conferir(notas.includes('Server: https://loja.teste.dev/demo\n'), 'as notas mandam o revisor ao endereço com o /demo (sem a barra do fim)');
     const feitas = demo.chamadas.map((c) => `${c.metodo} ${c.cheio}`);
     conferir(
-      ['GET /demo/health', 'POST /demo/api/v1/auth/login', 'GET /demo/api/v1/variantes/codigo-barras/7890000000000', 'GET /demo/api/v1/leitor/pareamentos/0', 'DELETE /demo/api/v1/usuarios/me', 'POST /demo/api/v1/auth/logout', 'GET /demo/privacidade'].every((c) => feitas.includes(c)),
-      'conferiu tudo debaixo do /demo: no ar, login, código, leitor, exclusão, privacidade e a sessão encerrada',
+      ['GET /demo/health', 'POST /demo/api/v1/auth/login', 'GET /demo/api/v1/variantes/codigo-barras/7890000000000', 'GET /demo/api/v1/leitor/pareamentos/0', 'GET /demo/api/v1/leitor/chamados/abertos', 'DELETE /demo/api/v1/usuarios/me', 'POST /demo/api/v1/auth/logout', 'GET /demo/privacidade'].every((c) => feitas.includes(c)),
+      'conferiu tudo debaixo do /demo: no ar, login, código, leitor, chamado, exclusão, privacidade e a sessão encerrada',
     );
     const naLoja = demo.chamadas.filter((c) => c.naLoja).map((c) => `${c.metodo} ${c.cheio}`);
     conferir(naLoja.length === 0, `nenhuma chamada foi à loja de verdade, na raiz${naLoja.length ? ` (${naLoja.join(', ')})` : ''}`);

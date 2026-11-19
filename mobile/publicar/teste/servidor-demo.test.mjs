@@ -76,6 +76,7 @@ test('conferência na demo em /demo: toda rota sai debaixo do caminho, e nada va
       'POST /demo/api/v1/auth/login',
       `GET /demo/api/v1/variantes/codigo-barras/${CONTA.codigo}`,
       'GET /demo/api/v1/leitor/pareamentos/0',
+      'GET /demo/api/v1/leitor/chamados/abertos',
       'DELETE /demo/api/v1/usuarios/me',
       'POST /demo/api/v1/auth/logout',
       'GET /demo/privacidade',
@@ -84,6 +85,30 @@ test('conferência na demo em /demo: toda rota sai debaixo do caminho, e nada va
     }
   } finally {
     await demo.fechar();
+  }
+});
+
+test('demo com o leitor por QR, mas sem o chamado (deploy anterior ao ADR-47): segura o envio, sem chamar celular nenhum', async () => {
+  // As notas mandam clicar em "Abrir no app o leitor de código": sem a rota dos chamados no
+  // deploy, o revisor procuraria um botão que o web de lá não tem.
+  const velha = await subirDemoFalso({ semChamado: true });
+  try {
+    const r = await conferirServidorDemo({ ...CONTA, base: velha.base, urlPrivacidade: `${velha.base}/privacidade` });
+    assert.equal(r.problemas.length, 1, r.problemas.join('\n'));
+    assert.match(r.problemas[0], /não tem o chamado do leitor \(HTTP 404\).*"Abrir no app o leitor de código".*\.\/atualizar\.sh.*Redeploy/);
+    assert.ok(r.conferidos.includes('o leitor pelo celular tem rota no servidor'), 'o QR continua conferido à parte');
+    // Conferir só LÊ: nenhum POST de chamado (ele mandaria push aos celulares da conta demo).
+    assert.ok(!velha.chamadas.some((c) => c.metodo === 'POST' && c.caminho.startsWith('/api/v1/leitor')), 'a conferência chamou o celular');
+  } finally {
+    await velha.fechar();
+  }
+  const nova = await subirDemoFalso();
+  try {
+    const r = await conferirServidorDemo({ ...CONTA, base: nova.base, urlPrivacidade: `${nova.base}/privacidade` });
+    assert.deepEqual(r.problemas, []);
+    assert.ok(r.conferidos.includes('o chamado do leitor ("Abrir no app o leitor de código") tem rota no servidor'), r.conferidos.join(' | '));
+  } finally {
+    await nova.fechar();
   }
 });
 

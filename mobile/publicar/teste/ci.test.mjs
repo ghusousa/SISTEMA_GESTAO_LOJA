@@ -7,7 +7,8 @@
  * permissão 600 FORA do repositório; o ascAppId só vai para o perfil "ci" do eas.json;
  * faltou peça → diz QUAIS nomes faltam, sem derrubar o build; versão do app.json já enviada
  * ou publicada é dita ANTES de compilar; o .ipa de teste (ad hoc) não sai sem um iPhone
- * registrado, e o UDID nunca aparece inteiro no log.
+ * registrado, e o UDID nunca aparece inteiro no log; o App ID ganha Push Notifications antes
+ * de compilar (o expo-notifications exige), e o que não der vira aviso, sem parar a ficha.
  */
 
 import { spawn, spawnSync } from 'node:child_process';
@@ -19,7 +20,16 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 
-import { comAscAppId, montar, normalizarP8, porQueNaoEhP8, SERVIDOR_DEMO_PADRAO, UDID } from '../ci.mjs';
+import {
+  CAPACIDADE_DO_PUSH,
+  comAscAppId,
+  garantirPushNoAppId,
+  montar,
+  normalizarP8,
+  porQueNaoEhP8,
+  SERVIDOR_DEMO_PADRAO,
+  UDID,
+} from '../ci.mjs';
 import { DO_MODELO_ANTIGO, lerConfig, lerPadroes } from '../ficha.mjs';
 import { subirMock } from './mock-asc.mjs';
 
@@ -419,6 +429,133 @@ test('preparar diz, ANTES de compilar, que a versão do app.json já foi enviada
       assert.match(s.versao_mensagem, new RegExp(`versão ${VERSAO.replace(/\./g, '\\.')} já existe na Apple no estado ${estadoNaApple}`));
       assert.match(s.versao_mensagem, /suba "version"/, 'diz como sair: versão nova no app.json');
       assert.match(saida, /⚠ A versão/);
+    } finally {
+      fechar();
+    }
+  }
+});
+
+// ------------------------------------------------------------ Push Notifications no App ID (ADR-47)
+
+/** Um cliente da Apple na memória: anota cada chamada e devolve os App IDs que o teste der. */
+function clienteDosAppIds(bundleIds, included) {
+  const chamadas = [];
+  return {
+    chamadas,
+    get: async (caminho) => {
+      chamadas.push(['GET', caminho]);
+      return { data: bundleIds, included };
+    },
+    post: async (caminho, corpo) => {
+      chamadas.push(['POST', caminho, corpo]);
+      return { data: { type: 'bundleIdCapabilities', id: 'NOVA' } };
+    },
+  };
+}
+const appIdFalso = (id, identifier, capacidades) => ({
+  type: 'bundleIds',
+  id,
+  attributes: { identifier, platform: 'IOS' },
+  relationships: { bundleIdCapabilities: { data: capacidades.map((c) => ({ type: 'bundleIdCapabilities', id: c })) } },
+});
+const capacidadeFalsa = (id, tipo) => ({ type: 'bundleIdCapabilities', id, attributes: { capabilityType: tipo, settings: null } });
+const BUNDLE = 'com.gestaoloja.app';
+
+test('garantirPushNoAppId: já ligado não escreve; desligado liga com o corpo certo; sem App ID não escreve nada', async () => {
+  const ligado = clienteDosAppIds([appIdFalso('B1', BUNDLE, ['B1_P'])], [capacidadeFalsa('B1_P', 'PUSH_NOTIFICATIONS')]);
+  assert.equal(await garantirPushNoAppId(ligado, BUNDLE), 'ligado');
+  assert.deepEqual(ligado.chamadas.map(([metodo]) => metodo), ['GET'], 'já ligado: nenhuma escrita');
+  assert.match(ligado.chamadas[0][1], /^\/v1\/bundleIds\?filter\[identifier\]=com\.gestaoloja\.app&include=bundleIdCapabilities/);
+
+  // O filtro da Apple casa pelo começo: a extensão (com push) vem junto e não conta pelo app.
+  const desligado = clienteDosAppIds(
+    [appIdFalso('B2', `${BUNDLE}.widget`, ['B2_P']), appIdFalso('B1', BUNDLE, ['B1_IAP'])],
+    [capacidadeFalsa('B2_P', 'PUSH_NOTIFICATIONS'), capacidadeFalsa('B1_IAP', 'IN_APP_PURCHASE')],
+  );
+  assert.equal(await garantirPushNoAppId(desligado, BUNDLE), 'ligou');
+  assert.equal(desligado.chamadas.length, 2);
+  const [metodo, caminho, corpo] = desligado.chamadas[1];
+  assert.equal(`${metodo} ${caminho}`, 'POST /v1/bundleIdCapabilities');
+  assert.deepEqual(corpo, {
+    data: {
+      type: 'bundleIdCapabilities',
+      attributes: { capabilityType: CAPACIDADE_DO_PUSH },
+      relationships: { bundleId: { data: { type: 'bundleIds', id: 'B1' } } },
+    },
+  });
+
+  const semAppId = clienteDosAppIds([appIdFalso('B2', `${BUNDLE}.widget`, ['B2_P'])], [capacidadeFalsa('B2_P', 'PUSH_NOTIFICATIONS')]);
+  assert.equal(await garantirPushNoAppId(semAppId, BUNDLE), 'sem-bundle');
+  assert.equal(semAppId.chamadas.length, 1, 'App ID inexistente: só a leitura');
+});
+
+test('preparar liga Push Notifications no App ID antes de compilar, UMA vez, conforme a especificação', async () => {
+  const { porta, estado, fechar } = await subirMock();
+  try {
+    const pasta = mkdtempSync(join(tmpdir(), 'ci-apple-push-'));
+    const rodar = async (nome) => {
+      const eas = join(pasta, `${nome}-eas.json`);
+      copyFileSync(join(MOBILE, 'eas.json'), eas);
+      const github = join(pasta, nome);
+      const r = await rodarPreparar({
+        ...CHAVE,
+        ...FICHA,
+        ASC_BASE: `http://127.0.0.1:${porta}`,
+        PASTA_SAIDA: join(pasta, 'apple'),
+        EAS_JSON: eas,
+        GITHUB_OUTPUT: github,
+      });
+      assert.equal(r.codigo, 0, r.saida);
+      return { ...r, s: lerSaidas(github) };
+    };
+    const primeira = await rodar('um');
+    assert.equal(primeira.s.push_no_app_id, 'ligou');
+    assert.match(primeira.saida, /Push Notifications ligado no App ID com\.gestaoloja\.app/);
+    const segunda = await rodar('dois');
+    assert.equal(segunda.s.push_no_app_id, 'ligado');
+    assert.equal(segunda.s.app_id, 'APP1', 'o resto do preparar segue igual');
+    assert.equal(estado.requisicoes.filter((r) => r === 'POST /v1/bundleIdCapabilities').length, 1, 'ligou duas vezes');
+    const [app, extensao] = estado.bundles;
+    assert.deepEqual(app.capacidades.map((c) => c.tipo), ['PUSH_NOTIFICATIONS']);
+    assert.deepEqual(extensao.capacidades.map((c) => c.tipo), ['PUSH_NOTIFICATIONS'], 'mexeu no App ID errado');
+    assert.equal(estado.recusas.length, 0, `fora da especificação: ${JSON.stringify(estado.recusas)}`);
+    for (const { saida } of [primeira, segunda]) assert.ok(!saida.includes('PRIVATE KEY'), 'a chave apareceu no log');
+  } finally {
+    fechar();
+  }
+});
+
+test('preparar: App ID que ainda não existe ou chave sem permissão viram aviso — a ficha e o build seguem', async () => {
+  const casos = [
+    [{ capacidadesDoAppId: null }, 'sem-bundle', /⚠ O App ID com\.gestaoloja\.app ainda não existe no portal/],
+    [{ recusarCapacidade: true }, 'falhou', /⚠ Não deu para conferir Push Notifications no App ID com\.gestaoloja\.app \(POST \/v1\/bundleIdCapabilities -> 403/],
+  ];
+  for (const [opcoes, esperado, frase] of casos) {
+    const { porta, estado, fechar } = await subirMock(opcoes);
+    try {
+      const pasta = mkdtempSync(join(tmpdir(), 'ci-apple-push-'));
+      const eas = join(pasta, 'eas.json');
+      copyFileSync(join(MOBILE, 'eas.json'), eas);
+      const github = join(pasta, 'github-output');
+      const { codigo, saida } = await rodarPreparar({
+        ...CHAVE,
+        ...FICHA,
+        ASC_BASE: `http://127.0.0.1:${porta}`,
+        PASTA_SAIDA: join(pasta, 'apple'),
+        EAS_JSON: eas,
+        GITHUB_OUTPUT: github,
+      });
+      assert.equal(codigo, 0, saida);
+      const s = lerSaidas(github);
+      assert.equal(s.push_no_app_id, esperado);
+      assert.equal(s.tem_ficha, 'sim', esperado);
+      assert.equal(s.app_id, 'APP1', `${esperado}: o preparar parou no push`);
+      assert.match(saida, frase);
+      assert.match(saida, /plano B em publicar\/README\.md \("Notificações no iPhone"\)/);
+      if (esperado === 'sem-bundle') {
+        assert.ok(!estado.requisicoes.includes('POST /v1/bundleIdCapabilities'), 'ligou push na extensão');
+      }
+      assert.ok(!saida.includes('PRIVATE KEY'), 'a chave apareceu no log');
     } finally {
       fechar();
     }

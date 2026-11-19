@@ -4,7 +4,7 @@
  * ({code, message, detail}; 404 genérico do FastAPI quando a rota não existe no deploy).
  *
  * `opcoes` liga as falhas: senha errada, conta que não é de dono, código que não existe ou
- * sem estoque, deploy sem o leitor, sem a exclusão da própria conta ou sem a proteção da conta
+ * sem estoque, deploy sem o leitor ou sem o chamado dele, sem a exclusão da própria conta ou sem a proteção da conta
  * demo, privacidade ou suporte fora, servidor fora. `chamadas` guarda o que chegou — o teste confere que
  * ninguém mandou a senha DA DEMO para a rota de excluir a própria conta (e que nada saiu).
  *
@@ -21,7 +21,8 @@ const PADRAO = {
   senha: 'segredo-demo',
   papel: 'ADMIN',
   codigos: ['7890000000000'],
-  semLeitor: false, // deploy anterior ao ADR-43
+  semLeitor: false, // deploy anterior ao ADR-43 (e, portanto, sem o chamado)
+  semChamado: false, // deploy anterior ao ADR-47: o leitor por QR, sem "Abrir no app o leitor de código"
   semExclusao: false, // deploy anterior ao ADR-45: /usuarios/me cai na rota /usuarios/{id}
   protegida: true, // a conta demo não se exclui (CONTA_DE_DEMONSTRACAO antes da senha)
   saldo: 12, // peças do código demo em estoque
@@ -103,6 +104,10 @@ export function subirDemoFalso(opcoes = {}) {
         return o.semLeitor
           ? json(res, 404, { detail: 'Not Found' })
           : json(res, 404, { code: 'NAO_ENCONTRADO', message: 'Leitor não encontrado.', detail: {} });
+      }
+      if (caminho === '/api/v1/leitor/chamados/abertos' && req.method === 'GET') {
+        if (o.semLeitor || o.semChamado) return json(res, 404, { detail: 'Not Found' });
+        return json(res, 200, { items: [], total: 0, page: 1, size: Number(url.searchParams.get('size') ?? 10) });
       }
       if (caminho === '/api/v1/usuarios/me' && req.method === 'DELETE') {
         if (o.semExclusao) {

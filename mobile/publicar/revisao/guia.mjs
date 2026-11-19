@@ -246,10 +246,26 @@ shop with fictitious data only; its address, the owner account and a sample barc
       ("Leitor do computador") and "Minha conta".</td></tr>
   </tbody>
 </table>
-<p><b>Phone as the computer's barcode reader.</b> Open the server address in a computer browser, sign in and click
-${rotulo('Celular como leitor')} (left bar) to show a QR code. In the app:
-${caminho('Mais > Leitor do computador > "Ler o QR do computador"')}. Each label the camera scans appears on the
-computer's open sale.</p>
+<h3>Phone as the computer's barcode reader</h3>
+<ol>
+  <li>Open the server address in a computer browser and sign in with the <b>same account</b> as the app. The sale
+    screen (${rotulo('Vender (PDV)')}) opens.</li>
+  <li>Click ${rotulo('Abrir no app o leitor de código')}, above the barcode field. The computer shows
+    "Chamando o leitor no seu celular…" and a 3-character code, e.g. "Sinal 7K3".</li>
+  <li>With the app <b>open</b> on the iPhone, on any screen, the banner ${rotulo('O computador está chamando')} comes
+    down with the same code: tap ${rotulo('Abrir o leitor')}. The camera opens (the first time, iOS asks for the
+    camera) and the computer shows "Celular de … ligado".</li>
+  <li>Each label the camera scans appears on the computer's open sale. The code tells apart two computers signed in
+    with the same account: open the call with the code your computer shows.</li>
+</ol>
+<p><b>QR instead</b> (another person's phone, for example): ${rotulo('Celular de outra pessoa? Ler o QR')}, next to the
+button, or ${rotulo('Celular como leitor')}, in the left bar, shows a QR code; in the app:
+${caminho('Mais > Leitor do computador > "Ler o QR do computador"')}.</p>
+<p class="nota"><b>Notifications are optional</b>, and off unless the shop's server turns them on. When on, the
+barcode reader flow asks for the notification permission (when the person taps ${rotulo('Abrir o leitor')} or opens
+${rotulo('Leitor do computador')}, never at launch), and the call also reaches the phone with the app closed: a
+notification with the same code, which opens the camera. When off, nothing asks for it, and the call reaches the
+open app as above.</p>
 </section>
 
 <section>
@@ -265,6 +281,10 @@ computer's open sale.</p>
       database, accounts and item photos.</td></tr>
     <tr><td>NFC-e (optional)</td><td>Brazil's electronic consumer receipt, issued through an accredited issuer (Focus NFe)
       that the shop hires and connects to its server. Off in the demo.</td></tr>
+    <tr><td>Push notifications (optional)</td><td>Off unless the shop's server turns them on. Then the app gets a push
+      token from Expo's push service (device token and app installation id) and gives it to the shop's server, which
+      sends only the computer's call through Expo and Apple (APNs): a fixed text and a random 3-character code, no shop
+      or customer data.</td></tr>
     <tr><td>Payments</td><td>None in the app. The card terminal is a separate device; the app only records how the
       customer paid and the amount.</td></tr>
     <tr><td>AI, third-party sign-in, analytics, ads</td><td>None. No tracking, no IDFA, so no ATT prompt.</td></tr>
@@ -297,8 +317,8 @@ ${caminho('Mais > Usuários > "+"')} (the round button at the bottom right).</p>
     ${rotulo('Conta excluída')}.</li>
   <li><b>The owner, a staff account:</b> ${caminho('Mais > Usuários > (pessoa) > Excluir conta')} — "pessoa" is the
     person's card — with a confirmation. "Desativar" also exists, for a temporary leave.</li>
-  <li><b>Deleted:</b> the login (e-mail and password), the sessions on every device, a phone paired as barcode reader,
-    and the e-mail in the shop's log (masked). <b>Kept:</b> the sales, returns, stock entries and cash counts the person
+  <li><b>Deleted:</b> the login (e-mail and password), the sessions on every device, a phone paired as barcode reader
+    and its registration for notifications, and the e-mail in the shop's log (masked). <b>Kept:</b> the sales, returns, stock entries and cash counts the person
     registered, with their name — they are the shop's bookkeeping.</li>
   <li>The shop's only owner cannot delete their own account: the app asks to pass the owner role to someone else
     first (${caminho('Mais > Usuários > (pessoa) > Mudar papel')}). The demo account itself is protected on the demo
@@ -313,6 +333,8 @@ feed, comments or messaging between users, so there is nothing to report or bloc
   <li><b>Camera:</b> the barcode reader, and a photo of an item.</li>
   <li><b>Photos:</b> to pick an item photo.</li>
   <li><b>Local network:</b> only when the shop's server is on the shop's own network.</li>
+  <li><b>Notifications (optional):</b> only the computer's call to open the barcode reader, and only when the shop's
+    server turns them on (section 4); never asked at launch.</li>
 </ul>
 <h3>Purchases</h3>
 <p>No in-app purchases and no digital goods: the goods are physical and paid at the counter.</p>

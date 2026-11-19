@@ -126,6 +126,12 @@ export const TELAS_CITADAS = [
   ['Leitor do computador', 'mobile/src/app/(app)/(tabs)/mais.tsx'],
   ['Ler o QR do computador', 'mobile/src/app/(app)/mais/leitor.tsx'],
   ['Celular como leitor', 'web/js/main.js'],
+  // O chamado do leitor (ADR-47): o botão das telas do computador que leem código e o link do
+  // QR ao lado dele (os rótulos moram em ROTULOS_DO_CHAMADO), e a faixa que desce no app aberto.
+  ['Abrir no app o leitor de código', 'web/js/leitor-remoto.js'],
+  ['Ler o QR', 'web/js/leitor-remoto.js'],
+  ['O computador está chamando', 'mobile/src/components/FaixaDoChamado.tsx'],
+  ['Abrir o leitor', 'mobile/src/components/FaixaDoChamado.tsx'],
   ['Minha conta', 'mobile/src/app/(app)/(tabs)/mais.tsx'],
   ['Excluir minha conta', 'mobile/src/app/(app)/mais/conta.tsx'],
   ['Excluir conta', 'mobile/src/app/(app)/mais/usuarios.tsx'],

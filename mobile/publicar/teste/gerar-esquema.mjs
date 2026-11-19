@@ -80,6 +80,10 @@ const ROTAS = [
   // ci.mjs aparelhos: o perfil ad hoc do teste em iPhones reais pede um aparelho registrado.
   'GET /v1/devices',
   'POST /v1/devices',
+  // ci.mjs preparar: o App ID precisa de Push Notifications antes de compilar (o plugin do
+  // expo-notifications grava aps-environment; sem a capacidade, a assinatura quebra).
+  'GET /v1/bundleIds',
+  'POST /v1/bundleIdCapabilities',
 ];
 
 const caminhoSpec = process.argv[2];

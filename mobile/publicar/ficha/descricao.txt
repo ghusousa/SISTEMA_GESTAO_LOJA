@@ -24,7 +24,7 @@ Do balcão ao resultado do mês, na palma da mão:
 CELULAR E COMPUTADOR JUNTOS
 
 • Tudo se atualiza na hora entre os aparelhos da loja: vendeu no balcão, o estoque do celular já mostra.
-• O celular vira o leitor de código de barras do computador: no navegador, o botão "Celular como leitor" mostra um QR; no app, Mais > Leitor do computador > "Ler o QR do computador". Cada etiqueta bipada entra na venda aberta lá.
+• O celular vira o leitor de código de barras do computador: na venda, no navegador, "Abrir no app o leitor de código" chama o celular do mesmo login; no app aberto, um toque em "Abrir o leitor" liga a câmera. Celular de outra pessoa? Pelo QR, em Mais > Leitor do computador. Cada etiqueta bipada entra na venda aberta lá.
 • No computador, o mesmo sistema abre no navegador, com leitor USB e teclado.
 
 CADA UM VÊ O QUE É DO SEU CARGO

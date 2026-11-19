@@ -7,8 +7,9 @@
  * baixado de um link, que nunca vira arquivo pela metade); a revisão leva UM anexo (a Apple
  * recusa o segundo) — o vídeo antes do guia, e o que está lá sai antes de o novo subir; as
  * notas citam só o anexo que vai estar lá; a lista de aparelhos não aceita linha inventada fora
- * do formato; a ficha não cita tela que o app não tem; o guia PDF commitado é o das entradas de
- * agora; e as notas cabem nos 4000 da Apple no pior caso.
+ * do formato; a ficha não cita tela que o app não tem (e o código deste commit mostra cada rótulo
+ * de TELAS_CITADAS); o guia PDF commitado é o das entradas de agora; as notas cabem nos 4000 da
+ * Apple no pior caso, nas duas variantes de anexo, e não prometem push (ADR-47: nasce desligado).
  */
 
 import { createServer } from 'node:http';
@@ -33,7 +34,7 @@ import {
   videoAnexado,
 } from '../anexos.mjs';
 import { LIMITES, lerAparelhosTestados, lerFicha, PENDENTE, TELAS_CITADAS, telasQueFaltam } from '../ficha.mjs';
-import { diferencas, impressaoAtual, IMPRESSAO, lerGuia } from '../revisao/guia.mjs';
+import { diferencas, impressaoAtual, IMPRESSAO, lerGuia, montarHtml } from '../revisao/guia.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const MOBILE = resolve(AQUI, '..', '..');
@@ -315,6 +316,18 @@ test('telas citadas: rótulo que o app não mostra, ou tela que não existe, vir
   assert.deepEqual(telasQueFaltam({ 'descricao.txt': 'nada citado aqui' }, join(TEMP, 'vazio')), [], 'quem não cita não cobra');
 });
 
+test('telas citadas: cada rótulo de TELAS_CITADAS está no arquivo DESTE commit (o app e o web de verdade)', () => {
+  // Os outros testes usam árvores de mentira: provam o publicador. Este olha o código de verdade
+  // — rótulo trocado no app ou no web (ou tela citada que ainda não chegou à branch) quebra aqui,
+  // no CI, e não na hora de publicar, quando o publicador pararia antes de falar com a Apple.
+  const raiz = resolve(MOBILE, '..');
+  const faltam = TELAS_CITADAS.filter(([rotulo, arquivo]) => {
+    const caminho = join(raiz, arquivo);
+    return !existsSync(caminho) || !readFileSync(caminho, 'utf8').includes(rotulo);
+  }).map(([rotulo, arquivo]) => `"${rotulo}" em ${arquivo}`);
+  assert.deepEqual(faltam, [], `rótulo citado que o código deste commit não mostra:\n${faltam.join('\n')}`);
+});
+
 // O servidor da demo que sobe com a loja tem CAMINHO (<domínio>/demo, ADR-46): num domínio
 // comprido, é o endereço mais longo que as notas carregam (na linha do servidor e na das
 // etiquetas) — mais que o da Vercel.
@@ -352,6 +365,13 @@ test('notas da revisão: em inglês, os 7 itens, os dois caminhos da exclusão e
     }
     assert.ok(notas.includes('Mais > Minha conta > Excluir minha conta') && notas.includes('Mais > Usuários > (pessoa) > Excluir conta'));
     assert.ok(notas.includes('Mais > Leitor do computador > "Ler o QR do computador"'));
+    // O chamado (ADR-47) vem antes do QR, com o app ABERTO: a demo nasce com o push desligado,
+    // e as notas não prometem notificação — no máximo a permissão, opcional.
+    assert.ok(notas.includes('"Abrir no app o leitor de código"') && notas.includes('"Abrir o leitor" in the open app'));
+    assert.ok(notas.indexOf('Abrir no app o leitor de código') < notas.indexOf('Ler o QR do computador'), 'o QR é a alternativa');
+    assert.ok(!/push|APNs/i.test(notas), 'as notas prometem push');
+    assert.deepEqual(notas.match(/notification\w*/gi), ['notifications'], 'notificação nas notas só como permissão opcional');
+    assert.ok(notas.includes('notifications (optional)'));
     assert.ok(notas.includes(`made on a physical ${SETE_APARELHOS[0]}`) && notas.includes(SETE_APARELHOS.join('; ')));
     assert.ok(notas.includes('Password: Senha-Longa-Da-Demo-2026!$&'), 'a senha com $& chegou estragada (troca por texto em vez de função)');
     assert.ok(notas.includes(`Server: ${DEMO_COMPRIDA}\n`), 'o servidor chega às notas com o caminho');
@@ -402,15 +422,20 @@ test('guia PDF: o commitado é o das entradas de agora (texto, aparelhos e print
   assert.deepEqual(diferencas({}, atual).length, Object.keys(atual).length);
 });
 
-test('política de privacidade (a URL da ficha) e notas contam os mesmos serviços externos', () => {
-  // O revisor lê o item 5 das notas e abre a política pelo link da ficha: um documento não pode
-  // desmentir o outro. A política dizia "não fala com nenhum outro endereço" enquanto as notas
-  // contavam a checagem de conexão do NetInfo e as fotos da demo no Vercel Blob.
+test('política de privacidade (a URL da ficha), notas e guia contam os mesmos serviços externos', () => {
+  // O revisor lê o item 5 das notas (ou do guia) e abre a política pelo link da ficha: um
+  // documento não pode desmentir o outro. A política dizia "não fala com nenhum outro endereço"
+  // enquanto as notas contavam a checagem de conexão do NetInfo e as fotos da demo no Vercel Blob.
   const notas = readFileSync(join(MOBILE, 'publicar', 'ficha', 'notas-revisao.txt'), 'utf8');
+  const guia = montarHtml();
   const politica = readFileSync(join(MOBILE, '..', 'web', 'legal', 'privacidade.html'), 'utf8');
-  for (const servico of ['generate_204', 'Vercel Blob', 'Neon']) {
+  for (const servico of ['generate_204', 'Vercel Blob', 'Neon', 'Expo', 'APNs']) {
     if (notas.includes(servico)) assert.ok(politica.includes(servico), `as notas citam ${servico} e a política não`);
+    if (guia.includes(servico)) assert.ok(politica.includes(servico), `o guia cita ${servico} e a política não`);
   }
+  // O push do chamado (ADR-47) é opcional — a loja liga —, e a política diz isso, não que ele sempre existe.
+  assert.ok(guia.includes('Expo') && guia.includes('APNs'), 'o guia conta o push opcional');
+  assert.match(politica, /quando a loja liga as notificações/);
   assert.ok(!/não fala com nenhum outro endereço|única conexão que o app faz/i.test(politica), 'a política ainda nega qualquer outra conexão');
 });
 
