@@ -11,6 +11,8 @@
 #                 --loja "Boutique da Ana" --segmento ROUPAS --avisos loja-k3x9q --sim
 #
 # Se o Docker não estiver instalado, o instalador instala. Use --sem-docker para impedir.
+# Com domínio, confere o DNS antes de subir e diz o registro exato que falta.
+# A demonstração (dados fictícios, em <endereço>/demo) vem junto; --sem-demo a deixa de fora.
 # No fim, liga a cópia diária do banco (e, no Linux, o vigia que avisa quando a loja cai).
 #
 set -euo pipefail
@@ -30,8 +32,12 @@ morrer()  { printf '\n%s✗ %s%s\n\n' "$VERMELHO" "$1" "$NORMAL" >&2; exit 1; }
 # ------------------------------------------------------------------ argumentos
 
 DOMINIO=""; EMAIL=""; NOME=""; SENHA=""; SENHA_BANCO=""; NOTIFICAR_URL=""
+# LOJA e SEGMENTO também começam vazios: só a instalação nova pergunta por eles, e o caminho
+# que reaproveita o .env morria em "LOJA: unbound variable" depois do `up` — sem dono, sem as
+# rotinas religadas e sem o resumo, justo em quem rodava o instalador de novo.
+LOJA=""; SEGMENTO=""
 FUSO="America/Sao_Paulo"; PORTA_HTTP="80"; PORTA_HTTPS="443"
-INTERATIVO=1; FORCAR=0; INSTALAR_DOCKER=1
+INTERATIVO=1; FORCAR=0; INSTALAR_DOCKER=1; SEM_DEMO=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -49,7 +55,8 @@ while [ $# -gt 0 ]; do
         --sim|-y)       INTERATIVO=0; shift ;;
         --forcar)       FORCAR=1; shift ;;
         --sem-docker)   INSTALAR_DOCKER=0; shift ;;
-        -h|--help)      sed -n '3,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        --sem-demo)     SEM_DEMO=1; shift ;;
+        -h|--help)      sed -n '3,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *)              morrer "opção desconhecida: $1" ;;
     esac
 done
@@ -229,6 +236,219 @@ definir_endereco() {
         URL_FINAL="https://$DOMINIO"
         MODO="domínio $DOMINIO, com HTTPS automático"
     fi
+}
+
+# ------------------------------------------------------------------ o .env e a demonstração
+#
+# Espelho do bloco de mesmo nome no ./demo.sh: os dois escrevem o .env (e mais ninguém), e
+# uma conta da demonstração gerada de um jeito aqui e de outro lá é a que não entra na Apple.
+
+valor_no_env() { grep -E "^$1=" .env 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"' || true; }
+tem_no_env()   { grep -qE "^$1=" .env 2>/dev/null; }
+
+# A cópia que vira o .env nasce ao lado dele, 600, e o substitui de uma vez: nem um instante
+# com senha legível, nem um .env pela metade se a máquina cair no meio.
+TEMPORARIO=""
+trap 'if [ -n "${TEMPORARIO:-}" ]; then rm -f -- "$TEMPORARIO"; fi' EXIT
+trocar_o_env() {  # o novo conteúdo já está em $TEMPORARIO
+    chmod 600 "$TEMPORARIO"
+    mv -f "$TEMPORARIO" .env
+    TEMPORARIO=""
+}
+
+gravar_no_env() {  # gravar_no_env CHAVE VALOR — troca o valor, ou acrescenta a chave no fim
+    TEMPORARIO="$(mktemp ./.env.XXXXXX)"
+    if tem_no_env "$1"; then
+        # ENVIRON e não -v: o awk interpretaria barras invertidas de um valor passado por -v.
+        CHAVE="$1" VALOR="$2" awk 'index($0, ENVIRON["CHAVE"] "=") == 1 {
+                if (!feito) print ENVIRON["CHAVE"] "=" ENVIRON["VALOR"]; feito = 1; next
+            } { print }' .env > "$TEMPORARIO"
+    else
+        { cat .env; if [ -n "$(tail -c1 .env)" ]; then printf '\n'; fi
+          printf '%s=%s\n' "$1" "$2"; } > "$TEMPORARIO"
+    fi
+    trocar_o_env
+}
+
+acrescentar_no_env() {  # acrescentar_no_env LINHA... — no fim, mesmo sem \n na última linha
+    TEMPORARIO="$(mktemp ./.env.XXXXXX)"
+    { cat .env; if [ -n "$(tail -c1 .env)" ]; then printf '\n'; fi
+      printf '%s\n' "$@"; } > "$TEMPORARIO"
+    trocar_o_env
+}
+
+# O COMPOSE_PROFILES é uma lista separada por vírgula; "demo" é o perfil da demonstração.
+tem_demo() { case ",$1," in *,demo,*) return 0 ;; *) return 1 ;; esac; }
+com_demo() { if tem_demo "$1"; then printf '%s' "$1"; else printf '%s' "${1:+$1,}demo"; fi; }
+sem_demo() {
+    printf '%s' "$1" | awk -F, '{ s = ""; for (i = 1; i <= NF; i++)
+        if ($i != "demo" && $i != "") s = s (s == "" ? "" : ",") $i; print s }'
+}
+
+#: A conta do revisor. `.example` é reservado (RFC 2606): o e-mail nunca é de ninguém.
+EMAIL_DA_DEMO="dono@demo.example"
+
+# As duas linhas que abrem o bloco da demonstração no .env (o ./demo.sh --apagar as tira).
+COMENTARIO_DA_DEMO=(
+    "# Demonstração em /demo (ADR-46): outra API, outro banco e outra conta, só com dados fictícios."
+    "# Demonstração: endereço e senha com ./demo.sh --mostrar; desligar com ./demo.sh --desligar."
+)
+COMENTARIO_DA_DEMO_DESLIGADA="# Demonstração em /demo (ADR-46) desligada. Para ligar: ./demo.sh --ligar."
+
+# Completa o .env com o que a demonstração precisa e ainda não está lá, e liga o perfil. O
+# que já existe NÃO muda: a senha da conta é a que está na Apple, e trocá-la sem ninguém ver
+# deixaria o revisor de fora. SENHA_DEMO_NOVA=1 diz que a senha nasceu agora — a única vez em
+# que o resumo a mostra.
+SENHA_DEMO_NOVA=0
+completar_env_da_demo() {
+    local banco jwt jwt_da_loja email senha bloco
+    SENHA_DEMO_NOVA=0
+    banco="$(valor_no_env DEMO_SENHA_BANCO)"
+    jwt="$(valor_no_env DEMO_JWT_SECRET)"
+    jwt_da_loja="$(valor_no_env JWT_SECRET)"
+    email="$(valor_no_env DEMO_ADMIN_EMAIL)"
+    senha="$(valor_no_env DEMO_ADMIN_SENHA)"
+    [ -n "$banco" ] || banco="$(sortear 32)"
+    # NUNCA o segredo da loja: o token só leva o id do usuário, e com o mesmo segredo o token
+    # da conta de demonstração (senha nas notas da Apple) valeria na loja como o mesmo id.
+    while [ -z "$jwt" ] || [ "$jwt" = "$jwt_da_loja" ]; do jwt="$(sortear 64)"; done
+    [ -n "$email" ] || email="$EMAIL_DA_DEMO"
+    if [ -z "$senha" ]; then senha="$(sortear 20)"; SENHA_DEMO_NOVA=1; fi
+    if [ -z "$banco" ] || [ -z "$senha" ]; then morrer "não consegui sortear as senhas da demonstração."; fi
+
+    if ! grep -qE '^DEMO_[A-Z_]+=' .env; then
+        # .env de antes da demonstração: o bloco inteiro, com o recado de onde mexer.
+        bloco=("" "${COMENTARIO_DA_DEMO[@]}")
+        tem_no_env COMPOSE_PROFILES || bloco+=("COMPOSE_PROFILES=demo")
+        bloco+=("DEMO_SENHA_BANCO=$banco" "DEMO_JWT_SECRET=$jwt"
+                "DEMO_ADMIN_EMAIL=$email" "DEMO_ADMIN_SENHA=$senha")
+        acrescentar_no_env "${bloco[@]}"
+    else
+        gravar_no_env DEMO_SENHA_BANCO "$banco"
+        gravar_no_env DEMO_JWT_SECRET "$jwt"
+        gravar_no_env DEMO_ADMIN_EMAIL "$email"
+        gravar_no_env DEMO_ADMIN_SENHA "$senha"
+    fi
+    gravar_no_env COMPOSE_PROFILES "$(com_demo "$(valor_no_env COMPOSE_PROFILES)")"
+}
+
+# ------------------------------------------------------------------ o DNS do domínio
+#
+# Com domínio, o certificado HTTPS só sai se o nome apontar para ESTA máquina, e o Let's
+# Encrypt limita as tentativas que falham: subir antes de o DNS estar certo gasta essas
+# tentativas e deixa a loja sem HTTPS por uma hora. Por isso a conferida vem antes do `up` e
+# diz o registro exato que falta, do jeito que o painel do domínio pede.
+
+# O IP público desta máquina, perguntado a quem a vê de fora — a placa de rede de uma VPS
+# atrás de NAT não sabe. Três serviços: um deles fora do ar não decide nada.
+ip_desta_maquina() {  # ip_desta_maquina <4|6>
+    local servicos servico ip
+    command -v curl >/dev/null 2>&1 || return 1
+    servicos="https://api.ipify.org https://ifconfig.me/ip https://icanhazip.com"
+    [ "$1" = 6 ] && servicos="https://api64.ipify.org https://ifconfig.me/ip https://icanhazip.com"
+    for servico in $servicos; do
+        ip="$(curl "-$1" -fsS --max-time 5 "$servico" 2>/dev/null | tr -d '[:space:]' | tr 'A-F' 'a-f')" \
+            || continue
+        if [ "$1" = 6 ]; then
+            case "$ip" in *:*) printf '%s' "$ip" | grep -Eq '^[0-9a-f:]+$' && { printf '%s' "$ip"; return 0; } ;; esac
+        elif eh_ip "$ip"; then
+            printf '%s' "$ip"; return 0
+        fi
+    done
+    return 1
+}
+
+# Para onde o nome aponta, pelo resolvedor da máquina. Fora da conta: a própria máquina (o
+# /etc/hosts de muita VPS põe o nome dela em 127.0.1.1) e o IPv4 vestido de IPv6 (::ffff:)
+# que o getent devolve quando o nome não tem AAAA.
+enderecos_do_dominio() {  # enderecos_do_dominio <4|6> <domínio>
+    getent "ahostsv$1" "$2" 2>/dev/null | awk '{print tolower($1)}' \
+        | grep -vE '^(127\.|::1$|::ffff:)' | sort -u || true
+}
+
+# O "Nome" que o painel do domínio pede: a parte antes do domínio registrado ("loja" em
+# loja.seudominio.com.br), ou "@" para ele mesmo. Registrado são os dois últimos pedaços —
+# ou três, quando o penúltimo é um genérico de país (com.br, net.br, co.uk...).
+nome_no_painel() {
+    local -a p
+    local n raiz=2
+    IFS=. read -r -a p <<< "$1"
+    n=${#p[@]}
+    if [ "$n" -ge 3 ] && [ "${#p[n-1]}" -eq 2 ]; then
+        case "${p[n-2]}" in com|net|org|gov|edu|mil|co|ac|art|blog|eco|emp|ind|inf|nom|tur) raiz=3 ;; esac
+    fi
+    if [ "$n" -le "$raiz" ]; then printf '@'; return 0; fi
+    local IFS=.
+    printf '%s' "${p[*]:0:n-raiz}"
+}
+
+juntar() { paste -sd, - | sed 's/,/, /g'; }   # uma por linha → "a, b"
+
+# Preenche PENDENCIAS_DNS com o que falta acertar no painel do domínio; sai 0 se nada falta.
+PENDENCIAS_DNS=(); DNS_IPS=""; DNS_NOTA=""
+#: De quanto em quanto tempo a conferida se repete enquanto alguém acerta o painel (os testes
+#: encurtam, como encurtam o DIR_SYSTEMD).
+INTERVALO_DNS="${INTERVALO_DNS:-15}"
+# O IP desta máquina não muda enquanto alguém mexe no painel: perguntado uma vez só (cada
+# pergunta pode levar segundos com um serviço de eco fora do ar).
+MEU_IPV4=""; MEU_IPV6=""; PERGUNTOU_IPV4=0; PERGUNTOU_IPV6=0
+avaliar_dns() {
+    local v4 v6 nome outros a
+    PENDENCIAS_DNS=(); DNS_NOTA=""
+    nome="$(nome_no_painel "$DOMINIO")"
+    if [ "$PERGUNTOU_IPV4" -eq 0 ]; then MEU_IPV4="$(ip_desta_maquina 4 || true)"; PERGUNTOU_IPV4=1; fi
+    v4="$(enderecos_do_dominio 4 "$DOMINIO")"
+    v6="$(enderecos_do_dominio 6 "$DOMINIO")"
+    DNS_IPS="$(printf '%s\n' "$v4" | juntar)"
+    if [ -z "$v4" ]; then
+        PENDENCIAS_DNS+=("Crie no painel do domínio:   Tipo A  ·  Nome $nome  ·  Valor ${MEU_IPV4:-<o IP público deste servidor>}")
+    elif [ -z "$MEU_IPV4" ]; then
+        DNS_NOTA="não consegui descobrir o IP público desta máquina: confira que $DNS_IPS é ela."
+    elif ! printf '%s\n' "$v4" | grep -qxF "$MEU_IPV4"; then
+        PENDENCIAS_DNS+=("$DOMINIO aponta para $DNS_IPS, não para este servidor. Corrija:   Tipo A  ·  Nome $nome  ·  Valor $MEU_IPV4")
+    else
+        outros="$(printf '%s\n' "$v4" | grep -vxF "$MEU_IPV4" | juntar || true)"
+        [ -z "$outros" ] || PENDENCIAS_DNS+=("Apague os outros registros A de $DOMINIO ($outros): parte das visitas cairia em outra máquina.")
+    fi
+    if [ -n "$v6" ]; then
+        if [ "$PERGUNTOU_IPV6" -eq 0 ]; then MEU_IPV6="$(ip_desta_maquina 6 || true)"; PERGUNTOU_IPV6=1; fi
+        while read -r a; do
+            if [ -z "$a" ] || [ "$a" = "$MEU_IPV6" ]; then continue; fi
+            PENDENCIAS_DNS+=("Apague o registro AAAA de $DOMINIO ($a): ele leva a outra máquina, e o Let's Encrypt tenta o IPv6 primeiro.")
+        done <<< "$v6"
+    fi
+    [ "${#PENDENCIAS_DNS[@]}" -eq 0 ]
+}
+
+mostrar_pendencias_dns() {
+    local p
+    [ "${#PENDENCIAS_DNS[@]}" -gt 0 ] || return 0
+    for p in "${PENDENCIAS_DNS[@]}"; do alerta "$p"; done
+}
+
+conferir_dns() {
+    local resposta rc
+    [ "$AMBIENTE" = "producao" ] || return 0
+    titulo "Conferindo o DNS de $DOMINIO"
+    if ! command -v getent >/dev/null 2>&1; then
+        alerta "sem o getent nesta máquina não dá para conferir: veja que $DOMINIO aponta para ela."
+        return 0
+    fi
+    if avaliar_dns; then
+        if [ -n "$DNS_NOTA" ]; then alerta "$DNS_NOTA"; else certo "$DOMINIO aponta para este servidor ($DNS_IPS)"; fi
+        return 0
+    fi
+    mostrar_pendencias_dns
+    # Sem gente na frente (--sim), não espera: a pendência volta no resumo, no fim.
+    [ "$INTERATIVO" -eq 1 ] || return 0
+    echo "  O certificado HTTPS só sai com o DNS certo. Conferindo de novo a cada ${INTERVALO_DNS} s —"
+    echo "  tecle Enter para seguir sem esperar (o que faltar volta no fim)."
+    while :; do
+        rc=0; read -r -t "$INTERVALO_DNS" resposta || rc=$?
+        # Enter (0) segue; fim da entrada (1) também — não há quem tecle, esperar seria para sempre.
+        [ "$rc" -gt 128 ] || break
+        if avaliar_dns; then certo "agora sim: $DOMINIO aponta para este servidor"; return 0; fi
+    done
 }
 
 # ------------------------------------------------------- instalação do Docker
@@ -432,6 +652,33 @@ dk compose version >/dev/null 2>&1 || morrer \
   Ubuntu: sudo apt install docker-compose-plugin
   Ou reinstale pelo caminho oficial: curl -fsSL https://get.docker.com | sudo sh"
 
+CMD_DOCKER="docker"
+[ -n "$PREFIXO_DOCKER" ] && CMD_DOCKER="sudo docker"
+
+# ------------------------------------------------------------------ a demonstração (ADR-46)
+#
+# Vem ligada. Fica de fora com --sem-demo — ou quando o .env de antes já decidiu: a linha
+# COMPOSE_PROFILES existe e não tem "demo" (é o que o ./demo.sh --desligar deixa), e quem
+# desligou a demonstração não a vê voltar por ter rodado o instalador de novo. Um .env de
+# antes da demonstração não tem a linha: a loja que roda o instalador de novo ganha a demo.
+# Lido aqui, antes de qualquer regravação: o --forcar ainda vê o .env de antes.
+DEMO_ANTES=0
+if tem_demo "$(valor_no_env COMPOSE_PROFILES)"; then DEMO_ANTES=1; fi
+if [ "$SEM_DEMO" -eq 1 ]; then
+    DEMO_LIGADA=0
+elif tem_no_env COMPOSE_PROFILES; then
+    DEMO_LIGADA="$DEMO_ANTES"
+else
+    DEMO_LIGADA=1
+fi
+# O que a demonstração já tinha. O --forcar regrava o .env inteiro e MANTÉM estes: a senha da
+# conta é a que está na Apple, e uma sorteada de novo deixaria o revisor de fora.
+PERFIS_ANTES="$(valor_no_env COMPOSE_PROFILES)"
+DEMO_BANCO="$(valor_no_env DEMO_SENHA_BANCO)"
+DEMO_JWT="$(valor_no_env DEMO_JWT_SECRET)"
+DEMO_EMAIL="$(valor_no_env DEMO_ADMIN_EMAIL)"
+DEMO_SENHA="$(valor_no_env DEMO_ADMIN_SENHA)"
+
 # ------------------------------------------------------------------ perguntas
 
 if [ -f .env ] && [ "$FORCAR" -eq 0 ]; then
@@ -439,6 +686,9 @@ if [ -f .env ] && [ "$FORCAR" -eq 0 ]; then
     alerta "Para começar do zero, rode com --forcar (isto NÃO apaga os dados do banco)."
     # shellcheck disable=SC1091
     set -a; . ./.env; set +a
+    # O que é da demonstração o docker compose lê do .env, e não do ambiente: exportada daqui,
+    # uma cópia antiga venceria o arquivo que o instalador acabou de completar.
+    unset COMPOSE_PROFILES DEMO_SENHA_BANCO DEMO_JWT_SECRET DEMO_ADMIN_EMAIL DEMO_ADMIN_SENHA
     REAPROVEITADO=1
     definir_endereco
 else
@@ -547,6 +797,20 @@ if [ "$REAPROVEITADO" -eq 0 ]; then
         fi
     fi
 
+    # O segredo do login da loja é sorteado a cada regravação, como sempre foi — e nunca igual
+    # ao da demonstração: o token só leva o id do usuário, e com o mesmo segredo um token da
+    # demonstração valeria na loja.
+    JWT_NOVO="$(sortear 64)"
+    while [ "$JWT_NOVO" = "$DEMO_JWT" ]; do JWT_NOVO="$(sortear 64)"; done
+    PERFIS="$(sem_demo "$PERFIS_ANTES")"
+    if [ "$DEMO_LIGADA" -eq 1 ]; then
+        PERFIS="$(com_demo "$PERFIS_ANTES")"
+        [ -n "$DEMO_BANCO" ] || DEMO_BANCO="$(sortear 32)"
+        while [ -z "$DEMO_JWT" ] || [ "$DEMO_JWT" = "$JWT_NOVO" ]; do DEMO_JWT="$(sortear 64)"; done
+        [ -n "$DEMO_EMAIL" ] || DEMO_EMAIL="$EMAIL_DA_DEMO"
+        if [ -z "$DEMO_SENHA" ]; then DEMO_SENHA="$(sortear 20)"; SENHA_DEMO_NOVA=1; fi
+    fi
+
     titulo "Gravando a configuração"
     umask 077                      # o .env carrega senhas: só o dono do arquivo lê.
     cat > .env <<FIM
@@ -557,7 +821,7 @@ PORTA_HTTP=$PORTA_HTTP
 PORTA_HTTPS=$PORTA_HTTPS
 
 SENHA_BANCO=$SENHA_BANCO
-JWT_SECRET=$(sortear 64)
+JWT_SECRET=$JWT_NOVO
 
 AMBIENTE=$AMBIENTE
 CORS_ORIGINS=$CORS_ORIGINS
@@ -572,9 +836,39 @@ BACKUP_REMOTO=
 # endereço de um tópico do ntfy. Vazio = os avisos ficam só no journal deste servidor.
 NOTIFICAR_URL=$NOTIFICAR_URL
 FIM
+    # A demonstração: ligada, ou desligada guardando o que ela já tinha (o ./demo.sh --ligar
+    # volta com a mesma senha). Desligada e sem nada, só a decisão — o --sem-demo não grava
+    # nada dela, mas a linha vazia diz ao próximo instalador que ela ficou de fora de propósito.
+    {
+        printf '\n'
+        if [ "$DEMO_LIGADA" -eq 1 ] || [ -n "$DEMO_BANCO$DEMO_JWT$DEMO_SENHA" ]; then
+            printf '%s\n' "${COMENTARIO_DA_DEMO[@]}"
+            printf 'COMPOSE_PROFILES=%s\n' "$PERFIS"
+            if [ -n "$DEMO_BANCO" ]; then printf 'DEMO_SENHA_BANCO=%s\n' "$DEMO_BANCO"; fi
+            if [ -n "$DEMO_JWT" ]; then printf 'DEMO_JWT_SECRET=%s\n' "$DEMO_JWT"; fi
+            if [ -n "$DEMO_EMAIL" ]; then printf 'DEMO_ADMIN_EMAIL=%s\n' "$DEMO_EMAIL"; fi
+            if [ -n "$DEMO_SENHA" ]; then printf 'DEMO_ADMIN_SENHA=%s\n' "$DEMO_SENHA"; fi
+        else
+            printf '%s\n' "$COMENTARIO_DA_DEMO_DESLIGADA"
+            printf 'COMPOSE_PROFILES=%s\n' "$PERFIS"
+        fi
+    } >> .env
     chmod 600 .env
     certo ".env gravado (só você consegue ler)"
 fi
+
+# Quem já tinha a loja e roda o instalador de novo: o .env fica como está, e só ganha o que
+# a demonstração precisa (ou, com --sem-demo, a decisão de deixá-la de fora).
+if [ "$REAPROVEITADO" -eq 1 ]; then
+    if [ "$DEMO_LIGADA" -eq 1 ]; then
+        completar_env_da_demo
+        certo "demonstração ligada no .env (o que já havia nele ficou como estava)"
+    elif ! tem_no_env COMPOSE_PROFILES; then
+        acrescentar_no_env "" "$COMENTARIO_DA_DEMO_DESLIGADA" "COMPOSE_PROFILES="
+    fi
+fi
+
+conferir_dns
 
 # ------------------------------------------------------------------ subir
 
@@ -620,7 +914,9 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
 FIM
 fi
 
-dk compose up -d --build 2>&1 | tee "$registro_up"
+# Só os serviços DA LOJA, pelo nome: a demonstração sobe depois, à parte, e o que acontece
+# com ela nunca decide se a instalação da loja deu certo.
+dk compose up -d --build db api proxy 2>&1 | tee "$registro_up"
 codigo_up=${PIPESTATUS[0]}
 set -e
 
@@ -673,10 +969,23 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
     git rev-parse HEAD > docker/estado/implantado.novo && mv -f docker/estado/implantado.novo docker/estado/implantado
 fi
 
+# O proxy só lê o Caddyfile ao subir, e o `up` só o recria quando muda a configuração DELE
+# no compose: rodando o instalador de novo, o Caddyfile do disco (o /demo, a CSP) pode ser
+# mais novo que o que está no ar. Conferido antes de recarregar — um que não passa nunca
+# troca o que está no ar. Num proxy recém-criado, recarregar o mesmo arquivo não muda nada.
+if dk compose exec -T proxy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1; then
+    dk compose exec -T proxy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 \
+        || alerta "o proxy não recarregou o Caddyfile; se algo não abrir: ${CMD_DOCKER} compose restart proxy"
+else
+    alerta "o Caddyfile não passou na conferência do proxy: veja ${CMD_DOCKER} compose logs proxy"
+fi
+
 # A API estar saudável não garante que o proxy esteja publicando a porta. Antes de anunciar
 # o endereço, abre ele de verdade.
+WEB_OK=0
 if command -v curl >/dev/null 2>&1; then
     if curl -skf -o /dev/null --max-time 15 "$URL_FINAL/app/"; then
+        WEB_OK=1
         certo "sistema web respondendo em $URL_FINAL/app/"
     elif [ "$AMBIENTE" = "producao" ]; then
         alerta "o endereço ainda não responde — o certificado pode estar sendo emitido."
@@ -720,6 +1029,56 @@ elif [ "$REAPROVEITADO" -eq 1 ]; then
     alerta "Configuração reaproveitada — a conta do dono não foi mexida."
     alerta "Para criar uma conta nova de administrador:"
     echo "    ${PREFIXO_DOCKER:+sudo }docker compose exec api python -m app.cli create-admin --nome ... --email ... --senha ..."
+fi
+
+# ------------------------------------------------------------------ a demonstração (ADR-46)
+
+# A loja já está no ar e conferida; a demonstração vem depois, e nunca a derruba: sobe, espera
+# com teto, e o que não deu vira recado — a instalação da loja termina do mesmo jeito. A conta
+# dela nasce DENTRO do contêiner, pelo ambiente que o compose passa (a senha nunca aparece numa
+# linha de comando, nem no `ps` da máquina).
+ESPERA_DEMO=90
+DEMO_PRONTA=0
+subir_demonstracao() {
+    local id estado
+    titulo "Subindo a demonstração (${URL_FINAL}/demo)"
+    passo "outra API e outro banco, só com dados fictícios: a loja não depende dela"
+    if ! dk compose up -d demo-banco api-demo; then
+        alerta "a demonstração não subiu (a loja está no ar e não depende dela)."
+        alerta "veja: ${CMD_DOCKER} compose logs --tail 50 api-demo   e tente de novo: ./demo.sh --ligar"
+        return 0
+    fi
+    # A primeira subida migra e carrega os dados fictícios antes de responder.
+    for _ in $(seq 1 "$ESPERA_DEMO"); do
+        id="$(dk compose ps -q api-demo 2>/dev/null | head -1 || true)"
+        if [ -n "$id" ]; then
+            estado="$(dk inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$id" 2>/dev/null || true)"
+            if [ "$estado" = "healthy" ]; then
+                DEMO_PRONTA=1
+                certo "demonstração no ar"
+                break
+            fi
+        fi
+        sleep 2
+    done
+    if [ "$DEMO_PRONTA" -eq 0 ]; then
+        alerta "a demonstração ainda não respondeu — a primeira carga dos dados fictícios leva alguns minutos."
+        alerta "confira depois com: ./demo.sh --mostrar"
+        return 0
+    fi
+    # Respondeu por dentro; e pelo endereço? Só vale perguntar se a loja abriu por ele.
+    if [ "$WEB_OK" -eq 1 ] && ! curl -skf -o /dev/null --max-time 15 "$URL_FINAL/demo/health"; then
+        alerta "a demonstração está no ar, mas $URL_FINAL/demo não abriu: ${CMD_DOCKER} compose restart proxy"
+    fi
+}
+
+if [ "$DEMO_LIGADA" -eq 1 ]; then
+    subir_demonstracao
+elif [ "$DEMO_ANTES" -eq 1 ]; then
+    # --sem-demo numa loja que tinha a demonstração: desliga de verdade (os contêineres dela não
+    # saem sozinhos do ar) e guarda o banco e a senha, como o ./demo.sh --desligar.
+    titulo "Desligando a demonstração (--sem-demo)"
+    ./demo.sh --desligar --sim || alerta "não consegui desligar a demonstração; tente: ./demo.sh --desligar"
 fi
 
 # ------------------------------------------------------------------ cópia diária e vigia
@@ -766,6 +1125,12 @@ ligar_rotinas() {
                 || alerta "a cópia diária não ligou (veja acima); ligue depois com ./backup.sh --automatico"
             ./vigia.sh --automatico \
                 || alerta "o vigia não ligou (veja acima); ligue depois com ./vigia.sh --automatico"
+            # A demonstração volta ao começo toda madrugada: o revisor sempre encontra os dados
+            # de exemplo inteiros, com as datas de hoje.
+            if [ "$DEMO_LIGADA" -eq 1 ]; then
+                ./demo.sh --automatico \
+                    || alerta "a renovação da demonstração não ligou; ligue depois com ./demo.sh --automatico"
+            fi
             religar_rotinas_anotadas
             ;;
         *)
@@ -787,13 +1152,29 @@ ligar_rotinas
 # ------------------------------------------------------------------ fim
 
 titulo "Pronto — o sistema está rodando"
-CMD_DOCKER="docker"
-[ -n "$PREFIXO_DOCKER" ] && CMD_DOCKER="sudo docker"
 cat <<FIM
 
   Endereço:  ${FORTE}${URL_FINAL}/app/${NORMAL}
   Modo:      ${MODO}
   Entrar:    ${EMAIL:-<a conta já existente>}
+FIM
+if [ "$DEMO_LIGADA" -eq 1 ]; then
+    printf '\n  %sDemonstração%s (dados fictícios; a conta dela não entra na loja):\n' "$FORTE" "$NORMAL"
+    printf '    Endereço:  %s%s/demo%s' "$FORTE" "$URL_FINAL" "$NORMAL"
+    [ "$DEMO_PRONTA" -eq 1 ] || printf '   (ainda subindo: ./demo.sh --mostrar)'
+    printf '\n    Entrar:    %s\n' "$(valor_no_env DEMO_ADMIN_EMAIL)"
+    # A senha aparece uma vez: quando acabou de nascer. Rodar o instalador de novo não a
+    # repete no terminal (nem no log de quem o rodou por automação).
+    if [ "$SENHA_DEMO_NOVA" -eq 1 ]; then
+        printf '    Senha:     %s%s%s   (anote: é a que vai para a revisão da Apple)\n' \
+            "$FORTE" "$(valor_no_env DEMO_ADMIN_SENHA)" "$NORMAL"
+    else
+        printf '    Senha:     veja com ./demo.sh --mostrar\n'
+    fi
+else
+    printf '\n  Demonstração: desligada — para ligar: ./demo.sh --ligar\n'
+fi
+cat <<FIM
 
   Comandos do dia a dia:
     ${CMD_DOCKER} compose ps               ver se está no ar
@@ -804,11 +1185,17 @@ cat <<FIM
     ./backup.sh --listar            as cópias do banco (uma por dia, às 03:15)
     ./backup.sh --mostrar-chave     a chave das cópias de fora: guarde FORA daqui
     ./vigia.sh                      conferir agora se está tudo de pé
+    ./demo.sh --mostrar             a demonstração: endereço, senha e o que levar à Apple
 
 FIM
 if [ "$AMBIENTE" = "producao" ]; then
-    alerta "Confira que o DNS de $DOMINIO aponta para o IP deste servidor e que as"
-    alerta "portas 80 e 443 estão liberadas — é o que o Let's Encrypt precisa para"
-    alerta "emitir o certificado. Acompanhe em: docker compose logs -f proxy"
+    # O que a conferida do DNS achou e ficou para trás (com --sim ninguém esperou por ele).
+    if [ "${#PENDENCIAS_DNS[@]}" -gt 0 ]; then
+        alerta "Falta acertar o DNS de $DOMINIO — sem isso o certificado HTTPS não sai:"
+        mostrar_pendencias_dns
+        echo
+    fi
+    alerta "As portas 80 e 443 deste servidor precisam estar liberadas — é o que o Let's"
+    alerta "Encrypt usa para emitir o certificado. Acompanhe em: ${CMD_DOCKER} compose logs -f proxy"
     echo
 fi

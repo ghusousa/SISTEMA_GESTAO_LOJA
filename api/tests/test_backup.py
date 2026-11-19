@@ -171,16 +171,33 @@ DOCKER_DE_MENTIRA = r"""#!/usr/bin/env bash
 echo "docker $*" >> "$FAKE_CTR/docker.log"
 case "$1" in
     info|rm) exit 0 ;;
-    ps) printf '%s\n' ${FAKE_PS:-}; exit 0 ;;
+    ps)  # $FAKE_PS são os contêineres da máquina; o --filter name= vale (por pedaço do nome)
+        filtro=""
+        while [ $# -gt 0 ]; do case "$1" in --filter) filtro="${2#name=}"; shift 2 ;; *) shift ;; esac; done
+        for nome in ${FAKE_PS:-}; do case "$nome" in *"$filtro"*) printf '%s\n' "$nome" ;; esac; done
+        exit 0 ;;
     image) echo "Total reclaimed space: 0B"; exit 0 ;;
     compose) shift ;;
     *) exit 0 ;;
 esac
+while [ "${1:-}" = --profile ]; do shift 2; done
 dentro() { printf '%s/%s' "$FAKE_CTR" "$(basename "$1")"; }
 case "$1" in
+    ps)  # `compose ps -q SERVIÇO`: o id do contêiner (o `up` troca o de quem está em $FAKE_RECRIA)
+        [ "${2:-}" = -q ] && [ -n "${3:-}" ] && { cat "$FAKE_CTR/id-$3" 2>/dev/null || echo "id-$3"; }
+        exit 0 ;;
+    up)  # falha se pedir um serviço de $FAKE_UP_FALHA; recria os de $FAKE_RECRIA
+        for svc in ${FAKE_UP_FALHA:-}; do case " $* " in *" $svc "*) exit 1 ;; esac; done
+        for svc in ${FAKE_RECRIA:-}; do
+            printf '%s+\n' "$(cat "$FAKE_CTR/id-$svc" 2>/dev/null || echo "id-$svc")" > "$FAKE_CTR/id-$svc"
+        done
+        exit 0 ;;
     exec)
         shift; [ "$1" = -T ] && shift; svc="$1"; shift; prog="$1"; shift
         if [ "$svc" = db ]; then
+            # O banco da demonstração NÃO existe no Postgres dos testes, que é de todos: o SQL
+            # dele (DROP DATABASE, DROP ROLE) só é anotado, nunca roda de verdade aqui.
+            case " $* " in *loja_demo*) exit 0 ;; esac
             args=(); com_d=0
             while [ $# -gt 0 ]; do
                 case "$1" in
@@ -199,6 +216,9 @@ case "$1" in
             esac
         fi
         [ "$svc" = api ] && exec bash -c "${FAKE_API:-exit 0}"
+        # A demonstração e o proxy recebem o comando: "$1 $2" = "python -c", "caddy validate"...
+        [ "$svc" = api-demo ] && exec bash -c "${FAKE_API_DEMO:-exit 0}" _ "$prog" "$@"
+        [ "$svc" = proxy ] && exec bash -c "${FAKE_PROXY:-exit 0}" _ "$prog" "$@"
         exit 0 ;;
     cp) case "$2" in
             db:*) cp "$(dentro "${2#db:}")" "$3" ;;

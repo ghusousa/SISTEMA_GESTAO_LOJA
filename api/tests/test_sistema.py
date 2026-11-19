@@ -18,7 +18,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tests.test_backup import RAIZ, TOKEN, _banco_descartavel, _maquina, _psql
+from tests.test_backup import RAIZ, TOKEN, _banco_descartavel, _maquina, _modo, _psql
 
 
 
@@ -156,8 +156,10 @@ def _git(pasta: Path, env: dict[str, str], *args: str) -> None:
 # manda gravar, e o `insteadOf` do git o leva ao repositório local. O atualizar.sh lê o
 # endereço CRU (dono/repositório e token) e pergunta o CI a um curl de mentira, que anota a
 # chamada (com o que veio pelo `-K -`) e responde o que estiver em ctr/ci.json — sem o
-# arquivo, falha como um GitHub fora do ar ou um token sem permissão. Qualquer outro endereço
-# é o ntfy: responde 200, ou falha se existir ctr/ntfy-fora.
+# arquivo, falha como um GitHub fora do ar ou um token sem permissão. Os serviços que dizem o
+# IP público desta máquina respondem ctr/ip-publico (ou ctr/ip6-publico, com -6). Um /health é
+# a loja pelo proxy: responde, ou falha se existir ctr/proxy-fora. Qualquer outro endereço é o
+# ntfy: responde 200, ou falha se existir ctr/ntfy-fora.
 REPO_GITHUB = "https://x-access-token:tok-de-teste@github.com/dono/loja.git"
 
 CURL_DE_MENTIRA = r"""#!/usr/bin/env bash
@@ -171,6 +173,14 @@ case "${args[-1]}" in
     https://api.github.com/*)
         [ -f "$FAKE_CTR/ci.json" ] || { echo "curl: (22) The requested URL returned error: 403" >&2; exit 22; }
         cat "$FAKE_CTR/ci.json" ;;
+    https://api.ipify.org|https://api64.ipify.org|https://ifconfig.me/ip|https://icanhazip.com)
+        case " $* " in *" -6 "*) ip="$FAKE_CTR/ip6-publico" ;; *) ip="$FAKE_CTR/ip-publico" ;; esac
+        [ -f "$ip" ] || { echo "curl: (6) Could not resolve host" >&2; exit 6; }
+        cat "$ip" ;;
+    */health)
+        codigo=200; [ -f "$FAKE_CTR/proxy-fora" ] && codigo=000
+        case " $* " in *"%{http_code}"*) printf '%s' "$codigo" ;; esac
+        [ "$codigo" = 200 ] || { echo "curl: (7) Failed to connect" >&2; exit 7; } ;;
     *)
         [ -f "$FAKE_CTR/ntfy-fora" ] && { echo "curl: (7) Failed to connect" >&2; exit 7; }
         exit 0 ;;
@@ -207,6 +217,12 @@ def _ci(tmp_path: Path, situacao: str | None) -> None:
     arquivo.write_text(json.dumps({"total_count": len(corpo), "check_runs": corpo}))
 
 
+def _gravar(pasta: Path, nome: str, conteudo: str) -> None:
+    """Grava `nome` (pode ter pasta no meio, como docker/caddy/Caddyfile) dentro de `pasta`."""
+    (pasta / nome).parent.mkdir(parents=True, exist_ok=True)
+    (pasta / nome).write_text(conteudo)
+
+
 def _servidor(
     tmp_path: Path, env: dict[str, str], antes: dict[str, str], depois: dict[str, str]
 ) -> Path:
@@ -214,10 +230,11 @@ def _servidor(
     origem, servidor, dev = tmp_path / "origin.git", tmp_path / "servidor", tmp_path / "dev"
     _git(tmp_path, env, "init", "-q", "--bare", str(origem))
     _git(tmp_path, env, "clone", "-q", str(origem), str(servidor))
-    for nome in ("atualizar.sh", "backup.sh", "notificar.sh", "docker-compose.yml", ".gitignore"):
+    for nome in ("atualizar.sh", "backup.sh", "notificar.sh", "demo.sh", "docker-compose.yml",
+                 ".gitignore"):
         shutil.copy(RAIZ / nome, servidor / nome)
     for nome, conteudo in antes.items():
-        (servidor / nome).write_text(conteudo)
+        _gravar(servidor, nome, conteudo)
     _git(servidor, env, "add", "-A")
     _git(servidor, env, "commit", "-qm", "v1")
     _git(servidor, env, "push", "-q", "origin", "HEAD")
@@ -229,7 +246,7 @@ def _servidor(
     _ci(tmp_path, "verde")
     _git(tmp_path, env, "clone", "-q", str(origem), str(dev))
     for nome, conteudo in depois.items():
-        (dev / nome).write_text(conteudo)
+        _gravar(dev, nome, conteudo)
     _git(dev, env, "add", "-A")
     _git(dev, env, "commit", "-qm", "v2")
     _git(dev, env, "push", "-q", "origin", "HEAD")
@@ -415,7 +432,7 @@ def _publicar(tmp_path: Path, env: dict[str, str], arquivos: dict[str, str],
     """Mais um commit no GitHub de mentira (o de quem desenvolve)."""
     dev = tmp_path / "dev"
     for nome, conteudo in arquivos.items():
-        (dev / nome).write_text(conteudo)
+        _gravar(dev, nome, conteudo)
     for nome in apagar:
         (dev / nome).unlink()
     _git(dev, env, "add", "-A")
@@ -527,6 +544,225 @@ async def test_atualizacao_sozinha_que_falha_avisa_o_dono(tmp_path: Path) -> Non
     assert f"ExecStart={servidor}/notificar.sh --unidade %i" in (
         unidades / "loja-aviso@.service").read_text()
     assert "enable --now loja-atualizar.timer" in (tmp_path / "ctr" / "systemctl.log").read_text()
+
+
+# ------------------------------------------------------------- a demonstração na atualização
+#
+# ADR-46: a loja sobe primeiro e decide sozinha se a atualização fica ou volta; a
+# demonstração vem depois, e nunca desfaz nada. O proxy é conferido por onde o navegador chega.
+
+ENV_COM_DEMO = "SENHA_BANCO=x\nCOMPOSE_PROFILES=demo\nNOTIFICAR_URL=https://ntfy.exemplo/loja\n"
+
+
+@precisa_do_git
+async def test_a_loja_sobe_primeiro_e_a_demo_depois(tmp_path: Path) -> None:
+    """Duas fases: o `up` da loja (db, api, proxy) é o que decide sucesso ou volta atrás; a
+    demonstração sobe depois, pelo nome, só com o perfil dela ligado no .env."""
+    env = _maquina(tmp_path, FAKE_API="echo ok") | GIT_ISOLADO
+    servidor = _servidor(tmp_path, env, antes={}, depois={"novidade.txt": "v2"})
+    (servidor / ".env").write_text(ENV_COM_DEMO)
+
+    r = _atualizar(servidor, env, "--sem-backup")
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "Atualizado." in r.stdout
+    assert "Demonstração (/demo): no ar" in r.stdout
+    log = (tmp_path / "ctr" / "docker.log").read_text()
+    loja, demo = log.index("compose up -d --build --remove-orphans db api proxy"), log.index("compose up -d demo-banco api-demo")
+    assert loja < demo
+    assert "exec -T api-demo python -c" in log[demo:]  # e esperou o /health dela
+    # Conferida pelo proxy, antes do "Atualizado".
+    assert "[http://127.0.0.1:80/health]" in (tmp_path / "ctr" / "curl.log").read_text()
+
+
+@precisa_do_git
+async def test_loja_sem_a_demo_atualiza_sem_tocar_nela_nem_no_env(tmp_path: Path) -> None:
+    """A loja que veio pela 1ª atualização (rodada pelo atualizar.sh VELHO, que não conhece a
+    demonstração) chega aqui com o .env de antes: a demo fica de fora, e o .env não é escrito."""
+    env = _maquina(tmp_path, FAKE_API="echo ok") | GIT_ISOLADO
+    servidor = _servidor(tmp_path, env, antes={}, depois={"novidade.txt": "v2"})
+    dotenv = "SENHA_BANCO=x\nJWT_SECRET=y\nNOTIFICAR_URL=\n"
+    (servidor / ".env").write_text(dotenv)
+
+    r = _atualizar(servidor, env, "--sem-backup")
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    log = (tmp_path / "ctr" / "docker.log").read_text()
+    # A loja sobe pelo nome, e só ela: um contêiner da demonstração que tenha ficado de pé
+    # (perfil desligado) nem é tocado pela fase que decide a atualização.
+    assert "compose up -d --build --remove-orphans db api proxy" in log
+    assert "demo-banco" not in log and "api-demo" not in log
+    assert "Demonstração" not in r.stdout
+    assert (servidor / ".env").read_text() == dotenv
+
+
+@precisa_do_git
+@pytest.mark.parametrize("defeito", [{"FAKE_UP_FALHA": "api-demo"}, {"FAKE_API_DEMO": "exit 1"}])
+async def test_falha_so_da_demo_nao_desfaz_a_atualizacao_e_avisa(
+    tmp_path: Path, defeito: dict[str, str]
+) -> None:
+    """A demonstração que não sobe (ou não responde) não é motivo para voltar a LOJA para trás:
+    a atualização fica, e o dono é avisado — ela é a vitrine da revisão da Apple."""
+    env = _maquina(tmp_path, FAKE_API="echo ok", **defeito) | GIT_ISOLADO
+    servidor = _servidor(tmp_path, env, antes={}, depois={"novidade.txt": "v2"})
+    (servidor / ".env").write_text(ENV_COM_DEMO)
+
+    r = _atualizar(servidor, env, "--sem-backup")
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "Atualizado." in r.stdout
+    assert (servidor / "novidade.txt").exists()
+    assert not (servidor / "docker/estado/falhou").exists()
+    assert (servidor / "docker/estado/implantado").read_text().strip() == _cabeca_do_github(tmp_path)
+    assert _avisos(tmp_path) == ["A demonstração não subiu"]
+
+
+@precisa_do_git
+async def test_caddyfile_novo_e_conferido_e_recarregado(tmp_path: Path) -> None:
+    """O proxy só lê o Caddyfile ao subir, e o `up` não o recria por mudança no arquivo: a
+    CSP nova (ou o /demo) ficava esperando o próximo reboot. Mudou e o proxy não foi
+    recriado: confere e recarrega, depois do `up`. Não mudou: nada de mexer no proxy à toa."""
+    env = _maquina(tmp_path, FAKE_API="echo ok") | GIT_ISOLADO
+    servidor = _servidor(tmp_path, env, antes={"docker/caddy/Caddyfile": ":80 {\n}\n"},
+                         depois={"docker/caddy/Caddyfile": ":80 {\n\tencode gzip\n}\n"})
+    log = tmp_path / "ctr" / "docker.log"
+
+    r = _atualizar(servidor, env, "--sem-backup")
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "Caddyfile novo conferido e aplicado ao proxy" in r.stdout
+    texto = log.read_text()
+    up = texto.index("compose up -d --build")
+    validar = texto.index("compose exec -T proxy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile")
+    recarregar = texto.index("compose exec -T proxy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile")
+    assert up < validar < recarregar
+
+    _publicar(tmp_path, env, {"outra.txt": "v3"})
+    log.unlink()
+    r = _atualizar(servidor, env, "--sem-backup")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "caddy" not in log.read_text()
+
+
+@precisa_do_git
+async def test_proxy_recriado_ja_subiu_com_o_caddyfile_novo(tmp_path: Path) -> None:
+    env = _maquina(tmp_path, FAKE_API="echo ok", FAKE_RECRIA="proxy") | GIT_ISOLADO
+    servidor = _servidor(tmp_path, env, antes={"docker/caddy/Caddyfile": "v1\n"},
+                         depois={"docker/caddy/Caddyfile": "v2\n"})
+
+    r = _atualizar(servidor, env, "--sem-backup")
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "o proxy foi recriado e já subiu com ele" in r.stdout
+    assert "caddy reload" not in (tmp_path / "ctr" / "docker.log").read_text()
+
+
+@precisa_do_git
+async def test_caddyfile_que_nao_passa_na_conferencia_desfaz_a_atualizacao(tmp_path: Path) -> None:
+    """Recarregado quebrado, o Caddy recusaria e seguiria com o de antes — mas o arquivo
+    quebrado ficaria no disco, esperando o próximo reinício do proxy para derrubar a loja."""
+    env = _maquina(tmp_path, FAKE_API="echo ok", FAKE_PROXY='[ "$2" != validate ]') | GIT_ISOLADO
+    servidor = _servidor(tmp_path, env, antes={"docker/caddy/Caddyfile": "v1\n"},
+                         depois={"docker/caddy/Caddyfile": "quebrado {\n"})
+
+    r = _atualizar(servidor, env, "--sem-backup")
+
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "não passou na conferência" in r.stdout
+    assert (servidor / "docker/caddy/Caddyfile").read_text() == "v1\n"
+    assert "caddy reload" not in (tmp_path / "ctr" / "docker.log").read_text()
+    assert (servidor / "docker/estado/falhou").read_text().strip() == _cabeca_do_github(tmp_path)
+
+
+# A versão nova derruba o proxy: depois de cada `up`, o proxy cai se o código no disco tem o
+# arquivo `quebra-proxy`, e volta se não tem. O resto é o docker de mentira do test_backup.
+DOCKER_QUE_DERRUBA_O_PROXY = r"""#!/usr/bin/env bash
+"$(dirname "$0")/docker-de-mentira" "$@" || exit $?
+if [ "$1 $2" = "compose up" ]; then
+    if [ -f quebra-proxy ]; then : > "$FAKE_CTR/proxy-fora"; else rm -f "$FAKE_CTR/proxy-fora"; fi
+fi
+exit 0
+"""
+
+
+@precisa_do_git
+async def test_loja_que_nao_abre_pelo_proxy_volta_atras(tmp_path: Path) -> None:
+    """O /health por dentro da API dizia "subiu" com a loja fechada para o navegador. Agora o
+    "Atualizado" só sai depois de a loja abrir PELO PROXY — se ela abria antes."""
+    env = _maquina(tmp_path, FAKE_API="echo ok") | GIT_ISOLADO
+    docker = tmp_path / "bin" / "docker"
+    docker.rename(tmp_path / "bin" / "docker-de-mentira")
+    docker.write_text(DOCKER_QUE_DERRUBA_O_PROXY)
+    docker.chmod(0o755)
+    servidor = _servidor(tmp_path, env, antes={}, depois={"quebra-proxy": ""})
+
+    r = _atualizar(servidor, env, "--sem-backup")
+
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "a loja não abre pelo proxy (http://127.0.0.1:80/health)" in r.stderr
+    assert "Atualizado." not in r.stdout
+    assert not (servidor / "quebra-proxy").exists()
+    assert not (tmp_path / "ctr" / "proxy-fora").exists()  # a de antes voltou a abrir
+
+
+@precisa_do_git
+async def test_proxy_que_ja_nao_abria_nao_desfaz_a_atualizacao(tmp_path: Path) -> None:
+    """Se a loja já não abria pelo proxy ANTES (porta bloqueada, um problema de antes), a
+    conferida de depois não é juiz: senão toda atualização voltaria atrás por um defeito que
+    não é dela. Atualiza, e avisa."""
+    env = _maquina(tmp_path, FAKE_API="echo ok") | GIT_ISOLADO
+    servidor = _servidor(tmp_path, env, antes={}, depois={"novidade.txt": "v2"})
+    (tmp_path / "ctr" / "proxy-fora").touch()
+
+    r = _atualizar(servidor, env, "--sem-backup")
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "Atualizado." in r.stdout
+    assert "já não abria antes desta atualização" in r.stdout
+
+
+@precisa_do_git
+async def test_volta_atras_recria_a_demo_do_zero(tmp_path: Path) -> None:
+    """O banco da demonstração pode ter sido migrado por uma versão que a de antes não
+    conhece ("Can't locate revision"). Ela é descartável: na volta atrás, sai o contêiner,
+    sai o banco, e a versão de antes migra e semeia tudo de novo."""
+    env = _maquina(tmp_path, FAKE_API="[ ! -f quebrada ]") | GIT_ISOLADO
+    servidor = _servidor(tmp_path, env, antes={}, depois={"quebrada": ""})
+    (servidor / ".env").write_text(ENV_COM_DEMO)
+
+    r = _atualizar(servidor, env, "--sem-backup")
+
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert not (servidor / "quebrada").exists()
+    log = (tmp_path / "ctr" / "docker.log").read_text()
+    tirar = log.index("compose rm -sf api-demo")
+    apagar = log.index("DROP DATABASE IF EXISTS loja_demo WITH (FORCE)")
+    subir = log.index("compose up -d demo-banco api-demo")
+    assert tirar < apagar < subir
+    # A demonstração nunca subiu com a versão quebrada: só a de antes, do zero.
+    assert log.count("compose up -d demo-banco api-demo") == 1
+
+
+@precisa_do_git
+async def test_orfao_de_qualquer_servico_sai_antes_do_up(tmp_path: Path) -> None:
+    """O órfão de uma recriação interrompida trava o `up` seguinte, e não só o da api: o do
+    proxy fecha as portas da loja, e o da demonstração faria a atualização da loja voltar
+    atrás. Quem decide é o nome inteiro — contêiner de outro projeto nunca sai."""
+    orfaos = ("3f2a9c1b7d4e_loja-api-1", "9a8b7c6d5e4f_loja-api-demo-1", "0a1b2c3d4e5f_loja-proxy-1",
+              "aabbccddeeff_loja-demo-banco-1")
+    alheios = ("loja-db-1", "minha_loja-web-1", "3f2a9c1b7d4e_outro-api-1")
+    env = _maquina(tmp_path, FAKE_PS=" ".join(orfaos + alheios), FAKE_API="echo ok") | GIT_ISOLADO
+    servidor = _servidor(tmp_path, env, antes={}, depois={"novidade.txt": "v2"})
+
+    r = _atualizar(servidor, env, "--sem-backup")
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    log = (tmp_path / "ctr" / "docker.log").read_text()
+    for nome in orfaos:
+        assert f"docker rm -f {nome}" in log
+        assert log.index(f"docker rm -f {nome}") < log.index("compose up -d --build")
+    for nome in alheios:
+        assert f"docker rm -f {nome}" not in log
 
 
 # ------------------------------------------------------------------ avisos e vigia
@@ -655,26 +891,39 @@ async def test_vigia_avisa_queda_disco_e_backup_atrasado_e_avisa_quando_volta(
 
 # ------------------------------------------------------------------ o ./instalar.sh
 
-# O Docker do instalador: tudo sobe, e a API responde "healthy" na primeira conferida.
+# O Docker do instalador: tudo sobe, e cada serviço responde "healthy" na primeira conferida
+# — menos os de $FAKE_DOENTE. O `up` que pede um serviço de $FAKE_UP_FALHA falha.
 DOCKER_DO_INSTALADOR = r"""#!/usr/bin/env bash
 echo "docker $*" >> "$FAKE_CTR/docker.log"
 case "$1 $2" in
     "volume inspect") exit 1 ;;
-    "compose ps") echo "id-da-api" ;;
-    "inspect -f") echo healthy ;;
+    "compose ps") echo "id-${4:-da-api}" ;;
+    "inspect -f") case " ${FAKE_DOENTE:-} " in *" ${4#id-} "*) echo starting ;; *) echo healthy ;; esac ;;
+    "compose up") for s in ${FAKE_UP_FALHA:-}; do case " $* " in *" $s "*) exit 1 ;; esac; done ;;
 esac
+exit 0
+"""
+
+# O resolvedor da máquina: ahostsv4/ahostsv6 dão os endereços de ctr/dns-v4 e ctr/dns-v6 (um
+# por linha), no formato do getent; sem o arquivo, "não achei" (sai 2), como o de verdade.
+GETENT_DE_MENTIRA = r"""#!/usr/bin/env bash
+arquivo="$FAKE_CTR/dns-${1#ahosts}"
+[ -s "$arquivo" ] || exit 2
+while read -r ip; do [ -n "$ip" ] && printf '%-15s STREAM %s\n' "$ip" "$2"; done < "$arquivo"
 exit 0
 """
 
 
 def _instalador(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     env = _maquina(tmp_path)
-    for nome, corpo in (("docker", DOCKER_DO_INSTALADOR), ("curl", CURL_DE_MENTIRA)):
+    for nome, corpo in (("docker", DOCKER_DO_INSTALADOR), ("curl", CURL_DE_MENTIRA),
+                        ("getent", GETENT_DE_MENTIRA)):
         (tmp_path / "bin" / nome).write_text(corpo)
         (tmp_path / "bin" / nome).chmod(0o755)
     loja = tmp_path / "loja"
     loja.mkdir()
-    for nome in ("instalar.sh", "backup.sh", "vigia.sh", "notificar.sh", "docker-compose.yml"):
+    for nome in ("instalar.sh", "backup.sh", "vigia.sh", "notificar.sh", "demo.sh",
+                 "docker-compose.yml"):
         shutil.copy(RAIZ / nome, loja / nome)
     (tmp_path / "run-systemd").mkdir()
     # "Há systemd no comando" (o /run/systemd/system da máquina de verdade).
@@ -758,6 +1007,293 @@ async def test_instalar_por_ip_publico_recusa_sem_gravar_nada(tmp_path: Path) ->
     assert "compose up" not in (tmp_path / "ctr" / "docker.log").read_text()
 
 
+# ------------------------------------------------------------- a demonstração na instalação
+#
+# ADR-46: a demonstração (outra API, outro banco, dados fictícios) vem ligada com a loja, em
+# <endereço>/demo. As senhas dela moram no .env, que só o instalar.sh e o demo.sh escrevem.
+
+DEMO = ("DEMO_SENHA_BANCO", "DEMO_JWT_SECRET", "DEMO_ADMIN_EMAIL", "DEMO_ADMIN_SENHA")
+
+# Um .env de antes da demonstração, do jeito que o instalar.sh o gravava.
+ENV_DE_ANTES = (
+    "DOMINIO=192.168.0.10\nENDERECO_PROXY=:80\nPORTA_HTTP=80\nPORTA_HTTPS=443\n\n"
+    "SENHA_BANCO=senhaDoBancoDeAntes123\nJWT_SECRET=" + "j" * 48 + "\n\n"
+    "AMBIENTE=local\nCORS_ORIGINS=*\nTIMEZONE_LOJA=America/Sao_Paulo\n\n"
+    "BACKUP_REMOTO=\n\nNOTIFICAR_URL=\n"
+)
+
+
+def _ler_env(pasta: Path) -> dict[str, str]:
+    linhas = (pasta / ".env").read_text().splitlines()
+    return dict(linha.split("=", 1) for linha in linhas if "=" in linha and not linha.startswith("#"))
+
+
+def _mascarar(texto: str, *segredos: str) -> str:
+    """A saída para a mensagem de um assert que falhou, sem as senhas que ela pode ter."""
+    for segredo in segredos:
+        if segredo:
+            texto = texto.replace(segredo, "***")
+    return texto
+
+
+def _saida(r: subprocess.CompletedProcess, loja: Path) -> str:
+    segredos = _ler_env(loja).values() if (loja / ".env").exists() else ()
+    return _mascarar(r.stdout + r.stderr, *[s for s in segredos if len(s) >= 12])
+
+
+def _religar(loja: Path, env: dict[str, str], *mais: str) -> subprocess.CompletedProcess:
+    """O instalador de novo, reaproveitando o .env (o "religar depois de um down")."""
+    return subprocess.run(["bash", "./instalar.sh", "--sim", *mais], cwd=loja, env=env,
+                          capture_output=True, text=True, timeout=300)
+
+
+def _dns(tmp_path: Path, ip: str | None = None, v4: tuple[str, ...] = (),
+         v6: tuple[str, ...] = (), ip6: str | None = None) -> None:
+    """O IP público desta máquina (o que os serviços de eco veem) e para onde o domínio aponta."""
+    ctr = tmp_path / "ctr"
+    for nome, valor in (("ip-publico", ip), ("ip6-publico", ip6)):
+        (ctr / nome).unlink(missing_ok=True)
+        if valor:
+            (ctr / nome).write_text(valor + "\n")
+    (ctr / "dns-v4").write_text("".join(f"{a}\n" for a in v4))
+    (ctr / "dns-v6").write_text("".join(f"{a}\n" for a in v6))
+
+
+@precisa_do_bash
+async def test_instalacao_nova_vem_com_a_demo_e_mostra_a_senha_uma_vez(tmp_path: Path) -> None:
+    """"A conta demo já vai vir pronta": instalação nova grava as senhas da demonstração no
+    .env (600, segredo do login diferente do da loja), sobe a loja e DEPOIS a demonstração,
+    agenda a renovação diária e mostra a senha no resumo — uma vez. Rodar de novo não a repete."""
+    loja, env = _instalador(tmp_path)
+    _dns(tmp_path, ip="203.0.113.10", v4=("203.0.113.10",))
+
+    r = _instalar(loja, env, "loja.exemplo.com.br")
+
+    assert r.returncode == 0, _saida(r, loja)
+    dotenv = _ler_env(loja)
+    assert dotenv["COMPOSE_PROFILES"] == "demo"
+    assert dotenv["DEMO_ADMIN_EMAIL"] == "dono@demo.example"
+    for chave, minimo in (("DEMO_SENHA_BANCO", 20), ("DEMO_JWT_SECRET", 32), ("DEMO_ADMIN_SENHA", 20)):
+        assert re.fullmatch(r"[A-Za-z0-9_-]{%d,}" % minimo, dotenv[chave]), chave
+    # O token só leva o id do usuário: com o mesmo segredo, o da demo abriria a loja.
+    assert dotenv["DEMO_JWT_SECRET"] != dotenv["JWT_SECRET"]
+    assert _modo(loja / ".env") == 0o600
+    senha = dotenv["DEMO_ADMIN_SENHA"]
+    assert r.stdout.count(senha) == 1, _saida(r, loja)
+    assert "https://loja.exemplo.com.br/demo" in r.stdout
+    assert "loja.exemplo.com.br aponta para este servidor (203.0.113.10)" in r.stdout
+    log = (tmp_path / "ctr" / "docker.log").read_text()
+    # A loja sobe sozinha e conferida; a demonstração vem depois, pelo nome.
+    assert log.index("compose up -d --build db api proxy") < log.index("compose up -d demo-banco api-demo")
+    assert "caddy reload --config /etc/caddy/Caddyfile" in log
+    # A conta nasce dentro do contêiner, pelo ambiente: a senha não passa em linha de comando.
+    assert senha not in log
+    unidades = tmp_path / "systemd"
+    assert "OnCalendar=*-*-* 04:30:00 America/Sao_Paulo" in (unidades / "loja-demo-renovar.timer").read_text()
+    servico = (unidades / "loja-demo-renovar.service").read_text()
+    assert "OnFailure=loja-aviso@%N.service" in servico
+    assert f"ExecStart={loja}/demo.sh --renovar" in servico
+
+    de_novo = _religar(loja, env)
+
+    assert de_novo.returncode == 0, _saida(de_novo, loja)
+    assert senha not in de_novo.stdout + de_novo.stderr
+    assert "veja com ./demo.sh --mostrar" in de_novo.stdout
+    assert _ler_env(loja) == dotenv
+
+
+@precisa_do_bash
+async def test_sem_demo_nao_grava_nada_da_demo_e_a_decisao_fica(tmp_path: Path) -> None:
+    """--sem-demo: nenhuma senha, nenhum serviço, nenhum timer da demonstração. E a decisão
+    fica no .env (a linha vazia): religar a loja depois não liga a demo por conta própria."""
+    loja, env = _instalador(tmp_path)
+
+    r = _instalar(loja, env, "192.168.0.10", "--sem-demo")
+
+    assert r.returncode == 0, _saida(r, loja)
+    texto = (loja / ".env").read_text()
+    assert "DEMO_" not in texto
+    assert _ler_env(loja)["COMPOSE_PROFILES"] == ""
+    log = (tmp_path / "ctr" / "docker.log").read_text()
+    assert "api-demo" not in log and "demo-banco" not in log
+    assert not (tmp_path / "systemd" / "loja-demo-renovar.timer").exists()
+    assert "Demonstração: desligada — para ligar: ./demo.sh --ligar" in r.stdout
+
+    de_novo = _religar(loja, env)
+
+    assert de_novo.returncode == 0, _saida(de_novo, loja)
+    assert "DEMO_" not in (loja / ".env").read_text()
+    assert "api-demo" not in (tmp_path / "ctr" / "docker.log").read_text()
+
+
+@precisa_do_bash
+async def test_forcar_mantem_as_senhas_da_demo(tmp_path: Path) -> None:
+    """O --forcar regrava o .env inteiro e sorteia o segredo do login de novo. A senha da
+    conta da demonstração é a que está na Apple: sorteada de novo, o revisor ficaria de fora."""
+    loja, env = _instalador(tmp_path)
+    assert _instalar(loja, env, "192.168.0.10").returncode == 0
+    antes = _ler_env(loja)
+
+    r = _instalar(loja, env, "192.168.0.10", "--forcar")
+
+    assert r.returncode == 0, _saida(r, loja)
+    depois = _ler_env(loja)
+    for chave in DEMO:
+        assert depois[chave] == antes[chave], chave
+    assert depois["COMPOSE_PROFILES"] == "demo"
+    assert depois["JWT_SECRET"] != antes["JWT_SECRET"]
+    assert depois["DEMO_JWT_SECRET"] != depois["JWT_SECRET"]
+    # Não nasceu agora: o resumo não a repete.
+    assert antes["DEMO_ADMIN_SENHA"] not in r.stdout
+    assert "veja com ./demo.sh --mostrar" in r.stdout
+
+
+@precisa_do_bash
+async def test_religar_sem_loja_chega_ao_fim_e_ganha_a_demo(tmp_path: Path) -> None:
+    """O caminho que reaproveita o .env morria em "LOJA: unbound variable" depois do `up`:
+    sem rotinas religadas e sem resumo. É por ele que a loja de antes ganha a demonstração,
+    sem mexer no que o .env já tinha."""
+    loja, env = _instalador(tmp_path)
+    (loja / ".env").write_text(ENV_DE_ANTES)
+    (loja / ".env").chmod(0o600)
+
+    r = _religar(loja, env)
+
+    assert r.returncode == 0, _saida(r, loja)
+    assert "unbound variable" not in r.stderr
+    assert "Pronto — o sistema está rodando" in r.stdout
+    dotenv = _ler_env(loja)
+    assert dotenv["SENHA_BANCO"] == "senhaDoBancoDeAntes123"
+    assert dotenv["JWT_SECRET"] == "j" * 48
+    assert dotenv["COMPOSE_PROFILES"] == "demo"
+    assert all(dotenv[chave] for chave in DEMO)
+    assert dotenv["DEMO_JWT_SECRET"] != dotenv["JWT_SECRET"]
+    assert (loja / ".env").read_text().startswith(ENV_DE_ANTES)
+    assert _modo(loja / ".env") == 0o600
+    # A senha nasceu agora: aparece uma vez.
+    assert r.stdout.count(dotenv["DEMO_ADMIN_SENHA"]) == 1
+    assert "compose up -d demo-banco api-demo" in (tmp_path / "ctr" / "docker.log").read_text()
+
+
+@precisa_do_bash
+@pytest.mark.parametrize(("defeito", "recado"), [
+    ({"FAKE_UP_FALHA": "api-demo"}, "a demonstração não subiu"),
+    ({"FAKE_DOENTE": "api-demo"}, "a demonstração ainda não respondeu"),
+])
+async def test_demo_que_nao_sobe_nao_derruba_a_instalacao(
+    tmp_path: Path, defeito: dict[str, str], recado: str
+) -> None:
+    """A loja não depende da vitrine: a demonstração que não sobe, ou não responde no tempo,
+    vira um recado — e a instalação da loja termina igual, com rotinas e resumo."""
+    loja, env = _instalador(tmp_path)
+
+    r = _instalar(loja, env | defeito, "192.168.0.10")
+
+    assert r.returncode == 0, _saida(r, loja)
+    assert recado in r.stdout
+    assert "Pronto — o sistema está rodando" in r.stdout
+    assert "enable --now loja-backup.timer" in (tmp_path / "ctr" / "systemctl.log").read_text()
+
+
+@precisa_do_bash
+async def test_sem_demo_numa_loja_com_demo_desliga_e_guarda(tmp_path: Path) -> None:
+    """--sem-demo onde a demonstração estava ligada: desliga de verdade (os contêineres dela
+    não saem do ar sozinhos) e guarda as senhas, para o ./demo.sh --ligar voltar igual."""
+    loja, env = _instalador(tmp_path)
+    assert _instalar(loja, env, "192.168.0.10").returncode == 0
+    antes = _ler_env(loja)
+
+    r = _religar(loja, env, "--sem-demo")
+
+    assert r.returncode == 0, _saida(r, loja)
+    depois = _ler_env(loja)
+    assert depois["COMPOSE_PROFILES"] == ""
+    assert all(depois[chave] == antes[chave] for chave in DEMO)
+    assert "compose --profile demo rm -sf api-demo demo-banco" in (tmp_path / "ctr" / "docker.log").read_text()
+    assert not (tmp_path / "systemd" / "loja-demo-renovar.timer").exists()
+
+
+@precisa_do_bash
+async def test_dns_errado_diz_o_registro_e_repete_no_resumo(tmp_path: Path) -> None:
+    """Com --sim ninguém espera o DNS: a conferida diz o registro exato que falta (como o
+    painel do domínio pede) e o resumo repete. Um AAAA para outra máquina tem de sair: o Let's
+    Encrypt tenta o IPv6 primeiro, e o certificado não sairia."""
+    loja, env = _instalador(tmp_path)
+    _dns(tmp_path, ip="203.0.113.10", v4=("198.51.100.7",), v6=("2001:db8::99",))
+
+    r = _instalar(loja, env, "loja.seudominio.com.br")
+
+    assert r.returncode == 0, _saida(r, loja)
+    registro = "Tipo A  ·  Nome loja  ·  Valor 203.0.113.10"
+    assert r.stdout.count(registro) == 2, _saida(r, loja)
+    assert "aponta para 198.51.100.7, não para este servidor" in r.stdout
+    assert r.stdout.count("Apague o registro AAAA de loja.seudominio.com.br (2001:db8::99)") == 2
+    # Conferido ANTES de subir: o Let's Encrypt limita as tentativas que falham.
+    assert r.stdout.index("Conferindo o DNS") < r.stdout.index("Construindo e subindo")
+    assert "Falta acertar o DNS de loja.seudominio.com.br" in r.stdout
+
+    _dns(tmp_path, ip="203.0.113.10", v4=())
+    sem_registro = _instalar(loja, env, "loja.seudominio.com.br", "--forcar")
+    assert "Crie no painel do domínio:   Tipo A  ·  Nome loja  ·  Valor 203.0.113.10" in sem_registro.stdout
+
+    _dns(tmp_path, ip="203.0.113.10", v4=("203.0.113.10",), v6=("2001:db8::10",), ip6="2001:db8::10")
+    certo = _instalar(loja, env, "loja.seudominio.com.br", "--forcar")
+    assert "aponta para este servidor (203.0.113.10)" in certo.stdout
+    assert "Falta acertar o DNS" not in certo.stdout
+
+
+@precisa_do_bash
+async def test_dns_interativo_espera_e_segue_quando_o_registro_aparece(tmp_path: Path) -> None:
+    """Com gente na frente, o instalador espera o DNS conferindo de novo (a cada 15 s) e segue
+    sozinho quando o registro aparece — sem ninguém teclar nada."""
+    loja, env = _instalador(tmp_path)
+    _dns(tmp_path, ip="203.0.113.10", v4=())
+    # O registro "aparece" na segunda pergunta ao resolvedor.
+    getent = tmp_path / "bin" / "getent"
+    getent.write_text(
+        '#!/usr/bin/env bash\n'
+        'n="$(cat "$FAKE_CTR/perguntas" 2>/dev/null || echo 0)"; echo $((n + 1)) > "$FAKE_CTR/perguntas"\n'
+        '[ "$1" = ahostsv4 ] && [ "$n" -ge 2 ] && echo "203.0.113.10    STREAM $2"\n'
+        'exit 0\n'
+    )
+    saida, erros = tmp_path / "saida.txt", tmp_path / "erros.txt"
+    with saida.open("w") as o, erros.open("w") as e:
+        processo = subprocess.Popen(
+            ["bash", "./instalar.sh", "--dominio", "loja.seudominio.com.br", "--nome", "Dona Maria",
+             "--email", "dona@loja.com", "--senha", "senha12345", "--senha-banco", "senhaDoBanco123",
+             "--loja", "Boutique", "--segmento", "ROUPAS", "--avisos", "loja-teste"],
+            cwd=loja, env=env | {"INTERVALO_DNS": "1"}, stdin=subprocess.PIPE, stdout=o, stderr=e,
+        )
+        try:
+            assert processo.wait(timeout=120) == 0, _mascarar(saida.read_text() + erros.read_text())
+        finally:
+            processo.stdin.close()
+            if processo.poll() is None:
+                processo.kill()
+    texto = saida.read_text()
+    assert "Conferindo de novo a cada 1 s" in texto
+    assert "agora sim: loja.seudominio.com.br aponta para este servidor" in texto
+    assert "Falta acertar o DNS" not in texto
+
+
+def _nome_no_painel(dominio: str) -> str:
+    funcoes = f'eval "$(sed -n "/^nome_no_painel() {{/,/^}}/p" {RAIZ / "instalar.sh"})"'
+    feito = subprocess.run(["bash", "-c", f'{funcoes}; nome_no_painel "$1"', "_", dominio],
+                           capture_output=True, text=True, timeout=30)
+    return feito.stdout.strip()
+
+
+@precisa_do_bash
+@pytest.mark.parametrize(("dominio", "nome"), [
+    ("loja.seudominio.com.br", "loja"), ("seudominio.com.br", "@"), ("loja.exemplo.com", "loja"),
+    ("exemplo.com", "@"), ("a.b.loja.com.br", "a.b"), ("loja.exemplo.co.uk", "loja"),
+    ("vendas.loja.net.br", "vendas"),
+])
+async def test_o_nome_do_registro_e_o_que_o_painel_pede(dominio: str, nome: str) -> None:
+    """O painel do domínio pede o pedaço antes do domínio registrado (ou @ para ele mesmo)."""
+    assert _nome_no_painel(dominio) == nome
+
+
 @precisa_do_git
 async def test_repositorio_publico_sem_token_tambem_confere_o_ci(tmp_path: Path) -> None:
     """Sem credencial gravada (repositório público), a pergunta vai sem token — e a resposta
@@ -788,7 +1324,8 @@ async def test_desinstalar_desliga_o_vigia_e_as_rotinas(tmp_path: Path) -> None:
     for nome in ("desinstalar.sh", "docker-compose.yml"):
         shutil.copy(RAIZ / nome, loja / nome)
     unidades = tmp_path / "systemd"
-    for unidade in ("loja-vigia", "loja-backup", "loja-backup-nuvem", "loja-atualizar"):
+    for unidade in ("loja-vigia", "loja-backup", "loja-backup-nuvem", "loja-atualizar",
+                    "loja-demo-renovar"):
         for tipo in ("service", "timer"):
             (unidades / f"{unidade}.{tipo}").write_text("")
     (unidades / "loja-atualizar.timer").write_text("[Timer]\nOnBootSec=5min\nOnUnitActiveSec=15min\n")
@@ -806,3 +1343,28 @@ async def test_desinstalar_desliga_o_vigia_e_as_rotinas(tmp_path: Path) -> None:
     desligados = (tmp_path / "ctr" / "systemctl.log").read_text()
     assert "disable --now loja-vigia.timer" in desligados
     assert "disable --now loja-atualizar.timer" in desligados
+    # A renovação da demonstração também para: com a loja desligada, ela falharia todo dia.
+    assert "disable --now loja-demo-renovar.timer" in desligados
+    # O `down` só alcança serviço de perfil LIGADO: sem nomear a demonstração, um contêiner
+    # dela (perfil desligado no .env) ficava no ar depois do "desinstalado".
+    assert "docker compose --profile demo down" in (tmp_path / "ctr" / "docker.log").read_text()
+
+
+@precisa_do_bash
+async def test_desinstalar_tudo_leva_a_demo_junto(tmp_path: Path) -> None:
+    """Apagar tudo apaga também os volumes da demonstração (o `down -v` sem o perfil dela
+    deixava o das fotos para trás) e o .env com as senhas dela."""
+    env = _maquina(tmp_path)
+    loja = tmp_path / "loja"
+    loja.mkdir()
+    for nome in ("desinstalar.sh", "docker-compose.yml"):
+        shutil.copy(RAIZ / nome, loja / nome)
+    (loja / ".env").write_text(ENV_COM_DEMO + "DEMO_ADMIN_SENHA=senhaDaDemo123456789\n")
+
+    r = subprocess.run(["bash", "./desinstalar.sh", "--sim"], cwd=loja,
+                       env=env, capture_output=True, text=True, timeout=60)
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "docker compose --profile demo down -v" in (tmp_path / "ctr" / "docker.log").read_text()
+    assert not (loja / ".env").exists()
+    assert "a demonstração (/demo) junto" in r.stdout
