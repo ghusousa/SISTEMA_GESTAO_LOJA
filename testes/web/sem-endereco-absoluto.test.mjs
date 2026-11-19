@@ -188,7 +188,8 @@ function infracoesEm(arquivos) {
       if (!chaveNaRaiz(achado[1], codigo)) anotar(linhaDe(achado.index), 'chave do navegador sem nomeNaRaiz');
     }
     const naoEChave = '(?:get|set|remove)Item|clear|key|length';
-    for (const achado of codigo.matchAll(new RegExp(`(?<![\\w$])(?:${guardas})\\s*\\??\\.\\s*(?!(?:${naoEChave})(?![\\w$]))[A-Za-z_$]`, 'g'))) {
+    // Colado no ponto, como se escreve código: "no localStorage. Depois" num comentário não é chave.
+    for (const achado of codigo.matchAll(new RegExp(`(?<![\\w$])(?:${guardas})\\??\\.(?!(?:${naoEChave})(?![\\w$]))[A-Za-z_$]`, 'g'))) {
       anotar(linhaDe(achado.index), 'chave do navegador sem nomeNaRaiz');
     }
     if (USA_O_NAVEGADOR.test(codigo) && !codigo.includes('nomeNaRaiz(')) {
@@ -252,7 +253,8 @@ test('a varredura reprova o que o ADR-46 corrigiu, e não o que está certo (sem
       "const canal = new BroadcastChannel(CHAVE);\nlocalStorage.getItem(nomeNaRaiz('formato'));",
     'js/guarda.js':
       "const CHAVE = nomeNaRaiz('x');\nlocalStorage?.setItem(CHAVE, v);\nconst s = window.sessionStorage;\ns.setItem(CHAVE, v);\n" +
-      "localStorage[CHAVE] = v;\nlocalStorage[nomeNaRaiz('y')] = v;\nconst n = localStorage.length;\nsessionStorage.clear();",
+      "localStorage[CHAVE] = v;\nlocalStorage[nomeNaRaiz('y')] = v;\nconst n = localStorage.length;\nsessionStorage.clear();\n" +
+      'salvar(CHAVE); // guarda no localStorage. Depois, nada',
     'js/foto.js':
       "img.src = enderecoDaFoto(item.foto_url) ?? '';\nimg.setAttribute('src', enderecoDaFoto(p.foto_url));\n" +
       'const t = html`<img src=${enderecoDaFoto(p.foto_url)}>`;\nprevia.src = url;\n' +
