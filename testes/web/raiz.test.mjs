@@ -114,8 +114,9 @@ test('a ADR-42 manda a tela nova pela mesma porta: foto da API só por enderecoD
     .find((trecho) => trecho.startsWith('**Quem mostra aceita as duas formas**'))
     ?.split('\n\n')[0];
   assert.ok(item, 'a ADR-42 perdeu o item "Quem mostra aceita as duas formas"');
-  assert.match(item, /a web passa por `enderecoDaFoto\(\)`/);
-  assert.doesNotMatch(item, /direto no `src`/);
+  // Por palavra, não por espaço: o parágrafo pode ser refeito com a quebra em qualquer lugar.
+  assert.match(item, /a\s+web\s+passa\s+por\s+`enderecoDaFoto\(\)`/);
+  assert.doesNotMatch(item, /direto\s+no\s+`src`/);
 });
 
 // ------------------------------------------------------- a ligação de verdade

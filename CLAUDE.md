@@ -276,7 +276,10 @@ publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com as telas do
 - Refresh token **só** em cookie httpOnly; access token só em memória. Nunca `localStorage`.
 - **Raiz da página (ADR-46)**: a mesma pasta serve a loja (`/app/`) e a demo (`/demo/app/`). Caminho
   do servidor só por `naRaiz()`, foto por `enderecoDaFoto()`, chave de storage/canal por `nomeNaRaiz()`
-  (`js/raiz.js`); `testes/web/sem-endereco-absoluto.test.mjs` reprova `/api/v1` absoluto.
+  (`js/raiz.js`); `testes/web/sem-endereco-absoluto.test.mjs` reprova `/api/v1` absoluto (também
+  o montado depois de um `${...}` que não seja a raiz nem rota `#/`), a chave do navegador que não
+  venha de `nomeNaRaiz` em CADA chamada (`?.`, apelido e `['x']` contam) e o `foto_url` que chegue
+  ao `src` (`.src =`, `setAttribute('src'`, `src=${}`) sem passar por `enderecoDaFoto()`.
 - Leitor USB é teclado (`js/leitor.js`): rajada de dígitos + Enter. Campo do PDV marcado `data-leitor`.
 - **Um campo, duas entradas**: o mesmo `data-leitor` aceita bipe E nome. Letras abrem a lista
   (`js/busca-peca.js`, espelho de `mobile/src/components/BuscarPeca.tsx`); com ela aberta o
