@@ -230,6 +230,10 @@ que você pôs no `.env` à mão — a NFC-e, por exemplo — também).
     -Email dona@minhaloja.com.br -Senha "uma-senha-boa" -Sim
 ```
 
+Com `--sim` ele nunca pergunta: o que faltar (`--nome`, `--email`, `--senha`) ele diz qual é e
+para. Sem terminal e sem `--sim` (a entrada fechada: um agendador, um `ssh` sem `-t`), também não
+fica esperando — a primeira pergunta sem resposta para e diz para rodar com `--sim` e os parâmetros.
+
 Outras opções: `--senha-banco`, `--fuso`, `--porta-http`, `--porta-https`, `--avisos TOPICO`
 (o tópico do ntfy), `--forcar` (refaz o `.env` pelo modelo, com domínio, portas, fuso e o segredo
 do login de novo — e mantém o resto: as senhas da demonstração, porque a da conta dela é a que está

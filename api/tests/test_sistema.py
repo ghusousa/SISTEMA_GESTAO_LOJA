@@ -1461,6 +1461,105 @@ async def test_espera_do_dns_interrompida_nao_deixa_env_e_a_volta_cria_o_dono(tm
     assert "app.cli create-admin --nome Dona Maria --email dona@loja.com" in log
 
 
+# O que o instalador diz quando pergunta e a entrada acabou (sem terminal, ninguém responde).
+SEM_TERMINAL = "a entrada acabou: sem terminal, rode com --sim e os parâmetros"
+
+
+def _sem_terminal(loja: Path, env: dict[str, str], *parametros: str,
+                  entrada: str | None = None) -> subprocess.CompletedProcess:
+    """O instalador sem gente na frente: a entrada é /dev/null, ou o texto dado e depois o fim.
+    O prazo curto é parte da prova: o laço de antes não terminava nunca."""
+    if entrada is None:
+        entradas: dict[str, object] = {"stdin": subprocess.DEVNULL}
+    else:
+        entradas = {"input": entrada}
+    try:
+        return subprocess.run(["bash", "./instalar.sh", *parametros], cwd=loja, env=env,
+                              capture_output=True, text=True, timeout=30, **entradas)
+    except subprocess.TimeoutExpired:
+        pytest.fail("o instalador não terminou em 30 s: uma pergunta ficou em laço")
+
+
+def _nada_subiu(tmp_path: Path) -> bool:
+    log = tmp_path / "ctr" / "docker.log"
+    return not log.exists() or "compose up" not in log.read_text()
+
+
+@precisa_do_bash
+@pytest.mark.parametrize("parametros", [
+    # Do jeito que a revisão rodou: instalação nova, nada por parâmetro.
+    (),
+    # Tudo por parâmetro menos o e-mail — a pergunta sem padrão, que era o laço sem fim.
+    ("--loja", "Boutique", "--segmento", "ROUPAS", "--dominio", "localhost", "--nome", "Dona Maria",
+     "--senha", "senha12345"),
+])
+async def test_sem_terminal_a_pergunta_para_com_a_frase_e_sem_laco(
+    tmp_path: Path, parametros: tuple[str, ...]
+) -> None:
+    """`./instalar.sh < /dev/null`: o `read` engolia o fim da entrada (`|| true`), o padrão entrava
+    calado e o laço do e-mail repetia "e-mail inválido." milhares de vezes por segundo, para
+    sempre. Agora a primeira pergunta sem resposta para e diz o caminho: --sim e os parâmetros.
+    Nada é gravado, nada sobe."""
+    loja, env = _instalador(tmp_path)
+
+    r = _sem_terminal(loja, env, *parametros)
+
+    assert r.returncode != 0
+    assert SEM_TERMINAL in r.stderr, _saida(r, loja)
+    assert "e-mail inválido" not in r.stdout + r.stderr
+    assert not (loja / ".env").exists()
+    assert _nada_subiu(tmp_path)
+
+
+@precisa_do_bash
+async def test_email_errado_pergunta_de_novo_e_a_ultima_linha_sem_enter_vale(tmp_path: Path) -> None:
+    """O e-mail errado ficava na variável, e o perguntar não pergunta o que já tem valor: o laço
+    repetia "e-mail inválido." para sempre sem perguntar de novo. Agora pergunta de novo — e, se
+    a entrada acabou, para com a frase. A última linha sem o Enter no fim é resposta, não o fim:
+    a instalação vai até o fim com ela."""
+    loja, env = _instalador(tmp_path)
+
+    errado = _sem_terminal(loja, env, entrada="Boutique\n1\nlocalhost\nDona Maria\nnao-e-email\n")
+
+    assert errado.returncode != 0
+    assert errado.stdout.count("e-mail inválido.") == 1, _saida(errado, loja)
+    assert SEM_TERMINAL in errado.stderr
+    assert not (loja / ".env").exists()
+
+    # Loja, ramo, domínio, dono, o e-mail errado e o certo, a senha duas vezes, Enter (a senha do
+    # banco, sorteada) e o tópico do ntfy sem o Enter no fim.
+    certo = _sem_terminal(loja, env, entrada=(
+        "Boutique\n1\nlocalhost\nDona Maria\nnao-e-email\ndona@loja.com\nsenha12345\nsenha12345\n\n"
+        "loja-teste"))
+
+    assert certo.returncode == 0, _saida(certo, loja)
+    assert certo.stdout.count("e-mail inválido.") == 1
+    assert _ler_env(loja)["NOTIFICAR_URL"] == "https://ntfy.sh/loja-teste"
+    assert "Entrar:    dona@loja.com" in certo.stdout
+
+
+@precisa_do_bash
+@pytest.mark.parametrize(("email", "recado"), [
+    ((), "faltou --email"),
+    (("--email", "nao-e-email"), "e-mail inválido: nao-e-email"),
+])
+async def test_sim_sem_email_bom_para_na_validacao_e_nao_em_laco(
+    tmp_path: Path, email: tuple[str, ...], recado: str
+) -> None:
+    """Com --sim ninguém responde: o laço do e-mail rodava para sempre sem e-mail (ou com um
+    errado) em vez de chegar à validação, que diz o parâmetro que faltou."""
+    loja, env = _instalador(tmp_path)
+
+    r = _sem_terminal(loja, env, "--sim", "--dominio", "localhost", "--nome", "Dona Maria",
+                      "--senha", "senha12345", *email)
+
+    assert r.returncode == 1
+    assert recado in r.stderr, _saida(r, loja)
+    assert "e-mail inválido." not in r.stdout
+    assert not (loja / ".env").exists()
+    assert _nada_subiu(tmp_path)
+
+
 @precisa_do_bash
 @pytest.mark.parametrize(("maquina", "recado"), [
     # Sem IPv6 na máquina, o AI_ADDRCONFIG do getent escondia o AAAA velho do domínio (o da zona

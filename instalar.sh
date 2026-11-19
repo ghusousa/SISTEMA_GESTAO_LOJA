@@ -73,6 +73,21 @@ sortear() {
     fi
 }
 
+# Toda resposta do teclado passa por aqui. O fim da entrada sem resposta nenhuma é erro, e não
+# "a resposta vazia": sem terminal (`./instalar.sh < /dev/null`, um agendador, um ssh sem -t),
+# o `read` volta na hora, toda vez — o padrão entrava calado e o laço do e-mail, que não tem
+# padrão, repetia "e-mail inválido." para sempre. A última linha sem o Enter no fim ainda vale:
+# o `read` a entrega, e só então diz que a entrada acabou.
+ler() {  # ler <variável> <opções do read...>
+    local _var="$1"; shift
+    read -r "$@" "${_var?}" && return 0
+    [ -n "${!_var:-}" ] && return 0
+    morrer "a entrada acabou: sem terminal, rode com --sim e os parâmetros. Por exemplo:
+      ./instalar.sh --sim --dominio loja.seudominio.com.br --nome \"Dona Maria\" \\
+                    --email dona@loja.com --senha \"uma-senha-boa\"
+  (todos em ./instalar.sh --help)"
+}
+
 # Um valor já informado por parâmetro nunca é perguntado de novo, e nada lê do teclado
 # quando o instalador roda sem gente na frente (--sim). Sem essas duas guardas, chamar o
 # instalador com --senha travava para sempre esperando uma digitação que não vinha.
@@ -81,9 +96,9 @@ perguntar() {  # perguntar <texto> <padrão> <variável>
     [ -n "${!alvo:-}" ] && return
     if [ "$INTERATIVO" -eq 0 ]; then printf -v "$alvo" '%s' "$padrao"; return; fi
     if [ -n "$padrao" ]; then
-        read -r -p "  $texto [$padrao]: " resposta || true
+        ler resposta -p "  $texto [$padrao]: "
     else
-        read -r -p "  $texto: " resposta || true
+        ler resposta -p "  $texto: "
     fi
     printf -v "$alvo" '%s' "${resposta:-$padrao}"
 }
@@ -123,7 +138,7 @@ perguntar_segmento() {  # perguntar_segmento <variável>
         printf '    %d) %s\n' "$((i + 1))" "${SEGMENTOS_ROTULO[$i]}"
     done
     while :; do
-        read -r -p "  Número do ramo [1]: " escolha || true
+        ler escolha -p "  Número do ramo [1]: "
         escolha="${escolha:-1}"
         case "$escolha" in
             ''|*[!0-9]*) alerta "digite o número da linha." ;;
@@ -145,9 +160,9 @@ perguntar_senha() {  # perguntar_senha <texto> <variável>
     # parâmetro faltou, em vez de o instalador ficar pendurado.
     [ "$INTERATIVO" -eq 0 ] && return
     while :; do
-        read -r -s -p "  $texto: " a; echo
+        ler a -s -p "  $texto: "; echo
         if [ "${#a}" -lt 8 ]; then alerta "mínimo de 8 caracteres."; continue; fi
-        read -r -s -p "  repita a senha: " b; echo
+        ler b -s -p "  repita a senha: "; echo
         [ "$a" = "$b" ] && break
         alerta "as senhas não são iguais."
     done
@@ -636,7 +651,7 @@ garantir_docker() {
     if [ "$INTERATIVO" -eq 1 ]; then
         echo "  Ele é gratuito e é o que faz o banco, a API e o site rodarem isolados."
         local resposta=""
-        read -r -p "  Instalar o Docker agora? [S/n]: " resposta || true
+        ler resposta -p "  Instalar o Docker agora? [S/n]: "
         case "${resposta:-s}" in
             [Nn]*) morrer "instalação cancelada. Nada foi mexido no sistema." ;;
         esac
@@ -794,17 +809,22 @@ else
         perguntar "Nome" "Dona da Loja" NOME
         [ -n "$NOME" ] && break
     done
+    # O e-mail errado sai antes da volta: o perguntar não pergunta o que já tem valor, e o laço
+    # repetia "e-mail inválido." para sempre sem perguntar de novo — num erro de digitação, ou
+    # com --sim, onde quem recusa é a validação logo abaixo ("faltou --email").
     while :; do
         perguntar "E-mail (é com ele que você entra)" "" EMAIL
         email_valido "$EMAIL" && break
+        [ "$INTERATIVO" -eq 1 ] || break
         alerta "e-mail inválido."
+        EMAIL=""
     done
     perguntar_senha "Senha do dono (mínimo 8 caracteres)" SENHA
 
     titulo "4. Banco de dados"
     echo "  Esta senha fica só entre os containers; ninguém digita no dia a dia."
     if [ "$INTERATIVO" -eq 1 ] && [ -z "$SENHA_BANCO" ]; then
-        read -r -p "  Gerar uma senha forte automaticamente? [S/n]: " gerar || true
+        ler gerar -p "  Gerar uma senha forte automaticamente? [S/n]: "
         case "${gerar:-s}" in
             [Nn]*)
                 while :; do
