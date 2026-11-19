@@ -26,6 +26,13 @@ export const cores = {
    * (hora branca 5:1, preta 4,2:1) e o texto branco da faixa também.
    */
   demonstracao: '#B45309',
+  /**
+   * Faixa "O computador está chamando" (ADR-47). Pela mesma razão da demonstração, quando ela
+   * é a primeira faixa fica debaixo da barra de status, clara ou escura conforme a tela de
+   * baixo: hora branca 4,9:1, preta 4,3:1 (o teste de `lib/chamadoDoLeitor.test.ts` mede). Azul,
+   * e não o âmbar da demonstração: na demonstração as duas aparecem juntas.
+   */
+  chamadoDoLeitor: '#2F6FD0',
 
   texto: '#16202C',
   textoSuave: '#5A6572',

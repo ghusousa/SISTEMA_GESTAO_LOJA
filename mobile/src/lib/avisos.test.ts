@@ -161,6 +161,13 @@ test('leitor (celular-leitor, ADR-43) não refaz consulta nenhuma no app', () =>
   );
 });
 
+test('leitor_pareamento (chamado do computador, ADR-47) derruba as consultas do leitor', () => {
+  assert.deepEqual(chavesDosAssuntos(['leitor_pareamento']), [['leitor']]);
+  // O bipe continua sem refazer nada: separar os assuntos é o que deixa o pareamento raro.
+  assert.deepEqual(chavesDosAssuntos(['leitor']), []);
+  assert.deepEqual(chavesDosAssuntos(['leitor', 'leitor_pareamento']), [['leitor']]);
+});
+
 test('assunto desconhecido e sinais de vida não derrubam nada', () => {
   assert.deepEqual(chavesDosAssuntos(['ping', 'conectado', 'novidade' as Assunto]), []);
 });
@@ -224,5 +231,29 @@ test('a rodada refaz o que está na tela uma vez e só marca o resto como velho'
 
   produtos.sair();
   resumo.sair();
+  cliente.clear();
+});
+
+test('leitor_pareamento alcança a lista de chamados E o leitor ligado, por prefixo', async () => {
+  // A faixa refaz a lista de chamados na hora; a tela do leitor ligado fica sabendo que o
+  // computador desligou sem esperar a volta de 15 s. O resto da tela não refaz nada.
+  const cliente = new QueryClient({ defaultOptions: { queries: { gcTime: Infinity } } });
+  const chamados = consultaNaTela(cliente, ['leitor', 'chamados']);
+  const pareamento = consultaNaTela(cliente, ['leitor', 41]);
+  const vendas = consultaNaTela(cliente, ['vendas']);
+  await respirar();
+  assert.deepEqual([chamados, pareamento, vendas].map((c) => c.contagem.buscas), [1, 1, 1]);
+
+  aplicarRodada(['leitor_pareamento'], cliente);
+  await respirar();
+  assert.equal(chamados.contagem.buscas, 2, 'a faixa busca os chamados de novo');
+  assert.equal(pareamento.contagem.buscas, 2, 'o leitor ligado confere o pareamento');
+  assert.equal(vendas.contagem.buscas, 1, 'o resto não refaz');
+
+  aplicarRodada(['leitor'], cliente);
+  await respirar();
+  assert.equal(chamados.contagem.buscas, 2, 'o bipe não derruba nada');
+
+  for (const c of [chamados, pareamento, vendas]) c.sair();
   cliente.clear();
 });

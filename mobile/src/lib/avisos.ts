@@ -30,6 +30,7 @@ export type Assunto =
   | 'condicionais'
   | 'contas_pagar'
   | 'leitor'
+  | 'leitor_pareamento'
   | 'conectado'
   | 'ping';
 
@@ -74,6 +75,11 @@ const CHAVES_POR_ASSUNTO: Record<Assunto, readonly QueryKey[]> = {
   // computador pareado; no app, a tela do leitor consulta o pareamento no próprio ritmo
   // (15 s), e refazer algo a cada bipe seria uma ida ao servidor por peça bipada.
   leitor: [],
+  // Pareamento criado (código ou chamado), atendido ou encerrado (ADR-47). Raro: é o que faz a
+  // faixa "O computador está chamando" descer na hora — a lista de chamados é refeita pela
+  // rota REST, o aviso não diz de quem nem qual. Derruba também o `['leitor', id]` da tela do
+  // leitor ligado: desligado no computador, o celular fica sabendo agora, não em 15 s.
+  leitor_pareamento: [['leitor']],
   // Sinais de vida, não mudança: quem trata `conectado` é a reconexão, que recarrega tudo.
   conectado: [],
   ping: [],

@@ -70,6 +70,11 @@ export const chaves = {
   contasPagar: ['contas-pagar'] as const,
   /** O pareamento do celular-leitor (ADR-43); a tela consulta de 15 em 15 s. */
   leitor: (id: number) => ['leitor', id] as const,
+  /**
+   * Os chamados abertos do computador para este login (ADR-47): a faixa do topo e a tela do
+   * leitor. Debaixo de `['leitor']`, que o assunto `leitor_pareamento` derruba inteiro.
+   */
+  chamadosDoLeitor: ['leitor', 'chamados'] as const,
 };
 
 /**

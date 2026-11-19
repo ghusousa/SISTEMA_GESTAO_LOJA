@@ -1,29 +1,47 @@
 /**
- * "Usar como leitor do computador" (ADR-43).
+ * "Usar como leitor do computador" (ADR-43 e ADR-47).
  *
- * No computador (PDV, Devolução, Entrada, Inventário, Condicional nova) a pessoa pede para
- * ligar o celular: aparece um QR e um código de 6 caracteres. Aqui o celular lê o QR — ou
- * a pessoa digita o código — e passa a ser o leitor de código de barras daquele
- * computador: cada bipe na câmera cai no campo do leitor de lá, como o leitor USB.
+ * Nas telas do computador que leem código (PDV, Devolução, Entrada, Inventário, Condicional
+ * nova), "Abrir no app o leitor de código" CHAMA o celular do mesmo login: o chamado aparece
+ * aqui num cartão com o sinal de 3 caracteres que o computador também mostra ("Sinal 7K3"), e
+ * um toque em "Abrir o leitor" liga a câmera — sem QR nem código (ADR-47). Fora desta tela,
+ * quem avisa é a faixa do topo (`components/FaixaDoChamado.tsx`), e com o app fechado, a
+ * notificação, quando o servidor da loja manda push — o toque nela abre esta tela já ligando o
+ * chamado daquele sinal.
+ *
+ * O QR continua, recolhido: o celular de OUTRA pessoa (outro login), ou o app sem o chamado.
+ * O celular lê o QR — ou a pessoa digita o código — e passa a ser o leitor de código de barras
+ * daquele computador: cada bipe na câmera cai no campo do leitor de lá, como o leitor USB.
  *
  * Qualquer pessoa logada pode (não há capacidade própria). Um celular por computador, e o
- * aceite vale até alguém desligar, sair, ou no máximo 12 h. O app aceita SEMPRE no
- * servidor em que já está ligado: o endereço do QR só serve para avisar que o código é de
- * outro servidor.
+ * leitor vale até alguém desligar, sair, ou no máximo 12 h. O app liga SEMPRE no servidor em
+ * que já está: o endereço do QR só serve para avisar que o código é de outro servidor.
+ *
+ * As notificações: a permissão é pedida aqui na abertura (sem leitor ligado, sem câmera), só
+ * no iPhone, só se o servidor manda push e só se nunca decidida. A linha do fim da tela diz o
+ * efeito; recusada, oferece "Abrir Ajustes" — a régua da câmera (5.1.1).
  */
 
 import { useMutation } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Linking, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { baseAtual, mensagemDoErro } from '@/api/client';
 import { leitor } from '@/api/endpoints';
+import { CartoesDoChamado } from '@/components/FaixaDoChamado';
 import { LeitorPareado, ListaDeBipes } from '@/components/LeitorPareado';
 import { Scanner, SO_QR, type ScannerRef } from '@/components/Scanner';
 import { Botao, Campo, Cartao } from '@/components/ui';
+import {
+  buscarChamadosAbertos,
+  useAtenderChamado,
+  useChamadosDoLeitor,
+  type AtenderChamado,
+} from '@/hooks/useChamadosDoLeitor';
 import { useTelaVisivel } from '@/hooks/useTelaVisivel';
 import { urlDaApi } from '@/lib/enderecoDoServidor';
+import { idDaInstalacao } from '@/lib/instalacao';
 import {
   conviteDoLink,
   formatarCodigo,
@@ -33,14 +51,103 @@ import {
   normalizarCodigo,
   type Convite,
 } from '@/lib/leitorRemoto';
+import { avisoDasNotificacoes, type SituacaoNaTela } from '@/lib/notificacoes';
+import { situacaoNoLeitor } from '@/lib/pushDoLeitor';
+import { chaves, queryClient } from '@/lib/queryClient';
 import { cores, espaco, fonte } from '@/lib/tema';
 import { useLeitorStore } from '@/stores/leitorStore';
 
+/** O toque numa notificação cujo chamado não está mais aberto. */
+const CHAMADO_QUE_ACABOU =
+  'Esse chamado já acabou (venceu, foi atendido ou cancelado). Se o computador ainda estiver chamando, ele aparece aqui.';
+
 export default function LeitorDoComputador() {
   const pareamento = useLeitorStore((e) => e.pareamento);
+  const pedido = useLeitorStore((e) => e.pedido);
   const visivel = useTelaVisivel();
-  if (pareamento) return <LeitorPareado pareamento={pareamento} visivel={visivel} />;
-  return <SemPareamento visivel={visivel} />;
+  const atendimento = useAtenderChamado();
+  const { atender } = atendimento;
+  const [destaque, setDestaque] = useState<string | null>(null);
+  const [avisoDoToque, setAvisoDoToque] = useState<string | null>(null);
+  const montada = useRef(true);
+  useEffect(() => {
+    montada.current = true;
+    return () => {
+      montada.current = false;
+    };
+  }, []);
+
+  // Um "sim" a um chamado chegou pela store:
+  // - o "Abrir o leitor" da faixa traz o id e pede antes a notificação — aqui, sem câmera;
+  // - o toque numa notificação traz só o sinal: procura entre os chamados abertos AGORA (sem
+  //   cache) e atende — a permissão já existe, ou a notificação não teria chegado.
+  // Com o leitor ligado não troca sozinho: destaca a linha do chamado, e trocar é um toque.
+  useEffect(() => {
+    if (!pedido) return;
+    const lido = useLeitorStore.getState().consumirPedido();
+    if (!lido) return;
+    setAvisoDoToque(null);
+    if (lido.id !== undefined && !useLeitorStore.getState().pareamento) {
+      atender(lido.id, { pedirPermissao: lido.pedirPermissao });
+      return;
+    }
+    queryClient
+      .fetchQuery({ queryKey: chaves.chamadosDoLeitor, queryFn: buscarChamadosAbertos, staleTime: 0, retry: false })
+      .then((chamados) => {
+        if (!montada.current) return;
+        const achado = chamados.find((c) => c.sinal === lido.sinal);
+        if (!achado) setAvisoDoToque(CHAMADO_QUE_ACABOU);
+        else if (useLeitorStore.getState().pareamento) setDestaque(achado.sinal);
+        else atender(achado.id, { pedirPermissao: lido.pedirPermissao });
+      })
+      .catch((erro: unknown) => {
+        if (montada.current) setAvisoDoToque(mensagemDoErro(erro, 'Não deu para procurar o chamado.'));
+      });
+  }, [pedido, atender]);
+
+  if (pareamento) {
+    return (
+      <LeitorPareado
+        pareamento={pareamento}
+        visivel={visivel}
+        atendimento={atendimento}
+        destaque={destaque}
+        avisoDoToque={avisoDoToque}
+      />
+    );
+  }
+  return (
+    <SemPareamento
+      visivel={visivel}
+      atendimento={atendimento}
+      avisoDoToque={avisoDoToque}
+      esquecerAvisoDoToque={() => setAvisoDoToque(null)}
+    />
+  );
+}
+
+/**
+ * A linha das notificações no fim da tela. Na primeira vez que a tela aparece sem leitor e sem
+ * câmera, o sistema pergunta (só nas condições de `lib/pushDoLeitor.ts`); na volta dos Ajustes,
+ * relê. Sem tela do app com "Permitir" antes do alerta.
+ */
+function useSituacaoDasNotificacoes(visivel: boolean, podePedir: boolean): SituacaoNaTela {
+  const [situacao, setSituacao] = useState<SituacaoNaTela>('lendo');
+  const jaPediu = useRef(false);
+  useEffect(() => {
+    if (!visivel) return undefined;
+    let viva = true;
+    const pedir = podePedir && !jaPediu.current;
+    jaPediu.current = true;
+    void situacaoNoLeitor({ pedir }).then((nova) => {
+      if (viva) setSituacao(nova);
+    });
+    return () => {
+      viva = false;
+    };
+    // `podePedir` vale só na abertura (o `jaPediu`): depois, a tela só relê.
+  }, [visivel, podePedir]);
+  return situacao;
 }
 
 type Modo = 'inicio' | 'qr' | 'digitar';
@@ -55,7 +162,17 @@ function apiDoApp(): string {
   return urlDaApi(baseAtual());
 }
 
-function SemPareamento({ visivel }: { visivel: boolean }) {
+function SemPareamento({
+  visivel,
+  atendimento,
+  avisoDoToque,
+  esquecerAvisoDoToque,
+}: {
+  visivel: boolean;
+  atendimento: AtenderChamado;
+  avisoDoToque: string | null;
+  esquecerAvisoDoToque: () => void;
+}) {
   const params = useLocalSearchParams<{ v?: string; c?: string; api?: string }>();
   const router = useRouter();
   const ligar = useLeitorStore((e) => e.ligar);
@@ -65,6 +182,11 @@ function SemPareamento({ visivel }: { visivel: boolean }) {
   // (Filtra fora do seletor: array novo a cada leitura da store faria o zustand 5 girar.)
   const bipes = useLeitorStore((e) => e.bipes);
   const naoSairam = bipes.filter((b) => b.estado === 'nao-enviado' || b.estado === 'sem-confirmacao');
+  const { data: chamados } = useChamadosDoLeitor();
+  // Pedir a permissão de notificação na abertura, mas não por cima de quem chegou pelo link do
+  // QR com o código preenchido: essa pessoa veio tocar em "Ligar".
+  const [podePedir] = useState(() => !normalizarCodigo(params.c));
+  const linhaDasNotificacoes = avisoDasNotificacoes(useSituacaoDasNotificacoes(visivel, podePedir));
 
   const [modo, setModo] = useState<Modo>('inicio');
   const [texto, setTexto] = useState('');
@@ -95,7 +217,9 @@ function SemPareamento({ visivel }: { visivel: boolean }) {
     mutationFn: async (convite: Convite) => {
       // A sessão de quando o aceite saiu: se ela sair antes da resposta, nada liga.
       const sessao = useLeitorStore.getState().sessao;
-      return { novo: await leitor.aceitar(convite.codigo), sessao };
+      // A instalação prende o leitor a ESTE aparelho (ADR-47): o reenvio do aceite só vale
+      // para ele, e outro celular com o mesmo login não bipa por este pareamento.
+      return { novo: await leitor.aceitar(convite.codigo, await idDaInstalacao()), sessao };
     },
     onSuccess: ({ novo, sessao }) => {
       setErro(null);
@@ -180,8 +304,25 @@ function SemPareamento({ visivel }: { visivel: boolean }) {
 
   const codigoValido = normalizarCodigo(texto) !== null;
 
+  const avisoDoChamado = atendimento.aviso ?? avisoDoToque;
+
   return (
     <ScrollView contentContainerStyle={s.conteudo} keyboardShouldPersistTaps="handled">
+      {/* Primeiro, o que o computador está pedindo agora: um cartão por chamado aberto. */}
+      <CartoesDoChamado chamados={chamados ?? []} atendimento={atendimento} />
+      {!!avisoDoChamado && (
+        <Cartao
+          estilo={s.cartaoAviso}
+          onPress={() => {
+            atendimento.esquecerAviso();
+            esquecerAvisoDoToque();
+          }}
+        >
+          <Text style={s.avisoTexto}>{avisoDoChamado}</Text>
+          <Text style={s.dispensar}>Tocar para fechar</Text>
+        </Cartao>
+      )}
+
       {!!aviso && (
         <Cartao estilo={s.cartaoAviso} onPress={esquecerAviso}>
           <Text style={s.avisoTexto}>{aviso}</Text>
@@ -200,9 +341,10 @@ function SemPareamento({ visivel }: { visivel: boolean }) {
       <Cartao>
         <Text style={s.titulo}>Usar o celular como leitor</Text>
         <Text style={s.texto}>
-          No computador, peça para ligar o celular como leitor: aparece um QR e um código de
-          6 letras e números. Depois de ligado, cada peça bipada aqui cai na tela do
-          computador, como no leitor de código de barras.
+          No computador, entre com o mesmo login e toque em “Abrir no app o leitor de código”:
+          o chamado aparece aqui, com o mesmo sinal da tela de lá. Para o celular de outra
+          pessoa, leia o QR do computador. Depois de ligado, cada peça bipada aqui cai na tela
+          do computador, como no leitor de código de barras.
         </Text>
       </Cartao>
 
@@ -249,6 +391,20 @@ function SemPareamento({ visivel }: { visivel: boolean }) {
           <Botao titulo="Digitar o código" variante="secundario" onPress={() => abrir('digitar')} />
         </View>
       )}
+
+      {/* Por último: o computador alcança este celular com o app fechado? */}
+      {linhaDasNotificacoes && (
+        <View style={s.notificacoes}>
+          <Text style={s.notificacoesTexto}>{linhaDasNotificacoes.texto}</Text>
+          {linhaDasNotificacoes.botao && (
+            <Botao
+              titulo={linhaDasNotificacoes.botao}
+              variante="secundario"
+              onPress={() => void Linking.openSettings()}
+            />
+          )}
+        </View>
+      )}
     </ScrollView>
   );
 }
@@ -266,6 +422,8 @@ const s = StyleSheet.create({
   dispensar: { fontSize: fonte.pequena, color: cores.textoSuave, marginTop: espaco.xs },
   cartaoErro: { backgroundColor: cores.perigoFraco, borderColor: cores.perigo, borderWidth: 1 },
   erroTexto: { fontSize: fonte.base, color: cores.perigo },
+  notificacoes: { gap: espaco.sm, paddingTop: espaco.sm },
+  notificacoesTexto: { fontSize: fonte.pequena, color: cores.textoSuave, lineHeight: 19 },
   avisoQr: {
     color: '#FFF',
     backgroundColor: 'rgba(198,40,40,0.85)',
