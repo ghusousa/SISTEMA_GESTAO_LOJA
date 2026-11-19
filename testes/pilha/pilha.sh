@@ -205,6 +205,45 @@ conferir "demo parada: /demo/api responde 503 DEMONSTRACAO_FORA_DO_AR" \
 conferir "demo parada: a loja segue no ar" test "$(status "$BASE/api/v1/configuracao")" = 200
 dc start api-demo >/dev/null 2>&1
 
+# --- 9. Pool da demo -------------------------------------------------------------------------
+# A role loja_demo tem CONNECTION LIMIT 20: com o pool padrão (10 + 20) uma rajada passava de
+# 20 conexões e o excesso saía 500, em vez de esperar a vez no pool.
+echo "9. pool da demo"
+conferir "a api-demo volta depois de parada" saudavel api-demo 240
+conferir "a api-demo roda com pool 5 + 8 (cabe no CONNECTION LIMIT 20)" \
+    test "$(dc exec -T api-demo python -c \
+        'from app.core.config import settings as s; print(s.db_pool_size, s.db_max_overflow)')" = "5 8"
+rajada() {  # rajada <caminho> <n> <vezes> → "status:quantos ..." de <vezes> rajadas de n GET
+    # Cada rajada abre as n conexões ANTES e manda os n pedidos no mesmo instante: com uma
+    # thread por pedido o escalonamento os espalhava, e nem o pool antigo estourava. E são
+    # três porque a primeira pega o pool quase vazio, e abrir conexão nova é lento o bastante
+    # para as primeiras voltarem a tempo: com o pool antigo ela dava 60 × 200. Da segunda em
+    # diante o pool já guarda as ociosas — o dia a dia de uma demo em uso — e cada uma dava
+    # 10 × 500.
+    python3 - "$PORTA" "$1" "$2" "$3" <<'EOF'
+import asyncio, collections, sys
+porta, caminho, n, vezes = int(sys.argv[1]), sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
+pedido = f"GET {caminho} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n".encode()
+async def status(leitor):
+    linha = await leitor.readline()
+    return int(linha.split()[1]) if linha.startswith(b"HTTP/") else 0
+async def rajada():
+    conexoes = await asyncio.gather(
+        *(asyncio.open_connection("127.0.0.1", porta) for _ in range(n)))
+    for _, escritor in conexoes:
+        escritor.write(pedido)
+    codigos = await asyncio.wait_for(
+        asyncio.gather(*(status(leitor) for leitor, _ in conexoes)), 90)
+    for _, escritor in conexoes:
+        escritor.close()
+    return codigos
+codigos = [c for _ in range(vezes) for c in asyncio.run(rajada())]
+print(" ".join(f"{c}:{q}" for c, q in sorted(collections.Counter(codigos).items())))
+EOF
+}
+placar=$(rajada /demo/api/v1/configuracao 60 3)
+conferir "3 rajadas de 60 GET simultâneos na demo, nenhum 500 ($placar)" test "$placar" = "200:180"
+
 echo
 if [ "$FALHAS" -gt 0 ]; then
     echo "✗ $FALHAS conferência(s) falharam" >&2

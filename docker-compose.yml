@@ -130,6 +130,12 @@ services:
     # NFC-e, a senha do superusuário do banco e o segredo do login da loja não entram aqui.
     environment:
       DATABASE_URL: postgresql+asyncpg://loja_demo:${DEMO_SENHA_BANCO:-}@db:5432/loja_demo
+      # Pool que CABE no `CONNECTION LIMIT 20` da role loja_demo (docker/demo-banco.sh): 5 + 8
+      # no pico = 13, mais 1 do LISTEN do tempo real e os 2 ou 3 do preparar/renovar (que rodam
+      # por `exec` aqui dentro) — abaixo de 20. Com o padrão da loja (10 + 20), a 21ª conexão
+      # é recusada pelo Postgres e o pedido sai 500; dentro do pool, o excesso espera a vez.
+      DB_POOL_SIZE: "5"
+      DB_MAX_OVERFLOW: "8"
       # Segredo PRÓPRIO: o access token só carrega o id do usuário, então com o segredo da
       # loja o token do revisor (id 1 na demo) abriria a conta de id 1 da loja real. Vazio, a
       # API se recusa a subir em produção — e só a demo fica de fora.

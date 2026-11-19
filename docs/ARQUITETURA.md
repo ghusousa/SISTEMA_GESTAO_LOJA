@@ -2037,7 +2037,11 @@ navegador: as duas dividem a mesma origem.
   Postgres a demonstração só enxerga o que é dela: nem uma injeção de SQL na demo conectaria no banco
   real, e o superusuário `loja`, cuja senha a `api-demo` não recebe, é só da loja e do backup. O
   limite de conexões existe porque o `max_connections` é um só para os dois bancos: um robô
-  martelando a demo não toma as conexões do balcão. E o banco da demo leva um marco, `ALTER DATABASE
+  martelando a demo não toma as conexões do balcão. E o pool da `api-demo` cabe nele
+  (`DB_POOL_SIZE: "5"` e `DB_MAX_OVERFLOW: "8"` no compose): 13 no pico, mais 1 do LISTEN do tempo
+  real e as 2 ou 3 do preparar/renovar (por `exec` no mesmo contêiner) ficam abaixo de 20. Com o
+  padrão da loja (10 + 20), a 21ª conexão era recusada pelo Postgres e o pedido saía 500; dentro
+  do pool, o excesso espera a vez. E o banco da demo leva um marco, `ALTER DATABASE
   loja_demo SET loja.demonstracao = 'sim'`, que o real nunca tem: é a segunda chave de tudo que
   APAGA dados (abaixo).
 - **Segredos próprios, escritos à mão.** O `.env` ganha `DEMO_SENHA_BANCO` (sorteada, 32
@@ -2184,7 +2188,8 @@ que escapa tudo (ADR-25; as telas são as mesmas nas duas), o access token só e
 demo que não vale na loja (segredo próprio), a role da demo que nem conecta no banco real, e só dado
 fictício do lado de lá. Os testes provam o isolamento em cada ponta (§7), e o job `imagem` do CI sobe
 a pilha de verdade (`testes/pilha/pilha.sh`: compose com `.env` antigo e novo, o Caddyfile nos dois
-modos, e contas, tokens, cookies e bancos da loja e da demo sem se cruzar).
+modos, e contas, tokens, cookies e bancos da loja e da demo sem se cruzar; o pool da demo em três
+rajadas de 60 pedidos).
 
 ## 4. Contratos de API
 
