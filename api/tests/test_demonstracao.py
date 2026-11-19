@@ -15,9 +15,16 @@ O que se prende:
   renovação em fila — e nunca imprime senha nem a URL do banco;
 - com a conta inválida no .env, a renovação para ANTES de zerar: a demo de ontem fica;
 - a renovação trava primeiro as portas da API (`login_attempts`, `refresh_tokens`, `users`),
-  na ordem em que ela as pega: a requisição que já passou por uma porta termina sem impasse,
-  e o TRUNCATE conclui na primeira tentativa;
-- o TRUNCATE que perde a vez para a API (impasse, tabela ocupada) volta inteiro e se repete.
+  na ordem em que ela as pega: o login, a renovação da sessão e a requisição que passou pelo
+  crachá e segue lendo terminam sem impasse, e o TRUNCATE conclui na primeira tentativa. O
+  logout e as rotas que derrubam sessões (trocar a senha, desativar, excluir conta) não cabem
+  nessa ordem: pegam `users` e DEPOIS `refresh_tokens` ou `login_attempts`, ao contrário da
+  renovação da sessão, e nenhuma ordem serve às duas — com eles o impasse custa uma tentativa
+  ao TRUNCATE (ou um 500 à requisição, se o bcrypt de uma rota de senha acabar mais de 1 s
+  depois de ele parar na porta; ver `_PERDEU_A_VEZ`);
+- o TRUNCATE que perde a vez para a API (impasse; tabela ocupada além da espera, como a
+  releitura de uma mutação enquanto a auditoria grava o diário, que custa uma tentativa em
+  55P03 e atrasa a resposta até 5 s) volta inteiro e se repete.
 
 O banco da demo daqui imita o da instalação: um papel SEM superusuário, dono só do próprio
 banco, que migra e semeia sozinho. Nome e papel derivam do banco de teste desta suíte.

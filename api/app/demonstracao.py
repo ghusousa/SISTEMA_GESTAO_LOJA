@@ -478,17 +478,26 @@ async def _dar_nome_a_loja() -> None:
 #: a conta; a renovação da sessão trava o refresh token (`refresh_tokens`) antes de ler a conta;
 #: o resto passa pelo crachá (`get_current_user`, `users`) e só depois lê o que veio buscar. O
 #: TRUNCATE da renovação trava as tabelas uma a uma, e estas vão primeiro, nesta ordem: a
-#: requisição que já passou por uma porta termina sem esbarrar nele (ele ainda não pegou nada
-#: do que ela vai ler), e a que chega depois espera na porta sem segurar nada. Em ordem
-#: alfabética, `users` vinha quase no fim: com o crachá na mão, a requisição pedia `products`,
-#: que o TRUNCATE já tinha, e o Postgres derrubava um dos dois — às vezes a requisição, com 500.
+#: requisição que passou por uma porta e depois só pede o que ele trava depois dela termina sem
+#: esbarrar nele (ele ainda não pegou nada do que ela vai ler), e a que chega depois espera na porta
+#: sem segurar nada. Em ordem alfabética, `users` vinha quase no fim: com o crachá na mão, a
+#: requisição pedia `products`, que o TRUNCATE já tinha, e o Postgres derrubava um dos dois — às
+#: vezes a requisição, com 500. Nenhuma ordem serve a todo caminho: o logout e as rotas que derrubam
+#: sessões (trocar a senha, desativar, excluir conta) pegam `users` e DEPOIS `refresh_tokens` ou
+#: `login_attempts`, na ordem contrária à da renovação da sessão.
 PORTAS_DA_API = ("login_attempts", "refresh_tokens", "users")
-#: Quando o TRUNCATE da renovação tenta de novo (ADR-46): impasse com quem entrou sem passar
-#: por uma porta (a transação que uma rota abre depois de um commit no meio da requisição, como
-#: a da foto depois do login) ou espera além do prazo da trava — a leitura lenta, ou a releitura
-#: de uma mutação enquanto a auditoria grava o diário por outra conexão (a borda espera `users`
-#: atrás do TRUNCATE, que espera a releitura: um ciclo que o Postgres não vê). Nos dois casos a
-#: transação inteira volta: nada foi zerado, e repetir é seguro.
+#: Quando o TRUNCATE da renovação tenta de novo (ADR-46): impasse (40P01) ou espera além do prazo da
+#: trava (55P03). O impasse vem de quem pega as portas na ordem contrária — o logout e as rotas que
+#: derrubam sessões, enquanto o TRUNCATE, já dono de `refresh_tokens`, espera em `users` — ou de
+#: quem entrou sem passar por uma porta (a transação que uma rota abre depois de um commit no meio
+#: da requisição, como a da foto depois do login). O Postgres derruba o primeiro a completar 1 s
+#: parado (`deadlock_timeout`) com o ciclo fechado: no logout e no desativar, que pedem
+#: `refresh_tokens` logo depois do crachá, o TRUNCATE (a requisição termina em ~1 s); numa rota de
+#: senha cujo bcrypt acabe mais de 1 s depois de ele parar na porta, a requisição, com 500, e o
+#: TRUNCATE segue. A espera vencida é a leitura lenta, ou a releitura de uma mutação enquanto a
+#: auditoria grava o diário por outra conexão (a borda espera `users` atrás do TRUNCATE, que espera
+#: a releitura: um ciclo que o Postgres não vê; a mutação responde até 5 s depois, sem 5xx). Nos
+#: dois casos a transação inteira volta: nada foi zerado, e repetir é seguro.
 _PERDEU_A_VEZ = {
     "40P01": "impasse com uma leitura da API",
     "55P03": "tabela ocupada pela API além da espera",

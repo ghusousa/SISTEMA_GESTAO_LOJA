@@ -153,6 +153,10 @@ publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com as telas do
   banco da loja: teto `DEMO_FOTOS_MAX_BYTES` (200 MB; ajustável no `.env`, vale ao recriar a
   `api-demo`; 409 `DEMONSTRACAO_SEM_ESPACO`, `FotosDaDemonstracao`)
   e a renovação esvazia `MEDIA_DIR/produtos` — nunca o `MEDIA_DIR`, onde o volume está montado.
+  A renovação trava antes as portas da API (`PORTAS_DA_API`, na ordem em que a API entra no
+  banco); caminho novo que entra por outra tabela entra na lista, na ordem certa. O logout e as
+  rotas que derrubam sessões vão na ordem contrária à da renovação da sessão, e nenhuma ordem
+  serve às duas: não troque a ordem por eles (o impasse com eles está na ADR-46).
 - Tempo real: `WS /api/v1/tempo-real`. Quem avisa é o commit do SQLAlchemy
   (`core/eventos.py`), não os services — mudou tabela, sai aviso. O que trafega é o
   ASSUNTO ("estoque"), nunca o dado: a tela refaz a consulta pela rota REST, e o filtro

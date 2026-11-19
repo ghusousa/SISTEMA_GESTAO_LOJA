@@ -2172,18 +2172,32 @@ navegador: as duas dividem a mesma origem.
   requisição, com 500. Por isso ele trava antes as **portas da API**, na ordem em que ela as pega
   (`PORTAS_DA_API`: `login_attempts`, que o login conta antes de ler a conta; `refresh_tokens`, que
   a renovação da sessão trava antes de ler a conta; `users`), num `LOCK TABLE` — que trava na
-  ordem dada; a do TRUNCATE não é documentada —, e só então o resto: quem já passou por uma porta
-  termina sem esbarrar nele, e quem chega depois espera na porta sem segurar nada. Com três
-  navegadores pedindo a lista de produtos sem parar, 8 renovações em 8 sem impasse, sem repetição
-  e sem 5xx (antes, repetição em 4 das 8 e 23 respostas 500). A repetição fica como rede para
-  quem entra sem passar por uma porta — a transação que a rota abre depois de um commit no meio da
-  requisição: a da foto, depois do login, e a releitura de uma mutação enquanto a auditoria grava o
-  diário por outra conexão (a borda espera `users` atrás do TRUNCATE, que espera a releitura: um
-  ciclo que o Postgres não vê, desfeito pelo prazo da trava) —: cada trava espera no máximo 5 s
-  (`lock_timeout`; só os testes a encurtam, com `DEMO_RENOVAR_ESPERA_DA_TRAVA_MS`, que na
-  instalação não chega à `api-demo`) e, em impasse (40P01) ou espera vencida (55P03), a transação
-  inteira volta — nada foi zerado — e se repete, até 5 tentativas, com pausa que dobra (1, 2, 4,
-  8 s), avisando na saída. As fotos só saem depois de um TRUNCATE que deu certo. Os dois comandos
+  ordem dada; a do TRUNCATE não é documentada —, e só então o resto: quem passou por uma porta e
+  depois só pede o que ele trava depois dela (o login, a renovação da sessão, a lista de produtos
+  depois do crachá) termina sem esbarrar nele, e quem chega depois espera na porta sem segurar nada.
+  Com três navegadores pedindo a lista de produtos sem parar, 8 renovações em 8 sem impasse, sem
+  repetição e sem 5xx (antes, repetição em 4 das 8 e 23 respostas 500). Nem todo caminho cabe nessa
+  ordem. O logout e as rotas que derrubam sessões (trocar a senha, desativar, excluir conta) pegam
+  `users` (o crachá) e DEPOIS `refresh_tokens` ou `login_attempts`, na ordem contrária à da
+  renovação da sessão — nenhuma ordem das portas serve às duas —, e fecham um impasse com o
+  TRUNCATE, que já tem `refresh_tokens` e espera em `users`. O Postgres derruba o primeiro dos dois
+  a completar 1 s parado (o `deadlock_timeout`) com o ciclo já fechado. Quando a rota pede
+  `refresh_tokens` logo depois do crachá (o logout, o desativar), cai o TRUNCATE (40P01), que já
+  esperava: perde a vez uma vez e repete, e a requisição termina em ~1 s — numa carga com logouts no
+  meio, 8 renovações em 8 e nenhum 5xx. Quando ela passa antes pelo bcrypt (as de senha e a exclusão
+  da própria conta: uns 0,25 s cada bcrypt na máquina dos testes) e ele termina mais de 1 s depois
+  de o TRUNCATE parar na porta, quem cai é a requisição, com 500 (medido: uma pausa de 1,5 s ali dá
+  40P01 nela, e o TRUNCATE segue). Quem entra sem passar por uma porta também pode tomar a vez — a
+  transação que a rota abre depois de um commit no meio da requisição: a da foto, depois do login, e
+  a releitura de uma mutação enquanto a auditoria grava o diário por outra conexão (a borda espera
+  `users` atrás do TRUNCATE, que espera a releitura: um ciclo que o Postgres não vê, desfeito pelo
+  prazo da trava; custa uma tentativa, com 55P03, e atrasa a resposta da mutação em até 5 s, sem
+  5xx). Para o TRUNCATE que perde a vez fica a repetição, como rede: cada trava espera no máximo 5 s
+  (`lock_timeout`) e, em impasse (40P01) ou espera vencida (55P03), a transação inteira volta — nada
+  foi zerado — e se repete, até 5 tentativas, com pausa que dobra (1, 2, 4, 8 s), avisando na saída.
+  `DEMO_RENOVAR_ESPERA_DA_TRAVA_MS` troca esse prazo, mas só os testes a usam (para encurtar ou
+  alongar a espera): na instalação ela não chega à `api-demo`. As fotos só saem depois de um
+  TRUNCATE que deu certo. Os dois comandos
   exigem as DUAS chaves — o contêiner se diz
   demonstração (`settings.demonstracao`) E o banco também (o marco `loja.demonstracao`) —, porque o
   banco de uma loja recém-instalada está vazio, que é exatamente o "pode semear" da carga: uma
