@@ -1017,10 +1017,11 @@ existe nas telas e no recibo impresso), `img-src 'self' data: blob:` (ícone e p
 `connect-src 'self'` mais o WebSocket da mesma origem, `frame-ancestors 'none'`. `/docs` e
 `/redoc` ficam fora dela: o Swagger vem de CDN e só existe fora de produção. HSTS vai sempre
 (o navegador o ignora em HTTP), por um ano e sem `includeSubDomains`. O proxy também põe **teto
-no corpo do pedido, por rota** (`request_body`, na loja e na demo, ADR-46): o FastAPI lê o corpo
-inteiro ANTES de conferir o login — o JSON na memória, o arquivo num temporário sem teto —, e um
-`PUT .../foto` de 40 MB sem login ocupava 39 MB de disco até sair o 401 (hoje a rota da foto
-confere o login antes de ler o corpo, §2.2; as de JSON seguem lendo antes). E o teto vale por pedido:
+no corpo do pedido, por rota** (`request_body`, na loja e na demo, ADR-46): as rotas de JSON leem
+o corpo inteiro, na memória, ANTES de conferir o login; a da foto confere o login antes de ler
+(§2.2) — até essa mudança, o arquivo ia num temporário sem teto, e um `PUT .../foto` de 40 MB
+sem login ocupava 39 MB de disco até sair o 401 —, mas, com login, o envio inteiro ainda vai ao
+temporário antes de a API recusar a foto grande. E o teto vale por pedido:
 N conexões abertas, segurando o último byte, seguram N vezes ele (com 10 MB em toda rota, 20 JSON
 no login sem conta levaram a API da loja de 91 para 290 MiB). Por isso cada rota tem o menor que
 lhe cabe: **6 MB** no `PUT .../produtos/{id}/foto`, o único arquivo — a API recusa a foto acima

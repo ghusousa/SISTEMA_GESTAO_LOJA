@@ -6,12 +6,14 @@
 {$ENDERECO} {
 	encode gzip
 
-	# Teto do corpo do pedido, da loja e da demo, POR ROTA. O FastAPI lê o corpo inteiro ANTES
-	# de conferir o login — o JSON na memória; o arquivo, o Starlette grava num temporário sem
-	# teto: sem isto, um PUT .../foto de 40 MB SEM login ocupava 39 MB de disco até sair o 401,
-	# e o disco é o mesmo do banco. E o teto vale por PEDIDO: N conexões abertas, segurando o
-	# último byte, seguram N vezes o teto (com 10 MB em tudo, 20 JSON no login sem conta levaram
-	# a API da loja de 91 para 290 MiB). Por isso cada rota tem o menor teto que lhe cabe:
+	# Teto do corpo do pedido, da loja e da demo, POR ROTA. As rotas de JSON leem o corpo
+	# inteiro, na memória, ANTES de conferir o login. A da foto confere o login antes de ler
+	# (até essa mudança, o Starlette gravava o arquivo num temporário sem teto, e um
+	# PUT .../foto de 40 MB SEM login ocupava 39 MB de disco até sair o 401 — o disco do
+	# banco), mas, com login, o Starlette ainda grava o envio inteiro antes de a API recusar a
+	# foto grande. E o teto vale por PEDIDO: N conexões abertas, segurando o último byte,
+	# seguram N vezes o teto (com 10 MB em tudo, 20 JSON no login sem conta levaram a API da
+	# loja de 91 para 290 MiB). Por isso cada rota tem o menor teto que lhe cabe:
 	#   - o envio da foto da peça (PUT .../produtos/<id>/foto), o único arquivo: 6 MB. A API
 	#     recusa a foto acima de 5 MiB (MAX_UPLOAD_BYTES) com a frase dela (422), e 6 MB é isso
 	#     mais o envelope do multipart. A web e o app encolhem a foto para 100–300 KB antes.
