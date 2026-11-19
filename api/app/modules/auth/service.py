@@ -14,6 +14,7 @@ from app.core.security import (
 from app.modules.auditoria.service import AuditoriaService, mascarar_email
 from app.modules.auth.repository import AuthRepository
 from app.modules.auth.schemas import TokenOut
+from app.modules.notificacoes.service import NotificacoesService
 from app.modules.usuarios.models import User
 from app.modules.usuarios.schemas import UsuarioOut
 from app.modules.usuarios.service import UsuarioService
@@ -78,6 +79,14 @@ class AuthService:
         await self.repo.limpar_expirados(agora)
         await AuditoriaService(self.session).aplicar_retencao(agora)
         tokens = await self._emitir(user, family_id=uuid.uuid4())
+        # E o aparelho calado há 30 dias sai com o token de push (ADR-47), mesmo na loja que
+        # parou de usar o app: lá ninguém mais registra aparelho, e a faxina do registro não
+        # roda. Por último, depois do flush — o refresh novo pega a conta pela FK, e é ali que o
+        # login pode esperar a exclusão desta mesma conta, que apaga os aparelhos dela —: a
+        # faxina não espera trava nenhuma (`SKIP LOCKED`), e depois dela o login só faz commit.
+        # Quem esperar pela linha que ela pegou espera o commit, sem fechar ciclo com o login.
+        await self.session.flush()
+        await NotificacoesService(self.session).faxina()
         await self.session.commit()
         return tokens
 

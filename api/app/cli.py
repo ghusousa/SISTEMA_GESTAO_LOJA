@@ -116,8 +116,12 @@ _O_QUE_FAZER = {
     ),
     "erro": (
         "A Expo não entregou: o código acima diz por quê (lista em "
-        "https://docs.expo.dev/push-notifications/sending-notifications/). Nome de erro de rede "
-        "(ConnectError, TimeoutError) é este servidor que não alcança https://exp.host."
+        "https://docs.expo.dev/push-notifications/sending-notifications/)."
+    ),
+    "sem_rede": (
+        "O problema é a rede DESTE servidor, não a Expo nem a Apple: o aviso não chegou a "
+        "https://exp.host, ou a resposta não veio em 4 s. Confira a internet da máquina (o DNS, "
+        "um proxy, o firewall) e rode o teste de novo."
     ),
 }
 
@@ -181,7 +185,12 @@ async def _testar_push(email: str, espera_s: float, intervalo_s: float = 5.0) ->
         rotulo = f"  aparelho {n} ({r.plataforma})"
         ios = r.plataforma == "ios"
         quem, a_quem = ("a Apple", "à Apple") if ios else ("o Google", "ao Google")
-        if r.situacao != "ok":
+        if r.sem_resposta:
+            # Rede caída, DNS, proxy, o teto de 4 s: nada veio da Expo. Dizer "a Expo recusou"
+            # mandaria o dono atrás da chave da Apple quando o defeito é a rede da máquina.
+            situacoes.append("sem_rede")
+            print(f"{rotulo}: este servidor não conseguiu falar com a Expo ({r.motivo})")
+        elif r.situacao != "ok":
             situacoes.append(r.situacao)
             print(f"{rotulo}: a Expo recusou o aviso ({r.motivo})")
         elif r.id_na_expo not in entregas:
@@ -201,7 +210,7 @@ async def _testar_push(email: str, espera_s: float, intervalo_s: float = 5.0) ->
             "Ajustes > Notificações > o app (Permitir), e o Foco/Não Perturbe desligado."
         )
         return 0
-    for situacao in ("sem_credencial", "token_morto", "erro"):
+    for situacao in ("sem_credencial", "token_morto", "erro", "sem_rede"):
         if situacao in situacoes:
             print(_O_QUE_FAZER[situacao])
             return 1

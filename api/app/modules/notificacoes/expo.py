@@ -89,6 +89,11 @@ class Recibo:
     motivo: str | None = None
     #: No "ok": o id com que se pergunta depois pela entrega (`getReceipts`).
     id_na_expo: str | None = None
+    #: Nenhuma resposta da Expo chegou a este servidor (rede, DNS, proxy, o teto de 4 s): a
+    #: Expo não recusou nada. É o que separa "a rede DESTE servidor" de "a Expo disse não" —
+    #: o nome do erro de rede e o código da Expo têm a mesma cara (`ConnectError`,
+    #: `DeviceNotRegistered`), então quem lê não adivinha pelo `motivo`.
+    sem_resposta: bool = False
 
 
 @dataclass(frozen=True)
@@ -135,7 +140,12 @@ def situacao_do_codigo(codigo: str) -> SituacaoDoRecibo:
 
 
 def _recibo(
-    m: Mensagem, situacao: SituacaoDoRecibo, motivo: str | None, id_na_expo: str | None = None
+    m: Mensagem,
+    situacao: SituacaoDoRecibo,
+    motivo: str | None,
+    id_na_expo: str | None = None,
+    *,
+    sem_resposta: bool = False,
 ) -> Recibo:
     return Recibo(
         token=m.token,
@@ -143,6 +153,7 @@ def _recibo(
         situacao=situacao,
         motivo=motivo,
         id_na_expo=id_na_expo,
+        sem_resposta=sem_resposta,
     )
 
 
@@ -211,7 +222,7 @@ class ExpoPush:
             # Passou do teto (ou caiu fora dos POSTs): o que já tinha resposta vale.
             motivo_do_resto = type(exc).__name__
         recibos = [
-            r if r is not None else _recibo(m, "erro", motivo_do_resto)
+            r if r is not None else _recibo(m, "erro", motivo_do_resto, sem_resposta=True)
             for r, m in zip(prontos, mensagens, strict=True)
         ]
         _logar_recusas(recibos)
@@ -224,7 +235,7 @@ class ExpoPush:
             )
         except Exception as exc:  # noqa: BLE001 - nunca levanta
             # Só o tipo do erro: a mensagem de alguns traz a requisição inteira.
-            return _recibo(m, "erro", type(exc).__name__)
+            return _recibo(m, "erro", type(exc).__name__, sem_resposta=True)
         if resposta.status_code != 200:
             return _do_pedido_recusado(m, resposta)
         try:

@@ -23,6 +23,20 @@ _ESPACO_TRAVA_LEITOR = 43
 VIDA_DO_BIPE = timedelta(days=1)
 #: Pareamento terminado (encerrado ou vencido) há mais que isto some da tabela.
 VIDA_DO_PAREAMENTO_TERMINADO = timedelta(days=30)
+#: O id da instalação (ADR-47) sai do pareamento que terminou há mais que isto. A folga
+#: garante que nenhuma transação viva ainda o vê ligado (um aceite, um atender ou um bipe que
+#: começou antes do fim; cada comando tem 30 s de teto): ninguém lê como ligado, sem a
+#: instalação, o que acabou de terminar, e ninguém disputa a linha com quem a tira.
+FOLGA_PARA_ESQUECER_A_INSTALACAO = timedelta(minutes=5)
+
+
+def _terminou():
+    """Quando o pareamento terminou: no primeiro destes — encerrado, ou o prazo que valia
+    para ele (o do código, se ninguém aceitou; as 12 h, se aceitou). `LEAST` ignora o NULL."""
+    return func.least(
+        LeitorPareamento.encerrado_em,
+        func.coalesce(LeitorPareamento.expira_em, LeitorPareamento.codigo_expira_em),
+    )
 
 
 class LeitorRepository:
@@ -224,13 +238,37 @@ class LeitorRepository:
             .where(LeitorBipe.criado_em < agora - VIDA_DO_BIPE)
             .execution_options(synchronize_session=False)
         )
-        terminou = func.least(
-            LeitorPareamento.encerrado_em,
-            func.coalesce(LeitorPareamento.expira_em, LeitorPareamento.codigo_expira_em),
-        )
         await self.session.execute(
             delete(LeitorPareamento)
-            .where(terminou < agora - VIDA_DO_PAREAMENTO_TERMINADO)
+            .where(_terminou() < agora - VIDA_DO_PAREAMENTO_TERMINADO)
+            .execution_options(synchronize_session=False)
+        )
+
+    async def esquecer_instalacoes(self, agora: datetime) -> None:
+        """Tira o id da instalação do celular (ADR-47) do pareamento que terminou: ele só
+        serve ao leitor ligado. O `_encerrar` já o tira na hora; aqui sai o do leitor que só
+        VENCEU (o relógio não grava nada), o que um aceite gravou junto de um encerramento (a
+        corrida de `vivos_do_computador`) e o que ficou de antes desta regra.
+
+        Roda no fim do código e do chamado, logo antes do commit, e não espera ninguém
+        (`SKIP LOCKED`; a linha travada sai na próxima). Depois dela a transação só faz
+        commit: quem esperar pela linha que ela pegou — a exclusão da conta, que apaga os
+        pareamentos dela — espera o commit, sem fechar ciclo com a FK do pareamento novo,
+        que é onde o código e o chamado esperam pela conta travada.
+        """
+        com_instalacao = (
+            select(LeitorPareamento.id)
+            .where(
+                LeitorPareamento.aparelho_instalacao.is_not(None),
+                _terminou() < agora - FOLGA_PARA_ESQUECER_A_INSTALACAO,
+            )
+            .with_for_update(skip_locked=True)
+        )
+        # SQL Core, como o retirar: nada que uma tela mostre muda, e não sai aviso.
+        await self.session.execute(
+            update(LeitorPareamento)
+            .where(LeitorPareamento.id.in_(com_instalacao.scalar_subquery()))
+            .values(aparelho_instalacao=None)
             .execution_options(synchronize_session=False)
         )
 

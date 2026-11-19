@@ -124,8 +124,9 @@ class LeitorPareamento(Base):
     sinal: Mapped[str | None] = mapped_column(String(3))
     #: Só do chamado: a chave do POST, que a tela grava antes de pedir (o F5 retoma).
     client_uuid: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), unique=True)
-    #: A instalação do app que aceitou ou atendeu. NULL = aceito por app antigo (vale por
-    #: login, como antes); preenchida, só ela bipa e só ela recebe o reenvio.
+    #: A instalação do app que aceitou ou atendeu, e só enquanto o leitor está ligado: quem
+    #: encerra a tira, e o próximo código ou chamado a tira do que venceu. Preenchida, só ela
+    #: bipa e só ela recebe o reenvio; NULL num leitor ligado = aceito por app antigo.
     aparelho_instalacao: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True))
 
 

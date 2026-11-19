@@ -180,6 +180,12 @@ def _encerrar(p: LeitorPareamento, agora: datetime, motivo: MotivoEncerramento) 
     # Pelo ORM de propósito: o commit avisa "leitor_pareamento" e a outra ponta refaz o status.
     p.encerrado_em = agora
     p.motivo_encerramento = motivo.value
+    # O id da instalação do celular (ADR-47) só serve ao leitor LIGADO: o bipe, o reenvio do
+    # aceite e do atender, o TROCOU — todos olham só o que não terminou. Terminado, ele sai
+    # junto: o registro do aparelho não fica guardado depois que o celular deixa de ser o
+    # leitor (e a próxima cópia de segurança já sai sem ele). O do que só venceu sai no
+    # próximo código ou chamado (`esquecer_instalacoes`).
+    p.aparelho_instalacao = None
 
 
 class LeitorService:
@@ -200,6 +206,8 @@ class LeitorService:
         await self._substituir(dados.substitui_id, usuario_id, agora)
         self._aplicar_teto(await self._vivos(usuario_id, agora), agora)
         novo = await self._novo_pareamento(usuario_id, agora)
+        # Por último, depois da FK do pareamento novo (ver `esquecer_instalacoes`).
+        await self.repo.esquecer_instalacoes(agora)
         await self.session.commit()
         return await self._montar(novo, agora)
 
@@ -267,6 +275,8 @@ class LeitorService:
         novo = await self._novo_pareamento(
             usuario_id, agora, chamado=True, sinal=sinal, client_uuid=dados.client_uuid
         )
+        # Por último, depois da FK do pareamento novo (ver `esquecer_instalacoes`).
+        await self.repo.esquecer_instalacoes(agora)
         # O chamado vai para o banco ANTES do push: o app aberto o vê pela faixa mesmo que a
         # Expo demore, e o celular que tocar na notificação acha o chamado já gravado.
         await self.session.commit()

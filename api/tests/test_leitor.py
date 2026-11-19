@@ -8,6 +8,7 @@ abas retirando a mesma fila) rodam de verdade, em sessões separadas.
 
 import asyncio
 import contextlib
+import time
 import uuid
 from datetime import timedelta
 
@@ -42,6 +43,20 @@ async def _sql(sql: str, **params: object) -> list:
     async with engine.begin() as conn:
         resultado = await conn.execute(text(sql), params)
         return list(resultado.all()) if resultado.returns_rows else []
+
+
+async def _alguem_esperando_trava() -> None:
+    """Espera até alguma conexão deste banco ficar parada numa trava (a corrida chegou ao
+    ponto de espera de verdade, e não por sorte do escalonador)."""
+    prazo = time.monotonic() + 10
+    while not (
+        await _sql(
+            "SELECT count(*) FROM pg_stat_activity "
+            "WHERE datname = current_database() AND wait_event_type = 'Lock'"
+        )
+    )[0][0]:
+        assert time.monotonic() < prazo, "ninguém chegou a esperar a trava"
+        await asyncio.sleep(0.05)
 
 
 async def _criar(client: AsyncClient, auth: dict[str, str], **corpo: object) -> dict:
