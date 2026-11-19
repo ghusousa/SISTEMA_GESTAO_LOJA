@@ -14,10 +14,12 @@ import contextlib
 import logging
 from dataclasses import dataclass
 
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette import status as http
 
 from app.core.config import settings
+from app.core.exceptions import AppError
 from app.modules.notificacoes import expo
 from app.modules.notificacoes.repository import NotificacoesRepository
 from app.modules.notificacoes.schemas import AparelhoFora, AparelhoIn, SituacaoDaNotificacao
@@ -31,6 +33,29 @@ TIPO_DO_CHAMADO = "leitor-chamado"
 #: Quanto o push espera para ser entregue: o chamado vale 5 min (`PRAZO_DO_CODIGO` do leitor,
 #: que passa o dele); depois disso a notificação só abriria um "esse chamado já acabou".
 VALIDADE_DO_CHAMADO_S = 300
+
+
+class RegistroIndisponivel(AppError):
+    """O banco não gravou o registro do aparelho agora (tabela travada além do teto de
+    consulta, conexão que caiu, a conta excluída no meio). O app trata qualquer 5xx do
+    registro em silêncio e registra de novo na próxima volta."""
+
+    code = "NOTIFICACAO_INDISPONIVEL"
+    http_status = http.HTTP_503_SERVICE_UNAVAILABLE
+    message = "O registro deste celular não foi gravado agora. O app tenta de novo sozinho."
+
+
+def _nome_do_erro_do_banco(exc: StatementError) -> str:
+    """O que o log pode dizer de um erro do banco: o nome do erro do Postgres e o SQLSTATE.
+
+    Nunca `str(exc)`: ele traz o comando com os parâmetros, e a causa encadeada traz o DETAIL
+    do Postgres ("Key (token)=(ExponentPushToken[...]) already exists").
+    """
+    origem = exc.orig
+    causa = getattr(origem, "__cause__", None) or origem
+    sqlstate = getattr(origem, "sqlstate", None) or getattr(causa, "sqlstate", None)
+    nome = type(causa).__name__ if causa is not None else type(exc).__name__
+    return f"{nome}, SQLSTATE {sqlstate}" if isinstance(sqlstate, str) else nome
 
 
 def texto_do_chamado(sinal: str) -> str:
@@ -55,9 +80,17 @@ class NotificacoesService:
 
     async def registrar(self, dados: AparelhoIn, usuario: User) -> None:
         """`PUT /notificacoes/aparelho`: esta instalação é deste login, com este token (ou
-        sem). Também poda o login a 10 aparelhos e faz a faxina dos de 30 dias."""
+        sem). Também poda o login a 10 aparelhos e faz a faxina dos de 30 dias.
+
+        O erro do banco NÃO sobe daqui: ele traz o comando com os parâmetros — o token — e,
+        no UNIQUE, o DETAIL do Postgres com o token por extenso, na causa encadeada. Subindo,
+        o uvicorn escreveria tudo no log ("Exception in ASGI application"). Vira 503
+        `NOTIFICACAO_INDISPONIVEL`, levantado FORA do `except` (sem o erro do banco pendurado
+        no `__context__`), e o log diz só o nome do erro e o SQLSTATE.
+        """
         user_id = usuario.id
         com_token = "token" in dados.model_fields_set
+        motivo, de_novo = "", False
         for tentativa in range(2):
             try:
                 await self.repo.upsert(
@@ -71,12 +104,17 @@ class NotificacoesService:
                 await self.repo.faxina()
                 await self.session.commit()
                 return
-            except IntegrityError:
+            except StatementError as exc:
+                motivo = _nome_do_erro_do_banco(exc)
                 # Duas instalações gravando o MESMO token ao mesmo tempo: a segunda esbarra no
                 # UNIQUE dele. Desfeita, a nova tentativa já vê a outra e a apaga antes.
+                de_novo = isinstance(exc, IntegrityError) and tentativa == 0
+            with contextlib.suppress(Exception):
                 await self.session.rollback()
-                if tentativa:
-                    raise
+            if not de_novo:
+                break
+        logger.warning("registro do aparelho: o banco recusou (%s)", motivo)
+        raise RegistroIndisponivel()
 
     async def esquecer(self, dados: AparelhoFora) -> None:
         """`DELETE /notificacoes/aparelho`, SEM sessão: o app sai, a sessão caiu, ou limpa o

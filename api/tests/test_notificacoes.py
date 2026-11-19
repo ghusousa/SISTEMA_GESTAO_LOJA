@@ -11,12 +11,14 @@ import asyncio
 import logging
 import re
 import time
+import traceback
 import uuid
 
 import httpx
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.core.config import settings
 from app.core.db import engine
@@ -25,6 +27,7 @@ from app.modules.notificacoes import expo as push_da_expo
 from app.modules.notificacoes import service as notificacoes_service
 from app.modules.notificacoes.expo import Mensagem, Recibo
 from app.modules.notificacoes.models import AparelhoDeNotificacao
+from app.modules.notificacoes.repository import NotificacoesRepository
 from tests.test_leitor import _sql
 
 ROTA = "/notificacoes/aparelho"
@@ -216,6 +219,147 @@ async def test_esquecer_sem_sessao(client, auth_admin) -> None:
 
     for torto in ({"instalacao": "x"}, {}):
         assert (await client.request("DELETE", ROTA, json=torto)).status_code == 422
+
+
+# ------------------------------------------------------------------ o banco falha no registro
+
+
+async def _registrar_sem_vazar(
+    client: AsyncClient, auth: dict[str, str], instalacao: uuid.UUID, token: str
+) -> httpx.Response:
+    """O PUT do aparelho, provando o que iria para o log se a exceção subisse: o uvicorn
+    escreve "Exception in ASGI application" e o traceback INTEIRO, com as causas."""
+    try:
+        return await _registrar(client, auth, instalacao, token=token)
+    except Exception as erro:  # noqa: BLE001 - é exatamente isto que o servidor logaria
+        escrito = "".join(traceback.format_exception(erro))
+        assert token not in escrito, "o token de push iria inteiro para o log do servidor"
+        raise
+
+
+def _ouvir_o_log(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    # O `fileConfig` do Alembic (as migrations do conftest) desliga os loggers já criados:
+    # sem religar, o teste passaria sem nada ter sido logado.
+    monkeypatch.setattr(push_da_expo.logger, "disabled", False)
+    monkeypatch.setattr(notificacoes_service.logger, "disabled", False)
+    caplog.set_level(logging.DEBUG)
+
+
+async def test_banco_travado_no_registro_e_503_sem_o_token(
+    client, auth_vendedor, monkeypatch, caplog
+) -> None:
+    """Uma migração, um VACUUM FULL ou a renovação da demo seguram a tabela além do teto de
+    consulta: o PUT cai com erro do banco, e esse erro traz o comando com os PARÂMETROS — o
+    token inclusive. O certo: 503 limpo (o app tenta de novo sozinho) e, no log, só o nome
+    do erro."""
+    original = NotificacoesRepository.upsert
+
+    async def com_teto_curto(self, **kw):
+        await self.session.execute(text("SET LOCAL statement_timeout = '300ms'"))
+        return await original(self, **kw)
+
+    monkeypatch.setattr(NotificacoesRepository, "upsert", com_teto_curto)
+    _ouvir_o_log(monkeypatch, caplog)
+    segredo = _token("segredo-do-banco-travado")
+    async with engine.connect() as trava:
+        await trava.execute(text("LOCK TABLE notificacao_aparelhos IN ACCESS EXCLUSIVE MODE"))
+        try:
+            r = await _registrar_sem_vazar(client, auth_vendedor, uuid.uuid4(), segredo)
+        finally:
+            await trava.rollback()
+
+    assert r.status_code == 503, r.text
+    assert r.json()["code"] == "NOTIFICACAO_INDISPONIVEL"
+    assert segredo not in r.text and segredo not in caplog.text
+    # O log diz POR QUÊ: o nome do erro do banco e o SQLSTATE (57014: consulta cancelada).
+    assert "QueryCanceledError" in caplog.text and "57014" in caplog.text
+    assert await _aparelhos() == []
+
+
+async def test_unique_do_token_nas_duas_tentativas_e_503_sem_o_token(
+    client, auth_admin, auth_vendedor, monkeypatch, caplog
+) -> None:
+    """O UNIQUE do token de novo na segunda tentativa: o DETAIL do Postgres ("Key
+    (token)=(...) already exists") vem na causa encadeada do erro — e nenhum
+    `hide_parameters` o esconde. Só não subir a exceção resolve."""
+    segredo = _token("segredo-do-unique")
+    await _registrar(client, auth_admin, uuid.uuid4(), token=segredo)
+    tentativas = 0
+
+    async def sem_apagar_o_outro(self, *, user_id, instalacao, plataforma, token, com_token):
+        # Como se a outra instalação gravasse o mesmo token de novo a cada tentativa.
+        nonlocal tentativas
+        tentativas += 1
+        await self.session.execute(
+            pg_insert(AparelhoDeNotificacao.__table__).values(
+                user_id=user_id, instalacao=instalacao, plataforma=plataforma, token=token
+            )
+        )
+
+    monkeypatch.setattr(NotificacoesRepository, "upsert", sem_apagar_o_outro)
+    _ouvir_o_log(monkeypatch, caplog)
+    r = await _registrar_sem_vazar(client, auth_vendedor, uuid.uuid4(), segredo)
+
+    assert tentativas == 2, "a segunda tentativa do UNIQUE (a corrida de dois aparelhos) sumiu"
+    assert r.status_code == 503, r.text
+    assert r.json()["code"] == "NOTIFICACAO_INDISPONIVEL"
+    assert segredo not in r.text and segredo not in caplog.text
+    assert "UniqueViolationError" in caplog.text
+
+
+async def test_conta_excluida_no_meio_do_registro_e_503_sem_o_token(
+    client, vendedor, auth_vendedor, monkeypatch, caplog
+) -> None:
+    """O dono exclui a conta entre o crachá e a gravação: a FK recusa o INSERT, e o erro
+    leva os parâmetros dele."""
+    original = NotificacoesRepository.upsert
+
+    async def com_conta_apagada(self, **kw):
+        await _sql("DELETE FROM users WHERE id = :i", i=vendedor.id)
+        return await original(self, **kw)
+
+    monkeypatch.setattr(NotificacoesRepository, "upsert", com_conta_apagada)
+    _ouvir_o_log(monkeypatch, caplog)
+    segredo = _token("segredo-da-conta-apagada")
+    r = await _registrar_sem_vazar(client, auth_vendedor, uuid.uuid4(), segredo)
+
+    assert r.status_code == 503, r.text
+    assert segredo not in r.text and segredo not in caplog.text
+    assert await _aparelhos() == []
+
+
+async def test_unique_do_token_so_na_primeira_tentativa_grava_na_segunda(
+    client, admin, vendedor, auth_admin, auth_vendedor, monkeypatch
+) -> None:
+    """A corrida de verdade: duas instalações gravando o MESMO token ao mesmo tempo. A
+    segunda esbarra no UNIQUE, desfaz e tenta de novo — e na nova tentativa já vê a outra e
+    a apaga antes. O token fica só na instalação que chegou por último."""
+    velha, nova = uuid.uuid4(), uuid.uuid4()
+    segredo = _token("disputado")
+    await _registrar(client, auth_admin, velha, token=segredo)
+    original = NotificacoesRepository.upsert
+    tentativas = 0
+
+    async def colide_na_primeira(self, **kw):
+        nonlocal tentativas
+        tentativas += 1
+        if tentativas == 1:
+            await self.session.execute(
+                pg_insert(AparelhoDeNotificacao.__table__).values(
+                    user_id=kw["user_id"],
+                    instalacao=kw["instalacao"],
+                    plataforma=kw["plataforma"],
+                    token=kw["token"],
+                )
+            )
+            return
+        await original(self, **kw)
+
+    monkeypatch.setattr(NotificacoesRepository, "upsert", colide_na_primeira)
+    r = await _registrar(client, auth_vendedor, nova, token=segredo)
+    assert r.status_code == 204, r.text
+    assert tentativas == 2
+    assert await _aparelhos() == [(str(nova), vendedor.id, "ios", segredo)]
 
 
 # ------------------------------------------------------------------ o push
