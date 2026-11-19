@@ -8,6 +8,10 @@
  *
  * Como os bipes saem (um por vez, em ordem, reenvio com o mesmo `client_uuid`, prazo de
  * dois minutos) mora em `lib/filaDoLeitor.ts`, com teste; aqui só se liga a fila à API.
+ *
+ * O chamado do computador (ADR-47) também passa por aqui: os chamados que a pessoa dispensou
+ * na faixa, e o "sim" a um chamado (o toque na notificação, ou o "Abrir o leitor" da faixa)
+ * que fica para a tela do leitor atender.
  */
 
 import axios from 'axios';
@@ -22,6 +26,7 @@ import {
   type BipeDaFila,
   type Falha,
 } from '@/lib/filaDoLeitor';
+import { idDaInstalacao } from '@/lib/instalacao';
 import { avisoDoFim } from '@/lib/leitorRemoto';
 import { gerarUuid } from '@/lib/uuid';
 
@@ -34,9 +39,24 @@ export const HISTORICO_DE_BIPES = 10;
 const FILA_CHEIA =
   'O computador não está recebendo as leituras. Confira se a tela dele está aberta.';
 
+/**
+ * Quanto tempo o pedido do toque espera a tela do leitor: abrir o app a frio e restaurar a
+ * sessão leva segundos, não minutos — pedido mais velho que isto é de outra situação.
+ */
+const VALIDADE_DO_PEDIDO_MS = 60_000;
+
 interface OpcoesDesligar {
   /** Curto no logout: sair do app não espera servidor que não responde. */
   timeout?: number;
+}
+
+export interface PedidoDeAtendimento {
+  sinal: string;
+  /** O chamado, quando quem pediu já o conhece (a faixa); sem ele, a tela procura pelo sinal. */
+  id?: number;
+  /** Perguntar antes a permissão de notificação (o toque em "Abrir o leitor" da faixa). */
+  pedirPermissao: boolean;
+  em: number;
 }
 
 interface LeitorState {
@@ -55,6 +75,23 @@ interface LeitorState {
    * leitor nenhum: compare com o valor de quando o pedido saiu.
    */
   sessao: number;
+  /**
+   * Chamados do computador (ADR-47) que a pessoa dispensou na faixa (✕). Só na memória: um
+   * chamado novo aparece de novo, e o logout esquece.
+   */
+  chamadosDispensados: number[];
+  /**
+   * Um "sim" a um chamado, para a tela do leitor atender: o toque numa notificação (só o sinal,
+   * que a tela procura entre os chamados abertos) ou o "Abrir o leitor" da faixa (com o id, e
+   * pedindo antes a permissão de notificação — lá, numa tela sem câmera). Vale
+   * `VALIDADE_DO_PEDIDO_MS`.
+   */
+  pedido: PedidoDeAtendimento | null;
+  /**
+   * O servidor não tem a rota dos chamados (de antes da ADR-47, 404 sem `code`): ninguém
+   * pergunta de novo até a próxima sessão.
+   */
+  servidorSemChamados: boolean;
 
   /**
    * O aceite deu certo: daqui em diante as leituras vão para este computador. Com `sessao`
@@ -73,6 +110,13 @@ interface LeitorState {
   esquecerAviso: () => void;
   /** Esquece tudo sem falar com o servidor (sessão perdida). */
   limpar: () => void;
+  /** ✕ na faixa: esconde estes chamados (os que estavam nela). */
+  dispensarChamados: (ids: number[]) => void;
+  /** O "sim" ao chamado deste sinal: a tela do leitor atende. */
+  pedirAtendimento: (sinal: string, extra?: { id?: number; pedirPermissao?: boolean }) => void;
+  /** A tela do leitor pega o pedido (uma vez só); vencido, `null`. */
+  consumirPedido: () => Omit<PedidoDeAtendimento, 'em'> | null;
+  marcarServidorSemChamados: () => void;
 }
 
 const estadoInicial = () => ({
@@ -135,8 +179,14 @@ const fila = criarFila({
     useLeitorStore.setState((e) => ({
       bipes: podar(e.bipes.map((b) => (b.uuid === uuid ? { ...b, ...mudanca } : b))),
     })),
-  enviar: (bipe, pareamentoId) =>
-    leitor.enviarBipe({ client_uuid: bipe.uuid, pareamento_id: pareamentoId, codigo: bipe.codigo }),
+  // A instalação (ADR-47): o servidor recusa o bipe de outro aparelho do mesmo login.
+  enviar: async (bipe, pareamentoId) =>
+    leitor.enviarBipe({
+      client_uuid: bipe.uuid,
+      pareamento_id: pareamentoId,
+      codigo: bipe.codigo,
+      instalacao: await idDaInstalacao(),
+    }),
   lerFalha,
   aoDesligar: (statusDoLeitor) => {
     const id = useLeitorStore.getState().pareamento?.id;
@@ -158,16 +208,29 @@ const fila = criarFila({
 export const useLeitorStore = create<LeitorState>((set, get) => ({
   ...estadoInicial(),
   sessao: 0,
+  chamadosDispensados: [],
+  pedido: null,
+  servidorSemChamados: false,
 
   ligar(pareamento, sessao) {
     // O aceite que voltou depois do logout: o celular não liga para o computador de ninguém.
     if (sessao !== undefined && sessao !== get().sessao) return;
+    const anterior = get().pareamento;
+    // A resposta repetida do mesmo leitor (o reenvio do atender): é o mesmo, a fila segue.
+    if (anterior && anterior.id === pareamento.id && pareamento.status === 'ATIVO') {
+      set({ pareamento });
+      return;
+    }
     fila.interromper();
     if (pareamento.status !== 'ATIVO') {
       set({ ...estadoInicial(), aviso: avisoDoFim(pareamento) });
       return;
     }
-    set({ pareamento, bipes: [], aviso: null, alerta: null });
+    // Trocar de computador com o leitor ligado (ADR-47): o que ainda não tinha saído do
+    // anterior fica na lista como "não enviado". Não pode seguir na fila — ela manda com o
+    // pareamento ATUAL, e as peças bipadas para um computador cairiam no outro.
+    const bipes = anterior ? pendentesNaoEnviados(get().bipes) : [];
+    set({ pareamento, bipes, aviso: null, alerta: null });
   },
 
   atualizar(pareamento) {
@@ -211,7 +274,8 @@ export const useLeitorStore = create<LeitorState>((set, get) => ({
     set({ ...estadoInicial() });
     if (!pareamento) return true;
     try {
-      await leitor.desligar(pareamento.id, opcoes);
+      // `ponta`: com o mesmo login nas duas pontas, o diário diz que foi o CELULAR que desligou.
+      await leitor.desligar(pareamento.id, { ...opcoes, ponta: 'celular' });
       return true;
     } catch (erro) {
       // Já desligado do outro lado (404) também é desligado.
@@ -235,6 +299,33 @@ export const useLeitorStore = create<LeitorState>((set, get) => ({
 
   limpar() {
     fila.interromper();
-    set((e) => ({ ...estadoInicial(), sessao: e.sessao + 1 }));
+    set((e) => ({
+      ...estadoInicial(),
+      chamadosDispensados: [],
+      pedido: null,
+      servidorSemChamados: false,
+      sessao: e.sessao + 1,
+    }));
+  },
+
+  dispensarChamados(ids) {
+    set((e) => ({ chamadosDispensados: [...new Set([...e.chamadosDispensados, ...ids])] }));
+  },
+
+  pedirAtendimento(sinal, { id, pedirPermissao = false } = {}) {
+    set({ pedido: { sinal, id, pedirPermissao, em: Date.now() } });
+  },
+
+  consumirPedido() {
+    const { pedido } = get();
+    if (!pedido) return null;
+    set({ pedido: null });
+    if (Date.now() - pedido.em > VALIDADE_DO_PEDIDO_MS) return null;
+    const { em: _em, ...resto } = pedido;
+    return resto;
+  },
+
+  marcarServidorSemChamados() {
+    if (!get().servidorSemChamados) set({ servidorSemChamados: true });
   },
 }));

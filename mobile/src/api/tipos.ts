@@ -599,6 +599,12 @@ export interface ConfiguracaoPublica {
    * Opcional: servidor antigo não manda, e a demonstração da Vercel não liga — sem faixa.
    */
   demonstracao?: boolean;
+  /**
+   * O servidor manda o push do chamado do leitor (ADR-47; `NOTIFICACOES_PUSH=expo`). Nasce
+   * desligado: sem `true`, o app nunca pede a permissão de notificação nem busca o token — o
+   * chamado chega pela faixa, com o app aberto. Servidor antigo não manda: desligado.
+   */
+  notificacoes_push?: boolean;
   vocabulario: {
     icone: string;
     exemplo_produto: string;
@@ -785,8 +791,16 @@ export type MotivoEncerramento = 'COMPUTADOR' | 'CELULAR' | 'TROCOU' | 'SUBSTITU
 /** Um computador e o celular que bipa para ele. Datas em ISO UTC. */
 export interface Pareamento {
   id: number;
-  codigo: string;
+  /** `null` no chamado (ADR-47): o código do chamado nunca sai em resposta nem abre aceite. */
+  codigo: string | null;
   status: StatusPareamento;
+  /**
+   * Nasceu do "Abrir no app o leitor de código" do computador, não do QR (ADR-47). Opcionais
+   * porque o servidor antigo não manda: aí é um pareamento de QR, sem sinal.
+   */
+  chamado?: boolean;
+  /** Os 3 caracteres que o computador e o celular mostram iguais ("7K3"). */
+  sinal?: string | null;
   computador_nome: string;
   aparelho_nome: string | null;
   criado_em: string;
@@ -813,3 +827,26 @@ export interface BipesRetirados {
   descartados: number;
   pareamento: Pareamento;
 }
+
+/**
+ * Um chamado do computador esperando o celular do mesmo login (ADR-47), como
+ * `GET /leitor/chamados/abertos` lista: nunca o código, nunca nomes. `vence_em` = 5 min.
+ */
+export interface ChamadoAberto {
+  id: number;
+  sinal: string;
+  criado_em: string;
+  vence_em: string;
+}
+
+/** O que aconteceu com a notificação do chamado (o computador mostra; o app não usa). */
+export type SituacaoDaNotificacao =
+  | 'ENVIADA'
+  | 'SEM_CELULAR'
+  | 'SEM_NOTIFICACAO'
+  | 'DESLIGADA'
+  | 'SEM_CHAVE_DA_APPLE'
+  | 'FALHOU';
+
+/** Qual ponta desliga o leitor: o celular com o mesmo login nas duas pontas diz que é ele. */
+export type PontaDoLeitor = 'computador' | 'celular';

@@ -1,5 +1,6 @@
 import { Stack } from 'expo-router';
 
+import { useToqueNaNotificacao } from '@/hooks/useToqueNaNotificacao';
 import { cores } from '@/lib/tema';
 
 /**
@@ -7,6 +8,9 @@ import { cores } from '@/lib/tema';
  * por cima das abas em vez de virarem uma aba cada.
  */
 export default function AppLayout() {
+  // Aqui, e não na raiz: o grupo só monta com sessão, então o toque que abriu o app a frio
+  // espera o login restaurado antes de procurar o chamado (ADR-47).
+  useToqueNaNotificacao();
   return (
     <Stack
       screenOptions={{

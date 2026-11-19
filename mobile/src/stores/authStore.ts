@@ -18,6 +18,12 @@ import {
 import type { Usuario } from '@/api/tipos';
 import { AVISO_CONTA_EXCLUIDA } from '@/lib/exclusaoDeConta';
 import { pode, type Capacidade } from '@/lib/permissoes';
+import {
+  esquecerAparelho,
+  prepararNotificacoes,
+  tentarLimpezaPendente,
+  tirarDaCentral,
+} from '@/lib/pushDoLeitor';
 import { conectarTempoReal, desconectarTempoReal } from '@/lib/tempoReal';
 
 interface AuthState {
@@ -52,7 +58,7 @@ function limparEstadoDaSessao(): void {
   queryClient.clear();
 }
 
-/** Teto da espera pelo servidor ao desligar o leitor na saída. */
+/** Teto da espera pelo servidor ao desligar o leitor (e esquecer o aparelho) na saída. */
 const ESPERA_DESLIGAR_LEITOR_MS = 4000;
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -65,13 +71,22 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     await salvarSessao(tokens.access_token, tokens.refresh_token, tokens.usuario);
     set({ usuario: tokens.usuario, carregando: false, avisoDaEntrada: null });
     conectarTempoReal();
+    // Esta instalação para o login novo (ADR-47), sem segurar a entrada: é o que faz o
+    // computador saber que há um app capaz de atender o chamado.
+    void prepararNotificacoes();
   },
 
   async sair() {
     // Primeiro, com os tokens ainda valendo: o celular-leitor termina junto com a sessão,
     // e o computador para de esperar bipe deste aparelho. Melhor esforço — sem rede, o
-    // pareamento acaba sozinho nas 12 h, ou quando alguém desligar no computador.
-    await useLeitorStore.getState().desligar({ timeout: ESPERA_DESLIGAR_LEITOR_MS });
+    // pareamento acaba sozinho nas 12 h, ou quando alguém desligar no computador. Junto,
+    // o servidor esquece este aparelho (sem sessão: a rota não precisa dela), e o próximo
+    // login daqui não recebe os chamados do anterior.
+    await Promise.all([
+      useLeitorStore.getState().desligar({ timeout: ESPERA_DESLIGAR_LEITOR_MS }),
+      esquecerAparelho({ timeout: ESPERA_DESLIGAR_LEITOR_MS }),
+    ]);
+    void tirarDaCentral();
     const refresh = await lerRefreshToken();
     if (refresh) {
       // Revogar no servidor é o que faz o logout valer de verdade; se a rede falhar,
@@ -91,12 +106,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const salvo = await lerUsuarioSalvo().catch(() => null);
     if (!salvo) {
       set({ usuario: null, carregando: false });
+      // A saída de antes foi sem rede: o servidor ainda acha que este aparelho é daquele login.
+      void tentarLimpezaPendente();
       return;
     }
     // Mostra o app imediatamente com o usuário salvo e confirma com o servidor em seguida:
     // abrir o PDV não pode depender de uma ida à rede.
     set({ usuario: salvo, carregando: false });
     conectarTempoReal();
+    void prepararNotificacoes();
     try {
       const atual = await auth.eu();
       set({ usuario: atual });
@@ -109,12 +127,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     desconectarTempoReal();
     limparEstadoDaSessao();
     set({ usuario: null, carregando: false });
+    // A sessão caiu, mas esquecer o aparelho não precisa dela (ADR-47).
+    void esquecerAparelho();
+    void tirarDaCentral();
   },
 
   async encerrarPorContaExcluida() {
     // Sem `auth.logout` nem desligar o leitor no servidor: a exclusão já revogou as sessões
-    // e levou o pareamento junto. Chamar agora daria 401, o interceptor tentaria renovar e
-    // a pessoa sairia por "sessão expirada" — e o cofre ficaria com os tokens mortos.
+    // e levou o pareamento junto — e o registro deste aparelho para as notificações também.
+    // Chamar agora daria 401, o interceptor tentaria renovar e a pessoa sairia por "sessão
+    // expirada" — e o cofre ficaria com os tokens mortos.
     desconectarTempoReal();
     await limparSessao();
     limparEstadoDaSessao();
