@@ -19,6 +19,7 @@ import { api, ErroApi } from '../api.js';
 import { ligarBuscaDePeca } from '../busca-peca.js';
 import { formatar, paraCentavos } from '../dinheiro.js';
 import { criarLeitor, digitandoEm, manterFoco } from '../leitor.js';
+import { ligarBotaoDoCelular } from '../leitor-chamado.js';
 import { ir } from '../router.js';
 import { novoClientUuid } from '../store.js';
 import {
@@ -61,6 +62,7 @@ export function render(raiz, _params, consulta) {
       </div>
 
       <div class="pdv__leitura">
+        <div class="leitor-chamado" data-leitor-chamado></div>
         <div class="pdv__campo">
           <label class="so-leitor" for="leitura-devolucao">Código de barras ou nome da peça</label>
           <input id="leitura-devolucao" data-leitor type="text" autocomplete="off"
@@ -363,12 +365,14 @@ export function render(raiz, _params, consulta) {
     ocupadoQuando: () => enviando || digitandoEm(area),
   });
   leitor.ligar();
+  const soltarChamado = ligarBotaoDoCelular(raiz.querySelector('[data-leitor-chamado]'));
   const pararFoco = manterFoco(campo);
 
   if (consulta?.venda) void abrirVenda(Number(consulta.venda));
 
   return () => {
     leitor.desligar();
+    soltarChamado();
     busca.desligar();
     pararFoco();
   };

@@ -20,7 +20,7 @@ export function textosDaExclusao({ propria, nome = '' }) {
     return {
       some: [
         'O seu login: e-mail e senha deixam de existir, e ninguém mais entra com eles.',
-        'As sessões abertas em todos os aparelhos e o celular ligado como leitor.',
+        'As sessões abertas em todos os aparelhos, o celular ligado como leitor e o registro dele para as notificações.',
         'O seu e-mail no diário da loja, que passa a mostrar só uma máscara.',
       ],
       fica: [
@@ -33,7 +33,7 @@ export function textosDaExclusao({ propria, nome = '' }) {
   return {
     some: [
       `O login de ${nome}: e-mail e senha deixam de existir, e ninguém mais entra com eles.`,
-      'As sessões abertas em todos os aparelhos caem na hora, e o celular ligado como leitor também.',
+      'As sessões abertas em todos os aparelhos caem na hora, e o celular ligado como leitor e o registro dele para as notificações também.',
       'O e-mail no diário da loja, que passa a mostrar só uma máscara.',
     ],
     fica: [

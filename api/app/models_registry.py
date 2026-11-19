@@ -17,6 +17,7 @@ from app.modules.despesas.models import Expense, ExpenseCategory
 from app.modules.estoque.models import StockBalance, StockEntry, StockMovement
 from app.modules.fiscal.models import NotaFiscal
 from app.modules.leitor.models import LeitorBipe, LeitorPareamento
+from app.modules.notificacoes.models import AparelhoDeNotificacao
 from app.modules.taxas.models import CardFee
 from app.modules.usuarios.models import User
 from app.modules.vendas.models import (
@@ -30,6 +31,7 @@ from app.modules.vendas.models import (
 )
 
 __all__ = [
+    "AparelhoDeNotificacao",
     "AuditLog",
     "StoreConfig",
     "BackupConfig",

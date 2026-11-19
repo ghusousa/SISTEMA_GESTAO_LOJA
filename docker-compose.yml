@@ -64,6 +64,9 @@ services:
       FOCUSNFE_TOKEN: ${FOCUSNFE_TOKEN:-}
       FOCUSNFE_AMBIENTE: ${FOCUSNFE_AMBIENTE:-homologacao}
       FISCAL_EMITIR_AUTOMATICO: ${FISCAL_EMITIR_AUTOMATICO:-0}
+      # Push do chamado do leitor (ADR-47): desligado até quem publica o app pôr a chave APNs
+      # na Expo e o teste no TestFlight passar. Sem segredo; vale ao recriar a api.
+      NOTIFICACOES_PUSH: ${NOTIFICACOES_PUSH:-desligado}
     volumes:
       - fotos-de-produto:/srv/media
       # Só de leitura, e da PASTA do repositório e não de um volume: quem escreve aqui é o
@@ -153,6 +156,9 @@ services:
       ESTADO_DIR: /srv/estado
       FISCAL_EMISSOR: desligado
       FISCAL_EMITIR_AUTOMATICO: "0"
+      # O push do chamado (ADR-47) tem variável própria: o dono liga ou desliga só na demo. O
+      # que sai é texto fixo com o sinal, para os celulares da conta de quem chamou.
+      NOTIFICACOES_PUSH: ${DEMO_NOTIFICACOES_PUSH:-desligado}
       LOJA_DEMONSTRACAO: "1"
       PREFIXO: /demo
       DEMO_ADMIN_EMAIL: ${DEMO_ADMIN_EMAIL:-dono@demo.example}

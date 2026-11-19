@@ -4,14 +4,19 @@ Rodar contra Postgres de verdade (e não SQLite) é o que garante que CHECK, UNI
 coluna gerada e concorrência sejam realmente exercitados.
 """
 
+import json
 import os
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 
 os.environ.setdefault(
     "DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/loja_test"
 )
 os.environ.setdefault("JWT_SECRET", "chave-de-teste")
+# O push do chamado do leitor nasce desligado (ADR-47): quem testa o envio liga com a fixture
+# `expo`, que troca a rede pela Expo de mentira.
+os.environ.setdefault("NOTIFICACOES_PUSH", "desligado")
 
+import httpx  # noqa: E402
 import pytest  # noqa: E402
 from alembic import command  # noqa: E402
 from alembic.config import Config  # noqa: E402
@@ -23,6 +28,7 @@ from app.core.config import settings  # noqa: E402
 from app.core.db import SessionLocal, engine, get_session  # noqa: E402
 from app.core.security import hash_senha  # noqa: E402
 from app.main import app  # noqa: E402
+from app.modules.notificacoes import expo as push_da_expo  # noqa: E402
 from app.modules.usuarios.models import Papel, User  # noqa: E402
 
 TABELAS = [
@@ -56,6 +62,7 @@ TABELAS = [
     "card_fees",
     "leitor_bipes",
     "leitor_pareamentos",
+    "notificacao_aparelhos",
     "audit_log",
     "login_attempts",
     "refresh_tokens",
@@ -151,6 +158,65 @@ async def auth_gerente(client: AsyncClient, gerente: User) -> dict[str, str]:
 @pytest.fixture
 async def auth_supervisora(client: AsyncClient, supervisora: User) -> dict[str, str]:
     return await _login(client, supervisora.email)
+
+
+class ExpoFalsa:
+    """A API de push da Expo, de mentira: guarda cada lote que chegou e responde o que o
+    teste mandar (por padrão, "ok" para cada mensagem, na ordem)."""
+
+    def __init__(self) -> None:
+        self.lotes: list[list[dict]] = []
+        #: Roda DENTRO do envio, com o lote — para o teste olhar o banco nesse instante.
+        self.durante: Callable[[list[dict]], Awaitable[None]] | None = None
+        #: Monta a resposta a partir do lote; `None` = tudo "ok".
+        self.responder: Callable[[list[dict]], Awaitable[httpx.Response]] | None = None
+
+    async def __call__(self, request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == push_da_expo.URL_DO_ENVIO
+        lote = json.loads(request.content)
+        self.lotes.append(lote)
+        if self.durante is not None:
+            await self.durante(lote)
+        if self.responder is not None:
+            return await self.responder(lote)
+        return httpx.Response(
+            200, json={"data": [{"status": "ok", "id": f"recibo-{i}"} for i in range(len(lote))]}
+        )
+
+    @property
+    def tokens(self) -> list[str]:
+        return [m["to"] for lote in self.lotes for m in lote]
+
+
+@pytest.fixture(autouse=True)
+def _push_sem_internet(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rede de segurança: teste nenhum fala com a Expo de verdade. Quem liga o push sem a
+    fixture `expo` quebra aqui — `pytest.fail` passa pelo `except Exception` do adaptador,
+    que transformaria qualquer outro erro num FALHOU calado."""
+
+    def recusar(_: httpx.Request) -> httpx.Response:
+        pytest.fail("um teste tentou mandar push para a Expo de verdade: use a fixture `expo`")
+
+    monkeypatch.setattr(
+        push_da_expo,
+        "fabrica",
+        lambda _nome: push_da_expo.ExpoPush(transport=httpx.MockTransport(recusar)),
+    )
+
+
+@pytest.fixture
+def expo(monkeypatch: pytest.MonkeyPatch) -> ExpoFalsa:
+    """Liga o push como o dono ligaria — `NOTIFICACOES_PUSH=expo` — com a rede trocada pela
+    Expo de mentira (`httpx.MockTransport`): nada vai para a internet."""
+    falsa = ExpoFalsa()
+    monkeypatch.setattr(settings, "notificacoes_push", "expo")
+
+    def fabrica(nome: str) -> push_da_expo.ExpoPush:
+        assert nome == "expo"
+        return push_da_expo.ExpoPush(transport=httpx.MockTransport(falsa))
+
+    monkeypatch.setattr(push_da_expo, "fabrica", fabrica)
+    return falsa
 
 
 @pytest.fixture(autouse=True)
