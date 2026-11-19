@@ -144,7 +144,9 @@ publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com as telas do
   base junta por texto, nunca `new URL('/x', base)`. Semear ou zerar exige as DUAS chaves:
   `settings.demonstracao` e o marco `loja.demonstracao = 'sim'` do banco. No compose, serviço da demo
   só usa `${X:-}` (nunca `:?`), a `api-demo` tem `pull_policy: never` e nenhum serviço da loja
-  depende da demo: ela nunca derruba a loja (Compose 2.3 a 5.8).
+  depende da demo: ela nunca derruba a loja (Compose 2.3 a 5.8). As fotos dela moram no disco do
+  banco da loja: teto `DEMO_FOTOS_MAX_BYTES` (409 `DEMONSTRACAO_SEM_ESPACO`, `FotosDaDemonstracao`)
+  e a renovação esvazia `MEDIA_DIR/produtos` — nunca o `MEDIA_DIR`, onde o volume está montado.
 - Tempo real: `WS /api/v1/tempo-real`. Quem avisa é o commit do SQLAlchemy
   (`core/eventos.py`), não os services — mudou tabela, sai aviso. O que trafega é o
   ASSUNTO ("estoque"), nunca o dado: a tela refaz a consulta pela rota REST, e o filtro

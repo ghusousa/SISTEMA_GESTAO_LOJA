@@ -11,8 +11,9 @@ O que se prende:
   está vazio, e "vazio" é o que a carga entende como "pode semear";
 - com as duas: semeia uma vez, dá o nome e o ramo da demo, CONVERGE a conta das notas da
   Apple a cada preparo (senha trocada no banco volta a ser a do .env), renova voltando as
-  vendas para hoje (igual à primeira carga), põe preparo e renovação em fila — e nunca
-  imprime senha nem a URL do banco.
+  vendas para hoje (igual à primeira carga) e levando as fotos de quem testou, põe preparo e
+  renovação em fila — e nunca imprime senha nem a URL do banco;
+- com a conta inválida no .env, a renovação para ANTES de zerar: a demo de ontem fica.
 
 O banco da demo daqui imita o da instalação: um papel SEM superusuário, dono só do próprio
 banco, que migra e semeia sozinho. Nome e papel derivam do banco de teste desta suíte.
@@ -166,7 +167,7 @@ def _ambiente(**extra: str) -> dict[str, str]:
         )
         and chave not in {
             "AMBIENTE", "CORS_ORIGINS", "DEBUG", "MEDIA_DIR", "WEB_DIR", "JWT_SECRET",
-            "LOJA_DEMONSTRACAO", "PREFIXO",
+            "LOJA_DEMONSTRACAO", "PREFIXO", "BLOB_READ_WRITE_TOKEN",
         }
     }
     limpo.update(
@@ -197,6 +198,15 @@ def _rodar(comando: str, env: dict[str, str], tmp_path: Path) -> subprocess.Comp
         cwd=PASTA_API, capture_output=True, text=True, timeout=600,
         env={**env, "MEDIA_DIR": str(tmp_path / "media")},
     )
+
+
+def _foto_de_quem_testou(tmp_path: Path, nome: str = "1-de-quem-testou.jpg") -> Path:
+    """Uma foto no volume da demo, onde o envio grava (`MEDIA_DIR/produtos/<id>-<uuid>`)."""
+    pasta = tmp_path / "media" / "produtos"
+    pasta.mkdir(parents=True, exist_ok=True)
+    foto = pasta / nome
+    foto.write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 64)
+    return foto
 
 
 def _sem_segredo(feito: subprocess.CompletedProcess[str]) -> str:
@@ -275,6 +285,7 @@ async def test_sem_as_duas_chaves_recusa_e_nao_toca_em_nada(
 ) -> None:
     de_fabrica = tuple((await _consultar(_INTOCADO))[0])
     assert de_fabrica[:2] == (0, 0) and de_fabrica[3] == 0
+    foto = _foto_de_quem_testou(tmp_path)
 
     # A loja de verdade: o banco SEM o marco, mesmo com a variável copiada por engano.
     for comando in ("preparar-demonstracao", "renovar-demonstracao"):
@@ -295,6 +306,7 @@ async def test_sem_as_duas_chaves_recusa_e_nao_toca_em_nada(
         assert feito.returncode == 2, saida[-3000:]
         assert "LOJA_DEMONSTRACAO" in feito.stderr and "nada foi feito" in feito.stderr
     assert tuple((await _consultar(_INTOCADO))[0]) == (*de_fabrica[:3], 1)
+    assert foto.exists(), "a renovação recusada apagou a foto"
 
 
 async def test_com_as_duas_chaves_semeia_converge_e_renova(
@@ -321,11 +333,13 @@ async def test_com_as_duas_chaves_semeia_converge_e_renova(
     retrato = tuple((await _consultar(RETRATO))[0])
     assert retrato[1] == 10 and retrato[3] > 100 and retrato[17] == 2
 
-    # 2. A subida seguinte não duplica nada.
+    # 2. A subida seguinte não duplica nada — nem apaga a foto que alguém enviou.
+    enviada = _foto_de_quem_testou(tmp_path)
     de_novo = _rodar("preparar-demonstracao", _da_demo(), tmp_path)
     assert de_novo.returncode == 0, _sem_segredo(de_novo)[-3000:]
     assert "já semeada" in de_novo.stdout
     assert tuple((await _consultar(RETRATO))[0]) == retrato
+    assert enviada.exists()
 
     # 3. A conta das notas mexida no banco (rebaixada, desligada, outra senha) volta a ser a
     #    do .env na subida seguinte — o revisor entra sem ninguém consertar à mão.
@@ -346,14 +360,23 @@ async def test_com_as_duas_chaves_semeia_converge_e_renova(
     assert tuple((await _consultar(RETRATO))[0]) == retrato
 
     # 4. Uma semana depois, os dados envelheceram; a renovação zera e semeia de novo, com as
-    #    vendas voltando para hoje — e a demo renovada é igual à primeira.
+    #    vendas voltando para hoje — e a demo renovada é igual à primeira. As fotos que quem
+    #    testou enviou saem junto (o teto delas volta a zero); a `media`, onde o volume da
+    #    demo está montado, fica, com o que não é foto de peça.
     await _consultar(
         "UPDATE sales SET sold_at = sold_at - interval '30 days', "
         "created_at = created_at - interval '30 days'"
     )
+    outra = _foto_de_quem_testou(tmp_path, "2-de-quem-testou.png")
+    fora = tmp_path / "media" / "nao-e-foto.txt"
+    fora.write_text("fica")
     renovou = _rodar("renovar-demonstracao", _da_demo(), tmp_path)
     assert renovou.returncode == 0, _sem_segredo(renovou)[-3000:]
     assert "zerada" in renovou.stdout and "demonstração semeada" in renovou.stdout
+    assert not enviada.exists() and not outra.exists()
+    assert list((tmp_path / "media" / "produtos").iterdir()) == []
+    assert fora.read_text() == "fica"
+    assert "2 fotos" in renovou.stdout
     assert tuple((await _consultar(RETRATO))[0]) == retrato
     ultima = (await _consultar("SELECT max(sold_at) FROM sales"))[0][0]
     hoje = datetime.now(UTC).astimezone(settings.tz_loja).date()
@@ -373,6 +396,7 @@ async def test_renovar_com_a_conta_invalida_para_antes_de_zerar(
     assert feito.returncode == 0, _sem_segredo(feito)[-3000:]
     retrato = tuple((await _consultar(RETRATO))[0])
     assert retrato[0] == 2 and retrato[1] == 10 and retrato[3] > 100
+    foto = _foto_de_quem_testou(tmp_path)
 
     curta = "Curta-7"  # 7 caracteres: a régua da API pede 8
     sem_senha = _ambiente(LOJA_DEMONSTRACAO="1", DEMO_ADMIN_EMAIL=EMAIL_DO_DONO)
@@ -386,6 +410,7 @@ async def test_renovar_com_a_conta_invalida_para_antes_de_zerar(
         assert renovou.returncode == 1, saida[-3000:]
         assert frase in renovou.stderr and "zerada" not in renovou.stdout
         assert tuple((await _consultar(RETRATO))[0]) == retrato
+        assert foto.exists()
 
 
 async def test_preparo_espera_a_renovacao_que_esta_rodando(

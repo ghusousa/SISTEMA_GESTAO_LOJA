@@ -163,6 +163,12 @@ class Settings(BaseSettings):
     #: conta das notas da revisão da App Store, e o revisor seguinte precisa entrar com ela
     #: (ADR-45). Na loja não vale nada (ver `conta_demo_protegida`).
     demo_admin_email: str = ""
+    #: Teto da pasta de fotos da demonstração que sobe com a loja (ADR-46). O volume dela
+    #: mora no mesmo disco do banco da loja, e a senha da demo vai para quem o dono mostra o
+    #: sistema: sem teto, envios repetidos encheriam o disco e parariam o Postgres DA LOJA.
+    #: Passou, a foto é recusada (409 DEMONSTRACAO_SEM_ESPACO) até a renovação da madrugada
+    #: esvaziar a pasta. Fora da demonstração (e com o Blob) não vale nada.
+    demo_fotos_max_bytes: int = Field(default=200 * 1024 * 1024, gt=0)
 
     @field_validator("cors_origins", mode="before")
     @classmethod

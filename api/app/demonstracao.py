@@ -657,6 +657,27 @@ def preparar_demonstracao(origem: Origem | str) -> None:
         _preparar_na_instalacao(admin, vendedora)
 
 
+def _esvaziar_as_fotos() -> int:
+    """Apaga as fotos da demonstração depois do TRUNCATE e diz quantas.
+
+    Nenhum produto aponta mais para elas: sem isto ficavam no volume da demo para sempre — no
+    mesmo disco do banco da loja —, e o teto de fotos (`FotosDaDemonstracao`) nunca voltaria a
+    zero. Roda depois do `_zerar`, que conferiu o marco na transação do TRUNCATE: as duas
+    chaves já valeram. Só quando a foto mora no disco da demonstração; no Blob (ou sem lugar),
+    nada. Falha aqui não para a renovação: as tabelas já estão vazias, e a carga tem de vir.
+    """
+    from app.modules.catalogo import fotos
+
+    casa = fotos.armazenamento()
+    if not isinstance(casa, fotos.FotosDaDemonstracao):
+        return 0
+    try:
+        return casa.esvaziar()
+    except OSError as exc:
+        _passo(f"as fotos não saíram ({sem_segredos(exc)}): ficam para a próxima renovação")
+        return 0
+
+
 def renovar_demonstracao() -> None:
     """Zera o banco da demonstração e semeia de novo — as vendas voltam a ser "de hoje".
 
@@ -664,7 +685,8 @@ def renovar_demonstracao() -> None:
     de hoje e da semana ficam vazios e quem testa vê uma loja parada. Só a origem instalação
     renova (na Vercel, zerar é DROP SCHEMA + Redeploy, à mão). As contas são conferidas antes
     do TRUNCATE: com elas inválidas no .env, a renovação para sem tocar em nada e a demo de
-    ontem segue no ar, com a conta do revisor.
+    ontem segue no ar, com a conta do revisor. As fotos que quem testou enviou saem junto
+    com as tabelas (`_esvaziar_as_fotos`).
     """
     motivo = motivo_para_recusar()
     if motivo:
@@ -672,5 +694,6 @@ def renovar_demonstracao() -> None:
     admin, vendedora = _contas_da_instalacao()
     with _uma_de_cada_vez():
         tabelas = asyncio.run(_zerar())
-        _passo(f"demonstração zerada ({tabelas} tabelas); semeando de novo")
+        apagadas = _esvaziar_as_fotos()
+        _passo(f"demonstração zerada ({tabelas} tabelas, {apagadas} fotos); semeando de novo")
         _preparar_na_instalacao(admin, vendedora)

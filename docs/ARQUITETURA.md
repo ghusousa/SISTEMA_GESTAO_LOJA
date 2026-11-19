@@ -2048,6 +2048,16 @@ navegador: as duas dividem a mesma origem.
   dela (`fotos-da-demo`), e a NFC-e é desligada pela própria config quando `settings.demonstracao`
   está ligada, venha o que vier do ambiente: a venda de quem testa nunca sai como nota no CNPJ da
   loja.
+- **As fotos da demo têm teto.** O volume `fotos-da-demo` mora no MESMO disco do banco da loja, e a
+  senha da demo vai para a Apple e para quem o dono mostra o sistema: sem teto, envios repetidos de
+  5 MB (criar produto é livre, então apagar a foto trocada não limitaria nada) encheriam o disco e
+  parariam o Postgres da loja. Com `settings.demonstracao` e a foto no disco, `fotos._fabricar` dá
+  o `FotosDaDemonstracao`: antes de gravar ele soma o que `MEDIA_DIR/produtos` OCUPA — o bloco
+  inteiro de cada arquivo, senão milhões de "fotos" de 9 bytes passariam pelo teto enchendo o disco
+  e os inodes — e recusa com 409 `DEMONSTRACAO_SEM_ESPACO` a foto que passaria de
+  `DEMO_FOTOS_MAX_BYTES` (200 MB). Medir e gravar são um passo só (`asyncio.Lock` do processo; a
+  `api-demo` é um processo só — com N, o teto passaria de no máximo N-1 fotos). A renovação esvazia
+  a pasta (abaixo), e o teto volta a zero toda madrugada. Na loja e no Blob, nada disso.
 - **A API sob o prefixo.** `LOJA_DEMONSTRACAO=1` liga `settings.demonstracao`; `PREFIXO=/demo`
   (vazio, ou `/[a-z0-9-]+` sem barra no fim — o resto é recusado no boot, nunca "consertado": um
   prefixo que a API entendesse diferente do Caddy daria 404 em tudo, calado) faz o `app.main` expor
@@ -2088,7 +2098,8 @@ navegador: as duas dividem a mesma origem.
   preparo assina os marcos como "Demonstração (instalação)", dá o nome "Loja de Demonstração" e o
   ramo ROUPAS (o catálogo do seed é de roupa) e converge a conta do revisor. `renovar-demonstracao`
   faz TRUNCATE de todas as tabelas do schema `public` menos `alembic_version` (`RESTART IDENTITY
-  CASCADE`) e prepara de novo. Os dois comandos exigem as DUAS chaves — o contêiner se diz
+  CASCADE`), apaga os arquivos de `MEDIA_DIR/produtos` (a pasta e o `MEDIA_DIR`, onde o volume está
+  montado, ficam) e prepara de novo. Os dois comandos exigem as DUAS chaves — o contêiner se diz
   demonstração (`settings.demonstracao`) E o banco também (o marco `loja.demonstracao`) —, porque o
   banco de uma loja recém-instalada está vazio, que é exatamente o "pode semear" da carga: uma
   variável copiada por engano para o contêiner da loja não basta para tocar no banco dela. Sem as
@@ -2192,6 +2203,7 @@ Erros: `{"code": "...", "message": "...", "detail": {...}}`.
 | `LEITOR_CODIGO_INVALIDO` | 404 | código do leitor pelo celular inexistente, vencido, já aceito por outro ou encerrado — a MESMA resposta (ADR-43) |
 | `LEITOR_DESLIGADO` | 409 | bipe num pareamento que não está ATIVO; `detail.status` diz qual (ADR-43) |
 | `LEITOR_FILA_CHEIA` | 409 | 100 bipes esperando o computador retirar (ADR-43) |
+| `DEMONSTRACAO_SEM_ESPACO` | 409 | só na demonstração da instalação (`settings.demonstracao`, foto no disco): a foto passaria do teto da pasta de fotos (`DEMO_FOTOS_MAX_BYTES`, 200 MB); `detail.limite_mb`. A foto de antes fica, e a renovação da madrugada esvazia a pasta (ADR-46) |
 | `CONTA_DE_DEMONSTRACAO` | 409 | numa demonstração — a Vercel ou a que sobe com a loja em `/demo` (`conta_demo_protegida`) —, excluir, rebaixar, desativar ou trocar a senha da conta `DEMO_ADMIN_EMAIL` (ADR-45, ADR-46) — antes de conferir a senha. Na loja de verdade, nunca |
 | `DEMONSTRACAO_FORA_DO_AR` | 503 | do PROXY, não da API: `/demo/api/*` com a demonstração desligada ou subindo. Corpo `{"code":"DEMONSTRACAO_FORA_DO_AR","message":"A demonstração está desligada ou começando. Tente de novo em um minuto.","detail":{}}`; o resto de `/demo/*` recebe a mesma frase numa página. Nunca a loja no lugar (ADR-46) |
 

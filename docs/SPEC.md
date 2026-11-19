@@ -297,7 +297,8 @@ real nada":
 - a conta de dono da demonstração não pode ser excluída, rebaixada, desativada nem ter a senha
   trocada, e quem errar a senha dela de propósito não a tranca para o revisor;
 - a demonstração nunca derruba a loja: se ela falhar ao instalar, atualizar ou renovar, a loja
-  segue no ar e o dono é avisado.
+  segue no ar e o dono é avisado; e as fotos que quem testa envia têm teto e saem na renovação,
+  para não encher o disco que a loja usa.
 
 A demonstração da Vercel (ADR-42) continua como está: é a outra forma de mostrar o sistema, sem
 máquina nenhuma, e a revisão da Apple pode usar qualquer uma das duas.

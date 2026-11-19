@@ -4,6 +4,9 @@ Nada aqui vai para a internet: `BlobFalso` faz o papel do Blob atrás de um
 `httpx.MockTransport` e guarda o que recebeu — o que foi enviado, com que cabeçalhos, e o
 que foi apagado. O invariante que importa: o store guarda exatamente a foto para a qual o
 banco aponta (nem órfã, nem apagada debaixo da tela).
+
+Na demonstração que sobe com a loja (ADR-46), o disco tem teto: o volume dela mora no disco do
+banco da loja, e quem tem a senha da demo não pode enchê-lo.
 """
 
 import asyncio
@@ -26,7 +29,12 @@ from sqlalchemy import text
 from app.core.config import Settings, settings
 from app.core.db import engine
 from app.modules.catalogo import fotos
-from app.modules.catalogo.fotos import FotosNoBlob, FotosNoDisco, FotosSemLugar
+from app.modules.catalogo.fotos import (
+    FotosDaDemonstracao,
+    FotosNoBlob,
+    FotosNoDisco,
+    FotosSemLugar,
+)
 
 TOKEN = "vercel_blob_rw_LOJA123_segredo"
 API = "https://blob.teste/api/blob"
@@ -35,6 +43,8 @@ PASTA_API = Path(__file__).resolve().parents[1]
 MB = 1024 * 1024
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+#: 64 KB cravados, múltiplo do bloco do disco: o que ocupa é o que mede.
+FOTO_64K = PNG + b"\x00" * (64 * 1024 - len(PNG))
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
 WEBP = b"RIFF\x00\x00\x00\x00WEBPVP8 " + b"\x00" * 64
 
@@ -121,6 +131,14 @@ def disco(monkeypatch: pytest.MonkeyPatch, tmp_path):
     monkeypatch.setattr(settings, "vercel", False)
     monkeypatch.setattr(settings, "media_dir", str(tmp_path))
     return tmp_path
+
+
+@pytest.fixture
+def demo(monkeypatch: pytest.MonkeyPatch, disco):
+    """A demonstração que sobe com a loja (ADR-46): o disco, com lugar para 3 fotos de 64 KB."""
+    monkeypatch.setattr(settings, "demonstracao", True)
+    monkeypatch.setattr(settings, "demo_fotos_max_bytes", 3 * len(FOTO_64K) + 1024)
+    return disco
 
 
 @pytest.fixture
@@ -242,6 +260,105 @@ async def test_na_loja_disco_cheio_responde_503_sem_falar_de_vercel_e_o_errno_va
     assert "Vercel" not in resp.text and "BLOB" not in resp.text
     assert "errno 28" in caplog.text
     assert await _foto_no_banco(produto["id"]) is None
+
+
+# ------------------------------------------------------------------ demonstração (ADR-46)
+def _fotos_na_pasta(media: Path) -> list[str]:
+    return sorted(f.name for f in (media / "produtos").iterdir())
+
+
+async def test_na_demonstracao_a_foto_que_passaria_do_teto_e_recusada(
+    client, auth_admin, produto, demo
+) -> None:
+    """Quem tem a senha da demo (a Apple, quem o dono leva para conhecer o sistema) não enche
+    o disco da loja: cabem três, a quarta é recusada com o código da demo e a de antes fica."""
+    aceitas = [await _enviar(client, auth_admin, produto["id"], FOTO_64K) for _ in range(3)]
+    assert [r.status_code for r in aceitas] == [200, 200, 200]
+    na_tela = aceitas[-1].json()["foto_url"]
+
+    resp = await _enviar(client, auth_admin, produto["id"], FOTO_64K)
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["code"] == "DEMONSTRACAO_SEM_ESPACO"
+    assert resp.json()["detail"] == {"limite_mb": 0.2}
+    assert "madrugada" in resp.json()["message"]
+    assert len(_fotos_na_pasta(demo)) == 3
+    assert await _foto_no_banco(produto["id"]) == na_tela
+
+
+async def test_na_demonstracao_envios_juntos_nao_furam_o_teto(
+    client, auth_admin, produto, demo
+) -> None:
+    """Medir a pasta e gravar são um passo só: cinco envios ao mesmo tempo, lugar para três."""
+    respostas = await asyncio.gather(
+        *(_enviar(client, auth_admin, produto["id"], FOTO_64K) for _ in range(5))
+    )
+    assert sorted(r.status_code for r in respostas) == [200, 200, 200, 409, 409]
+    assert len(_fotos_na_pasta(demo)) == 3
+
+
+async def test_na_demonstracao_a_foto_minuscula_conta_o_bloco_que_ocupa(
+    client, auth_admin, produto, demo, monkeypatch
+) -> None:
+    """Uma "foto" de 9 bytes (só a assinatura do PNG) ocupa um bloco inteiro: pelo tamanho,
+    milhões delas passariam pelo teto enchendo o disco (e os inodes) do mesmo jeito."""
+    minuscula = PNG[:8] + b"\x00"
+    sonda = demo / "sonda"
+    sonda.write_bytes(minuscula)
+    bloco = sonda.stat().st_blocks * 512
+    sonda.unlink()
+    if bloco <= len(minuscula):
+        pytest.skip("este disco guarda arquivo minúsculo sem bloco próprio")
+    monkeypatch.setattr(settings, "demo_fotos_max_bytes", 2 * bloco + 100)
+
+    codigos = [
+        (await _enviar(client, auth_admin, produto["id"], minuscula)).status_code
+        for _ in range(4)
+    ]
+    assert codigos == [200, 200, 200, 409]
+
+
+async def test_fora_da_demonstracao_a_pasta_de_fotos_nao_tem_teto(
+    client, auth_admin, produto, disco, monkeypatch
+) -> None:
+    """Na loja de verdade a variável, se vier, não vale: as fotos são da loja, e o disco dela
+    é o dono quem cuida (o vigia avisa a partir de 90%)."""
+    monkeypatch.setattr(settings, "demonstracao", False)
+    monkeypatch.setattr(settings, "demo_fotos_max_bytes", len(FOTO_64K))
+    respostas = [await _enviar(client, auth_admin, produto["id"], FOTO_64K) for _ in range(3)]
+    assert [r.status_code for r in respostas] == [200, 200, 200]
+    assert len(_fotos_na_pasta(disco)) == 3
+
+
+def test_na_demonstracao_a_fabrica_escolhe_o_disco_com_teto(monkeypatch) -> None:
+    for nome in ("BLOB_READ_WRITE_TOKEN", "VERCEL", "VERCEL_ENV", "DEMO_FOTOS_MAX_BYTES"):
+        monkeypatch.delenv(nome, raising=False)
+    monkeypatch.setenv("AMBIENTE", "test")
+    monkeypatch.setenv("LOJA_DEMONSTRACAO", "1")
+
+    def casa():
+        return fotos._fabricar(Settings(_env_file=None))
+
+    na_demo = casa()
+    assert isinstance(na_demo, FotosDaDemonstracao)
+    assert na_demo._teto == 200 * MB  # o padrão
+    monkeypatch.setenv("BLOB_READ_WRITE_TOKEN", TOKEN)
+    assert isinstance(casa(), FotosNoBlob)  # no Blob, nem teto nem pasta
+    monkeypatch.delenv("BLOB_READ_WRITE_TOKEN")
+    monkeypatch.delenv("LOJA_DEMONSTRACAO")
+    assert type(casa()) is FotosNoDisco  # a loja: o disco de sempre, sem teto
+
+
+def test_esvaziar_leva_as_fotos_e_deixa_as_pastas(tmp_path) -> None:
+    """O que a renovação chama: só os arquivos da pasta de fotos saem."""
+    casa = FotosDaDemonstracao(tmp_path, teto=MB)
+    assert casa.esvaziar() == 0  # nem a pasta existe ainda
+    (tmp_path / "produtos").mkdir()
+    for nome in ("1-a.jpg", "2-b.png"):
+        (tmp_path / "produtos" / nome).write_bytes(JPEG)
+    (tmp_path / "leia-me.txt").write_text("fica")
+    assert casa.esvaziar() == 2
+    assert list((tmp_path / "produtos").iterdir()) == []
+    assert (tmp_path / "leia-me.txt").read_text() == "fica"
 
 
 def _ambiente_limpo(**extra: str) -> dict[str, str]:
