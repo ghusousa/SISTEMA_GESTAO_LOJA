@@ -161,10 +161,19 @@ test('mesmoServidor: o caminho da base conta — a demo mora em /demo no host da
   assert.equal(mesmoServidor('https://loja.exemplo/demo/api/v1', 'https://loja.exemplo/demo2'), false);
 });
 
-test('mesmoServidor: convite de loopback não acusa ninguém', () => {
+test('mesmoServidor: convite de loopback não acusa pelo host, mas a raiz conta', () => {
   for (const host of ['localhost', '127.0.0.1', '127.1.2.3', '[::1]']) {
     assert.equal(mesmoServidor(`http://${host}:8000/api/v1`, 'https://loja.exemplo'), true, host);
   }
+  // O computador que abriu a demonstração por localhost sabe a raiz dela (ADR-46).
+  assert.equal(mesmoServidor('http://localhost/demo/api/v1', 'https://loja.exemplo/demo/api/v1'), true);
+  assert.equal(mesmoServidor('http://localhost/demo/api/v1', 'https://loja.exemplo/api/v1'), false);
+  assert.equal(mesmoServidor('http://localhost/api/v1', 'https://loja.exemplo/demo'), false);
+});
+
+test('mesmoServidor: a tela copiada da barra (/app/...) e barras dobradas não mudam a raiz', () => {
+  assert.equal(mesmoServidor('https://loja.exemplo//demo//api/v1', 'https://loja.exemplo/demo/app/#/pdv'), true);
+  assert.equal(mesmoServidor('https://loja.exemplo/api/v1', 'https://loja.exemplo/app/'), true);
 });
 
 test('mesmoServidor: endereço ilegível também não acusa', () => {

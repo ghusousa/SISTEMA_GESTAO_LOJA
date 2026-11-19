@@ -3,8 +3,9 @@
 #
 # A migration roda aqui, e não no instalador, para que ATUALIZAR também funcione: quem
 # der `git pull` e reconstruir a imagem ganha o schema novo sem precisar lembrar de um
-# segundo comando. Só existe um container de API, então não há duas migrations correndo
-# juntas — e é por isso que o ./atualizar.sh não roda outra por fora: ele espera o /health.
+# segundo comando. Só existe um container de API POR BANCO (a `api` migra o `loja`; a
+# `api-demo`, o `loja_demo`, ADR-46), então não há duas migrations correndo no mesmo banco —
+# e é por isso que o ./atualizar.sh não roda outra por fora: ele espera o /health.
 set -e
 
 echo "→ esperando o banco responder…"

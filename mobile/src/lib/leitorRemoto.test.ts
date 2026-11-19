@@ -173,6 +173,12 @@ test('mesmoServidor compara a base inteira: a raiz conta (ADR-46)', () => {
 test('mesmoServidor: convite de loopback não acusa pelo host, mas a raiz conta', () => {
   assert.equal(mesmoServidor('http://localhost/demo/api/v1', 'https://loja.exemplo/demo/api/v1'), true);
   assert.equal(mesmoServidor('http://localhost/demo/api/v1', 'https://loja.exemplo/api/v1'), false);
+  assert.equal(mesmoServidor('http://localhost/api/v1', 'https://loja.exemplo/demo'), false);
+});
+
+test('mesmoServidor: a tela copiada da barra (/app/...) e barras dobradas não mudam a raiz', () => {
+  assert.equal(mesmoServidor('https://loja.exemplo//demo//api/v1', 'https://loja.exemplo/demo/app/#/pdv'), true);
+  assert.equal(mesmoServidor('https://loja.exemplo/api/v1', 'https://loja.exemplo/app/'), true);
 });
 
 test('hostDoEndereco mostra a raiz junto: loja e demonstração dividem o host', () => {

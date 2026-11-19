@@ -5,9 +5,10 @@ pelos últimos dias, despesas do mês e uma peça no estoque mínimo para o aler
 
     .venv/bin/python scripts/seed_demo.py          # com a API no ar
 
-Na Vercel quem chama é o `scripts/vercel_build.py`, pela função `popular()`, com a API dentro
-do processo do build (ADR-42). Rodar de novo não duplica: cada gravação usa uma chave fixa, e a
-carga que caiu no meio termina de onde parou.
+As demonstrações chamam `popular()` pelo preparo compartilhado (`app/demonstracao.py`), com a
+API dentro do próprio processo: na Vercel, o `scripts/vercel_build.py` (ADR-42); na instalação, a
+`api-demo` a cada subida (`python -m app.cli preparar-demonstracao`, ADR-46). Rodar de novo não
+duplica: cada gravação usa uma chave fixa, e a carga que caiu no meio termina de onde parou.
 
 NÃO use em produção: cria usuários com senha conhecida.
 """
