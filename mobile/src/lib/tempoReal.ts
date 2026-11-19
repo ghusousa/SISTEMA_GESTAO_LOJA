@@ -20,6 +20,7 @@ import { baseAtual } from '@/api/client';
 import { lerAccessToken } from '@/api/sessao';
 import { aplicarRodada, criarAgrupador, relogioReal, type Assunto } from '@/lib/avisos';
 import { criarCanal } from '@/lib/canal';
+import { urlDoTempoReal } from '@/lib/enderecoDoServidor';
 import { queryClient } from '@/lib/queryClient';
 
 /**
@@ -45,9 +46,10 @@ function recarregarTudo(): void {
 }
 
 function urlDoCanal(): string {
-  // ws:// para http://, wss:// para https:// — a conexão segue o mesmo endereço da API,
-  // então não há um segundo lugar para configurar quando a loja muda de servidor.
-  return `${baseAtual().replace(/^http/i, 'ws')}/api/v1/tempo-real`;
+  // ws:// para http://, wss:// para https://, com a porta e o caminho da base (a demonstração
+  // em `/demo`) — a conexão segue o mesmo endereço da API, então não há um segundo lugar
+  // para configurar quando a loja muda de servidor.
+  return urlDoTempoReal(baseAtual());
 }
 
 /**

@@ -13,6 +13,7 @@
 import axios, { AxiosError, type AxiosInstance, type InternalAxiosRequestConfig } from 'axios';
 
 import { montarUrlDaFoto } from '../lib/enderecoDaFoto';
+import { urlDaApi } from '../lib/enderecoDoServidor';
 import { refreshRecusado } from '../lib/renovacao';
 import { lerAccessToken, lerRefreshToken, limparSessao, salvarTokens } from './sessao';
 import { enderecoSugerido, servidorEmCache } from './servidor';
@@ -21,6 +22,8 @@ import type { ErroApi, Tokens } from './tipos';
 /**
  * O endereço do servidor é escolhido no celular (api/servidor.ts) e pode mudar sem
  * recompilar, então NÃO dá para congelá-lo aqui: cada requisição pergunta qual é o atual.
+ * Pode ter caminho (`https://loja.x.com.br/demo`): toda rota se junta a ela por texto
+ * (`lib/enderecoDoServidor.ts`).
  */
 export function baseAtual(): string {
   return servidorEmCache() ?? enderecoSugerido();
@@ -56,7 +59,7 @@ api.interceptors.request.use(async (config) => {
   // A base vem daqui, e não do `create`, porque o servidor pode ser trocado com o app
   // aberto — em "Mais → Servidor". Fixá-la na criação deixaria o app falando com o
   // endereço antigo até alguém fechar e abrir de novo.
-  config.baseURL = `${baseAtual()}/api/v1`;
+  config.baseURL = urlDaApi(baseAtual());
   const token = await lerAccessToken();
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
@@ -74,7 +77,7 @@ async function renovarSessao(): Promise<string | null> {
   try {
     // Cliente separado: passar pelo `api` cairia no interceptor e viraria recursão.
     const { data } = await axios.post<Tokens>(
-      `${baseAtual()}/api/v1/auth/refresh`,
+      `${urlDaApi(baseAtual())}/auth/refresh`,
       { refresh_token: refresh },
       { timeout: 15000 },
     );
