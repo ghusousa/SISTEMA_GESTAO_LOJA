@@ -141,6 +141,9 @@ def _settings(monkeypatch: pytest.MonkeyPatch, **env: str) -> Settings:
         "VERCEL_BRANCH_URL",
         "VERCEL_PROJECT_PRODUCTION_URL",
         "FISCAL_EMITIR_AUTOMATICO",
+        # A demonstração que sobe com a loja (ADR-46) também muda padrões: fora daqui.
+        "LOJA_DEMONSTRACAO",
+        "PREFIXO",
     ):
         monkeypatch.delenv(chave, raising=False)
     for chave, valor in env.items():

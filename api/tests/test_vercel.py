@@ -373,7 +373,8 @@ def _rodar_build(
         chave: valor
         for chave, valor in os.environ.items()
         if not chave.startswith(("VERCEL", "DATABASE_URL", "DEMO_", "SEED_"))
-        and chave not in {"AMBIENTE", "CORS_ORIGINS", "DEBUG", "MEDIA_DIR", "WEB_DIR", "JWT_SECRET"}
+        and chave not in {"AMBIENTE", "CORS_ORIGINS", "DEBUG", "MEDIA_DIR", "WEB_DIR", "JWT_SECRET",
+                          "LOJA_DEMONSTRACAO", "PREFIXO"}
     }
     limpo.update(
         JWT_SECRET="j" * 48,
