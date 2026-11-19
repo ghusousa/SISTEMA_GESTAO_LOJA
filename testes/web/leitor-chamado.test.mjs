@@ -127,6 +127,10 @@ function chamado(id, extra = {}) {
 
 const ativo = (id, extra = {}) => chamado(id, { status: 'ATIVO', aparelho_nome: 'Maria', ...extra });
 const lote = (p) => ({ items: [], descartados: 0, pareamento: p });
+/** Um código de QR (ADR-43): sem `chamado` nem sinal, com o código que o celular digita. */
+const qr = (id, extra = {}) => chamado(id, { chamado: false, sinal: null, codigo: 'ABC234', ...extra });
+/** O AGUARDANDO que o chamado desta aba substituiu no servidor. */
+const trocado = (id) => chamado(id, { status: 'ENCERRADO', motivo_encerramento: 'SUBSTITUIDO' });
 
 /** Uma promessa que o teste resolve quando quiser (a resposta que ainda não chegou). */
 function adiada() {
@@ -477,5 +481,404 @@ test('na demo (/demo/app/) o chamado vai à API da demo, e as chaves da aba leva
     daDemo.pararLeitorCelular();
   } finally {
     location.pathname = '/app/';
+  }
+});
+
+// ------------------------------------------------- a chave sem resposta só vale para esta aba
+
+test('a chave sem resposta não sobrevive ao QR de outra pessoa: o F5 não chama o celular, e o leitor do QR continua', async () => {
+  comecar();
+  // "Abrir no app": a rede cai e o POST nunca chega ao servidor. A chave fica (podia ter chegado).
+  responder = (p) => (p.caminho === '/leitor/chamados' ? 'sem-rede' : naoEsperado(p));
+  await leitor.chamarCelular();
+  assert.ok(guarda.has('leitor-celular-chamado'));
+
+  // A vendedora desiste e liga o celular da Bia pelo QR.
+  const daBia = qr(50, { status: 'ATIVO', aparelho_nome: 'Bia' });
+  responder = (p) => {
+    if (p.metodo === 'POST' && p.caminho === '/leitor/pareamentos') return { status: 201, corpo: qr(50) };
+    if (p.caminho === '/leitor/pareamentos/50') return { corpo: daBia };
+    if (p.caminho === '/leitor/pareamentos/50/retirar') return { corpo: lote(daBia) };
+    return naoEsperado(p);
+  };
+  await leitor.mostrarQrDoLeitor().catch(() => {}); // o modal não abre no node; o código já foi adotado
+  assert.equal(guarda.has('leitor-celular-chamado'), false, 'o QR troca o que o chamado trocaria: a chave sai');
+  mock.timers.tick(2000); // a Bia leu o QR
+  await assentar();
+  assert.equal(estado(), 'ligado');
+
+  // F5 dentro dos 5 min: o servidor que nunca viu a chave criaria AGORA um chamado (com
+  // notificação, se o push estiver ligado), e a aba largaria o leitor da Bia sem ninguém retirar.
+  leitor.pararLeitorCelular({ esquecerAba: false });
+  const recarregada = await import('../../web/js/leitor-celular.js?qr-depois-da-queda');
+  pedidos.length = 0;
+  recarregada.ligarLeitorCelular(moldura);
+  await assentar();
+  assert.deepEqual(pedidos.filter((p) => p.caminho === '/leitor/chamados'), [], 'nenhum celular chamado');
+  assert.equal(recarregada.estadoDoLeitor().pareamento?.id, 50, 'o leitor da Bia continua nesta aba');
+  assert.equal(estado(recarregada), 'ligado');
+  assert.ok(pedidos.some((p) => p.caminho === '/leitor/pareamentos/50/retirar'), 'e a fila dela continua sendo retirada');
+  recarregada.pararLeitorCelular();
+});
+
+test('a chave sem resposta não sobrevive ao Cancelar: o F5 não chama o celular, e o clique seguinte usa chave nova', async () => {
+  comecar();
+  await comChamado(41);
+  // "Chamar de novo": a rede cai e o servidor nunca recebe. A área volta ao #41, com a chave guardada.
+  responder = (p) => {
+    if (p.caminho === '/leitor/chamados') return 'sem-rede';
+    if (p.metodo === 'DELETE' && p.caminho === '/leitor/pareamentos/41') return { status: 204 };
+    if (p.caminho === '/leitor/pareamentos/41') return { corpo: chamado(41) };
+    return naoEsperado(p);
+  };
+  await leitor.chamarDeNovo();
+  const chave = JSON.parse(guarda.get('leitor-celular-chamado')).client_uuid;
+  assert.equal(estado(), 'chamando');
+  // A pessoa desiste: Cancelar.
+  await leitor.cancelarEspera();
+  assert.equal(estado(), 'livre');
+  assert.equal(guarda.has('leitor-celular-chamado'), false, 'cancelou: a chave de antes não chama mais ninguém');
+
+  // F5 (em menos de 5 min): nada sai.
+  leitor.pararLeitorCelular({ esquecerAba: false });
+  const recarregada = await import('../../web/js/leitor-celular.js?cancelou-depois-da-queda');
+  pedidos.length = 0;
+  responder = naoEsperado;
+  recarregada.ligarLeitorCelular(moldura);
+  await assentar();
+  assert.deepEqual(pedidos, [], 'o F5 não chamou o celular que a pessoa cancelou');
+  assert.equal(estado(recarregada), 'livre');
+
+  // E o próximo "Abrir no app" é um chamado novo, com chave nova.
+  responder = (p) =>
+    p.caminho === '/leitor/chamados'
+      ? { status: 201, corpo: { pareamento: chamado(43), notificacao: 'DESLIGADA', celulares: 1 } }
+      : { corpo: chamado(43) };
+  await recarregada.chamarCelular();
+  await assentar();
+  const post = pedidos.find((p) => p.caminho === '/leitor/chamados');
+  assert.notEqual(post.corpo.client_uuid, chave);
+  assert.equal(post.corpo.substitui_id, null);
+  recarregada.pararLeitorCelular();
+});
+
+test('o reenvio do clique acha o chamado que o celular já atendeu: "ligado", e a fila segue sendo retirada sem canal', async () => {
+  comecar();
+  responder = (p) => (p.caminho === '/leitor/chamados' ? 'sem-rede' : naoEsperado(p));
+  await leitor.chamarCelular();
+  // O POST tinha chegado, e o celular atendeu enquanto a rede estava fora.
+  responder = (p) => {
+    if (p.caminho === '/leitor/chamados') return { status: 200, corpo: { pareamento: ativo(41), notificacao: null, celulares: 0 } };
+    if (p.caminho === '/leitor/pareamentos/41/retirar') return { corpo: lote(ativo(41)) };
+    return naoEsperado(p);
+  };
+  await leitor.chamarCelular();
+  await assentar();
+  assert.equal(estado(), 'ligado');
+  assert.equal(avisos.at(-1).texto, 'Celular de Maria ligado como leitor (sinal 7K3).');
+  const retiradas = () => pedidos.filter((p) => p.caminho === '/leitor/pareamentos/41/retirar').length;
+  assert.equal(retiradas(), 1, 'a fila que já tinha bipe sai na hora');
+  // Sem canal de tempo real, a rede de segurança (2 s) é o único caminho dos bipes.
+  mock.timers.tick(2000);
+  await assentar();
+  assert.equal(retiradas(), 2, 'a próxima retirada ficou agendada');
+});
+
+test('F5 com uma chave que não descreve mais a aba (deixada pela versão anterior da página): sai sem chamar, e o leitor guardado volta', async () => {
+  // A página de antes da correção não esquecia a chave ao ligar o QR: depois da atualização, o
+  // F5 encontra o id do QR ligado e uma chave que trocaria "nenhum". Reenviada, ela chamaria o
+  // celular e a aba largaria o leitor da Bia.
+  leitor.pararLeitorCelular();
+  guarda.clear();
+  pedidos.length = 0;
+  guarda.set('leitor-celular', '50');
+  guarda.set('leitor-celular-chamado', JSON.stringify({ client_uuid: '1b4e28ba-2fa1-41d2-883f-0016d3cca427', substitui_id: null, desde: Date.now(), usuario_id: 1 }));
+  const daBia = qr(50, { status: 'ATIVO', aparelho_nome: 'Bia' });
+  responder = (p) => {
+    if (p.caminho === '/leitor/pareamentos/50') return { corpo: daBia };
+    if (p.caminho === '/leitor/pareamentos/50/retirar') return { corpo: lote(daBia) };
+    return naoEsperado(p);
+  };
+  const recarregada = await import('../../web/js/leitor-celular.js?chave-de-outro-estado');
+  recarregada.ligarLeitorCelular(moldura);
+  await assentar();
+  assert.deepEqual(pedidos.filter((p) => p.caminho === '/leitor/chamados'), []);
+  assert.equal(guarda.has('leitor-celular-chamado'), false);
+  assert.equal(estado(recarregada), 'ligado');
+  assert.equal(recarregada.estadoDoLeitor().pareamento.id, 50);
+  recarregada.pararLeitorCelular();
+});
+
+// ------------------------------------------------- a troca desta aba, com a resposta perdida
+
+test('"Chamar de novo" chega ao servidor e a resposta se perde: a aba acha o chamado novo pela mesma chave, sem "leitores demais"', async () => {
+  comecar();
+  await comChamado(41);
+  mock.timers.tick(2000); // a rodada de rede de segurança, com o #41 ainda vivo
+  await assentar();
+  pedidos.length = 0;
+
+  // O servidor troca o #41 pelo #42 e a resposta não volta (a rede cai na volta, ou o proxy
+  // corta enquanto a notificação sai: o chamado vai para o banco ANTES do push).
+  const novo = chamado(42, { sinal: '4M8' });
+  let chegou = false;
+  responder = (p) => {
+    if (p.caminho === '/leitor/chamados' && !chegou) {
+      chegou = true;
+      return 'sem-rede';
+    }
+    // O reenvio da MESMA chave: o servidor devolve o que já criou, sem notificar de novo.
+    if (p.caminho === '/leitor/chamados') return { status: 200, corpo: { pareamento: novo, notificacao: null, celulares: 0 } };
+    if (p.caminho === '/leitor/pareamentos/41') return { corpo: trocado(41) };
+    if (p.caminho === '/leitor/pareamentos/42') return { corpo: novo };
+    return naoEsperado(p);
+  };
+  await leitor.chamarDeNovo();
+  const chave = pedidos.find((p) => p.caminho === '/leitor/chamados').corpo.client_uuid;
+  avisos.length = 0; // o "sem conexão" do clique
+  mock.timers.tick(2000); // a rodada vê o #41 encerrado pela troca
+  await assentar();
+
+  assert.deepEqual(avisos.map((a) => a.texto), [], 'nada de "há leitores demais": quem trocou foi esta aba');
+  const posts = pedidos.filter((p) => p.caminho === '/leitor/chamados');
+  assert.equal(posts.length, 2);
+  assert.deepEqual(posts[1].corpo, { client_uuid: chave, substitui_id: 41 }, 'a MESMA chave de novo');
+  assert.equal(estado(), 'chamando');
+  assert.equal(leitor.estadoDoLeitor().pareamento.id, 42, 'o chamado novo não fica órfão');
+  assert.equal(leitor.estadoDoLeitor().pareamento.sinal, '4M8');
+  assert.equal(guarda.get('leitor-celular'), '42');
+  assert.equal(guarda.has('leitor-celular-chamado'), false);
+});
+
+test('a troca perdida que o servidor recusa ao reenviar foi o teto de leitores: aí sim o aviso', async () => {
+  comecar();
+  await comChamado(41);
+  responder = (p) => {
+    if (p.caminho === '/leitor/chamados') return 'sem-rede';
+    if (p.caminho === '/leitor/pareamentos/41') return { corpo: chamado(41) };
+    return naoEsperado(p);
+  };
+  await leitor.chamarDeNovo();
+  mock.timers.tick(2000);
+  await assentar();
+  avisos.length = 0;
+  // O #41 aparece trocado; o reenvio da chave cai no intervalo entre chamados (a chave nunca
+  // chegou): quem trocou o #41 foi o teto de 10 leitores do login, e o aviso diz isso.
+  responder = (p) => {
+    if (p.caminho === '/leitor/chamados') {
+      return { status: 429, corpo: { code: 'LEITOR_CHAMADO_RAPIDO', message: 'Espere um instante.', detail: { retry_after: 2 } } };
+    }
+    if (p.caminho === '/leitor/pareamentos/41') return { corpo: trocado(41) };
+    return naoEsperado(p);
+  };
+  mock.timers.tick(2000);
+  await assentar();
+  assert.equal(estado(), 'livre');
+  assert.deepEqual(avisos.map((a) => a.texto), ['Este chamado foi encerrado: há leitores demais abertos com o seu login.']);
+  assert.equal(guarda.has('leitor-celular-chamado'), false);
+});
+
+test('sem chave pendente, o chamado trocado por fora é o teto de leitores do login: o aviso continua', async () => {
+  comecar();
+  await comChamado(41);
+  responder = (p) => (p.caminho === '/leitor/pareamentos/41' ? { corpo: trocado(41) } : naoEsperado(p));
+  mock.timers.tick(2000);
+  await assentar();
+  assert.equal(estado(), 'livre');
+  assert.deepEqual(avisos.map((a) => a.texto), ['Este chamado foi encerrado: há leitores demais abertos com o seu login.']);
+  assert.deepEqual(pedidos.filter((p) => p.caminho === '/leitor/chamados'), [], 'nada reenviado');
+});
+
+test('F5 cujo reenvio fica sem resposta, e o servidor mostra o AGUARDANDO trocado: a mesma chave de novo, com folga', async () => {
+  leitor.pararLeitorCelular();
+  guarda.clear();
+  pedidos.length = 0;
+  const chave = '0c8f5a3e-2b1d-4e6f-9a7c-5d3b1e0f2a64';
+  guarda.set('leitor-celular', '41');
+  guarda.set('leitor-celular-chamado', JSON.stringify({ client_uuid: chave, substitui_id: 41, desde: Date.now(), usuario_id: 1 }));
+  const novo = chamado(42, { sinal: '4M8' });
+  let tentativas = 0;
+  responder = (p) => {
+    if (p.caminho === '/leitor/chamados') {
+      tentativas += 1;
+      return tentativas === 1 ? 'sem-rede' : { status: 200, corpo: { pareamento: novo, notificacao: null, celulares: 0 } };
+    }
+    if (p.caminho === '/leitor/pareamentos/41') return { corpo: trocado(41) };
+    if (p.caminho === '/leitor/pareamentos/42') return { corpo: novo };
+    return naoEsperado(p);
+  };
+  const recarregada = await import('../../web/js/leitor-celular.js?f5-troca-perdida');
+  recarregada.ligarLeitorCelular(moldura);
+  await assentar();
+  assert.equal(tentativas, 1);
+  assert.equal(recarregada.estadoDoLeitor().ocupado, true, 'ainda retomando: a área segue travada');
+  mock.timers.tick(2000);
+  await assentar();
+  assert.equal(tentativas, 2);
+  assert.ok(pedidos.filter((p) => p.caminho === '/leitor/chamados').every((p) => p.corpo.client_uuid === chave));
+  assert.equal(estado(recarregada), 'chamando');
+  assert.equal(recarregada.estadoDoLeitor().pareamento.id, 42);
+  assert.equal(recarregada.estadoDoLeitor().ocupado, false);
+  recarregada.pararLeitorCelular();
+});
+
+// ------------------------------------------------- o F5 retomando: nada de clique no meio
+
+test('F5 com leitor guardado: até o servidor responder, a área fica travada e o clique não chama o celular', async () => {
+  leitor.pararLeitorCelular();
+  guarda.clear();
+  pedidos.length = 0;
+  guarda.set('leitor-celular', '40'); // o celular da Bia, ligado pelo QR antes do F5
+  const daBia = qr(40, { status: 'ATIVO', aparelho_nome: 'Bia' });
+  const busca = adiada();
+  responder = (p) => {
+    if (p.metodo === 'GET' && p.caminho === '/leitor/pareamentos/40') return busca.promessa;
+    if (p.caminho === '/leitor/pareamentos/40/retirar') return { corpo: lote(daBia) };
+    return naoEsperado(p);
+  };
+  const recarregada = await import('../../web/js/leitor-celular.js?f5-travado');
+  recarregada.ligarLeitorCelular(moldura);
+  await assentar();
+  assert.equal(recarregada.estadoDoLeitor().ocupado, true, 'retomando: os botões apagam');
+  await recarregada.chamarCelular();
+  await recarregada.mostrarQrDoLeitor();
+  await assentar();
+  assert.deepEqual(
+    pedidos.map((p) => `${p.metodo} ${p.caminho}`),
+    ['GET /leitor/pareamentos/40'],
+    'nenhum chamado (nem QR) por cima do leitor que está voltando',
+  );
+
+  busca.resolver({ corpo: daBia });
+  await assentar();
+  assert.equal(estado(recarregada), 'ligado');
+  assert.equal(recarregada.estadoDoLeitor().pareamento.id, 40);
+  assert.equal(recarregada.estadoDoLeitor().ocupado, false);
+  recarregada.pararLeitorCelular();
+});
+
+// ------------------------------------------------- a sessão sai enquanto o F5 retoma
+
+test('F5 retomando a chave e a pessoa sai (Sair) no meio: o chamado criado é encerrado no servidor', async () => {
+  leitor.pararLeitorCelular();
+  guarda.clear();
+  pedidos.length = 0;
+  guarda.set('leitor-celular-chamado', JSON.stringify({ client_uuid: '6f1c1b1e-8f0a-4c3e-9b1d-2a7d5e4f3c21', substitui_id: null, desde: Date.now(), usuario_id: 1 }));
+  const resposta = adiada();
+  responder = (p) => {
+    if (p.caminho === '/leitor/chamados') return resposta.promessa;
+    if (p.metodo === 'DELETE') return { status: 204 };
+    return naoEsperado(p);
+  };
+  const recarregada = await import('../../web/js/leitor-celular.js?f5-e-sair');
+  recarregada.ligarLeitorCelular(moldura);
+  await assentar();
+  recarregada.pararLeitorCelular(); // Sair: o token ainda está aqui enquanto o leitor desliga
+  resposta.resolver({ status: 201, corpo: { pareamento: chamado(41), notificacao: 'ENVIADA', celulares: 1 } });
+  await assentar();
+  assert.ok(
+    pedidos.some((p) => `${p.metodo} ${p.caminho}` === 'DELETE /leitor/pareamentos/41'),
+    'o chamado já notificado não fica 5 min atendível para um computador sem ninguém',
+  );
+  assert.equal(estado(recarregada), 'livre');
+});
+
+test('a sessão cai (sem Sair) enquanto o F5 retoma: nada é encerrado, e a chave fica para a mesma pessoa retomar', async () => {
+  leitor.pararLeitorCelular();
+  guarda.clear();
+  pedidos.length = 0;
+  const chave = '9d2e7c41-3b5a-4f80-8e6d-1c2b3a4f5e60';
+  guarda.set('leitor-celular-chamado', JSON.stringify({ client_uuid: chave, substitui_id: null, desde: Date.now(), usuario_id: 1 }));
+  const resposta = adiada();
+  responder = (p) => {
+    if (p.caminho === '/leitor/chamados') return resposta.promessa;
+    if (p.metodo === 'DELETE') return { status: 204 };
+    return naoEsperado(p);
+  };
+  const recarregada = await import('../../web/js/leitor-celular.js?f5-sessao-caiu');
+  recarregada.ligarLeitorCelular(moldura);
+  await assentar();
+  // A sessão caiu: o leitor para sem esquecer a aba (`main.js`); quem entrar de novo retoma.
+  recarregada.pararLeitorCelular({ esquecerAba: false });
+  resposta.resolver({ status: 201, corpo: { pareamento: chamado(41), notificacao: 'ENVIADA', celulares: 1 } });
+  await assentar();
+  assert.ok(!pedidos.some((p) => p.metodo === 'DELETE'), 'o chamado é de quem entrar de novo');
+  assert.equal(JSON.parse(guarda.get('leitor-celular-chamado')).client_uuid, chave);
+  recarregada.pararLeitorCelular();
+});
+
+// ------------------------------------------------- uma aba por leitor, também no clique
+
+test('"Duplicar aba" com a chave sem resposta: o clique da aba de origem não adota o chamado que a cópia já cuida', async () => {
+  // O BroadcastChannel de mentira: entrega às OUTRAS instâncias do mesmo nome, depois, como o de verdade.
+  const canais = new Set();
+  globalThis.BroadcastChannel = class {
+    constructor(nome) {
+      this.nome = nome;
+      this.ouvintes = [];
+      canais.add(this);
+    }
+    addEventListener(tipo, fn) {
+      if (tipo === 'message') this.ouvintes.push(fn);
+    }
+    postMessage(data) {
+      for (const outro of canais) {
+        if (outro !== this && outro.nome === this.nome) setImmediate(() => outro.ouvintes.forEach((fn) => fn({ data })));
+      }
+    }
+  };
+  leitor.pararLeitorCelular();
+  guarda.clear();
+  pedidos.length = 0;
+  avisos.length = 0;
+  try {
+    const abaA = await import('../../web/js/leitor-celular.js?aba-A');
+    abaA.ligarLeitorCelular(moldura);
+    // A aba A chama e a rede cai sem resposta: a chave fica no sessionStorage DELA.
+    responder = (p) => (p.caminho === '/leitor/chamados' ? 'sem-rede' : naoEsperado(p));
+    await abaA.chamarCelular();
+    const daAbaA = guarda.get('leitor-celular-chamado');
+
+    // "Duplicar aba": a cópia B herda a chave, retoma, e o servidor (que nunca a viu) cria o #41.
+    responder = (p) => {
+      if (p.caminho === '/leitor/chamados') return { status: 201, corpo: { pareamento: chamado(41), notificacao: 'DESLIGADA', celulares: 1 } };
+      if (p.caminho === '/leitor/pareamentos/41') return { corpo: chamado(41) };
+      return naoEsperado(p);
+    };
+    const abaB = await import('../../web/js/leitor-celular.js?aba-B');
+    abaB.ligarLeitorCelular(moldura);
+    await assentar();
+    mock.timers.tick(300); // se a B perguntar à dona, ninguém responde: a aba A não tem o #41
+    await assentar();
+    assert.equal(abaB.estadoDoLeitor().pareamento?.id, 41, 'a cópia cuida do #41');
+    // O sessionStorage da aba A é outro: lá a chave continua, sem o id que a B guardou.
+    guarda.set('leitor-celular-chamado', daAbaA);
+    guarda.delete('leitor-celular');
+    pedidos.length = 0;
+    avisos.length = 0;
+
+    // A pessoa clica de novo na aba A: o reenvio da chave acha o #41 (replay)...
+    responder = (p) => {
+      if (p.caminho === '/leitor/chamados') return { status: 200, corpo: { pareamento: chamado(41), notificacao: null, celulares: 0 } };
+      if (p.caminho === '/leitor/pareamentos/41') return { corpo: chamado(41) };
+      return naoEsperado(p);
+    };
+    await abaA.chamarCelular();
+    await assentar();
+    // ...e não o adota: com as duas abas retirando a mesma fila, os bipes se dividiriam entre
+    // dois carrinhos, um deles numa aba escondida.
+    assert.equal(abaA.estadoDoLeitor().pareamento, null);
+    assert.equal(estado(abaA), 'livre');
+    assert.equal(abaB.estadoDoLeitor().pareamento?.id, 41);
+    assert.deepEqual(avisos.at(-1), { texto: 'Este chamado já está aberto em outra aba.', tipo: 'aviso aviso--alerta' });
+    assert.deepEqual(
+      pedidos.map((p) => `${p.metodo} ${p.caminho}`),
+      ['POST /leitor/chamados'],
+      'a aba A não pergunta pelo #41 nem retira a fila dele',
+    );
+    abaA.pararLeitorCelular();
+    abaB.pararLeitorCelular();
+  } finally {
+    globalThis.BroadcastChannel = undefined;
   }
 });
