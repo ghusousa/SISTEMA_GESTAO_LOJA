@@ -643,15 +643,21 @@ recarregar_proxy() {
 # ------------------------------------------------------------------ a demonstração
 
 # Avisa no terminal e no celular: a demonstração é a vitrine da revisão da Apple, e ela fora
-# do ar ninguém nota até a Apple recusar.
-avisar_demo() {
+# do ar ninguém nota até a Apple recusar. Com "voltou", o aviso é o da volta atrás.
+avisar_demo() {  # avisar_demo <o que houve> [voltou]
+    local terminal="A loja está atualizada e no ar; ela não depende da demonstração."
+    local celular="A loja foi atualizada e está no ar, mas a demonstração (/demo) não:"
+    if [ "${2:-}" = voltou ]; then
+        terminal="A atualização voltou atrás; a loja não depende da demonstração."
+        celular="A atualização voltou atrás, e a demonstração (/demo) não voltou com ela:"
+    fi
     aviso "$1"
-    aviso "A loja está atualizada e no ar; ela não depende da demonstração."
+    aviso "$terminal"
     printf '  Veja: %sdocker compose logs --tail 50 api-demo%s   e religue: %s./demo.sh --ligar%s\n' \
         "$FORTE" "$NORMAL" "$FORTE" "$NORMAL"
     if [ -x ./notificar.sh ]; then
         ./notificar.sh --assunto demo-na-atualizacao "A demonstração não subiu" \
-            "A loja foi atualizada e está no ar, mas a demonstração (/demo) não: $1 Veja: docker compose logs --tail 50 api-demo" \
+            "$celular $1 Veja: docker compose logs --tail 50 api-demo" \
             >/dev/null 2>&1 || true
     fi
 }
@@ -733,6 +739,16 @@ voltar_atras() {
     # primeira fase e o daqui só nomeiam db, api e proxy, então ela segue na imagem e no banco
     # de antes — apagá-la e semeá-la de novo só a tirava do ar e derrubava a sessão de quem
     # estava nela (o revisor da Apple inclusive).
+    #
+    # A não ser que o contêiner dela tenha sumido: a versão desfeita tirou ou renomeou o serviço,
+    # e o --remove-orphans da primeira fase o levou como órfão. Aí ele sobe de novo, só ele, sem
+    # DROP (o banco dela é o de antes), e a falha avisa pela mesma via da segunda fase.
+    if demo_ligada && [ -z "$(dk compose ps -q api-demo 2>/dev/null || true)" ]; then
+        aviso "A demonstração saiu junto com a versão desfeita; subindo-a de novo."
+        if ! dk compose up -d demo-banco api-demo 2>&1 | tail -3; then
+            avisar_demo "A demonstração não subiu de novo na volta atrás." voltou
+        fi
+    fi
     printf '  A versão %s não será tentada de novo sozinha: a próxima é quando chegar um commit\n' \
         "$(git rev-parse --short "$DEPOIS")"
     printf '  novo no GitHub.\n'

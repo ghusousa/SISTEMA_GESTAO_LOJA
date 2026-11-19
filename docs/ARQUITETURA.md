@@ -2170,7 +2170,12 @@ navegador: as duas dividem a mesma origem.
   contêiner, na imagem e no banco de ANTES, sem nunca ter rodado a versão desfeita. Apagar o banco
   dela e semear de novo (era o que se fazia, "um schema mais novo que o código não a deixaria
   subir") não protegia nada: só a tirava do ar, com `/demo` em 503, e derrubava a sessão de quem
-  estava nela — o revisor da Apple inclusive. Backup e vigia continuam só da loja.
+  estava nela — o revisor da Apple inclusive. A exceção é a demo que sumiu: se a versão desfeita
+  tirou ou renomeou o serviço, o `--remove-orphans` da primeira fase levou o contêiner dela como
+  órfão, e nada o traria de volta até o próximo `./demo.sh --ligar`. Com a demo ligada e o
+  `compose ps -q api-demo` vazio, a volta atrás sobe `demo-banco api-demo` de novo — sem DROP, no
+  banco de antes —, e a falha avisa pelo `notificar.sh`, como na segunda fase. Backup e vigia
+  continuam só da loja.
 - **A pasta do Caddyfile, montada inteira.** O `git reset --hard` da atualização troca o
   `docker/caddy/Caddyfile` por um arquivo novo (inode novo), e um arquivo montado sozinho continua
   mostrando o VELHO ao contêiner até ele ser recriado: o `caddy reload` "dava certo" sem mudar nada,

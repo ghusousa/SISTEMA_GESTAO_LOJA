@@ -740,10 +740,65 @@ async def test_volta_atras_nao_mexe_na_demo(tmp_path: Path) -> None:
     assert not (servidor / "quebrada").exists()
     assert "O sistema voltou para a versão de antes e está no ar" in r.stdout
     log = (tmp_path / "ctr" / "docker.log").read_text()
-    # Nem o contêiner, nem o banco dela: nada da demonstração passa pelo docker na volta atrás.
-    assert "api-demo" not in log and "demo-banco" not in log, log
+    # Nem o contêiner, nem o banco dela: na volta atrás, no máximo a pergunta se o contêiner
+    # dela continua lá (continua: nada a fazer).
+    da_demo = [linha for linha in log.splitlines()
+               if ("api-demo" in linha or "demo-banco" in linha) and " compose ps " not in linha]
+    assert da_demo == [], log
     assert "loja_demo" not in log, log
     assert "A demonstração volta do zero" not in r.stdout + r.stderr
+    assert "subindo-a de novo" not in r.stdout + r.stderr
+
+
+# A versão nova tira (ou renomeia) o serviço da demonstração no compose — o arquivo
+# `sem-demo-no-compose` no código dela: o `up --remove-orphans` da primeira fase leva o
+# contêiner como órfão (ctr/id-api-demo vazio é o `compose ps -q api-demo` sem nada), e só um
+# `up` que nomeie a api-demo o cria de novo. O resto é o docker de mentira do test_backup.
+DOCKER_QUE_PERDE_A_DEMO = r"""#!/usr/bin/env bash
+"$(dirname "$0")/docker-de-mentira" "$@" || exit $?
+if [ "$1 $2" = "compose up" ]; then
+    case " $* " in
+        *" api-demo "*) echo "id-api-demo" > "$FAKE_CTR/id-api-demo" ;;
+        *" --remove-orphans "*) if [ -f sem-demo-no-compose ]; then : > "$FAKE_CTR/id-api-demo"; fi ;;
+    esac
+fi
+exit 0
+"""
+
+
+@precisa_do_git
+@pytest.mark.parametrize("sobe", [True, False])
+async def test_volta_atras_sobe_a_demo_que_a_versao_desfeita_levou(tmp_path: Path, sobe: bool) -> None:
+    """Uma versão que tira ou renomeia o serviço da demonstração e cai: o `--remove-orphans` da
+    primeira fase já levou o contêiner dela, e a volta atrás, que só nomeia db, api e proxy,
+    não o trazia de volta — a demo ficava fora, calada, até o próximo ./demo.sh --ligar. Agora a
+    volta atrás sobe a demo de novo (sem DROP: o banco dela é o de antes) e, se não subir, avisa
+    no celular pela mesma via da segunda fase."""
+    env = _maquina(tmp_path, FAKE_API="[ ! -f quebrada ]") | GIT_ISOLADO
+    if not sobe:
+        env["FAKE_UP_FALHA"] = "api-demo"
+    docker = tmp_path / "bin" / "docker"
+    docker.rename(tmp_path / "bin" / "docker-de-mentira")
+    docker.write_text(DOCKER_QUE_PERDE_A_DEMO)
+    docker.chmod(0o755)
+    servidor = _servidor(tmp_path, env, antes={}, depois={"quebrada": "", "sem-demo-no-compose": ""})
+    (servidor / ".env").write_text(ENV_COM_DEMO)
+
+    r = _atualizar(servidor, env, "--sem-backup")
+
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "O sistema voltou para a versão de antes e está no ar" in r.stdout
+    assert "A demonstração saiu junto com a versão desfeita; subindo-a de novo." in r.stdout
+    log = (tmp_path / "ctr" / "docker.log").read_text()
+    volta = log.rindex("compose up -d --build --remove-orphans db api proxy")
+    assert "compose up -d demo-banco api-demo" in log[volta:], log
+    assert "loja_demo" not in log, log  # sem DROP: o banco dela é o de antes
+    if sobe:
+        assert (tmp_path / "ctr" / "id-api-demo").read_text().strip() == "id-api-demo"
+        assert _avisos(tmp_path) == []
+    else:
+        assert "A atualização voltou atrás; a loja não depende da demonstração." in r.stdout
+        assert _avisos(tmp_path) == ["A demonstração não subiu"]
 
 
 @precisa_do_git
