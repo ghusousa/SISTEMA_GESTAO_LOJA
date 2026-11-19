@@ -91,8 +91,8 @@ só para a Apple, mais um **código de barras que exista**
 nele (é o caminho "Digitar código", que salva a revisão feita sem câmera). Antes de enviar, o
 publicador confere tudo isso no próprio servidor (no ar, login de dono, código, privacidade,
 leitor e exclusão de conta). O servidor de demonstração **fica no ar depois da revisão**: ele
-serve a política de privacidade da ficha. O `privacidade@sistemaobras.com.br` citado na
-política de privacidade precisa existir.
+serve a política de privacidade da ficha. O e-mail citado na política de
+privacidade é `ghusousa@gmail.com`, a caixa do dono.
 
 Para a revisão sair, também: a lista de iPhones físicos testados em
 `mobile/publicar/ficha/aparelhos-testados.txt` e a gravação de tela (link no
