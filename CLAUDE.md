@@ -57,7 +57,7 @@ npm run bundle       # expo export: pega erro de import que o tsc não vê
 npm run publicar     # ficha inteira na App Store via API (mobile/publicar/; -- --enviar submete ou REENVIA, --aguardar-build 60 espera o build,
                      #   --video-revisao arquivo|https anexa a gravação de tela, --conferir-envio só confere sem escrever,
                      #   --mesmo-build reenvia o build que a Apple devolveu — sem ela nem --build, o reenvio dele é recusado)
-node --test publicar/teste/*.test.mjs  # testes do publicador (ci.mjs, notas em inglês, guia PDF em dia, demo em <domínio>/demo)
+node --test publicar/teste/*.test.mjs  # testes do publicador (ci.mjs e o push no App ID, notas em inglês, guia PDF em dia, demo em <domínio>/demo, rótulos citados no código)
 node publicar/teste/rodar.mjs  # o publicador contra a Apple de mentira (--reais: com as capturas de media/app-store)
 node publicar/revisao/gerar-guia.mjs  # refaz o guia PDF do revisor (mudou texto, prints ou ficha/aparelhos-testados.txt)
 publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com as telas do app (export web: cabeçalho do navegador) e o guia PDF (Postgres local + seed; --sem-build)
@@ -229,6 +229,39 @@ publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com as telas do
   tem campo de digitar na lista que o bipe redesenha, passa `ocupadoQuando: () => enviando ||
   digitandoEm(areaItens)`: o código de fora espera em vez de sumir. Uma aba por leitor
   (`criarDonaDaAba`, "Duplicar aba" copia o `sessionStorage`).
+  **O chamado (ADR-47)**, sem QR: "Abrir no app o leitor de código", acima do campo de leitura das
+  cinco telas que leem código (tela nova com leitor: o `<div data-leitor-chamado>` antes do
+  `.pdv__campo`, `ligarBotaoDoCelular` no render e o `soltar` na limpeza), chama
+  o celular do MESMO login — `POST /leitor/chamados`, idempotente por `client_uuid` gravado no
+  `sessionStorage` ANTES do POST (o F5 retoma, sem órfão), um a cada 2 s (429 com `Retry-After`). É
+  um pareamento com `chamado`/`sinal`: o código sorteado nunca sai nem abre aceite, só o mesmo login
+  atende (`/atender`, a MESMA 404 `LEITOR_CHAMADO_INVALIDO` para tudo que não serve), e o SINAL de 3
+  caracteres é o que separa dois caixas com o mesmo login (a fronteira é o login; vínculo estrito é o
+  QR). `substitui_id` de um ATIVO é 409 `LEITOR_JA_LIGADO`, também no QR. A instalação do app (UUID
+  no SecureStore) vai no aceite, no atender e no bipe: reenvio, bipe e TROCOU valem por instalação.
+  "leitor" é só o bipe; o pareamento é "leitor_pareamento". No app aberto o chamado desce como FAIXA
+  (`FaixaDoChamado.tsx`, nunca modal, não pausa câmera), e ligar é sempre um toque (faixa, cartão ou
+  notificação; link e QR nunca ligam sozinhos). Rótulo novo que a ficha da Apple cita entra em
+  `TELAS_CITADAS` (`mobile/publicar/ficha.mjs`), e o CI confere no arquivo.
+- **Notificações (ADR-47)**: o push do chamado nasce **DESLIGADO** (`NOTIFICACOES_PUSH=desligado`;
+  na demo da instalação, `DEMO_NOTIFICACOES_PUSH`) e só funciona depois do passo único de quem publica
+  (a chave APNs na Expo: `mobile/publicar/README.md`, "Notificações no iPhone"); ligar é o `.env`, sem
+  build novo, e nada disso trava o envio à Apple. `GET /configuracao` diz `notificacoes_push`, e o app
+  SÓ pede a permissão e SÓ manda o token com ela `true` — desligado, registra o aparelho sem token
+  (`PUT /notificacoes/aparelho` a cada sessão: é o que faz `SEM_CELULAR` dizer a verdade). A
+  permissão só no caminho do leitor ("Abrir o leitor", Mais → Leitor do computador), nunca ao abrir o
+  app, nunca empilhada com a da câmera. O push sai DEPOIS do commit do chamado, fora de transação,
+  com teto TOTAL de 4 s (`asyncio.timeout`), e nunca derruba o chamado (vira `FALHOU`); leva só texto
+  fixo e o sinal — nenhum id, endereço de servidor ou dado da loja. **O token é credencial ao
+  portador**: nunca em rota, log ou `repr` (nem o `message` cru da Expo, que o repete) e nunca em
+  backup — os cinco `pg_dump` dos scripts levam `--exclude-table-data=notificacao_aparelhos`, e
+  `pg_dump` novo leva a mesma flag (o teste de texto cobra). Ele some em `_derrubar_sessoes` (trocar
+  ou redefinir a senha, desativar, excluir), no `DELETE /notificacoes/aparelho` SEM sessão (o app ao
+  sair; sem rede, uma limpeza pendente) e em 30 dias sem registro. Teste de push só com
+  `httpx.MockTransport` (o conftest reprova a Expo de verdade). O `expo-notifications` só carrega por
+  `lib/notificacoesNativas.ts`: o export web e o Expo Go nunca o importam. Espelhos: a validação do
+  token (`notificacoes/schemas.py` ↔ `tokenValido`, `lib/notificacoes.ts`), o formato do sinal
+  (servidor ↔ app) e as frases da exclusão de conta (o registro sai junto).
 - Versão: `GET /versao` diz o commit instalado E se é o mais novo. Quem sabe disso é o
   `atualizar.sh` (tem a credencial do GitHub), que grava `docker/estado/versao.json`; a API
   só lê o arquivo montado. **A API nunca fala com o GitHub** — token do código-fonte não
