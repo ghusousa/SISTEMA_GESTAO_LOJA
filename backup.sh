@@ -541,11 +541,18 @@ copiar_para_nuvem() {
     # O motivo de uma falha do rclone vai para um temporário DESTE processo, que some na saída.
     # Num caminho fixo (`/tmp/rclone.err`), o arquivo era de quem o criou primeiro: criado por
     # outro usuário, o `2>` falhava, e a cópia saía "NÃO consegui enviar" com o rclone bom.
-    ERROS_DO_RCLONE="$(mktemp "${TMPDIR:-/tmp}/loja-rclone.XXXXXX")"
-    trap 'rm -f "$ERROS_DO_RCLONE"' EXIT
+    # E o temporário só diz o motivo, nunca impede o envio: TMPDIR que não existe tenta o /tmp,
+    # e sem nenhum dos dois a cópia sobe assim mesmo, com a frase genérica se falhar. Vazio =
+    # sem temporário (o `2>` vai ao /dev/null, que a saída do script nunca apaga).
+    ERROS_DO_RCLONE="$(mktemp "${TMPDIR:-/tmp}/loja-rclone.XXXXXX" 2>/dev/null)" \
+        || ERROS_DO_RCLONE="$(mktemp /tmp/loja-rclone.XXXXXX 2>/dev/null)" \
+        || ERROS_DO_RCLONE=""
+    [ -z "$ERROS_DO_RCLONE" ] || trap 'rm -f "$ERROS_DO_RCLONE"' EXIT
     if ! rclone --config "$CONF_RCLONE" copyto "$arquivo" "loja:$pasta/loja-$carimbo.dump" \
-            2>"$ERROS_DO_RCLONE"; then
-        local motivo; motivo="$(tail -2 "$ERROS_DO_RCLONE" 2>/dev/null | tr '\n' ' ')"
+            2>"${ERROS_DO_RCLONE:-/dev/null}"; then
+        local motivo=""
+        [ -z "$ERROS_DO_RCLONE" ] \
+            || motivo="$(tail -2 "$ERROS_DO_RCLONE" 2>/dev/null | tr '\n' ' ')"
         anotar_backup false "$bytes" NULL "Não subiu para o Drive: ${motivo:-erro do rclone}"
         erro "NÃO consegui enviar para o Drive. A cópia só existe neste servidor."
         printf '  %s\n' "$motivo"

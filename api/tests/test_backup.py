@@ -559,6 +559,81 @@ async def test_envio_que_falha_diz_o_motivo_sem_caminho_fixo_no_tmp(
     assert MOTIVO_DO_DRIVE in linha.ultimo_erro
 
 
+#: O mktemp que não cria nada (pasta temporária cheia, sem permissão): o envio segue sem ele.
+MKTEMP_QUE_FALHA = (
+    '#!/bin/sh\necho "mktemp: failed to create file via template: No space left" >&2\nexit 1\n'
+)
+
+
+@precisa_da_maquina
+@pytest.mark.parametrize("sem", ["tmpdir_que_nao_existe", "mktemp_que_falha"])
+async def test_sem_temporario_para_o_motivo_a_copia_vai_ao_drive_mesmo_assim(
+    session: AsyncSession, tmp_path: Path, sem: str
+) -> None:
+    """O temporário do motivo do rclone nasceu para dizer por que o envio falhou, e não pode
+    impedir o envio: com um TMPDIR que não existe, o mktemp falhava, o `set -e` encerrava o
+    --nuvem depois do dump e antes do rclone, nada ia ao Drive e a tela ficava sem anotação
+    (`ultimo_em`, `ultimo_ok` e `ultimo_erro` nulos). Agora tenta o /tmp e, sem nenhum dos
+    dois, envia sem o motivo detalhado."""
+    await _ligar_backup(session)
+    env = _maquina(tmp_path, TMPDIR=str(tmp_path / "nao-existe"))
+    if sem == "mktemp_que_falha":
+        (tmp_path / "bin" / "mktemp").write_text(MKTEMP_QUE_FALHA)
+        (tmp_path / "bin" / "mktemp").chmod(0o755)
+
+    r = _backup_sh(tmp_path, env, "--nuvem")
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    no_drive = [p.name for p in (tmp_path / "drive" / "loja").iterdir()]
+    assert len(no_drive) == 1 and re.fullmatch(r"loja-\d{8}-\d{6}\.dump", no_drive[0])
+    linha = (
+        await session.execute(
+            text("SELECT ultimo_em, ultimo_ok, ultimo_erro, copias_na_nuvem FROM backup_config")
+        )
+    ).one()
+    assert linha.ultimo_em is not None
+    assert linha.ultimo_ok is True and linha.ultimo_erro is None
+    assert linha.copias_na_nuvem == 1
+
+
+@precisa_da_maquina
+@pytest.mark.skipif(not Path("/proc/self/fd").is_dir(), reason="lê o stderr do rclone no /proc")
+@pytest.mark.parametrize("sem", ["tmpdir_que_nao_existe", "mktemp_que_falha"])
+async def test_sem_temporario_o_envio_que_falha_ainda_e_anotado(
+    session: AsyncSession, tmp_path: Path, sem: str
+) -> None:
+    """Com o TMPDIR que não existe, o motivo vai a um temporário do /tmp (e some no fim); sem
+    temporário nenhum, a tela recebe a frase genérica — e o /dev/null, que serviu de saída ao
+    rclone, nunca é apagado na saída do script (que roda como root no timer)."""
+    await _ligar_backup(session)
+    env = _maquina(tmp_path, TMPDIR=str(tmp_path / "nao-existe"))
+    rclone = tmp_path / "bin" / "rclone"
+    rclone.rename(tmp_path / "bin" / "rclone-de-mentira")
+    rclone.write_text(RCLONE_QUE_NAO_ENVIA)
+    rclone.chmod(0o755)
+    if sem == "mktemp_que_falha":
+        (tmp_path / "bin" / "mktemp").write_text(MKTEMP_QUE_FALHA)
+        (tmp_path / "bin" / "mktemp").chmod(0o755)
+
+    r = _backup_sh(tmp_path, env, "--nuvem")
+
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "NÃO consegui enviar para o Drive" in r.stderr
+    assert Path("/dev/null").is_char_device()
+    destino = Path((tmp_path / "ctr" / "stderr-do-rclone").read_text().strip())
+    linha = (
+        await session.execute(text("SELECT ultimo_em, ultimo_ok, ultimo_erro FROM backup_config"))
+    ).one()
+    assert linha.ultimo_em is not None and linha.ultimo_ok is False
+    if sem == "tmpdir_que_nao_existe":
+        assert destino.parent == Path("/tmp").resolve(), destino
+        assert not destino.exists()  # e não fica para trás
+        assert MOTIVO_DO_DRIVE in linha.ultimo_erro
+    else:
+        assert destino == Path("/dev/null")
+        assert linha.ultimo_erro == "Não subiu para o Drive: erro do rclone"
+
+
 @precisa_da_maquina
 async def test_restaurar_copia_de_antes_de_uma_migration_deixa_a_api_subir(
     tmp_path: Path, banco_descartavel: str
