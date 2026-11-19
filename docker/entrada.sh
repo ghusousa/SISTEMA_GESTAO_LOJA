@@ -31,5 +31,20 @@ done
 echo "→ aplicando migrations…"
 alembic upgrade head
 
+# A DEMONSTRAÇÃO (ADR-46) se prepara sozinha a cada subida do contêiner dela: semeia a loja
+# fictícia se o banco está vazio, retoma uma carga que parou no meio, e confere a conta do
+# revisor (existe, é dona, está ativa e com a senha do .env). É o ÚNICO gatilho da carga — dois
+# gatilhos correriam juntos e duplicariam o que não tem chave única.
+# Falhar aqui não impede a API de subir: sem isso o contêiner entraria num laço de reinícios e
+# ninguém conseguiria olhar a demo para ver o porquê. O próximo boot (ou ./demo.sh --renovar)
+# retoma de onde parou, sem duplicar.
+if [ "${LOJA_DEMONSTRACAO:-}" = "1" ]; then
+    echo "→ preparando a demonstração…"
+    if ! python -m app.cli preparar-demonstracao; then
+        echo "⚠ a preparação da demonstração falhou (veja acima); a API sobe assim mesmo e" \
+             "o próximo reinício retoma de onde parou." >&2
+    fi
+fi
+
 echo "→ subindo a API"
 exec "$@"

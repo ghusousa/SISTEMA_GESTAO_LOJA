@@ -10,8 +10,11 @@ media
 **/.ruff_cache
 **/*.egg-info
 **/node_modules
-.env
-.env.*
+# Segredo só entra no contêiner pelo `environment:` do compose. `**/` porque o Settings lê o
+# `.env` da pasta de trabalho (/srv/api): um api/.env esquecido na máquina do build entraria
+# na imagem e seria lido pelas DUAS APIs, a da loja e a da demonstração.
+**/.env
+**/.env.*
 *.log
 # Cópia do web/ do build da Vercel (ADR-42): a imagem leva o web/ da raiz.
 api/web_vercel

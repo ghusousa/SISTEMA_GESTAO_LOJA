@@ -36,8 +36,37 @@
 		-Server
 	}
 
+	# A DEMONSTRAÇÃO (ADR-46) mora em /demo: outra API (api-demo), com banco, segredo do login
+	# e fotos próprios — a loja de verdade nunca atende nada daqui. O prefixo NÃO é tirado: a
+	# api-demo se monta sob /demo e gera os próprios caminhos com ele (o cookie da sessão com
+	# Path=/demo/..., o redirecionamento para /demo/app/). É isso que impede o navegador de
+	# misturar a sessão de uma com a da outra, que aqui dividem a mesma origem.
+	redir /demo /demo/ 308
+	handle /demo/* {
+		reverse_proxy api-demo:8000
+	}
+
 	# O sistema web e a API são a mesma origem: a página em /app e os dados em /api/v1.
-	reverse_proxy api:8000
+	handle {
+		reverse_proxy api:8000
+	}
+
+	# A demo desligada (sem o profile) ou ainda semeando: resposta clara em vez de um 502
+	# vazio — e NUNCA a loja real no lugar. Só chega aqui erro do próprio Caddy (não alcançou a
+	# api-demo); um 404 da api-demo é resposta normal e passa direto. Sem matcher que case
+	# (a loja real fora do ar), o Caddy responde como sempre respondeu: o código, sem corpo.
+	handle_errors {
+		@demo_api path /demo/api/*
+		handle @demo_api {
+			header Content-Type "application/json; charset=utf-8"
+			respond "{\"code\":\"DEMONSTRACAO_FORA_DO_AR\",\"message\":\"A demonstração está desligada ou começando. Tente de novo em um minuto.\",\"detail\":{}}" 503
+		}
+		@demo path /demo /demo/*
+		handle @demo {
+			header Content-Type "text/plain; charset=utf-8"
+			respond "A demonstração está desligada ou começando. Tente de novo em um minuto." 503
+		}
+	}
 
 	log {
 		output stdout
