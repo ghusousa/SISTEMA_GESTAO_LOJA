@@ -1125,6 +1125,14 @@ async def test_sem_demo_nao_grava_nada_da_demo_e_a_decisao_fica(tmp_path: Path) 
     assert "DEMO_" not in (loja / ".env").read_text()
     assert "api-demo" not in (tmp_path / "ctr" / "docker.log").read_text()
 
+    # Ligada depois pelo demo.sh: o recado de "desligada" sai do .env junto com a decisão.
+    ligada = subprocess.run(["bash", "./demo.sh", "--ligar"], cwd=loja, env=env, input="",
+                            capture_output=True, text=True, timeout=120)
+    assert ligada.returncode == 0, _saida(ligada, loja)
+    assert _ler_env(loja)["COMPOSE_PROFILES"] == "demo"
+    assert all(_ler_env(loja)[chave] for chave in DEMO)
+    assert "desligada" not in (loja / ".env").read_text()
+
 
 @precisa_do_bash
 async def test_forcar_mantem_as_senhas_da_demo(tmp_path: Path) -> None:
@@ -1173,6 +1181,26 @@ async def test_religar_sem_loja_chega_ao_fim_e_ganha_a_demo(tmp_path: Path) -> N
     # A senha nasceu agora: aparece uma vez.
     assert r.stdout.count(dotenv["DEMO_ADMIN_SENHA"]) == 1
     assert "compose up -d demo-banco api-demo" in (tmp_path / "ctr" / "docker.log").read_text()
+
+
+@precisa_do_bash
+async def test_religar_com_sem_demo_so_guarda_a_decisao(tmp_path: Path) -> None:
+    """A loja de antes religada com --sem-demo: nenhuma senha nasce, nada da demo sobe, e o
+    .env só ganha a linha que diz que ela ficou de fora — o próximo religar respeita."""
+    loja, env = _instalador(tmp_path)
+    (loja / ".env").write_text(ENV_DE_ANTES)
+
+    r = _religar(loja, env, "--sem-demo")
+
+    assert r.returncode == 0, _saida(r, loja)
+    texto = (loja / ".env").read_text()
+    assert texto.startswith(ENV_DE_ANTES)
+    assert "DEMO_" not in texto
+    assert _ler_env(loja)["COMPOSE_PROFILES"] == ""
+    assert "api-demo" not in (tmp_path / "ctr" / "docker.log").read_text()
+
+    assert _religar(loja, env).returncode == 0
+    assert "DEMO_" not in (loja / ".env").read_text()
 
 
 @precisa_do_bash

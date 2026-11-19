@@ -277,6 +277,12 @@ acrescentar_no_env() {  # acrescentar_no_env LINHA... — no fim, mesmo sem \n n
     trocar_o_env
 }
 
+tirar_do_env() {  # tirar_do_env REGEX — tira as linhas que casam
+    TEMPORARIO="$(mktemp ./.env.XXXXXX)"
+    grep -vE "$1" .env > "$TEMPORARIO" || true
+    trocar_o_env
+}
+
 # O COMPOSE_PROFILES é uma lista separada por vírgula; "demo" é o perfil da demonstração.
 tem_demo() { case ",$1," in *,demo,*) return 0 ;; *) return 1 ;; esac; }
 com_demo() { if tem_demo "$1"; then printf '%s' "$1"; else printf '%s' "${1:+$1,}demo"; fi; }
@@ -316,6 +322,8 @@ completar_env_da_demo() {
     if [ -z "$senha" ]; then senha="$(sortear 20)"; SENHA_DEMO_NOVA=1; fi
     if [ -z "$banco" ] || [ -z "$senha" ]; then morrer "não consegui sortear as senhas da demonstração."; fi
 
+    # O recado de "desligada" (de um --sem-demo) deixa de valer.
+    if grep -qF "$COMENTARIO_DA_DEMO_DESLIGADA" .env; then tirar_do_env "^# Demonstração em /demo \(ADR-46\) desligada"; fi
     if ! grep -qE '^DEMO_[A-Z_]+=' .env; then
         # .env de antes da demonstração: o bloco inteiro, com o recado de onde mexer.
         bloco=("" "${COMENTARIO_DA_DEMO[@]}")
@@ -809,6 +817,7 @@ if [ "$REAPROVEITADO" -eq 0 ]; then
         while [ -z "$DEMO_JWT" ] || [ "$DEMO_JWT" = "$JWT_NOVO" ]; do DEMO_JWT="$(sortear 64)"; done
         [ -n "$DEMO_EMAIL" ] || DEMO_EMAIL="$EMAIL_DA_DEMO"
         if [ -z "$DEMO_SENHA" ]; then DEMO_SENHA="$(sortear 20)"; SENHA_DEMO_NOVA=1; fi
+        if [ -z "$DEMO_BANCO" ] || [ -z "$DEMO_SENHA" ]; then morrer "não consegui sortear as senhas da demonstração."; fi
     fi
 
     titulo "Gravando a configuração"

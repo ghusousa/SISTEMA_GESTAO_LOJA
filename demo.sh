@@ -140,11 +140,13 @@ sortear() {
     fi
 }
 
-# As duas linhas que abrem o bloco da demonstração no .env (o --apagar as tira junto).
+# As duas linhas que abrem o bloco da demonstração no .env (o --apagar as tira junto), e a
+# que o ./instalar.sh deixa quando ela fica de fora.
 COMENTARIO_DA_DEMO=(
     "# Demonstração em /demo (ADR-46): outra API, outro banco e outra conta, só com dados fictícios."
     "# Demonstração: endereço e senha com ./demo.sh --mostrar; desligar com ./demo.sh --desligar."
 )
+COMENTARIO_DA_DEMO_DESLIGADA="# Demonstração em /demo (ADR-46) desligada. Para ligar: ./demo.sh --ligar."
 
 # Completa o .env com o que a demonstração precisa e ainda não está lá, e liga o perfil. O
 # que já existe NÃO muda: a senha da conta é a que está na Apple, e trocá-la sem ninguém ver
@@ -166,6 +168,8 @@ completar_env_da_demo() {
     if [ -z "$senha" ]; then senha="$(sortear 20)"; SENHA_DEMO_NOVA=1; fi
     if [ -z "$banco" ] || [ -z "$senha" ]; then erro "Não consegui sortear as senhas da demonstração."; exit 1; fi
 
+    # O recado de "desligada" (de um --sem-demo) deixa de valer.
+    if grep -qF "$COMENTARIO_DA_DEMO_DESLIGADA" .env; then tirar_do_env "^# Demonstração em /demo \(ADR-46\) desligada"; fi
     if ! grep -qE '^DEMO_[A-Z_]+=' .env; then
         # .env de antes da demonstração: o bloco inteiro, com o recado de onde mexer.
         bloco=("" "${COMENTARIO_DA_DEMO[@]}")
