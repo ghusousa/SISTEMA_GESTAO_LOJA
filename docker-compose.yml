@@ -133,7 +133,8 @@ services:
       # Pool que CABE no `CONNECTION LIMIT 20` da role loja_demo (docker/demo-banco.sh): 5 + 8
       # no pico = 13, mais 1 do LISTEN do tempo real e os 2 ou 3 do preparar/renovar (que rodam
       # por `exec` aqui dentro) — abaixo de 20. Com o padrão da loja (10 + 20), a 21ª conexão
-      # é recusada pelo Postgres e o pedido sai 500; dentro do pool, o excesso espera a vez.
+      # é recusada pelo Postgres e o pedido sai 500; dentro do pool, o excesso espera a vez —
+      # até 30 s (o `pool_timeout` do SQLAlchemy). Passado isso, sai 500 também.
       DB_POOL_SIZE: "5"
       DB_MAX_OVERFLOW: "8"
       # Segredo PRÓPRIO: o access token só carrega o id do usuário, então com o segredo da
@@ -145,6 +146,10 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
       TIMEZONE_LOJA: ${TIMEZONE_LOJA:-America/Sao_Paulo}
       MEDIA_DIR: /srv/media
+      # Teto da pasta de fotos da demo (o volume mora no disco do banco da loja; ADR-46), que o
+      # .env pode trocar. Com o padrão escrito aqui (200 MiB, o mesmo do código): `${X:-}`
+      # vazio derrubaria a api-demo — o campo é um inteiro maior que zero.
+      DEMO_FOTOS_MAX_BYTES: ${DEMO_FOTOS_MAX_BYTES:-209715200}
       ESTADO_DIR: /srv/estado
       FISCAL_EMISSOR: desligado
       FISCAL_EMITIR_AUTOMATICO: "0"

@@ -91,6 +91,14 @@ segredo_demo=$(dc config --format json | json 'd["services"]["api-demo"]["enviro
 conferir "a demo tem segredo de login próprio" test "$segredo_loja" != "$segredo_demo"
 conferir "a demo não recebe o token do emissor de NFC-e" \
     test "$(dc config --format json | json '"FOCUSNFE_TOKEN" in d["services"]["api-demo"]["environment"]')" = "False"
+fotos_demo() {  # fotos_demo [VAR=valor] → o DEMO_FOTOS_MAX_BYTES que chega à api-demo
+    env "$@" docker compose -p "$PROJETO" --env-file "$TMP/env" --profile demo config --format json |
+        json 'd["services"]["api-demo"]["environment"].get("DEMO_FOTOS_MAX_BYTES")'
+}
+conferir "o teto das fotos da demo tem padrão (sem DEMO_FOTOS_MAX_BYTES)" test "$(fotos_demo)" = 209715200
+conferir "DEMO_FOTOS_MAX_BYTES vazio fica o padrão (vazio derrubaria a api-demo)" \
+    test "$(fotos_demo DEMO_FOTOS_MAX_BYTES=)" = 209715200
+conferir "DEMO_FOTOS_MAX_BYTES chega à api-demo" test "$(fotos_demo DEMO_FOTOS_MAX_BYTES=1048576)" = 1048576
 
 # --- 2. O Caddyfile vale nos dois modos ----------------------------------------------------
 echo "2. Caddyfile"

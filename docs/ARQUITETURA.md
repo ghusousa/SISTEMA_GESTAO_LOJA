@@ -2064,7 +2064,9 @@ navegador: as duas dividem a mesma origem.
   (`DB_POOL_SIZE: "5"` e `DB_MAX_OVERFLOW: "8"` no compose): 13 no pico, mais 1 do LISTEN do tempo
   real e as 2 ou 3 do preparar/renovar (por `exec` no mesmo contêiner) ficam abaixo de 20. Com o
   padrão da loja (10 + 20), a 21ª conexão era recusada pelo Postgres e o pedido saía 500; dentro
-  do pool, o excesso espera a vez. E o banco da demo leva um marco, `ALTER DATABASE
+  do pool, o excesso espera a vez — até 30 s (o `pool_timeout` do SQLAlchemy). Passado isso, sai
+  500 também: uma rajada de logins na conta da demo, cada um segurando a conexão na fila da trava
+  por e-mail, chega lá (130 de uma vez deram 11). E o banco da demo leva um marco, `ALTER DATABASE
   loja_demo SET loja.demonstracao = 'sim'`, que o real nunca tem: é a segunda chave de tudo que
   APAGA dados (abaixo).
 - **Segredos próprios, escritos à mão.** O `.env` ganha `DEMO_SENHA_BANCO` (sorteada, 32
