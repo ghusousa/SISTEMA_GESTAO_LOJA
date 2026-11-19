@@ -370,12 +370,25 @@ ip_desta_maquina() {  # ip_desta_maquina <4|6>
     return 1
 }
 
-# Para onde o nome aponta, pelo resolvedor da máquina. Fora da conta: a própria máquina (o
-# /etc/hosts de muita VPS põe o nome dela em 127.0.1.1) e o IPv4 vestido de IPv6 (::ffff:)
-# que o getent devolve quando o nome não tem AAAA.
+# Para onde o nome aponta, perguntado ao DNS (o que o Let's Encrypt vai ver) e não ao que a
+# máquina acha: `-s dns` deixa o /etc/hosts de fora (um nome posto lá no IP público passaria
+# sem registro nenhum), e `-A` tira o AI_ADDRCONFIG, que numa máquina sem IPv6 esconde o AAAA
+# — um AAAA velho, que leva a outra máquina, passaria por certo e o certificado não sairia. O
+# getent antigo, sem o -A, recusa as opções (o "uso" do argp, saída 64): aí a pergunta vai
+# como antes, e a função sai 3 para quem chama saber que um AAAA pode ter ficado escondido.
+# Fora da conta: a própria máquina (o /etc/hosts de muita VPS põe o nome dela em 127.0.1.1) e
+# o IPv4 vestido de IPv6 (::ffff:) que o getent devolve quando o nome não tem AAAA.
 enderecos_do_dominio() {  # enderecos_do_dominio <4|6> <domínio>
-    getent "ahostsv$1" "$2" 2>/dev/null | awk '{print tolower($1)}' \
+    local saida rc=0 antigo=0
+    saida="$(getent -A -s dns "ahostsv$1" "$2" 2>/dev/null)" || rc=$?
+    # 0 (achou) e 2 (não achou) são resposta; o resto é o getent que não aceitou as opções.
+    if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then
+        antigo=1
+        saida="$(getent "ahostsv$1" "$2" 2>/dev/null)" || true
+    fi
+    printf '%s\n' "$saida" | awk 'NF {print tolower($1)}' \
         | grep -vE '^(127\.|::1$|::ffff:)' | sort -u || true
+    [ "$antigo" -eq 0 ] || return 3
 }
 
 # O "Nome" que o painel do domínio pede: a parte antes do domínio registrado ("loja" em
@@ -404,7 +417,8 @@ nome_no_painel() {
 juntar() { paste -sd, - | sed 's/,/, /g'; }   # uma por linha → "a, b"
 
 # Preenche PENDENCIAS_DNS com o que falta acertar no painel do domínio; sai 0 se nada falta.
-PENDENCIAS_DNS=(); DNS_IPS=""; DNS_NOTA=""
+# DNS_NOTA e DNS_NOTA_AAAA: o que não deu para conferir (o ✓ diria mais do que se viu).
+PENDENCIAS_DNS=(); DNS_IPS=""; DNS_NOTA=""; DNS_NOTA_AAAA=""
 #: De quanto em quanto tempo a conferida se repete enquanto alguém acerta o painel (os testes
 #: encurtam, como encurtam o DIR_SYSTEMD).
 INTERVALO_DNS="${INTERVALO_DNS:-15}"
@@ -412,14 +426,18 @@ INTERVALO_DNS="${INTERVALO_DNS:-15}"
 # pergunta pode levar segundos com um serviço de eco fora do ar).
 MEU_IPV4=""; MEU_IPV6=""; PERGUNTOU_IPV4=0; PERGUNTOU_IPV6=0
 avaliar_dns() {
-    local v4 v6 nome outros a
-    PENDENCIAS_DNS=(); DNS_NOTA=""
+    local v4 v6 nome outros a aaaa_visto=1
+    PENDENCIAS_DNS=(); DNS_NOTA=""; DNS_NOTA_AAAA=""
     # Ao lado do "Nome", o nome inteiro, para conferir com o painel — nunca ele NO campo: muito
     # painel acrescenta a zona sozinho, e o registro nasceria com o nome em dobro.
     nome="$(nome_no_painel "$DOMINIO") — o registro completo é $DOMINIO"
     if [ "$PERGUNTOU_IPV4" -eq 0 ]; then MEU_IPV4="$(ip_desta_maquina 4 || true)"; PERGUNTOU_IPV4=1; fi
-    v4="$(enderecos_do_dominio 4 "$DOMINIO")"
-    v6="$(enderecos_do_dominio 6 "$DOMINIO")"
+    v4="$(enderecos_do_dominio 4 "$DOMINIO")" || true
+    v6="$(enderecos_do_dominio 6 "$DOMINIO")" || aaaa_visto=0
+    # Pelo getent antigo, "sem AAAA" pode ser o AAAA escondido: não conferido, e não certo.
+    if [ "$aaaa_visto" -eq 0 ] && [ -z "$v6" ]; then
+        DNS_NOTA_AAAA="o AAAA (IPv6) de $DOMINIO não foi conferido: o getent desta máquina é antigo (sem o -A), e numa máquina sem IPv6 ele o esconde. Veja no painel que nenhum AAAA leva a outra máquina — o Let's Encrypt tenta o IPv6 primeiro."
+    fi
     DNS_IPS="$(printf '%s\n' "$v4" | juntar)"
     if [ -z "$v4" ]; then
         PENDENCIAS_DNS+=("Crie no painel do domínio:   Tipo A  ·  Nome $nome  ·  Valor ${MEU_IPV4:-<o IP público deste servidor>}")
@@ -447,6 +465,13 @@ mostrar_pendencias_dns() {
     for p in "${PENDENCIAS_DNS[@]}"; do alerta "$p"; done
 }
 
+# Nada pendente: o ✓ só quando tudo foi conferido; senão, o que se viu e o que ficou sem ver.
+dns_passou() {  # dns_passou <a frase do ✓>
+    if [ -z "$DNS_NOTA$DNS_NOTA_AAAA" ]; then certo "$1"; return 0; fi
+    if [ -n "$DNS_NOTA" ]; then alerta "$DNS_NOTA"; else alerta "$1, pelo registro A"; fi
+    if [ -n "$DNS_NOTA_AAAA" ]; then alerta "$DNS_NOTA_AAAA"; fi
+}
+
 conferir_dns() {
     local resposta rc
     [ "$AMBIENTE" = "producao" ] || return 0
@@ -456,7 +481,7 @@ conferir_dns() {
         return 0
     fi
     if avaliar_dns; then
-        if [ -n "$DNS_NOTA" ]; then alerta "$DNS_NOTA"; else certo "$DOMINIO aponta para este servidor ($DNS_IPS)"; fi
+        dns_passou "$DOMINIO aponta para este servidor ($DNS_IPS)"
         return 0
     fi
     mostrar_pendencias_dns
@@ -468,7 +493,7 @@ conferir_dns() {
         rc=0; read -r -t "$INTERVALO_DNS" resposta || rc=$?
         # Enter (0) segue; fim da entrada (1) também — não há quem tecle, esperar seria para sempre.
         [ "$rc" -gt 128 ] || break
-        if avaliar_dns; then certo "agora sim: $DOMINIO aponta para este servidor"; return 0; fi
+        if avaliar_dns; then dns_passou "agora sim: $DOMINIO aponta para este servidor"; return 0; fi
     done
 }
 

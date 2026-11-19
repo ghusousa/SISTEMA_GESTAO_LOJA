@@ -194,8 +194,11 @@ completo ao lado é para conferir com o painel — posto no campo, muito painel 
 `loja.minhaloja.com.br.minhaloja.com.br`.
 
 Se houver um registro **AAAA** (IPv6) levando a outra máquina, ele manda apagar — o Let's Encrypt
-tenta o IPv6 primeiro. Com `--sim` ele não espera: a pendência volta no resumo do fim. Um registro
-só serve às duas: a demonstração mora no **mesmo** domínio, em `/demo`, sem DNS a mais.
+tenta o IPv6 primeiro. A pergunta vai ao DNS, como a do Let's Encrypt: o `/etc/hosts` da máquina não
+conta, e o AAAA aparece mesmo numa máquina sem IPv6 (num `getent` antigo, que não consegue mostrá-lo,
+o instalador diz que o AAAA não foi conferido, em vez do ✓). Com `--sim` ele não espera: a pendência
+volta no resumo do fim. Um registro só serve às duas: a demonstração mora no **mesmo** domínio, em
+`/demo`, sem DNS a mais.
 
 Acompanhe a emissão com `docker compose logs -f proxy`. Sem domínio, o instalador usa HTTP puro e
 ajusta o resto sozinho — inclusive o cookie de sessão, que em HTTP não pode ser marcado `Secure`

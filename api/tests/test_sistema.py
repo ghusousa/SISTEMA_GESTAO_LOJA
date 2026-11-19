@@ -906,11 +906,37 @@ exit 0
 """
 
 # O resolvedor da máquina: ahostsv4/ahostsv6 dão os endereços de ctr/dns-v4 e ctr/dns-v6 (um
-# por linha), no formato do getent; sem o arquivo, "não achei" (sai 2), como o de verdade.
+# por linha), no formato do getent; sem nada, "não achei" (sai 2), como o de verdade. Cada
+# pergunta vai para ctr/getent.log, com as opções. Como o de verdade, sem `-s dns` entra também
+# o /etc/hosts da máquina (ctr/hosts-v4, ctr/hosts-v6), e sem `-A` (o AI_ADDRCONFIG ligado) uma
+# máquina sem IPv6 (ctr/sem-ipv6) não vê AAAA nenhum. Com FAKE_GETENT_ANTIGO, é o getent de
+# antes do -A: recusa a opção com o "uso" do argp, saída 64.
 GETENT_DE_MENTIRA = r"""#!/usr/bin/env bash
-arquivo="$FAKE_CTR/dns-${1#ahosts}"
-[ -s "$arquivo" ] || exit 2
-while read -r ip; do [ -n "$ip" ] && printf '%-15s STREAM %s\n' "$ip" "$2"; done < "$arquivo"
+echo "getent $*" >> "$FAKE_CTR/getent.log"
+sem_addrconfig=0; so_dns=0
+while :; do
+    case "${1:-}" in
+        -A) if [ -n "${FAKE_GETENT_ANTIGO:-}" ]; then
+                echo "getent: invalid option -- 'A'" >&2
+                echo "Try \`getent --help' or \`getent --usage' for more information." >&2
+                exit 64
+            fi
+            sem_addrconfig=1; shift ;;
+        -s) [ "$2" = dns ] && so_dns=1; shift 2 ;;
+        -*) echo "getent: invalid option -- '${1#-}'" >&2; exit 64 ;;
+        *) break ;;
+    esac
+done
+v="${1#ahosts}"
+[ "$v" = v6 ] && [ -e "$FAKE_CTR/sem-ipv6" ] && [ "$sem_addrconfig" -eq 0 ] && exit 2
+arquivos="$FAKE_CTR/dns-$v"
+[ "$so_dns" -eq 1 ] || arquivos="$FAKE_CTR/hosts-$v $arquivos"
+achou=0
+for arquivo in $arquivos; do
+    [ -s "$arquivo" ] || continue
+    while read -r ip; do [ -n "$ip" ] && printf '%-15s STREAM %s\n' "$ip" "$2" && achou=1; done < "$arquivo"
+done
+[ "$achou" -eq 1 ] || exit 2
 exit 0
 """
 
@@ -1298,12 +1324,14 @@ async def test_dns_interativo_espera_e_segue_quando_o_registro_aparece(tmp_path:
     sozinho quando o registro aparece — sem ninguém teclar nada."""
     loja, env = _instalador(tmp_path)
     _dns(tmp_path, ip="203.0.113.10", v4=())
-    # O registro "aparece" na segunda pergunta ao resolvedor.
+    # O registro "aparece" na segunda pergunta ao resolvedor (o banco e o nome vêm depois das
+    # opções, -A -s dns).
     getent = tmp_path / "bin" / "getent"
     getent.write_text(
         '#!/usr/bin/env bash\n'
         'n="$(cat "$FAKE_CTR/perguntas" 2>/dev/null || echo 0)"; echo $((n + 1)) > "$FAKE_CTR/perguntas"\n'
-        '[ "$1" = ahostsv4 ] && [ "$n" -ge 2 ] && echo "203.0.113.10    STREAM $2"\n'
+        'banco="${*: -2:1}"; nome="${*: -1}"\n'
+        '[ "$banco" = ahostsv4 ] && [ "$n" -ge 2 ] && echo "203.0.113.10    STREAM $nome"\n'
         'exit 0\n'
     )
     saida, erros = tmp_path / "saida.txt", tmp_path / "erros.txt"
@@ -1324,6 +1352,62 @@ async def test_dns_interativo_espera_e_segue_quando_o_registro_aparece(tmp_path:
     assert "Conferindo de novo a cada 1 s" in texto
     assert "agora sim: loja.seudominio.com.br aponta para este servidor" in texto
     assert "Falta acertar o DNS" not in texto
+
+
+@precisa_do_bash
+@pytest.mark.parametrize(("maquina", "recado"), [
+    # Sem IPv6 na máquina, o AI_ADDRCONFIG do getent escondia o AAAA velho do domínio (o da zona
+    # padrão do provedor, que leva ao estacionamento): passava por certo, e o Let's Encrypt, que
+    # tenta o IPv6 primeiro, não emitia o certificado.
+    ("sem-ipv6", "Apague o registro AAAA de loja.seudominio.com.br (2001:db8::dead)"),
+    # O nome no /etc/hosts da máquina, no IP dela, passava sem registro público nenhum.
+    ("hosts-v4", "Crie no painel do domínio:   Tipo A  ·  Nome loja — o registro completo é "
+                 "loja.seudominio.com.br  ·  Valor 203.0.113.10"),
+])
+async def test_dns_e_conferido_no_dns_e_nao_no_que_a_maquina_acha(
+    tmp_path: Path, maquina: str, recado: str
+) -> None:
+    """A conferida pergunta ao DNS (`-s dns`, sem o /etc/hosts) e sem o AI_ADDRCONFIG (`-A`):
+    é o que o Let's Encrypt vê, e não o que esta máquina acha."""
+    loja, env = _instalador(tmp_path)
+    if maquina == "sem-ipv6":
+        _dns(tmp_path, ip="203.0.113.10", v4=("203.0.113.10",), v6=("2001:db8::dead",))
+        (tmp_path / "ctr" / "sem-ipv6").touch()
+    else:
+        _dns(tmp_path, ip="203.0.113.10", v4=())
+        (tmp_path / "ctr" / "hosts-v4").write_text("203.0.113.10\n")
+
+    r = _instalar(loja, env, "loja.seudominio.com.br")
+
+    assert r.returncode == 0, _saida(r, loja)
+    assert recado in r.stdout, _saida(r, loja)
+    assert "aponta para este servidor" not in r.stdout
+    assert "Falta acertar o DNS de loja.seudominio.com.br" in r.stdout
+    perguntas = (tmp_path / "ctr" / "getent.log").read_text()
+    assert "getent -A -s dns ahostsv4 loja.seudominio.com.br" in perguntas
+    assert "getent -A -s dns ahostsv6 loja.seudominio.com.br" in perguntas
+
+
+@precisa_do_bash
+async def test_getent_antigo_diz_que_o_aaaa_nao_foi_conferido(tmp_path: Path) -> None:
+    """O getent de antes do -A recusa as opções (saída 64): a conferida pergunta do jeito
+    antigo, e, numa máquina sem IPv6, onde ele esconde o AAAA, diz que o AAAA não foi conferido
+    — em vez de dar ✓ só pelo registro A."""
+    loja, env = _instalador(tmp_path)
+    _dns(tmp_path, ip="203.0.113.10", v4=("203.0.113.10",), v6=("2001:db8::dead",))
+    (tmp_path / "ctr" / "sem-ipv6").touch()
+
+    r = _instalar(loja, env | {"FAKE_GETENT_ANTIGO": "1"}, "loja.seudominio.com.br")
+
+    assert r.returncode == 0, _saida(r, loja)
+    assert "loja.seudominio.com.br aponta para este servidor (203.0.113.10), pelo registro A" in r.stdout
+    assert "o AAAA (IPv6) de loja.seudominio.com.br não foi conferido" in r.stdout, _saida(r, loja)
+    assert "✓ loja.seudominio.com.br aponta para este servidor" not in r.stdout
+    # Não é pendência: ninguém sabe se há um AAAA para apagar, e a instalação segue.
+    assert "Falta acertar o DNS" not in r.stdout
+    perguntas = (tmp_path / "ctr" / "getent.log").read_text().splitlines()
+    recusada = perguntas.index("getent -A -s dns ahostsv6 loja.seudominio.com.br")
+    assert perguntas[recusada + 1] == "getent ahostsv6 loja.seudominio.com.br"
 
 
 def _nome_no_painel(dominio: str) -> str:

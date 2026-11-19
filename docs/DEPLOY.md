@@ -46,7 +46,9 @@ de cada separação está na ADR-46 de [ARQUITETURA.md](ARQUITETURA.md).
 
   (no campo Nome, só o `loja`, ou `@`; o nome completo é para conferir — no `.br` o domínio
   registrado sempre leva a categoria, `minhaloja.com.br`, `minhaloja.tec.br`...) e manda apagar um
-  **AAAA** que leve a outra máquina (o Let's Encrypt tenta o IPv6 primeiro). No
+  **AAAA** que leve a outra máquina (o Let's Encrypt tenta o IPv6 primeiro). Pergunta ao DNS
+  (`getent -A -s dns`), não ao `/etc/hosts` da máquina, e vê o AAAA mesmo sem IPv6 nela; com um
+  `getent` antigo, sem o `-A`, diz que o AAAA não foi conferido. No
   terminal, ele espera conferindo a cada 15 s (Enter segue sem esperar); com `--sim`, não espera e
   repete a pendência no resumo do fim.
 - **O endereço.** A loja fica em `https://<domínio>/app/` e a demonstração em
