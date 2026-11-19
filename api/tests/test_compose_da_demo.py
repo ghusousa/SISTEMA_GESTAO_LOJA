@@ -45,3 +45,17 @@ def test_a_api_demo_recebe_o_teto_das_fotos_com_o_padrao_do_codigo() -> None:
     assert padrao == 200 * 1024 * 1024
     ambiente = COMPOSE["services"]["api-demo"]["environment"]
     assert ambiente["DEMO_FOTOS_MAX_BYTES"] == f"${{DEMO_FOTOS_MAX_BYTES:-{padrao}}}"
+
+
+def test_o_push_do_leitor_nasce_desligado_na_loja_e_na_demo() -> None:
+    """O push do chamado do leitor (ADR-47) só funciona depois do passo único de quem publica o
+    app: nasce desligado nas duas APIs, e cada uma liga pela própria variável. Vazio no .env
+    vira o padrão — sem ele, `${X:-}` derrubaria a API, que só aceita "expo" ou "desligado"."""
+    assert Settings.model_fields["notificacoes_push"].default == "desligado"
+    servicos = COMPOSE["services"]
+    assert servicos["api"]["environment"]["NOTIFICACOES_PUSH"] == (
+        "${NOTIFICACOES_PUSH:-desligado}"
+    )
+    assert servicos["api-demo"]["environment"]["NOTIFICACOES_PUSH"] == (
+        "${DEMO_NOTIFICACOES_PUSH:-desligado}"
+    )
