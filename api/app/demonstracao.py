@@ -493,13 +493,13 @@ PORTAS_DA_API = ("login_attempts", "refresh_tokens", "users")
 #: da requisição, como a da foto depois do login). O Postgres derruba o primeiro a completar 1 s
 #: parado (`deadlock_timeout`) com o ciclo fechado: no logout e no desativar, que pedem
 #: `refresh_tokens` logo depois do crachá, o TRUNCATE (a requisição termina em ~1 s); numa rota de
-#: senha cujo bcrypt acabe mais de 1 s depois de ele parar na porta, a requisição, com 500, e o
-#: TRUNCATE segue. A espera vencida é a leitura lenta, ou a releitura de uma mutação enquanto a
+#: senha cujo bcrypt acabe entre 1 s e uns 4 s depois de ele parar na porta, a requisição, com 500,
+#: e o TRUNCATE segue (passado isso, vence antes o prazo da trava: 55P03 no TRUNCATE). A espera vencida é a leitura lenta, ou a releitura de uma mutação enquanto a
 #: auditoria grava o diário por outra conexão (a borda espera `users` atrás do TRUNCATE, que espera
 #: a releitura: um ciclo que o Postgres não vê; a mutação responde até 5 s depois, sem 5xx). Nos
 #: dois casos a transação inteira volta: nada foi zerado, e repetir é seguro.
 _PERDEU_A_VEZ = {
-    "40P01": "impasse com uma leitura da API",
+    "40P01": "impasse com uma requisição da API",
     "55P03": "tabela ocupada pela API além da espera",
 }
 #: Tentativas do TRUNCATE e a pausa antes da segunda, que dobra a cada uma (1, 2, 4, 8 s).

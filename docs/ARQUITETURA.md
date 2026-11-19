@@ -2185,9 +2185,10 @@ navegador: as duas dividem a mesma origem.
   `refresh_tokens` logo depois do crachá (o logout, o desativar), cai o TRUNCATE (40P01), que já
   esperava: perde a vez uma vez e repete, e a requisição termina em ~1 s — numa carga com logouts no
   meio, 8 renovações em 8 e nenhum 5xx. Quando ela passa antes pelo bcrypt (as de senha e a exclusão
-  da própria conta: uns 0,25 s cada bcrypt na máquina dos testes) e ele termina mais de 1 s depois
-  de o TRUNCATE parar na porta, quem cai é a requisição, com 500 (medido: uma pausa de 1,5 s ali dá
-  40P01 nela, e o TRUNCATE segue). Quem entra sem passar por uma porta também pode tomar a vez — a
+  da própria conta: uns 0,25 s cada bcrypt na máquina dos testes) e ele termina entre 1 s e uns 4 s
+  depois de o TRUNCATE parar na porta, quem cai é a requisição, com 500 (medido: uma pausa de 1,5 s
+  ali dá 40P01 nela, e o TRUNCATE segue); passado isso, o prazo da trava (5 s) vence antes, e quem
+  perde a vez é o TRUNCATE (55P03). Quem entra sem passar por uma porta também pode tomar a vez — a
   transação que a rota abre depois de um commit no meio da requisição: a da foto, depois do login, e
   a releitura de uma mutação enquanto a auditoria grava o diário por outra conexão (a borda espera
   `users` atrás do TRUNCATE, que espera a releitura: um ciclo que o Postgres não vê, desfeito pelo
@@ -2727,8 +2728,8 @@ e renovação), a role `loja_demo` não conecta no banco `loja`, preparar e reno
 chaves (variável e marco do banco) saem com erro sem tocar em nada, a carga da instalação semeia e
 converge a conta do revisor, a renovação zera, apaga as fotos e semeia de novo (com a conta
 inválida no `.env`, para antes de zerar; o TRUNCATE trava antes as portas da API, e a requisição
-que já passou pelo crachá, o login e a renovação da sessão terminam sem impasse com ele; o que
-ainda perde a vez se repete; e o preparo espera a renovação que está rodando), as
+que passou pelo crachá e segue lendo, o login e a renovação da sessão terminam sem impasse com ele
+— o logout e as rotas que derrubam sessões, não (ADR-46); o que ainda perde a vez se repete; e o preparo espera a renovação que está rodando), as
 fotos da demo têm teto (envios juntos não o furam; a foto minúscula conta o bloco), a conta
 protegida da instalação não trava pelo e-mail (a da Vercel e as outras, sim; e o IP trava
 todas), o cookie da demo vive e morre em `/demo/api/v1/auth`, a auditoria classifica sob `/demo`, fora do

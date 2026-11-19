@@ -20,8 +20,8 @@ O que se prende:
   logout e as rotas que derrubam sessões (trocar a senha, desativar, excluir conta) não cabem
   nessa ordem: pegam `users` e DEPOIS `refresh_tokens` ou `login_attempts`, ao contrário da
   renovação da sessão, e nenhuma ordem serve às duas — com eles o impasse custa uma tentativa
-  ao TRUNCATE (ou um 500 à requisição, se o bcrypt de uma rota de senha acabar mais de 1 s
-  depois de ele parar na porta; ver `_PERDEU_A_VEZ`);
+  ao TRUNCATE (ou um 500 à requisição, se o bcrypt de uma rota de senha acabar entre 1 s e uns
+  4 s depois de ele parar na porta; ver `_PERDEU_A_VEZ`);
 - o TRUNCATE que perde a vez para a API (impasse; tabela ocupada além da espera, como a
   releitura de uma mutação enquanto a auditoria grava o diário, que custa uma tentativa em
   55P03 e atrasa a resposta até 5 s) volta inteiro e se repete.
