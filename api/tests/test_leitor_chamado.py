@@ -15,15 +15,24 @@ from datetime import timedelta
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from starlette import status as http
 
+from app.core.db import engine
 from app.core.eventos import Assunto, central
 from app.core.exceptions import AppError, registrar_handlers
 from app.modules.leitor import service
 from app.modules.leitor.repository import LeitorRepository
 from app.modules.leitor.service import FORMATO_DO_SINAL, TETO_POR_COMPUTADOR
-from tests.test_leitor import _cliente, _diario, _retirar, _sql, _status
+from tests.test_leitor import (
+    _alguem_esperando_trava,
+    _cliente,
+    _diario,
+    _retirar,
+    _sql,
+    _status,
+)
 
 MENSAGEM_CHAMADO = (
     "Este chamado venceu, foi cancelado ou já foi atendido. Toque de novo no botão do "
@@ -746,3 +755,187 @@ async def test_teto_e_faxina_valem_para_chamado(client, auth_admin) -> None:
     )
     await _chamado(client, auth_admin)
     assert await _sql("SELECT id FROM leitor_pareamentos WHERE id = :id", id=velho) == []
+
+
+# ------------------------------------------------------------------ a instalação só vive ligada
+# O id da instalação do app serve ao leitor LIGADO — o bipe, o reenvio do aceite e do atender,
+# o TROCOU — e a política de privacidade promete que o registro do aparelho não fica depois
+# que o celular deixa de ser o leitor (nem nas cópias de segurança, que levam esta tabela).
+
+
+async def _instalacao_gravada(pareamento_id: int) -> str | None:
+    ((gravada,),) = await _sql(
+        "SELECT aparelho_instalacao FROM leitor_pareamentos WHERE id = :id", id=pareamento_id
+    )
+    return None if gravada is None else str(gravada)
+
+
+async def _ligado(client: AsyncClient, auth: dict[str, str], instalacao: uuid.UUID) -> int:
+    pid = (await _chamado(client, auth))["id"]
+    assert (await _atender(client, auth, pid, instalacao)).status_code == 200
+    assert await _instalacao_gravada(pid) == str(instalacao)
+    return pid
+
+
+async def test_instalacao_sai_quando_o_leitor_desliga(client, auth_admin, auth_vendedor) -> None:
+    """Desligado no celular (o app faz isso também ao sair da conta), no computador, ou
+    trocado por outro computador: o id sai na hora. O que vem depois do fim não precisa dele
+    — o bipe tardio continua sendo o 409 de leitor desligado, e o reenvio de um bipe que já
+    entrou continua sendo o mesmo bipe."""
+    a = uuid.uuid4()
+    for ponta in ("celular", "computador"):
+        pid = await _ligado(client, auth_admin, a)
+        bipe = {
+            "client_uuid": str(uuid.uuid4()),
+            "pareamento_id": pid,
+            "codigo": "7891234567895",
+            "instalacao": str(a),
+        }
+        entrou = await client.post("/leitor/bipes", headers=auth_admin, json=bipe)
+        assert entrou.status_code == 201, entrou.text
+        r = await client.delete(f"/leitor/pareamentos/{pid}?ponta={ponta}", headers=auth_admin)
+        assert r.status_code == 204
+        assert await _instalacao_gravada(pid) is None, ponta
+
+        # Terminado, a instalação não separa mais ninguém: a mesma e a OUTRA do mesmo login
+        # recebem o 409 de leitor desligado (o app trata igual ao 404, e esse login já lê o
+        # pareamento pelo GET — não há o que esconder dele).
+        for instalacao in (a, uuid.uuid4()):
+            tarde = await _bipar_de(client, auth_admin, pid, instalacao)
+            assert tarde.status_code == 409, tarde.text
+            assert tarde.json()["detail"] == {"status": "ENCERRADO"}
+        de_novo = await client.post("/leitor/bipes", headers=auth_admin, json=bipe)
+        assert de_novo.status_code == 200, de_novo.text
+
+    # A mesma instalação atendeu outro chamado: o de antes vira TROCOU e perde o id.
+    antes = await _ligado(client, auth_admin, a)
+    depois = await _ligado(client, auth_admin, a)
+    assert (await _status(client, auth_admin, antes))["motivo_encerramento"] == "TROCOU"
+    assert await _instalacao_gravada(antes) is None
+    assert await _instalacao_gravada(depois) == str(a)
+    # E o atender que chega tarde para ele continua sendo o 404 de sempre.
+    assert (await _atender(client, auth_admin, antes, a)).json() == CHAMADO_INVALIDO
+
+    # O leitor do QR, aceito por outro login com a instalação dele: o mesmo.
+    qr = (await client.post("/leitor/pareamentos", headers=auth_admin, json=None)).json()
+    b = uuid.uuid4()
+    aceito = await client.post(
+        "/leitor/pareamentos/aceitar",
+        headers=auth_vendedor,
+        json={"codigo": qr["codigo"], "instalacao": str(b)},
+    )
+    assert aceito.status_code == 200, aceito.text
+    assert await _instalacao_gravada(qr["id"]) == str(b)
+    desligou = await client.delete(f"/leitor/pareamentos/{qr['id']}", headers=auth_admin)
+    assert desligou.status_code == 204
+    assert await _instalacao_gravada(qr["id"]) is None
+
+
+async def test_faxina_tira_a_instalacao_do_leitor_que_so_venceu(client, auth_admin) -> None:
+    """O leitor que só VENCEU (12 h, ninguém desligou) não grava nada — o relógio não avisa
+    ninguém —, e o que terminou antes desta regra ainda tem o id: a faxina do próximo código
+    ou chamado tira dos dois. O ligado fica, e o que acabou de terminar espera a folga."""
+    a, b, c, d = (uuid.uuid4() for _ in range(4))
+    vencido = await _ligado(client, auth_admin, a)
+    await _sql(
+        "UPDATE leitor_pareamentos SET expira_em = now() - interval '10 minutes' WHERE id = :id",
+        id=vencido,
+    )
+    # Encerrado por SQL: é como ficou o pareamento terminado antes desta regra.
+    de_antes = await _ligado(client, auth_admin, b)
+    recente = await _ligado(client, auth_admin, c)
+    for pid, ha in ((de_antes, "10 minutes"), (recente, "1 minute")):
+        await _sql(
+            f"UPDATE leitor_pareamentos SET encerrado_em = now() - interval '{ha}', "
+            "motivo_encerramento = 'COMPUTADOR' WHERE id = :id",
+            id=pid,
+        )
+    ativo = await _ligado(client, auth_admin, d)
+
+    await _chamado(client, auth_admin)
+    assert await _instalacao_gravada(vencido) is None
+    assert await _instalacao_gravada(de_antes) is None
+    assert await _instalacao_gravada(recente) == str(c)
+    assert await _instalacao_gravada(ativo) == str(d)
+
+    # O ligado segue como estava: só a instalação dele bipa.
+    assert (await _bipar_de(client, auth_admin, ativo, d)).status_code == 201
+    assert (await _bipar_de(client, auth_admin, ativo, uuid.uuid4())).status_code == 404
+    # E o vencido responde ao bipe tardio o que sempre respondeu: leitor desligado.
+    tarde = await _bipar_de(client, auth_admin, vencido, a)
+    assert tarde.status_code == 409 and tarde.json()["detail"] == {"status": "EXPIRADO"}
+
+
+async def test_faxina_da_instalacao_nao_espera_a_linha_travada(client, auth_admin) -> None:
+    """A faxina roda dentro do código e do chamado: a linha que outra transação trava agora
+    (o celular desligando aquele leitor, um id velho mandado como `substitui_id`) fica para a
+    próxima, e o chamado não espera por ela."""
+    a = uuid.uuid4()
+    vencido = await _ligado(client, auth_admin, a)
+    await _sql(
+        "UPDATE leitor_pareamentos SET expira_em = now() - interval '10 minutes' WHERE id = :id",
+        id=vencido,
+    )
+    async with engine.connect() as outra, outra.begin():
+        await outra.execute(
+            text("SELECT 1 FROM leitor_pareamentos WHERE id = :id FOR UPDATE"), {"id": vencido}
+        )
+        await asyncio.wait_for(_chamado(client, auth_admin), timeout=5)
+    assert await _instalacao_gravada(vencido) == str(a)
+
+    await _chamado(client, auth_admin)
+    assert await _instalacao_gravada(vencido) is None
+
+
+async def test_chamado_durante_a_exclusao_da_propria_conta_nao_se_abraca_com_a_faxina(
+    client, vendedor, auth_admin, auth_vendedor, monkeypatch
+) -> None:
+    """A vendedora chama o celular enquanto o dono exclui a conta dela, que tem um leitor
+    vencido ainda com o id da instalação. A exclusão trava a conta e depois apaga os
+    pareamentos dela; o chamado pega a conta pela FK do pareamento novo. Se a faxina da
+    instalação segurasse o vencido antes disso, cada um esperaria o outro e o Postgres
+    derrubaria um. Por isso ela roda por último, logo antes do commit."""
+    from app.modules.usuarios.repository import UsuarioRepository
+
+    vencido = await _ligado(client, auth_vendedor, uuid.uuid4())
+    await _sql(
+        "UPDATE leitor_pareamentos SET expira_em = now() - interval '10 minutes' WHERE id = :id",
+        id=vencido,
+    )
+    # Com histórico (um fechamento de caixa), a linha da conta fica: o ramo do
+    # `esquecer_usuario` do leitor, que apaga os pareamentos com a conta já travada.
+    await _sql(
+        "INSERT INTO cash_closings (closing_date, user_id, total_expected, total_counted) "
+        "VALUES (current_date, :u, 0, 0)",
+        u=vendedor.id,
+    )
+
+    travou, seguir = asyncio.Event(), asyncio.Event()
+    travar_viva = UsuarioRepository.travar_viva
+
+    async def travar_e_parar(self, user_id: int) -> bool:
+        achou = await travar_viva(self, user_id)
+        travou.set()
+        await asyncio.wait_for(seguir.wait(), timeout=10)
+        return achou
+
+    monkeypatch.setattr(UsuarioRepository, "travar_viva", travar_e_parar)
+
+    async def excluir():
+        async with _cliente() as c:
+            return await c.delete(f"/usuarios/{vendedor.id}", headers=auth_admin)
+
+    async def chamar():
+        async with _cliente() as c:
+            return await _chamar(c, auth_vendedor)
+
+    exclusao = asyncio.create_task(excluir())
+    await asyncio.wait_for(travou.wait(), timeout=10)
+    chamado = asyncio.create_task(chamar())
+    # O chamado para na conta travada (a FK do pareamento novo); só então a exclusão segue.
+    await _alguem_esperando_trava()
+    seguir.set()
+    excluiu, chamou = await asyncio.wait_for(asyncio.gather(exclusao, chamado), timeout=30)
+    assert excluiu.status_code == 204, excluiu.text
+    assert chamou.status_code == 201, chamou.text
+    assert await _sql("SELECT id FROM leitor_pareamentos WHERE id = :id", id=vencido) == []
