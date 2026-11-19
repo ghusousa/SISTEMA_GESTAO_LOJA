@@ -10,7 +10,9 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
+import time
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -1304,7 +1306,9 @@ async def test_dns_errado_diz_o_registro_e_repete_no_resumo(tmp_path: Path) -> N
     assert r.stdout.count(registro) == 2, _saida(r, loja)
     assert "aponta para 198.51.100.7, não para este servidor" in r.stdout
     assert r.stdout.count("Apague o registro AAAA de loja.seudominio.com.br (2001:db8::99)") == 2
-    # Conferido ANTES de subir: o Let's Encrypt limita as tentativas que falham.
+    # Conferido ANTES de subir: o Let's Encrypt limita as tentativas que falham. E antes de
+    # gravar o .env: uma espera interrompida não deixa meia instalação para a próxima rodada.
+    assert r.stdout.index("Conferindo o DNS") < r.stdout.index("Gravando a configuração")
     assert r.stdout.index("Conferindo o DNS") < r.stdout.index("Construindo e subindo")
     assert "Falta acertar o DNS de loja.seudominio.com.br" in r.stdout
 
@@ -1352,6 +1356,54 @@ async def test_dns_interativo_espera_e_segue_quando_o_registro_aparece(tmp_path:
     assert "Conferindo de novo a cada 1 s" in texto
     assert "agora sim: loja.seudominio.com.br aponta para este servidor" in texto
     assert "Falta acertar o DNS" not in texto
+
+
+@precisa_do_bash
+async def test_espera_do_dns_interrompida_nao_deixa_env_e_a_volta_cria_o_dono(tmp_path: Path) -> None:
+    """A espera do DNS não tem teto e convida a sair: o Ctrl+C de quem vai acertar o painel, o
+    SSH que cai. Ela vinha DEPOIS de gravar o .env, e a rodada seguinte o reaproveitava sem
+    perguntar nada: terminava "com sucesso", sem a conta do dono e sem o nome e o ramo da loja
+    ("Entrar: <a conta já existente>", conta nenhuma). Agora a conferida vem antes de gravar."""
+    loja, env = _instalador(tmp_path)
+    _dns(tmp_path, ip="203.0.113.10", v4=("9.9.9.9",))
+    saida = tmp_path / "saida.txt"
+    with saida.open("w") as o:
+        processo = subprocess.Popen(
+            ["bash", "./instalar.sh", "--dominio", "loja.seudominio.com.br", "--nome", "Dona Maria",
+             "--email", "dona@loja.com", "--senha", "senha12345", "--senha-banco", "senhaDoBanco123",
+             "--loja", "Boutique", "--segmento", "ROUPAS", "--avisos", "loja-teste"],
+            cwd=loja, env=env | {"INTERVALO_DNS": "1"}, stdin=subprocess.PIPE, stdout=o,
+            stderr=subprocess.STDOUT,
+        )
+        try:
+            prazo = time.monotonic() + 60
+            while "Conferindo de novo a cada 1 s" not in saida.read_text():
+                assert processo.poll() is None and time.monotonic() < prazo, _mascarar(saida.read_text())
+                time.sleep(0.1)
+            processo.send_signal(signal.SIGINT)  # o Ctrl+C, no meio da espera
+            processo.wait(timeout=30)
+        finally:
+            processo.stdin.close()
+            if processo.poll() is None:
+                processo.kill()
+    assert processo.returncode != 0
+    assert not (loja / ".env").exists(), _mascarar(saida.read_text())
+    assert not list(loja.glob(".env.*"))
+    assert "compose up" not in (tmp_path / "ctr" / "docker.log").read_text()
+
+    # Com o DNS acertado, quem volta roda só ./instalar.sh: as perguntas vêm de novo, do começo
+    # (loja, ramo, domínio, dono, e-mail, senha duas vezes, senha do banco sorteada, sem ntfy).
+    _dns(tmp_path, ip="203.0.113.10", v4=("203.0.113.10",))
+    respostas = "Boutique\n1\nloja.seudominio.com.br\nDona Maria\ndona@loja.com\nsenha12345\nsenha12345\n\n\n"
+    r = subprocess.run(["bash", "./instalar.sh"], cwd=loja, env=env, input=respostas,
+                       capture_output=True, text=True, timeout=300)
+
+    assert r.returncode == 0, _saida(r, loja)
+    assert "Configuração reaproveitada" not in r.stdout
+    assert "Entrar:    dona@loja.com" in r.stdout
+    log = (tmp_path / "ctr" / "docker.log").read_text()
+    assert "app.cli configurar-loja --nome Boutique --segmento ROUPAS" in log
+    assert "app.cli create-admin --nome Dona Maria --email dona@loja.com" in log
 
 
 @precisa_do_bash

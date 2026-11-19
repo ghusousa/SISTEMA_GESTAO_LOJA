@@ -858,6 +858,12 @@ if [ "$REAPROVEITADO" -eq 0 ]; then
         if [ -z "$DEMO_BANCO" ] || [ -z "$DEMO_SENHA" ]; then morrer "não consegui sortear as senhas da demonstração."; fi
     fi
 
+    # O DNS ANTES de gravar o .env: a espera por ele não tem teto e convida a sair (Ctrl+C para
+    # ir acertar o painel, o SSH que cai). Interrompida com o .env já gravado, a próxima rodada o
+    # reaproveitava sem perguntar nada e terminava "com sucesso" sem a conta do dono, nem o nome
+    # e o ramo da loja. Assim, quem volta recomeça do jeito que começou.
+    conferir_dns
+
     titulo "Gravando a configuração"
     umask 077                      # o .env carrega senhas: só o dono do arquivo lê.
     cat > .env <<FIM
@@ -913,9 +919,9 @@ if [ "$REAPROVEITADO" -eq 1 ]; then
     elif ! tem_no_env COMPOSE_PROFILES; then
         acrescentar_no_env "" "$COMENTARIO_DA_DEMO_DESLIGADA" "COMPOSE_PROFILES="
     fi
+    # Aqui o .env já existia; a instalação nova conferiu antes de gravá-lo.
+    conferir_dns
 fi
-
-conferir_dns
 
 # ------------------------------------------------------------------ subir
 
