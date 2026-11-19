@@ -768,18 +768,22 @@ exit 0
 
 
 @precisa_do_git
-@pytest.mark.parametrize("sobe", [True, False])
+@pytest.mark.parametrize("demo", ["responde", "nao_sobe", "nao_responde"])
 async def test_volta_atras_sobe_a_demo_que_a_versao_desfeita_levou(
-    tmp_path: Path, sobe: bool
+    tmp_path: Path, demo: str
 ) -> None:
     """Uma versão que tira ou renomeia o serviço da demonstração e cai: o `--remove-orphans` da
     primeira fase já levou o contêiner dela, e a volta atrás, que só nomeia db, api e proxy,
     não o trazia de volta — a demo ficava fora, calada, até o próximo ./demo.sh --ligar. Agora a
-    volta atrás sobe a demo de novo (sem DROP: o banco dela é o de antes) e, se não subir, avisa
-    no celular pela mesma via da segunda fase."""
+    volta atrás sobe a demo de novo (sem DROP: o banco dela é o de antes), espera o /demo/health
+    como a segunda fase espera e, se ela não subir ou não responder, avisa no celular pela mesma
+    via da segunda fase. Só o `up` que falha não bastava: uma api-demo que sobe e não responde
+    passava calada."""
     env = _maquina(tmp_path, FAKE_API="[ ! -f quebrada ]") | GIT_ISOLADO
-    if not sobe:
+    if demo == "nao_sobe":
         env["FAKE_UP_FALHA"] = "api-demo"
+    if demo == "nao_responde":
+        env["FAKE_API_DEMO"] = "exit 1"
     docker = tmp_path / "bin" / "docker"
     docker.rename(tmp_path / "bin" / "docker-de-mentira")
     docker.write_text(DOCKER_QUE_PERDE_A_DEMO)
@@ -797,12 +801,22 @@ async def test_volta_atras_sobe_a_demo_que_a_versao_desfeita_levou(
     volta = log.rindex("compose up -d --build --remove-orphans db api proxy")
     assert "compose up -d demo-banco api-demo" in log[volta:], log
     assert "loja_demo" not in log, log  # sem DROP: o banco dela é o de antes
-    if sobe:
-        assert (tmp_path / "ctr" / "id-api-demo").read_text().strip() == "id-api-demo"
-        assert _avisos(tmp_path) == []
-    else:
+    if demo == "nao_sobe":
         assert "A atualização voltou atrás; a loja não depende da demonstração." in r.stdout
         assert _avisos(tmp_path) == ["A demonstração não subiu"]
+        return
+    assert (tmp_path / "ctr" / "id-api-demo").read_text().strip() == "id-api-demo"
+    # E esperou o /health dela, debaixo do prefixo, como a segunda fase espera.
+    assert "exec -T api-demo python -c" in log[volta:], log
+    assert "/demo/health" in log[volta:], log
+    if demo == "responde":
+        assert "a demonstração voltou e respondeu" in r.stdout
+        assert _avisos(tmp_path) == []
+    else:
+        assert "A demonstração subiu de novo, mas não respondeu ao /health." in r.stdout
+        assert "A atualização voltou atrás; a loja não depende da demonstração." in r.stdout
+        assert _avisos(tmp_path) == ["A demonstração não subiu"]
+        assert "não respondeu ao /health" in (tmp_path / "ctr" / "curl.log").read_text()
 
 
 @precisa_do_git

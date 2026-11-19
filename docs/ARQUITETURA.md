@@ -2231,8 +2231,9 @@ navegador: as duas dividem a mesma origem.
   tirou ou renomeou o serviço, o `--remove-orphans` da primeira fase levou o contêiner dela como
   órfão, e nada o traria de volta até o próximo `./demo.sh --ligar`. Com a demo ligada e o
   `compose ps -q api-demo` vazio, a volta atrás sobe `demo-banco api-demo` de novo — sem DROP, no
-  banco de antes —, e a falha avisa pelo `notificar.sh`, como na segunda fase. Backup e vigia
-  continuam só da loja.
+  banco de antes —, espera o `/demo/health` como a segunda fase espera (o `up` que dá certo não
+  diz que ela responde) e, se ela não subir ou não responder, avisa pelo `notificar.sh`, como na
+  segunda fase. Backup e vigia continuam só da loja.
 - **A pasta do Caddyfile, montada inteira.** O `git reset --hard` da atualização troca o
   `docker/caddy/Caddyfile` por um arquivo novo (inode novo), e um arquivo montado sozinho continua
   mostrando o VELHO ao contêiner até ele ser recriado: o `caddy reload` "dava certo" sem mudar nada,

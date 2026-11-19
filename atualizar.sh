@@ -742,11 +742,16 @@ voltar_atras() {
     #
     # A não ser que o contêiner dela tenha sumido: a versão desfeita tirou ou renomeou o serviço,
     # e o --remove-orphans da primeira fase o levou como órfão. Aí ele sobe de novo, só ele, sem
-    # DROP (o banco dela é o de antes), e a falha avisa pela mesma via da segunda fase.
+    # DROP (o banco dela é o de antes), com a mesma espera do /health da segunda fase — o `up`
+    # que dá certo não diz que ela responde —, e a falha avisa pela mesma via.
     if demo_ligada && [ -z "$(dk compose ps -q api-demo 2>/dev/null || true)" ]; then
         aviso "A demonstração saiu junto com a versão desfeita; subindo-a de novo."
         if ! dk compose up -d demo-banco api-demo 2>&1 | tail -3; then
             avisar_demo "A demonstração não subiu de novo na volta atrás." voltou
+        elif esperar_saude 60 api-demo /demo/health >/dev/null; then
+            ok "a demonstração voltou e respondeu"
+        else
+            avisar_demo "A demonstração subiu de novo, mas não respondeu ao /health." voltou
         fi
     fi
     printf '  A versão %s não será tentada de novo sozinha: a próxima é quando chegar um commit\n' \
