@@ -261,7 +261,7 @@ Ainda na aba "Conteúdo do app", duas declarações vizinhas que derrubam envio 
   4. Vendas
   5. Faturamento e cobrança / Contas a receber
 - **E-mail de contato:** `privacidade@sistemaobras.com.br` (o mesmo pode servir de suporte, ou crie `suporte@`)
-- **Política de privacidade (URL obrigatória):** publique em endereço público, ex. `https://sistemaobras.com.br/privacidade`, e a página de exclusão em `https://sistemaobras.com.br/privacidade/exclusao`
+- **Política de privacidade (URL obrigatória):** a do servidor de demonstração, `<servidor>/privacidade`, e a página de exclusão de dados em `<servidor>/exclusao-de-dados` — as mesmas do começo deste documento (hoje, as da Vercel). Trocou de servidor? Troque as duas aqui antes de desligar o antigo.
 
 ---
 

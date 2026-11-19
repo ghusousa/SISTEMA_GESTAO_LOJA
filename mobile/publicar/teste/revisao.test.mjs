@@ -267,3 +267,12 @@ test('política de privacidade (a URL da ficha) e notas contam os mesmos serviç
   }
   assert.ok(!/não fala com nenhum outro endereço|única conexão que o app faz/i.test(politica), 'a política ainda nega qualquer outra conexão');
 });
+
+test('LOJAS-DE-APP.md: as páginas legais das fichas são as do servidor da loja, nunca as do site de outro sistema', () => {
+  // As duas fichas colam a privacidade e a exclusão de dados que o próprio sistema serve
+  // (<servidor>/privacidade e <servidor>/exclusao-de-dados). sistemaobras.com.br é o site do
+  // Sistema Obras: a ficha do Google Play mandava colar a política de lá.
+  const doc = readFileSync(join(MOBILE, '..', 'docs', 'LOJAS-DE-APP.md'), 'utf8');
+  const paginas = doc.match(/https?:\/\/(?:[\w-]+\.)*sistemaobras\.com\.br\/[^\s`)]+/g) ?? [];
+  assert.deepEqual(paginas, [], `página do sistemaobras para colar numa ficha:\n${paginas.join('\n')}`);
+});
