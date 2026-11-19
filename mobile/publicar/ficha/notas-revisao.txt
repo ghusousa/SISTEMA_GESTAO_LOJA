@@ -16,13 +16,13 @@ Shop OWNER account: every screen is visible. Fictitious data only, isolated from
 
 4) SET UP AND ACCESS
 1. On the sign-in screen tap the GEAR (top right): "Conectar à loja" opens.
-2. In "Endereço do servidor" type the server above exactly as written (with https://), and tap "Conectar".
+2. In "Endereço do servidor" type the server above exactly as written (with https://) and tap "Conectar".
 3. Enter e-mail and password, tap "Entrar": the "Vender" tab (point of sale) opens.
 4. Add an item: "Ler código de barras" (camera), "Digitar código" (type the barcode above) or "Buscar" (part of a name, e.g. "cami").
 {{LINHA_ETIQUETAS}}
 5. Tap "Cobrar", "Dinheiro", then "Confirmar venda". The completed sale opens; tap "Recibo para a cliente" to see the receipt.
 More in the "Produtos", "Estoque", "Financeiro" and "Mais" tabs.
-Phone as the computer's barcode reader: in a computer browser, sign in with the same account and click "Abrir no app o leitor de código"; tap "Abrir o leitor" in the open app. Or "Ler o QR" there, and Mais > Leitor do computador > "Ler o QR do computador".
+Phone as the computer's barcode reader: open the server above in a computer browser, sign in with the same account, click "Abrir no app o leitor de código"; tap "Abrir o leitor" in the open app. Or "Ler o QR" there and Mais > Leitor do computador > "Ler o QR do computador".
 
 ACCOUNTS: no sign-up. The owner creates staff accounts in Mais > Usuários > "+" (bottom right).
 ACCOUNT DELETION (5.1.1(v)), inside the app:
@@ -34,7 +34,7 @@ The demo account is protected (can't be deleted) for the next reviewer: please c
 
 6) REGIONS: Brazil only, in Portuguese (Brazil); the same everywhere.
 
-7) REGULATION: not a regulated industry; no third-party protected content. The optional NFC-e is issued with the shop's own digital certificate.
+7) REGULATION: not a regulated industry; no third-party protected content. The optional NFC-e is issued with the shop's digital certificate.
 
 USER CONTENT: item names, photos and notes stay private to one shop's team. No publishing, feed or messaging between users, so nothing to report or block.
 PERMISSIONS: camera (barcode reader, item photo), photos (pick an item photo), local network (only when the server is on the shop's network), notifications (optional).

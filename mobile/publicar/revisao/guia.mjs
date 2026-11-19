@@ -257,6 +257,8 @@ shop with fictitious data only; its address, the owner account and a sample barc
     camera) and the computer shows "Celular de … ligado".</li>
   <li>Each label the camera scans appears on the computer's open sale. The code tells apart two computers signed in
     with the same account: open the call with the code your computer shows.</li>
+  <li>No label at hand, or one the camera can't read? Below the camera, ${rotulo('Digitar código')} sends a typed
+    barcode (the sample one from the App Review notes) to the computer the same way.</li>
 </ol>
 <p><b>QR instead</b> (another person's phone, for example): ${rotulo('Celular de outra pessoa? Ler o QR')}, next to the
 button, or ${rotulo('Celular como leitor')}, in the left bar, shows a QR code; in the app:
@@ -283,8 +285,8 @@ open app as above.</p>
       that the shop hires and connects to its server. Off in the demo.</td></tr>
     <tr><td>Push notifications (optional)</td><td>Off unless the shop's server turns them on. Then the app gets a push
       token from Expo's push service (device token and app installation id) and gives it to the shop's server, which
-      sends only the computer's call through Expo and Apple (APNs): a fixed text and a random 3-character code, no shop
-      or customer data.</td></tr>
+      sends only the computer's call (and a test notice its admin can trigger) through Expo and Apple (APNs): a fixed
+      text and a random 3-character code, no shop or customer data.</td></tr>
     <tr><td>Payments</td><td>None in the app. The card terminal is a separate device; the app only records how the
       customer paid and the amount.</td></tr>
     <tr><td>AI, third-party sign-in, analytics, ads</td><td>None. No tracking, no IDFA, so no ATT prompt.</td></tr>
