@@ -215,11 +215,12 @@ dc start api-demo >/dev/null 2>&1
 
 # --- 9. Pool da demo e teto do corpo no proxy -----------------------------------------------
 # A role loja_demo tem CONNECTION LIMIT 20: com o pool padrão (10 + 20) uma rajada passava de
-# 20 conexões e o excesso saía 500, em vez de esperar a vez no pool. E o FastAPI lê o corpo
-# inteiro ANTES de conferir o login: sem teto no Caddy, um PUT de foto gigante SEM login
-# enchia o disco (o mesmo do banco) com o temporário — na loja e na demo. O teto vale por
-# pedido (N conexões seguram N vezes ele), então é POR ROTA: 6 MB no envio da foto, 2 MB em
-# todo o resto, que é JSON.
+# 20 conexões e o excesso saía 500, em vez de esperar a vez no pool. E as rotas de JSON leem o
+# corpo inteiro ANTES de conferir o login. A da foto confere o login antes de ler (até essa
+# mudança, um PUT gigante SEM login enchia de temporário o disco, o mesmo do banco), mas, com
+# login, lê o envio inteiro antes de recusar a foto grande. O teto do Caddy vale na loja e na
+# demo, e vale por pedido (N conexões seguram N vezes ele), então é POR ROTA: 6 MB no envio da
+# foto, 2 MB em todo o resto, que é JSON.
 echo "9. pool da demo e teto do corpo"
 conferir "a api-demo volta depois de parada" saudavel api-demo 240
 conferir "a api-demo roda com pool 5 + 8 (cabe no CONNECTION LIMIT 20)" \
@@ -273,22 +274,6 @@ put_foto() {  # put_foto <arquivo> <url> [args do curl...] → status
 }
 token_demo=$(login /demo dono@demo.example "$SENHA_DEMO" | json 'd.get("access_token","")')
 token_real=$(login "" dona@loja.example "$SENHA_REAL" | json 'd.get("access_token","")')
-for raiz in "" /demo; do
-    token=$token_real; [ -z "$raiz" ] || token=$token_demo
-    # Na demo, 413 e nunca 503: o corpo grande não é "demonstração desligada".
-    conferir "JSON de 3 MB sem login em ${raiz}/api/v1/auth/login: 413 do proxy" \
-        test "$(curl -s -o "$TMP/resposta" -w '%{http_code}' -H 'Expect:' \
-            -H 'Content-Type: application/json' --data-binary "@$TMP/grande.json" \
-            "$BASE$raiz/api/v1/auth/login")" = 413
-    conferir "PUT de 7 MB sem login em ${raiz}/api/v1/produtos/1/foto: 413 do proxy" \
-        test "$(put_foto "$TMP/grande.jpg" "$BASE$raiz/api/v1/produtos/1/foto")" = 413
-    # Em pedaços e COM login: a rota da foto confere o login antes de ler o corpo, então sem
-    # ele a API responde 401 sem ler nada e o proxy nunca chega a cortar. Com ele, a API lê o
-    # multipart e o proxy corta nos 6 MB.
-    conferir "o mesmo em pedaços, sem Content-Length e com login (${raiz:-loja}): 413 do proxy" \
-        test "$(put_foto "$TMP/grande.jpg" "$BASE$raiz/api/v1/produtos/1/foto" \
-            -H 'Transfer-Encoding: chunked' -H "Authorization: Bearer $token")" = 413
-done
 produto_demo=$(curl -s -H "Authorization: Bearer $token_demo" \
     "$BASE/demo/api/v1/produtos?page=1&size=1" | json 'd["items"][0]["id"]')
 categoria_real=$(curl -s -H "Authorization: Bearer $token_real" -H 'Content-Type: application/json' \
@@ -296,6 +281,23 @@ categoria_real=$(curl -s -H "Authorization: Bearer $token_real" -H 'Content-Type
 produto_real=$(curl -s -H "Authorization: Bearer $token_real" -H 'Content-Type: application/json' \
     -d "{\"categoria_id\":$categoria_real,\"nome\":\"Peça da pilha\",\"variantes\":[{\"tamanho\":\"U\",\"preco_custo\":\"10.00\",\"preco_venda\":\"20.00\"}]}" \
     "$BASE/api/v1/produtos" | json 'd["id"]')
+for raiz in "" /demo; do
+    if [ -z "$raiz" ]; then token=$token_real produto=$produto_real
+    else token=$token_demo produto=$produto_demo; fi
+    # Na demo, 413 e nunca 503: o corpo grande não é "demonstração desligada".
+    conferir "JSON de 3 MB sem login em ${raiz}/api/v1/auth/login: 413 do proxy" \
+        test "$(curl -s -o "$TMP/resposta" -w '%{http_code}' -H 'Expect:' \
+            -H 'Content-Type: application/json' --data-binary "@$TMP/grande.json" \
+            "$BASE$raiz/api/v1/auth/login")" = 413
+    conferir "PUT de 7 MB sem login em ${raiz}/api/v1/produtos/1/foto: 413 do proxy" \
+        test "$(put_foto "$TMP/grande.jpg" "$BASE$raiz/api/v1/produtos/1/foto")" = 413
+    # Em pedaços, sem Content-Length, o proxy não recusa de antemão: corta no teto o que a API
+    # LÊ. E a foto confere o login antes de ler o corpo: sem login, o 401 dela chegaria antes
+    # do teto. Com login (e numa peça que existe), a API lê o envio, e o Caddy corta em 6 MB.
+    conferir "PUT de 7 MB em pedaços, sem Content-Length, com login (${raiz:-loja}): 413 do proxy" \
+        test "$(put_foto "$TMP/grande.jpg" "$BASE$raiz/api/v1/produtos/$produto/foto" \
+            -H 'Transfer-Encoding: chunked' -H "Authorization: Bearer $token")" = 413
+done
 for foto in "peca:200 KB" "media:3 MB (acima do teto do JSON)"; do
     conferir "foto de ${foto#*:} com login passa pelo proxy (loja)" \
         test "$(put_foto "$TMP/${foto%%:*}.jpg" "$BASE/api/v1/produtos/$produto_real/foto" \
