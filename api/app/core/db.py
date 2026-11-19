@@ -38,6 +38,12 @@ class TimestampMixin:
 engine = create_async_engine(
     settings.database_url,
     echo=settings.db_echo,
+    # O erro do banco (e o `DB_ECHO`) não repete os VALORES do comando: o traceback que o
+    # uvicorn escreve levaria o token de push, o e-mail, o hash da senha, a credencial do
+    # backup. O comando e a causa continuam. Defesa de fundo: o DETAIL do Postgres ("Key
+    # (token)=(...)") vem na causa encadeada e passa por aqui — quem grava um segredo não
+    # deixa o erro do banco subir (`NotificacoesService.registrar`, ADR-47).
+    hide_parameters=True,
     pool_pre_ping=True,
     # 10 + 20 na loja; pequeno na Vercel, onde cada instância da função tem o seu (ADR-42).
     pool_size=settings.db_pool_size,
