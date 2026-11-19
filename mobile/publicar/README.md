@@ -193,6 +193,13 @@ falhar, o passo diz isso.
 
 É experimental até a primeira rodada de verdade.
 
+**Sem compilar nada: o .ipa do build da loja.** O workflow à parte **"Link do .ipa (teste em
+iPhone real)"** (`.github/workflows/link-ipa.yml`, sem entradas) só lê a lista de builds da Expo
+com o `EXPO_TOKEN` e põe no resumo o link do .ipa do último build da LOJA que terminou. O
+BrowserStack reassina todo .ipa enviado (a documentação dele recomenda ad hoc; o da loja é a
+tentativa mais barata, porque já existe). Mora num arquivo à parte porque o formulário do
+"Publicar iOS" já está no limite de 10 entradas do `workflow_dispatch` — o `ci.test.mjs` confere.
+
 ### Uma vez só: segredos e variáveis do repositório
 
 Settings → Secrets and variables → Actions → **Secrets** → "Novo segredo do repositório"

@@ -542,6 +542,18 @@ test('workflow: o vídeo do link é baixado UMA vez, e a conferência e a ficha 
   }
 });
 
+test('link-ipa.yml: só LÊ a lista de builds da Expo (sem entrada, sem compilar, sem enviar) e põe o link no resumo', () => {
+  const yml = readFileSync(join(MOBILE, '..', '.github', 'workflows', 'link-ipa.yml'), 'utf8');
+  assert.match(yml, /^on:\n  workflow_dispatch:\n\n/m, 'sem entradas: o formulário do outro já está no limite');
+  assert.match(yml, /EXPO_TOKEN: \$\{\{ secrets\.EXPO_TOKEN \}\}/);
+  assert.match(yml, /eas-cli build:list --platform ios --status finished --distribution store[\s\\]+--limit 1 --json --non-interactive/);
+  assert.doesNotMatch(yml, /eas-cli (build|submit) --|ASC_KEY|publicar\.mjs/, 'o link não compila, não envia e não mexe na Apple');
+  assert.match(yml, /GITHUB_STEP_SUMMARY/);
+  // O formulário do "Publicar iOS" segue no limite de 10 entradas do workflow_dispatch.
+  const entradas = WORKFLOW.slice(WORKFLOW.indexOf('    inputs:'), WORKFLOW.indexOf('  push:')).match(/^      [a-z_]+:$/gm) ?? [];
+  assert.ok(entradas.length <= 10, `o Publicar iOS tem ${entradas.length} entradas: o GitHub recusa mais de 10`);
+});
+
 test('workflow: o .ipa de teste é ad hoc de verdade e monta o perfil sem modo interativo', () => {
   const eas = JSON.parse(readFileSync(join(MOBILE, 'eas.json'), 'utf8'));
   const perfil = eas.build['teste-aparelhos'];
