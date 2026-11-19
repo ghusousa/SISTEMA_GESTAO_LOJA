@@ -71,14 +71,17 @@ export function useFaixaDoChamado(): Faixa | null {
   const logado = useAuthStore((e) => !!e.usuario);
   const leitorLigado = useLeitorStore((e) => !!e.pareamento);
   const dispensados = useLeitorStore((e) => e.chamadosDispensados);
-  const { data: chamados } = useChamadosDoLeitor();
+  // Com o relógio: o chamado que venceu (sem aviso nenhum do servidor) sai da faixa na hora.
+  const { chamados, agora, buscadoEm } = useChamadosDoLeitor();
 
   if (!logado) return null;
   const conteudo = oQueAFaixaMostra({
-    chamados: chamados ?? [],
+    chamados,
     dispensados,
     leitorLigado,
     naTelaDoLeitor: naTelaDoLeitor(caminho),
+    agora,
+    buscadoEm,
   });
   if (!conteudo) return null;
   const irParaOLeitor = () => router.navigate(ROTA_DO_LEITOR as never);
@@ -154,7 +157,8 @@ function useAgora(intervaloMs: number, ligado: boolean): number {
 
 /**
  * Na tela do leitor sem leitor ligado: um cartão por chamado aberto, cada um com o seu sinal
- * (o mesmo login em dois caixas chama duas vezes; a pessoa escolhe o da tela dela).
+ * (o mesmo login em dois caixas chama duas vezes; a pessoa escolhe o da tela dela). `chamados`
+ * são os que ainda valem (`useChamadosDoLeitor().vivos`): o vencido não fica pedindo toque.
  */
 export function CartoesDoChamado({
   chamados,

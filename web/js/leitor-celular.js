@@ -29,6 +29,9 @@
  * A chave do chamado (`client_uuid`) também vai ao `sessionStorage`, ANTES do POST: o F5 no meio
  * — ou a rede que cai sem resposta — reenvia a MESMA chave, e o servidor devolve o chamado que
  * já criou em vez de deixá-lo órfão (atendível pelo celular, sem nenhuma aba retirando a fila).
+ * Ela só vale enquanto descreve a aba: a aba que seguiu adiante (Cancelar, o QR, o chamado que
+ * acabou, o leitor ligado) a esquece — reenviada depois a um servidor que nunca a recebeu, ela
+ * criaria AGORA um chamado que ninguém pediu, e a aba largaria o leitor que tem.
  *
  * O aviso de tempo real só diz o assunto: o código lido nunca passa pelo WebSocket.
  */
@@ -40,6 +43,7 @@ import {
   avisoDoChamadoQueAcabou,
   avisoDoFimNoComputador,
   avisoDosDescartados,
+  ASSUNTOS_DO_LEITOR,
   criarDonaDaAba,
   criarEntrega,
   intervaloDaBusca,
@@ -94,10 +98,19 @@ let ocupado = false;
  * anterior acabou por "leitores demais".
  */
 let trocando = false;
+/**
+ * O F5 (ou a moldura redesenhada no login) retomando o leitor desta aba: até o servidor dizer o
+ * que vale, a área fica travada. Um clique no meio criaria um chamado, e o leitor retomado
+ * passaria por cima dele (ou o contrário) — um dos dois ficaria no servidor sem ninguém.
+ */
+let restaurando = false;
 /** Como saiu a notificação do último chamado (`{ situacao, celulares }`): a dica da área. */
 let ultimaNotificacao = null;
 /** Quem mais mostra o leitor: a área do chamado de cada tela aberta (`aoMudarOLeitor`). */
 const ouvintes = new Set();
+
+/** Um pedido da área no ar, ou o F5 retomando: as ações esperam (e os botões apagam). */
+const ocupada = () => pedindo || ocupado || abrindo || restaurando;
 
 /** O caminho do código retirado até a tela (espera a tela ocupada, avisa o que não entrou). */
 const entrega = criarEntrega({
@@ -172,6 +185,28 @@ function pendenciaQueVale(pendente) {
 }
 
 /**
+ * A pendência que ainda descreve esta aba: a que vale (`pendenciaQueVale`) e trocaria o MESMO
+ * AGUARDANDO que a aba tem agora (`idAtual`; `null` quando não tem nenhum). A que não serve sai
+ * do `sessionStorage`: a aba que seguiu adiante não reenvia a chave de antes.
+ */
+function pendenciaDaAba(idAtual) {
+  const pendente = lerPendencia();
+  if (pendente && pendenciaQueVale(pendente) && pendente.substitui_id === (idAtual ?? null)) return pendente;
+  if (pendente) guardarPendencia(null);
+  return null;
+}
+
+/**
+ * A pendência desta aba, quando `p` (o AGUARDANDO dela, que acabou) foi trocado por ela: o POST
+ * do chamado chegou ao servidor e a resposta se perdeu (a rede caiu na volta, ou o proxy cortou
+ * enquanto a notificação saía — o chamado vai para o banco ANTES do push).
+ */
+function trocadoPelaPendencia(p) {
+  if (p?.status !== 'ENCERRADO' || p.motivo_encerramento !== 'SUBSTITUIDO') return null;
+  return pendenciaDaAba(p.id);
+}
+
+/**
  * O servidor respondeu e recusou (4xx): nada foi criado, a chave não serve mais. Sem resposta
  * (rede) ou com 5xx, o POST pode ter chegado — a chave fica, para o próximo clique ou o F5
  * reenviarem a MESMA e acharem o que ele criou.
@@ -180,16 +215,26 @@ const recusaDefinitiva = (erro) => erro instanceof ErroApi && erro.status >= 400
 
 // ----------------------------------------------------------------- estado
 
+/** O leitor desta aba passa a ser `p`. Com ele, o F5 que estava retomando terminou. */
 function adotar(p) {
   pareamento = p;
+  restaurando = false;
   guardarId(p.id);
+  // Ligado, a chave sem resposta não serve mais: o chamado dela trocaria este AGUARDANDO, e o
+  // servidor não troca um leitor ligado (nem trocou: senão ele não teria ligado).
+  if (p.status === 'ATIVO') guardarPendencia(null);
   pintarSelo();
 }
 
+/** Sem leitor na aba: o chamado ou o QR acabou, foi cancelado, ou o leitor foi desligado. */
 function esquecer() {
   pareamento = null;
+  restaurando = false;
   ultimaNotificacao = null;
   guardarId(null);
+  // A chave sem resposta trocaria o que acabou de sair de cena: reenviada no F5, ela chamaria
+  // o celular sem ninguém ter pedido — inclusive depois de a pessoa cancelar.
+  guardarPendencia(null);
   clearTimeout(timer);
   timer = null;
   pintarSelo();
@@ -220,10 +265,11 @@ function pintarSelo() {
 
 /**
  * O leitor desta aba, para a área do chamado: o pareamento, o POST do chamado no ar
- * (`pedindo`), outro pedido no ar (`ocupado`) e como saiu a notificação do último chamado.
+ * (`pedindo`), outro pedido no ar ou o F5 retomando (`ocupado`) e como saiu a notificação do
+ * último chamado.
  */
 export function estadoDoLeitor() {
-  return { pareamento, pedindo, ocupado: ocupado || abrindo, notificacao: ultimaNotificacao };
+  return { pareamento, pedindo, ocupado: ocupado || abrindo || restaurando, notificacao: ultimaNotificacao };
 }
 
 /** Chama `fn` a cada mudança do leitor desta aba; devolve o cancelar (a tela sai de cena). */
@@ -270,7 +316,7 @@ async function umaRodada() {
     if (mudou()) return;
     if (p.status === 'ATIVO') ligou(p);
     else if (p.status === 'AGUARDANDO') pareamento = p;
-    else if (!trocando) codigoVenceu(p);
+    else if (!trocando) void aguardandoAcabou(p);
     return;
   }
 
@@ -301,7 +347,31 @@ function ligou(p) {
       ? `Celular de ${quem} ligado como leitor (sinal ${p.sinal}).`
       : `Celular de ${quem} ligado como leitor.`,
   );
-  void rodar(); // a fila que já tiver bipe sai agora (roda ao fim desta rodada)
+  // A fila que já tiver bipe sai agora (ao fim desta rodada, se há uma girando), e a próxima
+  // fica agendada: ligado pela resposta de um chamado, sem rodada nenhuma antes, a aba sem
+  // canal nunca mais retiraria a fila.
+  acordar();
+}
+
+/**
+ * O AGUARDANDO desta aba acabou no servidor (`p`). Trocado pelo chamado da pendência desta aba
+ * — "Chamar de novo" chegou e a resposta se perdeu —, o fim é a própria troca: a aba reenvia a
+ * MESMA chave e acha o chamado novo pelo replay, em vez de avisar "há leitores demais" e deixá-lo
+ * órfão. Sem essa pendência, ou com o reenvio recusado, foi por fora: o aviso de sempre.
+ */
+async function aguardandoAcabou(p) {
+  const pendente = trocadoPelaPendencia(p);
+  if (!pendente) {
+    codigoVenceu(p);
+    return;
+  }
+  const fim = await pedirChamado(pendente);
+  if (fim.tipo === 'vivo') adotarChamado(fim);
+  else if (fim.tipo === 'outra-aba') chamadoDeOutraAba(pendente, { avisar: true });
+  else if (fim.tipo === 'acabou') codigoVenceu(fim.p);
+  else if (fim.tipo === 'erro' && recusaDefinitiva(fim.erro)) codigoVenceu(p);
+  // Sem resposta: a chave fica, e a próxima rodada tenta de novo (o aviso do clique já saiu).
+  else if (fim.tipo === 'erro') pintarSelo();
 }
 
 /** O AGUARDANDO não vale mais (`p`: como o servidor o mostrou; `null`: sumiu). */
@@ -327,7 +397,7 @@ function terminou(p) {
  * caminho é "Chamar de novo", que desliga o antigo antes (e isso entra no diário).
  */
 export async function chamarCelular() {
-  if (pedindo || ocupado || abrindo) return;
+  if (ocupada()) return;
   if (pareamento?.status === 'ATIVO') {
     await chamarDeNovo();
     return;
@@ -341,7 +411,7 @@ export async function chamarCelular() {
  * o celular antigo é desligado, e o diário mostra.
  */
 export async function chamarDeNovo() {
-  if (pedindo || ocupado || abrindo) return;
+  if (ocupada()) return;
   const p = pareamento;
   if (p?.status === 'ATIVO') {
     if (!(await apagarNoServidor(p.id))) return;
@@ -350,23 +420,46 @@ export async function chamarDeNovo() {
   await chamar();
 }
 
-async function chamar({ refazer = true } = {}) {
-  const minha = geracao;
-  const pendente = lerPendencia();
-  // Chamado anterior sem resposta (a rede caiu no meio): vai a MESMA chave. Se ele chegou, o
-  // servidor devolve o que criou (e ignora o resto do pedido); se não chegou, o chamado nasce
-  // agora — e substitui o AGUARDANDO que esta aba tem AGORA, não o da primeira tentativa.
-  const reenvio = pendenciaQueVale(pendente);
+/**
+ * O clique. Chamado anterior sem resposta (a rede caiu no meio) que ainda descreve esta aba: vai
+ * a MESMA chave — se ele chegou, o servidor devolve o que criou (e ignora o resto do pedido); se
+ * não chegou, o chamado nasce agora. Senão, chave nova.
+ */
+async function chamar() {
   const substitui_id = pareamento?.status === 'AGUARDANDO' ? pareamento.id : null;
-  const pedido = reenvio
-    ? { ...pendente, substitui_id }
-    : {
-        client_uuid: novoClientUuid(),
-        substitui_id,
-        desde: Date.now(),
-        usuario_id: sessao.get().usuario?.id ?? null,
-      };
-  // ANTES do POST: o F5 no meio retoma pela chave (`retomarChamado`).
+  const pendente = pendenciaDaAba(substitui_id);
+  const fim = await pedirChamado(
+    pendente ?? {
+      client_uuid: novoClientUuid(),
+      substitui_id,
+      desde: Date.now(),
+      usuario_id: sessao.get().usuario?.id ?? null,
+    },
+  );
+  if (fim.tipo === 'vivo') adotarChamado(fim);
+  else if (fim.tipo === 'outra-aba') chamadoDeOutraAba(fim.pedido, { avisar: true });
+  // A chave reenviada era de um chamado que já acabou (ela saiu com a resposta): chama de novo,
+  // com chave nova.
+  else if (fim.tipo === 'acabou' && pendente) await chamar();
+  else if (fim.tipo === 'erro') {
+    pintarSelo();
+    falhaDoChamado(fim.erro);
+  } else if (fim.tipo !== 'saiu') pintarSelo();
+}
+
+/**
+ * O POST do chamado com a chave de `pedido`, gravada no `sessionStorage` ANTES — o F5 no meio
+ * (ou a rede que cai sem resposta) reenvia a MESMA. Devolve como terminou:
+ * - `saiu`: a sessão saiu (ou a aba recomeçou) no meio — nada a adotar (`largarChamado`);
+ * - `erro`: sem chamado. Recusado (4xx), a chave sai; sem resposta ou 5xx, ela fica: o POST pode
+ *   ter chegado;
+ * - `outra-aba`: o reenvio achou o chamado que outra aba já cuida (a cópia de "Duplicar aba"
+ *   herda a pendência) — uma aba por leitor, e esta não o adota;
+ * - `acabou`: o reenvio achou um chamado que já terminou;
+ * - `vivo`: AGUARDANDO ou ATIVO, para `adotarChamado`.
+ */
+async function pedirChamado(pedido) {
+  const minha = geracao;
   guardarPendencia(pedido);
   pedindo = true;
   trocando = true;
@@ -379,39 +472,73 @@ async function chamar({ refazer = true } = {}) {
     });
   } catch (erro) {
     if (recusaDefinitiva(erro)) guardarPendencia(null);
-    if (minha !== geracao) return;
+    if (minha !== geracao) return { tipo: 'saiu' };
     pedindo = false;
     trocando = false;
-    pintarSelo();
-    falhaDoChamado(erro);
-    return;
+    return { tipo: 'erro', erro };
+  }
+  if (minha !== geracao) {
+    largarChamado(r.pareamento, pedido);
+    return { tipo: 'saiu' };
   }
   guardarPendencia(null);
+  const p = r.pareamento;
+  const vivo = p.status === 'AGUARDANDO' || p.status === 'ATIVO';
+  // Só o replay (`notificacao` nula: a chave já tinha criado este chamado) pode ser de outra
+  // aba; o chamado que nasce agora ninguém mais conhece.
+  const deOutraAba = vivo && r.notificacao == null && (await dona().outraCuida(p.id));
   if (minha !== geracao) {
-    // A sessão saiu enquanto o celular era chamado (o molde do `gerarCodigo`): nada de adotar.
-    // Com token ainda, encerra no servidor; sem, ele vence sozinho em 5 min.
-    if (acessoAtual()) void api.delete(`/leitor/pareamentos/${r.pareamento.id}`).catch(() => {});
-    return;
+    if (!deOutraAba) largarChamado(p, pedido);
+    return { tipo: 'saiu' };
   }
   pedindo = false;
   trocando = false;
-  const p = r.pareamento;
-  if (p.status !== 'AGUARDANDO' && p.status !== 'ATIVO') {
-    // A chave reenviada era de um chamado que já acabou: chama de novo, com chave nova.
-    if (reenvio && refazer) await chamar({ refazer: false });
-    else pintarSelo();
-    return;
-  }
+  if (deOutraAba) return { tipo: 'outra-aba', p, pedido };
+  if (!vivo) return { tipo: 'acabou', p, pedido };
+  const notificacao = r.notificacao ? { situacao: r.notificacao, celulares: r.celulares ?? 0 } : null;
+  return { tipo: 'vivo', p, notificacao };
+}
+
+/**
+ * O chamado que chegou depois de a sessão sair: nada de adotar. Largado de vez — Sair leva a
+ * pendência junto —, ele é encerrado no servidor com o token que ainda houver (o molde do
+ * `gerarCodigo`); sem token, vence sozinho em 5 min. A pendência que ficou (a sessão caiu, e a
+ * mesma pessoa pode entrar de novo e retomá-la) e o que esta aba já adotou outra vez são de quem
+ * retomou: encerrar ali derrubaria o chamado que a aba acabou de achar.
+ */
+function largarChamado(p, pedido) {
+  const vivo = p?.status === 'AGUARDANDO' || p?.status === 'ATIVO';
+  if (!vivo || !acessoAtual() || pareamento?.id === p.id) return;
+  if (lerPendencia()?.client_uuid === pedido.client_uuid) return;
+  void api.delete(`/leitor/pareamentos/${p.id}`).catch(() => {});
+}
+
+/** O chamado da resposta vira o leitor desta aba: o AGUARDANDO ("chamando") ou o já atendido. */
+function adotarChamado({ p, notificacao }) {
   janela?.fechar();
   if (p.status === 'ATIVO') {
     // O reenvio achou o chamado que o celular já atendeu: é o leitor desta aba.
     ligou(p);
     return;
   }
-  ultimaNotificacao = r.notificacao ? { situacao: r.notificacao, celulares: r.celulares ?? 0 } : null;
+  ultimaNotificacao = notificacao;
   adotar(p);
   // Já: o celular com o app aberto pode ter atendido enquanto a notificação saía.
   acordar();
+}
+
+/**
+ * O reenvio achou o chamado que outra aba cuida: esta não o adota. O AGUARDANDO que ele trocou
+ * (o da pendência, se esta aba ainda o tem) também já não vale no servidor.
+ */
+function chamadoDeOutraAba(pedido, { avisar = false } = {}) {
+  restaurando = false;
+  if (pedido.substitui_id !== null && pareamento?.id === pedido.substitui_id) esquecer();
+  else {
+    if (pedido.substitui_id !== null && lerId() === pedido.substitui_id) guardarId(null);
+    pintarSelo();
+  }
+  if (avisar) aviso('Este chamado já está aberto em outra aba.', 'alerta');
 }
 
 function falhaDoChamado(erro) {
@@ -430,7 +557,7 @@ function falhaDoChamado(erro) {
  * leitor ligado: o DELETE fica fora do diário, pela regra de sempre.
  */
 export async function cancelarEspera() {
-  if (pedindo || ocupado || abrindo) return;
+  if (ocupada()) return;
   janela?.fechar();
   const p = pareamento;
   if (p?.status !== 'AGUARDANDO') return;
@@ -465,46 +592,23 @@ async function apagarNoServidor(id) {
 }
 
 /**
- * F5 (ou a aba reaberta) com um chamado sem resposta: reenvia a MESMA chave. O servidor devolve
- * o chamado que já criou (200, sem notificar de novo) — ou o cria agora, se o primeiro POST não
- * chegou. Pendência de outra pessoa ou velha demais é esquecida sem reenviar.
+ * F5 (ou a aba reaberta) com a pendência desta aba (`pendenciaDaAba`): reenvia a MESMA chave. O
+ * servidor devolve o chamado que já criou (200, sem notificar de novo) — ou o cria agora, se o
+ * primeiro POST não chegou. Não deu (recusado, sem rede, já acabou): o leitor que a aba tinha
+ * antes, se tinha (`id`).
  */
 async function retomarChamado(pendente, id) {
   const minha = geracao;
-  if (!pendenciaQueVale(pendente)) {
-    guardarPendencia(null);
-    if (id) void restaurar(id);
-    return;
-  }
-  pedindo = true;
-  pintarSelo();
-  let r = null;
-  try {
-    r = await api.post('/leitor/chamados', {
-      client_uuid: pendente.client_uuid,
-      substitui_id: pendente.substitui_id,
-    });
-    guardarPendencia(null);
-  } catch (erro) {
-    if (recusaDefinitiva(erro)) guardarPendencia(null);
-  }
-  if (minha !== geracao) return;
-  const p = r?.pareamento;
-  const vivo = p?.status === 'AGUARDANDO' || p?.status === 'ATIVO';
+  const fim = await pedirChamado(pendente);
+  if (minha !== geracao || fim.tipo === 'saiu') return;
+  if (fim.tipo === 'vivo') adotarChamado(fim);
   // Cópia de "Duplicar aba": a aba de origem já cuida deste chamado.
-  const deOutraAba = vivo && (await dona().outraCuida(p.id));
-  if (minha !== geracao) return;
-  pedindo = false;
-  if (!vivo || deOutraAba) {
-    if (deOutraAba) guardarId(null);
+  else if (fim.tipo === 'outra-aba') chamadoDeOutraAba(pendente);
+  else if (id) void restaurar(id);
+  else {
+    restaurando = false;
     pintarSelo();
-    // Não deu (recusado, sem rede, já acabou): o leitor que a aba tinha antes, se tinha.
-    if (!vivo && id) void restaurar(id);
-    return;
   }
-  ultimaNotificacao = r.notificacao ? { situacao: r.notificacao, celulares: r.celulares ?? 0 } : null;
-  adotar(p);
-  acordar();
 }
 
 // ----------------------------------------------------------------- modal do QR
@@ -538,6 +642,8 @@ async function gerarCodigo() {
   // do relógio desta máquina — que pode estar adiantado ou atrasado.
   const venceEm = Date.now() + (Date.parse(p.codigo_expira_em) - Date.parse(p.criado_em));
   ultimaNotificacao = null;
+  // O QR troca o que o chamado sem resposta trocaria: a chave dele não descreve mais esta aba.
+  guardarPendencia(null);
   adotar(p);
   agendar();
   return { p, venceEm };
@@ -557,7 +663,7 @@ function soltarJanelaSumida() {
 
 async function abrirJanela() {
   soltarJanelaSumida();
-  if (abrindo || janela || pedindo || ocupado) return;
+  if (janela || ocupada()) return;
   if (pareamento?.status === 'ATIVO') {
     void oferecerDesligar();
     return;
@@ -589,7 +695,7 @@ export const mostrarQrDoLeitor = abrirJanela;
 
 async function oferecerDesligar() {
   const p = pareamento;
-  if (p?.status !== 'ATIVO' || pedindo || ocupado) return;
+  if (p?.status !== 'ATIVO' || ocupada()) return;
   const sim = await confirmar({
     titulo: 'Celular como leitor',
     mensagem: `O celular de ${p.aparelho_nome ?? 'alguém'} está lendo códigos para este computador. Desligar?`,
@@ -608,28 +714,45 @@ export const desligarLeitorDaTela = oferecerDesligar;
 
 // ----------------------------------------------------------------- ciclo de vida
 
+/**
+ * O leitor guardado na aba (F5), se ainda vale. A área fica travada (`restaurando`) até o
+ * servidor responder; `adotar` e `esquecer` destravam.
+ */
 async function restaurar(id) {
   const minha = geracao;
+  // Uma resposta que chega depois de a aba seguir adiante não passa por cima de nada.
+  const desistiu = () => minha !== geracao || pareamento !== null;
   // Cópia de "Duplicar aba": se a aba de origem ainda cuida deste leitor, esta não o retoma.
-  if (await dona().outraCuida(id)) {
-    if (minha === geracao) guardarId(null);
+  const deOutraAba = await dona().outraCuida(id);
+  if (desistiu()) return;
+  if (deOutraAba) {
+    guardarId(null);
+    restaurando = false;
+    pintarSelo();
     return;
   }
-  if (minha !== geracao) return;
+  let p;
   try {
-    const p = await api.get(`/leitor/pareamentos/${id}`);
-    if (minha !== geracao) return;
-    if (p.status === 'ATIVO' || p.status === 'AGUARDANDO') {
-      adotar(p);
-      acordar();
-    } else {
-      esquecer();
-    }
+    p = await api.get(`/leitor/pareamentos/${id}`);
   } catch (erro) {
-    if (minha !== geracao) return;
+    if (desistiu()) return;
     if (erro instanceof ErroApi && erro.status === 404) esquecer();
-    else setTimeout(() => minha === geracao && !pareamento && restaurar(id), 5000);
+    // Sem resposta: de novo daqui a pouco, com a área ainda travada — o leitor guardado pode
+    // estar vivo, e um chamado criado agora passaria por cima dele.
+    else setTimeout(() => !desistiu() && restaurar(id), 5000);
+    return;
   }
+  if (desistiu()) return;
+  if (p.status === 'ATIVO' || p.status === 'AGUARDANDO') {
+    adotar(p);
+    acordar();
+    return;
+  }
+  // Trocado pelo chamado da pendência desta aba: o reenvio do F5 ficou sem resposta, e o POST de
+  // antes tinha chegado. A mesma chave de novo, com folga — sem martelar um servidor que falha.
+  const pendente = trocadoPelaPendencia(p);
+  if (pendente) setTimeout(() => !desistiu() && retomarChamado(pendente, id), ESPERA_DO_ACEITE_MS);
+  else esquecer();
 }
 
 /** Liga o botão e o selo da moldura recém-desenhada e retoma o leitor desta aba (F5). */
@@ -640,13 +763,18 @@ export function ligarLeitorCelular(raizDaMoldura) {
   moldura.querySelector('[data-leitor-selo]')?.addEventListener('click', () => void oferecerDesligar());
   // Na hora, sem a espera da rodada: o bipe ("leitor") tem de cair no carrinho já, e o
   // atendimento do chamado ou o aceite do QR ("leitor_pareamento") tem de acender a área já.
-  pararDeOuvir = ouvirNaHora(['leitor', 'leitor_pareamento', 'reconectado'], acordar);
+  pararDeOuvir = ouvirNaHora(ASSUNTOS_DO_LEITOR, acordar);
   document.addEventListener('rota-trocada', soltarJanelaSumida);
   dona();
   const id = lerId();
-  const pendente = lerPendencia();
+  // A chave sem resposta só volta se ainda descreve a aba (a de outra pessoa, velha ou de um
+  // estado que a aba já deixou sai aqui, sem reenviar).
+  const pendente = pendenciaDaAba(id);
+  if (!pendente && !id) return;
+  restaurando = true;
+  pintarSelo();
   if (pendente) void retomarChamado(pendente, id);
-  else if (id) void restaurar(id);
+  else void restaurar(id);
 }
 
 /** Para tudo nesta aba, sem falar com o servidor (a sessão caiu: não há mais token). */
@@ -662,6 +790,7 @@ export function pararLeitorCelular({ esquecerAba = true } = {}) {
   pedindo = false;
   ocupado = false;
   trocando = false;
+  restaurando = false;
   ultimaNotificacao = null;
   clearTimeout(timer);
   timer = null;

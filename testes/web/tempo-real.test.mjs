@@ -337,7 +337,14 @@ test('tempo-real.js: ouvirNaHora chama no instante do aviso, sem esperar a rodad
 test('tempo-real.js: o atendimento do chamado ("leitor_pareamento") também chega na hora', async () => {
   // ADR-47: "leitor" ficou só para o bipe; o celular que atende o chamado (ou aceita o QR)
   // sai como "leitor_pareamento", e a área do computador tem de dizer "ligado" sem esperar a
-  // rodada de 1 a 2 s. O assunto novo passa pelo canal como qualquer outro.
+  // rodada de 1 a 2 s. O canal sempre repassou qualquer assunto: o que muda é a inscrição do
+  // leitor, e por isso a lista vem de onde `leitor-celular.js` a tira (`ASSUNTOS_DO_LEITOR`),
+  // não daqui. A aba de fato acordando com ela está no `leitor-chamado.test.mjs`.
+  const { ASSUNTOS_DO_LEITOR } = await import('../../web/js/leitor-remoto.js');
+  assert.ok(Array.isArray(ASSUNTOS_DO_LEITOR), 'a lista do leitor existe');
+  for (const assunto of ['leitor', 'leitor_pareamento', 'reconectado']) {
+    assert.ok(ASSUNTOS_DO_LEITOR.includes(assunto), assunto);
+  }
   mock.timers.enable({ apis: ['setTimeout'] });
   try {
     const criados = [];
@@ -374,7 +381,7 @@ test('tempo-real.js: o atendimento do chamado ("leitor_pareamento") também cheg
 
     const naHora = [];
     const naRodada = [];
-    const pararNaHora = tr.ouvirNaHora(['leitor', 'leitor_pareamento', 'reconectado'], (a) => naHora.push(a));
+    const pararNaHora = tr.ouvirNaHora(ASSUNTOS_DO_LEITOR, (a) => naHora.push(a));
     const pararRodada = tr.ouvir(['leitor_pareamento'], (a) => naRodada.push(a));
 
     tr.conectarTempoReal();

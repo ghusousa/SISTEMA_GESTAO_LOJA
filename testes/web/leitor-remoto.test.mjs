@@ -763,8 +763,16 @@ test('oQueMostrar chamando: o sinal em destaque, a dica da notificação e as tr
   assert.deepEqual(rotulosDe(m), ['Chamar de novo', 'Cancelar', 'Ler o QR']);
   assert.equal(m.travado, false);
   assert.equal(oQueMostrar('chamando', { pareamento: CHAMADO, ocupado: true }).travado, true, 'cancelando');
-  // Depois do F5 a situação não vem de novo: a frase geral.
-  assert.equal(oQueMostrar('chamando', { pareamento: CHAMADO }).dica, avisoDaNotificacao(null));
+  // Depois do F5 a situação não vem de novo: a frase depende do push do servidor.
+  assert.equal(oQueMostrar('chamando', { pareamento: CHAMADO }).dica, avisoDaNotificacao('DESLIGADA'));
+  assert.equal(
+    oQueMostrar('chamando', { pareamento: CHAMADO, pushLigado: true }).dica,
+    'Toque na notificação no celular — ou abra o app: o chamado aparece lá.',
+  );
+  assert.equal(
+    oQueMostrar('chamando', { pareamento: CHAMADO, notificacao: { situacao: 'SEM_CELULAR', celulares: 0 }, pushLigado: true }).dica,
+    avisoDaNotificacao('SEM_CELULAR'),
+  );
 });
 
 test('oQueMostrar qr: esperando a leitura, com o QR de novo e o cancelar', () => {
@@ -817,11 +825,27 @@ test('avisoDaNotificacao: cada situação diz por que o celular foi avisado, ou 
     avisoDaNotificacao('FALHOU'),
     'A notificação não saiu agora: com o app aberto, o chamado aparece lá — ou leia o QR.',
   );
-  // F5 ou reenvio da mesma chave: o servidor não conta de novo; e um valor que este web não conhece.
+  // F5 ou reenvio da mesma chave: o servidor não conta de novo; e um valor que este web não
+  // conhece. Com o push ligado no servidor, a notificação pode ter saído.
   const geral = 'Toque na notificação no celular — ou abra o app: o chamado aparece lá.';
-  assert.equal(avisoDaNotificacao(null), geral);
-  assert.equal(avisoDaNotificacao(undefined), geral);
-  assert.equal(avisoDaNotificacao('OUTRA_COISA'), geral);
+  assert.equal(avisoDaNotificacao(null, { pushLigado: true }), geral);
+  assert.equal(avisoDaNotificacao(undefined, { pushLigado: true }), geral);
+  assert.equal(avisoDaNotificacao('OUTRA_COISA', { pushLigado: true }), geral);
+});
+
+test('avisoDaNotificacao: sem situação e com o push desligado (E1), nada de prometer notificação', () => {
+  // O padrão do servidor é NOTIFICACOES_PUSH=desligado: depois do F5 a área dizia "Toque na
+  // notificação" a quem nunca ia receber uma. Sem `pushLigado` (a configuração ainda não chegou,
+  // ou o servidor é antigo) vale o desligado, como no app.
+  const semPush = avisoDaNotificacao('DESLIGADA');
+  for (const situacao of [null, undefined, 'OUTRA_COISA']) {
+    assert.equal(avisoDaNotificacao(situacao, { pushLigado: false }), semPush, String(situacao));
+    assert.equal(avisoDaNotificacao(situacao), semPush, `${situacao}, sem dizer`);
+    assert.doesNotMatch(avisoDaNotificacao(situacao), /notifica/i);
+  }
+  // Com situação, o push do servidor não muda a frase: ela já diz o que aconteceu.
+  assert.equal(avisoDaNotificacao('ENVIADA', { celulares: 1, pushLigado: false }), avisoDaNotificacao('ENVIADA', { celulares: 1 }));
+  assert.equal(avisoDaNotificacao('DESLIGADA', { pushLigado: true }), semPush);
 });
 
 test('avisoDaNotificacao: o push desligado (o padrão do servidor) só fala do app aberto e do QR', () => {
@@ -832,10 +856,12 @@ test('avisoDaNotificacao: o push desligado (o padrão do servidor) só fala do a
 
 test('avisoDaNotificacao: nenhuma frase manda o dono a um passo que é de quem publica o app', () => {
   for (const situacao of ['ENVIADA', 'SEM_CELULAR', 'SEM_NOTIFICACAO', 'DESLIGADA', 'SEM_CHAVE_DA_APPLE', 'FALHOU', null]) {
-    const frase = avisoDaNotificacao(situacao, { celulares: 1 });
-    assert.doesNotMatch(frase, /\bdono\b|README|mobile\/|publicar\/|APNs|Expo/i, `${situacao}: ${frase}`);
-    // Toda frase deixa um caminho que funciona sem a notificação.
-    assert.match(frase, /abra|aberto|QR/, `${situacao}: ${frase}`);
+    for (const pushLigado of [false, true]) {
+      const frase = avisoDaNotificacao(situacao, { celulares: 1, pushLigado });
+      assert.doesNotMatch(frase, /\bdono\b|README|mobile\/|publicar\/|APNs|Expo/i, `${situacao}: ${frase}`);
+      // Toda frase deixa um caminho que funciona sem a notificação.
+      assert.match(frase, /abra|aberto|QR/, `${situacao}: ${frase}`);
+    }
   }
 });
 

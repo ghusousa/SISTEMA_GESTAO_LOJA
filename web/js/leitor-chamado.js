@@ -20,6 +20,7 @@ import {
   mostrarQrDoLeitor,
 } from './leitor-celular.js';
 import { estadoDoChamado, oQueMostrar } from './leitor-remoto.js';
+import { aoMudarLoja, loja } from './loja.js';
 import { avisarErro, html } from './ui.js';
 
 /** O `data-acao` de cada botão e o que ele faz. */
@@ -80,7 +81,9 @@ export function ligarBotaoDoCelular(caixa) {
   function pintar() {
     const leitor = estadoDoLeitor();
     const estado = estadoDoChamado(leitor);
-    const m = oQueMostrar(estado, leitor);
+    // A dica do chamado sem situação (F5, replay) depende de o servidor mandar notificação: com o
+    // push desligado (o padrão), a área não promete uma notificação que não vem.
+    const m = oQueMostrar(estado, { ...leitor, pushLigado: loja().notificacoes_push === true });
     caixa.dataset.estado = estado;
     // Só o que mudou: repintar igual faria o leitor de tela repetir a frase, e refazer os
     // botões tiraria o foco de quem usa o teclado.
@@ -108,9 +111,12 @@ export function ligarBotaoDoCelular(caixa) {
 
   caixa.addEventListener('click', aoClicar);
   const pararDeOuvir = aoMudarOLeitor(pintar);
+  // `GET /configuracao` (com o `notificacoes_push`) pode chegar depois da área pintada.
+  const pararDeOuvirALoja = aoMudarLoja(pintar);
   pintar();
   return () => {
     pararDeOuvir();
+    pararDeOuvirALoja();
     caixa.removeEventListener('click', aoClicar);
   };
 }

@@ -80,11 +80,25 @@ export function comportamentoNoPrimeiroPlano(dados: unknown): Comportamento {
 }
 
 /**
+ * O modo do push no servidor, como o `GET /configuracao` diz:
+ * - `ligado`: `notificacoes_push: true`;
+ * - `desligado`: o campo veio, sem `true` (servidor da ADR-47 com o push desligado, o padrão);
+ * - `servidor-antigo`: o campo NÃO veio — servidor de antes da ADR-47, que nem tem o chamado.
+ *   A tela do leitor não promete nada nele: o chamado não existe lá (só o QR).
+ */
+export type PushDoServidor = 'ligado' | 'desligado' | 'servidor-antigo';
+
+export function lerPushDoServidor(configuracao: { notificacoes_push?: unknown } | null | undefined): PushDoServidor {
+  if (!configuracao || !('notificacoes_push' in configuracao)) return 'servidor-antigo';
+  return configuracao.notificacoes_push === true ? 'ligado' : 'desligado';
+}
+
+/**
  * O servidor manda push? Só com `true` de verdade: servidor antigo não manda o campo, e na
  * dúvida o app não pede permissão para algo que não vai chegar.
  */
 export function pushDoServidor(configuracao: { notificacoes_push?: unknown } | null | undefined): boolean {
-  return configuracao?.notificacoes_push === true;
+  return lerPushDoServidor(configuracao) === 'ligado';
 }
 
 interface Aparelho {
@@ -133,22 +147,31 @@ export function comoRegistrar({ permissao, ...aparelho }: Aparelho & { permissao
 /**
  * A linha das notificações na tela do leitor (Mais → Leitor do computador).
  * - `lendo`: ainda sem saber (a configuração ou a permissão não chegou) — nada na tela;
+ * - `servidor-antigo`: servidor de antes da ADR-47 — nada na tela: lá não há chamado nenhum;
  * - `servidor-sem-push`: o servidor da loja não manda push — o chamado vem com o app aberto;
  * - `sem-suporte`: Android, Expo Go, web — idem, por causa do aparelho;
  * - `pedir`: o sistema já perguntou na abertura da tela; se a pessoa só fechou o alerta, a
  *   linha some até a próxima vez (sem tela do app com "Permitir": 5.1.1);
  * - `liberada` e `abrir-ajustes` (recusada: só os Ajustes do aparelho ligam de novo).
  */
-export type SituacaoNaTela = 'lendo' | 'servidor-sem-push' | 'sem-suporte' | 'pedir' | 'liberada' | 'abrir-ajustes';
+export type SituacaoNaTela =
+  | 'lendo'
+  | 'servidor-antigo'
+  | 'servidor-sem-push'
+  | 'sem-suporte'
+  | 'pedir'
+  | 'liberada'
+  | 'abrir-ajustes';
 
 export function situacaoNaTela({
-  pushNoServidor,
+  push,
   permissao,
   ...aparelho
-}: Omit<Aparelho, 'pushNoServidor'> & { pushNoServidor: boolean | null; permissao: Permissao | null }): SituacaoNaTela {
-  if (pushNoServidor === null) return 'lendo';
-  if (!pushNoServidor) return 'servidor-sem-push';
-  if (!podeReceberPush({ ...aparelho, pushNoServidor })) return 'sem-suporte';
+}: Omit<Aparelho, 'pushNoServidor'> & { push: PushDoServidor | null; permissao: Permissao | null }): SituacaoNaTela {
+  if (push === null) return 'lendo';
+  if (push === 'servidor-antigo') return 'servidor-antigo';
+  if (push === 'desligado') return 'servidor-sem-push';
+  if (!podeReceberPush({ ...aparelho, pushNoServidor: true })) return 'sem-suporte';
   if (permissao === null) return 'lendo';
   if (permissao === 'liberada') return 'liberada';
   return permissao === 'negada' ? 'abrir-ajustes' : 'pedir';
@@ -168,6 +191,8 @@ export function avisoDasNotificacoes(situacao: SituacaoNaTela): { texto: string;
       return { texto: 'Neste aparelho o chamado só aparece com o app aberto.', botao: null };
     case 'servidor-sem-push':
       return { texto: 'O chamado do computador aparece aqui com o app aberto.', botao: null };
+    // Servidor antigo: prometer o chamado seria mentir — lá só existe o QR.
+    case 'servidor-antigo':
     default:
       return null;
   }
@@ -249,4 +274,55 @@ export function precisaRegistrarDeNovo({
   if (agora - ultimo.hora > UMA_HORA_MS) return true;
   if (push !== null && push !== ultimo.push) return true;
   return permissao !== null && permissao !== ultimo.permissao;
+}
+
+/**
+ * A configuração do servidor acabou de chegar (o tempo real a refaz a cada "conectado" e na
+ * volta ao app): registra de novo? Só quando o modo do push MUDOU desde o registro que vale, e
+ * só onde isso muda o que o app manda (o iPhone, fora do Expo Go). Foi o que faltava: o dono
+ * religa o push, a API reinicia, o app reconecta e lê `true` — e o token só voltava ao servidor
+ * na próxima ida ao fundo. Religação sem mudança não registra (na Vercel o socket cai a cada
+ * `maxDuration`, e cada uma viraria um PUT).
+ * `registrado`: o push do último registro (ou do que está no ar, se ele já leu o dele); `null`
+ * — nada registrado nesta sessão — fica com a abertura da sessão, que já registra.
+ */
+export function registrarPelaConfiguracao({
+  registrado,
+  push,
+  ...aparelho
+}: Omit<Aparelho, 'pushNoServidor'> & { registrado: boolean | null; push: boolean | null }): boolean {
+  if (registrado === null || push === null || push === registrado) return false;
+  return podeReceberPush({ ...aparelho, pushNoServidor: push }) || podeReceberPush({ ...aparelho, pushNoServidor: registrado });
+}
+
+/**
+ * A validade da limpeza pendente (o `DELETE` que a saída sem rede deixou para depois): a mesma
+ * faxina do servidor, que leva o aparelho sem registro há 30 dias. Passado isso, não há o que
+ * apagar lá — e um servidor que deixou de existir não fica sendo tentado para sempre.
+ */
+export const VALIDADE_DA_LIMPEZA_MS = 30 * 24 * 60 * 60_000;
+
+/**
+ * O que fazer com a limpeza pendente na abertura do app:
+ * - `descartar`: passou da validade (ou o relógio a marcou absurda);
+ * - `antes-do-registro`: é do servidor de AGORA — vai antes do registro, senão o `DELETE` que
+ *   chegasse depois do `PUT` apagaria o registro novo;
+ * - `ao-lado`: é de OUTRO servidor (o app trocou de endereço; o de antes pode nem existir mais):
+ *   corre sem segurar o registro deste, que não tem nada com ela (a instalação muda junto com o
+ *   endereço). Antes, o registro esperava até o teto de 10 s dela, a cada abertura.
+ */
+export type DestinoDaLimpeza = 'descartar' | 'antes-do-registro' | 'ao-lado';
+
+export function destinoDaLimpeza({
+  pendente,
+  base,
+  agora,
+}: {
+  pendente: { base: string; em: number };
+  base: string;
+  agora: number;
+}): DestinoDaLimpeza {
+  const idade = agora - pendente.em;
+  if (!Number.isFinite(idade) || Math.abs(idade) > VALIDADE_DA_LIMPEZA_MS) return 'descartar';
+  return pendente.base === base ? 'antes-do-registro' : 'ao-lado';
 }

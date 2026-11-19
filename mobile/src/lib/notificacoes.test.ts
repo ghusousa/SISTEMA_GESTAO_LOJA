@@ -12,19 +12,23 @@ import {
   avisoDasNotificacoes,
   comoRegistrar,
   comportamentoNoPrimeiroPlano,
+  destinoDaLimpeza,
   ehChamadoDoLeitor,
   instanteDaNotificacao,
   lerPermissao,
+  lerPushDoServidor,
   MAX_TOKEN,
   podeReceberPush,
   PRAZO_DA_RESPOSTA_MS,
   precisaRegistrarDeNovo,
   pushDoServidor,
+  registrarPelaConfiguracao,
   respostaAindaVale,
   situacaoNaTela,
   tokenValido,
   trocaDoTokenDoAparelho,
   UMA_HORA_MS,
+  VALIDADE_DA_LIMPEZA_MS,
   type UltimoRegistro,
 } from './notificacoes';
 
@@ -132,20 +136,49 @@ test('servidor sem push (E1): registra sem token mesmo com a permissão dada', (
 
 test('a linha da tela do leitor, estado por estado', () => {
   const ios = { plataforma: 'ios', expoGo: false };
-  assert.equal(situacaoNaTela({ ...ios, pushNoServidor: null, permissao: null }), 'lendo');
-  assert.equal(situacaoNaTela({ ...ios, pushNoServidor: false, permissao: null }), 'servidor-sem-push');
-  assert.equal(situacaoNaTela({ ...ios, pushNoServidor: false, permissao: 'liberada' }), 'servidor-sem-push');
-  assert.equal(situacaoNaTela({ ...ios, pushNoServidor: true, permissao: null }), 'lendo');
-  assert.equal(situacaoNaTela({ ...ios, pushNoServidor: true, permissao: 'liberada' }), 'liberada');
-  assert.equal(situacaoNaTela({ ...ios, pushNoServidor: true, permissao: 'negada' }), 'abrir-ajustes');
-  assert.equal(situacaoNaTela({ ...ios, pushNoServidor: true, permissao: 'indefinida' }), 'pedir');
+  assert.equal(situacaoNaTela({ ...ios, push: null, permissao: null }), 'lendo');
+  assert.equal(situacaoNaTela({ ...ios, push: 'desligado', permissao: null }), 'servidor-sem-push');
+  assert.equal(situacaoNaTela({ ...ios, push: 'desligado', permissao: 'liberada' }), 'servidor-sem-push');
+  assert.equal(situacaoNaTela({ ...ios, push: 'ligado', permissao: null }), 'lendo');
+  assert.equal(situacaoNaTela({ ...ios, push: 'ligado', permissao: 'liberada' }), 'liberada');
+  assert.equal(situacaoNaTela({ ...ios, push: 'ligado', permissao: 'negada' }), 'abrir-ajustes');
+  assert.equal(situacaoNaTela({ ...ios, push: 'ligado', permissao: 'indefinida' }), 'pedir');
   for (const aparelho of [
     { plataforma: 'android', expoGo: false },
     { plataforma: 'ios', expoGo: true },
     { plataforma: 'web', expoGo: false },
   ]) {
-    assert.equal(situacaoNaTela({ ...aparelho, pushNoServidor: true, permissao: null }), 'sem-suporte');
+    assert.equal(situacaoNaTela({ ...aparelho, push: 'ligado', permissao: null }), 'sem-suporte');
   }
+});
+
+test('o modo do push: campo AUSENTE é servidor antigo, diferente de `false` (servidor novo sem push)', () => {
+  assert.equal(lerPushDoServidor({ notificacoes_push: true }), 'ligado');
+  assert.equal(lerPushDoServidor({ notificacoes_push: false }), 'desligado');
+  // Veio, mas torto: o servidor é novo, e o push não está ligado.
+  for (const valor of ['true', 1, null, undefined]) {
+    assert.equal(lerPushDoServidor({ notificacoes_push: valor }), 'desligado', String(valor));
+  }
+  assert.equal(lerPushDoServidor({}), 'servidor-antigo');
+  assert.equal(lerPushDoServidor({ nome: 'Loja', segmento: 'ROUPAS' } as { notificacoes_push?: unknown }), 'servidor-antigo');
+});
+
+test('servidor antigo (sem o campo): a tela do leitor não promete o chamado — nenhuma linha', () => {
+  // App novo, VPS ainda sem a ADR-47: lá o computador nem tem o botão do chamado.
+  const ios = { plataforma: 'ios', expoGo: false };
+  for (const aparelho of [ios, { plataforma: 'android', expoGo: false }, { plataforma: 'web', expoGo: false }]) {
+    for (const permissao of [null, 'liberada', 'negada', 'indefinida'] as const) {
+      const situacao = situacaoNaTela({ ...aparelho, push: lerPushDoServidor({}), permissao });
+      assert.equal(situacao, 'servidor-antigo', `${aparelho.plataforma}/${permissao}`);
+      assert.equal(avisoDasNotificacoes(situacao), null);
+    }
+  }
+  // O servidor novo com o push desligado continua dizendo a verdade: com o app aberto, chega.
+  assert.equal(
+    avisoDasNotificacoes(situacaoNaTela({ ...ios, push: lerPushDoServidor({ notificacoes_push: false }), permissao: null }))
+      ?.texto,
+    'O chamado do computador aparece aqui com o app aberto.',
+  );
 });
 
 test('o texto da linha: recusada leva aos Ajustes; o resto só informa; pedir e lendo não mostram nada', () => {
@@ -235,4 +268,68 @@ test('volta ao app: registra de novo só quando há motivo', () => {
   assert.equal(precisaRegistrarDeNovo({ ...igual, push: false }), true, 'o servidor desligou o push');
   assert.equal(precisaRegistrarDeNovo({ ...igual, permissao: 'negada' }), true, 'foi aos Ajustes');
   assert.equal(precisaRegistrarDeNovo({ ...igual, push: null, permissao: null }), false, 'não saber não é motivo');
+});
+
+test('o dono religou o push: a configuração que chega com OUTRO modo registra de novo no iPhone', () => {
+  const ios = { plataforma: 'ios', expoGo: false };
+  // Registrado com o push desligado (token apagado no servidor); a configuração nova diz ligado.
+  assert.equal(registrarPelaConfiguracao({ ...ios, registrado: false, push: true }), true);
+  // E o contrário: desligou — o PUT com token null apaga o token guardado.
+  assert.equal(registrarPelaConfiguracao({ ...ios, registrado: true, push: false }), true);
+});
+
+test('religação do tempo real sem mudança no push não registra (a Vercel derruba o socket sempre)', () => {
+  const ios = { plataforma: 'ios', expoGo: false };
+  assert.equal(registrarPelaConfiguracao({ ...ios, registrado: true, push: true }), false);
+  assert.equal(registrarPelaConfiguracao({ ...ios, registrado: false, push: false }), false);
+  // Sem servidor agora: nada a decidir.
+  assert.equal(registrarPelaConfiguracao({ ...ios, registrado: true, push: null }), false);
+  // Nada registrado nesta sessão: quem registra é a abertura da sessão (senão, PUT dobrado no login).
+  assert.equal(registrarPelaConfiguracao({ ...ios, registrado: null, push: true }), false);
+});
+
+test('onde o push não existe (Android sem FCM, Expo Go, web), o modo do servidor não muda o registro', () => {
+  for (const aparelho of [
+    { plataforma: 'android', expoGo: false },
+    { plataforma: 'ios', expoGo: true },
+    { plataforma: 'web', expoGo: false },
+  ]) {
+    assert.equal(registrarPelaConfiguracao({ ...aparelho, registrado: false, push: true }), false, aparelho.plataforma);
+    assert.equal(registrarPelaConfiguracao({ ...aparelho, registrado: true, push: false }), false, aparelho.plataforma);
+  }
+});
+
+test('o toque com o iPhone já liberado e o último registro feito com o push desligado: registra', () => {
+  // É o que o "Abrir o leitor" e a tela do leitor conferem (pushDoLeitor → registro.conferir).
+  const desligado: UltimoRegistro = { base: 'https://loja.x', push: false, permissao: null, hora: 1_000_000 };
+  assert.equal(
+    precisaRegistrarDeNovo({ ultimo: desligado, agora: desligado.hora + 60_000, base: desligado.base, push: true, permissao: 'liberada' }),
+    true,
+  );
+  const ligado: UltimoRegistro = { ...desligado, push: true, permissao: 'liberada' };
+  assert.equal(
+    precisaRegistrarDeNovo({ ultimo: ligado, agora: ligado.hora + 60_000, base: ligado.base, push: true, permissao: 'liberada' }),
+    false,
+    'o toque de sempre, com o registro em dia, não manda PUT',
+  );
+});
+
+test('limpeza pendente: a do servidor de agora vai ANTES do registro; a de outro corre ao lado', () => {
+  const agora = 1_763_560_000_000;
+  const pendente = { base: 'http://192.168.0.10:8000', em: agora - 60_000 };
+  assert.equal(destinoDaLimpeza({ pendente, base: 'http://192.168.0.10:8000', agora }), 'antes-do-registro');
+  // Trocou de servidor (o de antes pode nem existir mais): o registro do novo não espera por ela.
+  assert.equal(destinoDaLimpeza({ pendente, base: 'https://loja.x', agora }), 'ao-lado');
+});
+
+test('limpeza pendente vale 30 dias (a faxina do servidor); depois, sai sem ser tentada', () => {
+  const agora = 1_763_560_000_000;
+  const base = 'https://loja.x';
+  assert.equal(VALIDADE_DA_LIMPEZA_MS, 30 * 24 * 60 * 60 * 1000);
+  assert.equal(destinoDaLimpeza({ pendente: { base, em: agora - VALIDADE_DA_LIMPEZA_MS }, base, agora }), 'antes-do-registro', 'no limite ainda vale');
+  assert.equal(destinoDaLimpeza({ pendente: { base, em: agora - VALIDADE_DA_LIMPEZA_MS - 1 }, base, agora }), 'descartar');
+  assert.equal(destinoDaLimpeza({ pendente: { base: 'http://outro', em: agora - 31 * 86_400_000 }, base, agora }), 'descartar');
+  // Relógio absurdo (data do ano 2100) e data ilegível: não fica sendo tentada para sempre.
+  assert.equal(destinoDaLimpeza({ pendente: { base, em: agora + 400 * 86_400_000 }, base, agora }), 'descartar');
+  assert.equal(destinoDaLimpeza({ pendente: { base, em: Number.NaN }, base, agora }), 'descartar');
 });
