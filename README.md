@@ -184,10 +184,14 @@ subir antes da hora deixaria a loja sem HTTPS por uma hora). Ele descobre o IP p
 e, se o nome ainda não aponta para ela, diz exatamente o que criar no painel do domínio:
 
 ```
-  ! Crie no painel do domínio:   Tipo A  ·  Nome loja  ·  Valor 203.0.113.10
+  ! Crie no painel do domínio:   Tipo A  ·  Nome loja — o registro completo é loja.minhaloja.com.br  ·  Valor 203.0.113.10
   O certificado HTTPS só sai com o DNS certo. Conferindo de novo a cada 15 s —
   tecle Enter para seguir sem esperar (o que faltar volta no fim).
 ```
+
+No campo **Nome** vai só o pedaço antes do domínio registrado (`@` para ele mesmo); o nome
+completo ao lado é para conferir com o painel — posto no campo, muito painel o repete e cria
+`loja.minhaloja.com.br.minhaloja.com.br`.
 
 Se houver um registro **AAAA** (IPv6) levando a outra máquina, ele manda apagar — o Let's Encrypt
 tenta o IPv6 primeiro. Com `--sim` ele não espera: a pendência volta no resumo do fim. Um registro

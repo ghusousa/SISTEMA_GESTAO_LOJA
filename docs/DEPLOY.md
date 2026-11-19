@@ -41,10 +41,12 @@ de cada separação está na ADR-46 de [ARQUITETURA.md](ARQUITETURA.md).
   tentativas que falham — e, se faltar, mostra o registro exato para o painel do domínio:
 
   ```
-  ! Crie no painel do domínio:   Tipo A  ·  Nome loja  ·  Valor 203.0.113.10
+  ! Crie no painel do domínio:   Tipo A  ·  Nome loja — o registro completo é loja.minhaloja.com.br  ·  Valor 203.0.113.10
   ```
 
-  e manda apagar um **AAAA** que leve a outra máquina (o Let's Encrypt tenta o IPv6 primeiro). No
+  (no campo Nome, só o `loja`, ou `@`; o nome completo é para conferir — no `.br` o domínio
+  registrado sempre leva a categoria, `minhaloja.com.br`, `minhaloja.tec.br`...) e manda apagar um
+  **AAAA** que leve a outra máquina (o Let's Encrypt tenta o IPv6 primeiro). No
   terminal, ele espera conferindo a cada 15 s (Enter segue sem esperar); com `--sim`, não espera e
   repete a pendência no resumo do fim.
 - **O endereço.** A loja fica em `https://<domínio>/app/` e a demonstração em

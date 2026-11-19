@@ -379,15 +379,22 @@ enderecos_do_dominio() {  # enderecos_do_dominio <4|6> <domínio>
 }
 
 # O "Nome" que o painel do domínio pede: a parte antes do domínio registrado ("loja" em
-# loja.seudominio.com.br), ou "@" para ele mesmo. Registrado são os dois últimos pedaços —
-# ou três, quando o penúltimo é um genérico de país (com.br, net.br, co.uk...).
+# loja.seudominio.com.br), ou "@" para ele mesmo. Registrado são os dois últimos pedaços — ou
+# três, quando o penúltimo é uma categoria do país. No .br, qualquer um: lá não se registra
+# direto sob o .br, só sob uma categoria (com.br, tec.br, app.br, adv.br, log.br...), e uma
+# lista delas sempre ficava para trás — o tec.br que faltava mandava criar "minhaloja" na zona
+# minhaloja.tec.br, o nome em dobro. Nos outros países, os genéricos (co.uk, me.uk, com.au...).
 nome_no_painel() {
     local -a p
     local n raiz=2
     IFS=. read -r -a p <<< "$1"
     n=${#p[@]}
-    if [ "$n" -ge 3 ] && [ "${#p[n-1]}" -eq 2 ]; then
-        case "${p[n-2]}" in com|net|org|gov|edu|mil|co|ac|art|blog|eco|emp|ind|inf|nom|tur) raiz=3 ;; esac
+    if [ "$n" -ge 3 ]; then
+        case "${p[n-2]}.${p[n-1]}" in
+            *.br|me.uk|ltd.uk|plc.uk) raiz=3 ;;
+            com.??|net.??|org.??|gov.??|edu.??|mil.??|co.??|ac.??) raiz=3 ;;
+            art.??|blog.??|eco.??|emp.??|ind.??|inf.??|nom.??|tur.??) raiz=3 ;;
+        esac
     fi
     if [ "$n" -le "$raiz" ]; then printf '@'; return 0; fi
     local IFS=.
@@ -407,7 +414,9 @@ MEU_IPV4=""; MEU_IPV6=""; PERGUNTOU_IPV4=0; PERGUNTOU_IPV6=0
 avaliar_dns() {
     local v4 v6 nome outros a
     PENDENCIAS_DNS=(); DNS_NOTA=""
-    nome="$(nome_no_painel "$DOMINIO")"
+    # Ao lado do "Nome", o nome inteiro, para conferir com o painel — nunca ele NO campo: muito
+    # painel acrescenta a zona sozinho, e o registro nasceria com o nome em dobro.
+    nome="$(nome_no_painel "$DOMINIO") — o registro completo é $DOMINIO"
     if [ "$PERGUNTOU_IPV4" -eq 0 ]; then MEU_IPV4="$(ip_desta_maquina 4 || true)"; PERGUNTOU_IPV4=1; fi
     v4="$(enderecos_do_dominio 4 "$DOMINIO")"
     v6="$(enderecos_do_dominio 6 "$DOMINIO")"

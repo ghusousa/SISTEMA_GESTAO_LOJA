@@ -1273,7 +1273,8 @@ async def test_dns_errado_diz_o_registro_e_repete_no_resumo(tmp_path: Path) -> N
     r = _instalar(loja, env, "loja.seudominio.com.br")
 
     assert r.returncode == 0, _saida(r, loja)
-    registro = "Tipo A  ·  Nome loja  ·  Valor 203.0.113.10"
+    # Ao lado do "Nome", o nome inteiro, para a pessoa conferir com o painel.
+    registro = "Tipo A  ·  Nome loja — o registro completo é loja.seudominio.com.br  ·  Valor 203.0.113.10"
     assert r.stdout.count(registro) == 2, _saida(r, loja)
     assert "aponta para 198.51.100.7, não para este servidor" in r.stdout
     assert r.stdout.count("Apague o registro AAAA de loja.seudominio.com.br (2001:db8::99)") == 2
@@ -1283,7 +1284,7 @@ async def test_dns_errado_diz_o_registro_e_repete_no_resumo(tmp_path: Path) -> N
 
     _dns(tmp_path, ip="203.0.113.10", v4=())
     sem_registro = _instalar(loja, env, "loja.seudominio.com.br", "--forcar")
-    assert "Crie no painel do domínio:   Tipo A  ·  Nome loja  ·  Valor 203.0.113.10" in sem_registro.stdout
+    assert f"Crie no painel do domínio:   {registro}" in sem_registro.stdout
 
     _dns(tmp_path, ip="203.0.113.10", v4=("203.0.113.10",), v6=("2001:db8::10",), ip6="2001:db8::10")
     certo = _instalar(loja, env, "loja.seudominio.com.br", "--forcar")
@@ -1337,10 +1338,34 @@ def _nome_no_painel(dominio: str) -> str:
     ("loja.seudominio.com.br", "loja"), ("seudominio.com.br", "@"), ("loja.exemplo.com", "loja"),
     ("exemplo.com", "@"), ("a.b.loja.com.br", "a.b"), ("loja.exemplo.co.uk", "loja"),
     ("vendas.loja.net.br", "vendas"),
+    # No .br não se registra direto sob o TLD: o segundo nível é sempre uma categoria — e as
+    # que não estavam na lista mandavam criar o nome em dobro (minhaloja.minhaloja.tec.br).
+    ("minhaloja.tec.br", "@"), ("loja.minhaloja.tec.br", "loja"), ("minhaloja.app.br", "@"),
+    ("minhaloja.dev.br", "@"), ("escritorio.adv.br", "@"), ("entregas.log.br", "@"),
+    ("a.b.minhaloja.blog.br", "a.b"),
+    # As categorias do .uk além do co.uk; um país sem categoria continua com dois pedaços.
+    ("minhaloja.me.uk", "@"), ("loja.minhaloja.me.uk", "loja"), ("loja.empresa.org.uk", "loja"),
+    ("empresa.ltd.uk", "@"), ("empresa.plc.uk", "@"), ("loja.empresa.net.uk", "loja"),
+    ("loja.exemplo.de", "loja"),
 ])
 async def test_o_nome_do_registro_e_o_que_o_painel_pede(dominio: str, nome: str) -> None:
     """O painel do domínio pede o pedaço antes do domínio registrado (ou @ para ele mesmo)."""
     assert _nome_no_painel(dominio) == nome
+
+
+@precisa_do_bash
+async def test_dns_num_tec_br_pede_o_arroba_e_mostra_o_nome_inteiro(tmp_path: Path) -> None:
+    """Na zona minhaloja.tec.br, "Nome minhaloja" criava minhaloja.minhaloja.tec.br: o DNS nunca
+    ficava certo e o certificado não saía. Agora o recado pede o @ e mostra ao lado o nome
+    inteiro do registro, para conferir com o painel (e não para pôr NO campo)."""
+    loja, env = _instalador(tmp_path)
+    _dns(tmp_path, ip="203.0.113.10", v4=())
+
+    r = _instalar(loja, env, "minhaloja.tec.br")
+
+    assert r.returncode == 0, _saida(r, loja)
+    assert ("Crie no painel do domínio:   Tipo A  ·  Nome @ — o registro completo é minhaloja.tec.br"
+            "  ·  Valor 203.0.113.10") in r.stdout, _saida(r, loja)
 
 
 @precisa_do_git
