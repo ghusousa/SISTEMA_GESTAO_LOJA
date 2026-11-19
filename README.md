@@ -291,9 +291,11 @@ tocar em nada.
 **A demonstração vem depois, e nunca decide nada.** Primeiro a loja sobe e é conferida — por
 dentro e pelo endereço de verdade, passando pelo proxy (se o `Caddyfile` mudou, ele é conferido e
 recarregado antes). Só então, com a demonstração ligada, ela sobe; se não subir, você recebe um
-aviso e a loja continua atualizada e no ar. Se a atualização for desfeita, a demonstração volta do
-zero com a versão de antes (ela é descartável). O `./atualizar.sh` nunca liga a demonstração numa
-loja que ainda não a tinha: para isso, `./demo.sh --ligar`.
+aviso e a loja continua atualizada e no ar. Se a atualização for desfeita, a demonstração fica
+como estava: ela nunca rodou a versão desfeita, e nada dela é apagado. Se a versão desfeita a
+tirou do ar, a volta atrás a sobe de novo, com os mesmos dados, e você recebe um aviso se ela não
+subir. O `./atualizar.sh` nunca liga a demonstração numa loja que ainda não a tinha: para isso,
+`./demo.sh --ligar`.
 
 | Opção | Para quê |
 |---|---|
