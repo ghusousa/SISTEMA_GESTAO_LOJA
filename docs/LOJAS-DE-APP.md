@@ -142,7 +142,7 @@ Nenhuma imagem é enviada a terceiros: a foto vai para o servidor da sua loja e 
 
 PRIVACIDADE
 Sem anúncios, sem analytics, sem rastreamento, sem venda e sem compartilhamento de dados com terceiros. Tudo o que o app registra fica no servidor da sua loja. Pela LGPD, a loja que hospeda o servidor é a CONTROLADORA dos dados; o fornecedor do software atua como OPERADOR, e apenas quando presta suporte.
-Dúvidas sobre dados pessoais: privacidade@sistemaobras.com.br
+Dúvidas sobre dados pessoais: ghusousa@gmail.com
 
 REQUISITOS
 Android 7.0 ou superior; conexão com o servidor da loja (rede local ou internet); conta criada pela loja.
@@ -196,7 +196,7 @@ O app **não obriga HTTPS hoje**. Em `mobile/src/api/servidor.ts`, `normalizarEn
 
 Dois caminhos honestos:
 
-- **A (recomendado):** exigir HTTPS antes de publicar — `normalizarEndereco()` passa a assumir `https://`, remova `usesCleartextTraffic` (ou restrinja o texto claro a IPs privados por Network Security Config) e trate `http://` como endereço inválido. Feito isso, **marque "Sim"** com tranquilidade, já que `https://sistemaobras.com.br` tem certificado válido.
+- **A (recomendado):** exigir HTTPS antes de publicar — `normalizarEndereco()` passa a assumir `https://`, remova `usesCleartextTraffic` (ou restrinja o texto claro a IPs privados por Network Security Config) e trate `http://` como endereço inválido. Feito isso, **marque "Sim"** com tranquilidade: o servidor da loja com domínio sai em HTTPS, com certificado válido (Caddy na instalação, ADR-46; a Vercel já serve em HTTPS).
 - **B:** manter como está e **marcar "Não"**. O Play passa a exibir "Os dados não são criptografados" na ficha — péssimo cartão de visita para um app que mexe com dinheiro e CPF.
 
 ### 4.5 Texto para a página de exclusão de dados (a URL vai no formulário)
@@ -211,7 +211,7 @@ da loja que usa o sistema — é a loja que decide o que guardar e por quanto te
 Para excluir a sua conta: no aplicativo, toque em Mais > Minha conta > Excluir minha
 conta, confirme com a sua senha, e pronto (no computador, Minha conta). O dono ou o
 gerente da loja também excluem a conta de alguém da equipe em Mais > Usuários > Excluir
-conta. Sem acesso ao aplicativo, escreva para privacidade@sistemaobras.com.br e
+conta. Sem acesso ao aplicativo, escreva para ghusousa@gmail.com e
 encaminhamos o pedido ao responsável pela loja. Cadastros de clientes do crediário são
 excluídos pela própria loja.
 
@@ -260,7 +260,7 @@ Ainda na aba "Conteúdo do app", duas declarações vizinhas que derrubam envio 
   3. Ferramentas para pequenas empresas
   4. Vendas
   5. Faturamento e cobrança / Contas a receber
-- **E-mail de contato:** `privacidade@sistemaobras.com.br` (o mesmo pode servir de suporte, ou crie `suporte@`)
+- **E-mail de contato:** `ghusousa@gmail.com` (o mesmo serve de suporte)
 - **Política de privacidade (URL obrigatória):** a do servidor de demonstração, `<servidor>/privacidade`, e a página de exclusão de dados em `<servidor>/exclusao-de-dados` — as mesmas do começo deste documento (hoje, as da Vercel). Trocou de servidor? Troque as duas aqui antes de desligar o antigo.
 
 ---
@@ -269,7 +269,7 @@ Ainda na aba "Conteúdo do app", duas declarações vizinhas que derrubam envio 
 
 1. **HTTPS obrigatório** — item 4.4. É o único ponto em que a ficha, do jeito que o app está hoje, seria imprecisa. Arquivos: `/home/user/SISTEMA_GESTAO_LOJA/mobile/src/api/servidor.ts` (função `normalizarEndereco`, que hoje faz `texto = \`http://${texto}\``) e `/home/user/SISTEMA_GESTAO_LOJA/mobile/app.json` (`expo-build-properties` → `usesCleartextTraffic: true`).
 2. **Android mínimo** — a descrição diz "Android 7.0 ou superior", que é o `minSdkVersion 24` do Expo SDK 54 / RN 0.81. Confirme no `build.gradle` gerado pelo prebuild e ajuste o texto se o EAS subir esse piso.
-3. **E-mail `privacidade@sistemaobras.com.br`** — confirmar com o dono que a caixa existe e é lida; o Play envia verificação para o e-mail de contato.
+3. **E-mail `ghusousa@gmail.com`** — é a caixa do dono, lida por ele; o Play envia verificação para o e-mail de contato.
 4. **Nome de exibição** — se optar por "Gestão de Loja: Estoque e PDV" na ficha, mantenha `name: "Gestão de Loja"` no `app.json` (é o nome sob o ícone) para não ficar um nome comprido no launcher.
 
 ---
@@ -541,7 +541,7 @@ O `--enviar` do publicador (caixa "revisao" no GitHub) confere tudo o que é con
 - `{{EMAIL_DEMO}}`, `{{SENHA_DEMO}}`: conta de perfil **dono** no servidor de demonstração (a Apple exige conta de demonstração sempre que o login não é público) — variável `APPLE_EMAIL_DEMO` e segredo `APPLE_DEMO_PASSWORD`. O publicador entra com ela antes de enviar e recusa se não for dona.
 - `{{CODIGO_DEMO}}`: um código de barras que exista no banco de demonstração (`APPLE_CODIGO_DEMO`) — é o caminho sem câmera. O publicador o procura lá antes de enviar.
 - `{{URL_ETIQUETAS_DEMO}}` (opcional): página com códigos de barras de exemplo para bipar da tela; sem ela, a frase some e "Digitar código" e "Buscar" bastam.
-- `{{EMAIL_SUPORTE}}`: o e-mail de suporte (`APPLE_EMAIL_SUPORTE`). O `privacidade@sistemaobras.com.br` da política de privacidade precisa existir e ser lido.
+- `{{EMAIL_SUPORTE}}`: o e-mail de suporte (`APPLE_EMAIL_SUPORTE`; padrão `ghusousa@gmail.com`, o mesmo da política de privacidade).
 - **Servidor de demonstração no ar depois da revisão**: ele serve a política de privacidade da ficha (`<servidor>/privacidade`), que sem `APPLE_URL_SUPORTE` é também a URL de suporte. Desligá-lo derrubaria os links da App Store (5.1.1(i) e 1.5) e os do Play Console; outro endereço permanente vai em `APPLE_URL_PRIVACIDADE` (o suporte vai junto; outra página de suporte, `APPLE_URL_SUPORTE`), e o antigo só sai do ar depois que a versão com as URLs novas for aprovada.
 - Resposta na Central de Resolução: opcional (não tem API, e o reenvio já leva notas e anexos novos). Texto pronto, em inglês: `mobile/publicar/revisao/resposta-ao-app-review.txt`.
 
