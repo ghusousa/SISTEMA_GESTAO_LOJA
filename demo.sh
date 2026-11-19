@@ -373,7 +373,8 @@ mostrar() {
     # Play não passa pelo publicador: trocado de servidor sem trocar lá, a ficha fica apontando
     # para páginas fora do ar (docs/LOJAS-DE-APP.md).
     if [ "$local_" -eq 0 ]; then
-        titulo "Ao trocar de servidor (da Vercel para este)"
+        # O título sem a linha em branco do `titulo`: a de cima já termina com uma.
+        printf '%s%s%s\n' "$FORTE$AZUL" "Ao trocar de servidor (da Vercel para este)" "$NORMAL"
         printf '  ANTES de desligar o servidor antigo, troque no Play Console a URL da política\n'
         printf '  de privacidade e a de exclusão de dados por:\n'
         printf '      %s/privacidade\n' "$endereco"
