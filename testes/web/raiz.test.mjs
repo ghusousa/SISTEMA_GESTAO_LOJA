@@ -43,6 +43,14 @@ test('raizDoCaminho: o /app que conta é o do fim', () => {
   assert.equal(raizDoCaminho('/lojas/app-centro/app/'), '/lojas/app-centro');
 });
 
+test('raizDoCaminho: tudo depois do /app é da página — na demo, nunca cai na raiz da loja', () => {
+  // O servidor de arquivos abre a página com barra a mais; sem a raiz certa, a demo
+  // chamaria a API da loja.
+  assert.equal(raizDoCaminho('/demo/app//'), '/demo');
+  assert.equal(raizDoCaminho('/demo/app/sub/pagina.html'), '/demo');
+  assert.equal(raizDoCaminho('/app//'), '');
+});
+
 test('raizDoCaminho: barra dobrada não vira endereço de outro site', () => {
   // "//outro.site" + "/api/v1" é URL sem esquema: o fetch iria a OUTRO host, com o token.
   assert.equal(raizDoCaminho('//outro.site/app/'), '/outro.site');

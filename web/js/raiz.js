@@ -18,16 +18,18 @@
 /**
  * `"/app/"` → `""`; `"/demo/app/"` e `"/demo/app/index.html"` → `"/demo"`.
  *
- * Endereço que não termina no `/app` da página dá `""` — a origem inteira, como sempre foi.
+ * Endereço sem um segmento `/app` dá `""` — a origem inteira, como sempre foi.
  * @param {string | null | undefined} caminho o `location.pathname`
  * @returns {string}
  */
 export function raizDoCaminho(caminho) {
-  const achado = /^(.*)\/app(?:\/[^/]*)?$/.exec(String(caminho ?? ''));
-  if (!achado) return '';
-  // Barra dobrada não passa: "//outro.site" + "/api/v1" é endereço SEM esquema, e o
-  // navegador o leva a OUTRO site — com o token da sessão no cabeçalho.
-  return achado[1].replace(/\/{2,}/g, '/').replace(/\/$/, '');
+  // Barra dobrada sai antes de tudo. "/demo/app//" ainda abre a página (o servidor de
+  // arquivos aceita), e sem isto daria raiz "" — a demo falando com a loja. E "//outro.site"
+  // + "/api/v1" é endereço SEM esquema: o navegador o leva a OUTRO site, com o token junto.
+  const limpo = String(caminho ?? '').replace(/\/{2,}/g, '/');
+  // O ÚLTIMO "/app" inteiro (não "/apple"): a raiz pode ela mesma se chamar "/app".
+  const achado = /^(.*)\/app(?:\/.*)?$/.exec(limpo);
+  return achado ? achado[1] : '';
 }
 
 /**
