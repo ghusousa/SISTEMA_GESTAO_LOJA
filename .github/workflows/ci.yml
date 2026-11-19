@@ -49,9 +49,9 @@ jobs:
         working-directory: api
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -128,9 +128,9 @@ jobs:
         working-directory: api
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -193,9 +193,9 @@ jobs:
         shell: bash
         working-directory: mobile
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # 22 (LTS): o Expo SDK 54 pede Node >= 20.19.4, e o 20 já saiu de suporte.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
           cache: npm
@@ -221,7 +221,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # O caminho que a loja usa (Dockerfile + requirements.lock) e que nenhum outro job
       # percorre: dependência que não instala na imagem só aparecia no servidor da loja.
       - run: docker build --pull -t loja-api:local .
@@ -235,6 +235,6 @@ jobs:
     name: Scripts de operação (shellcheck)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # São os scripts que mexem no banco e no servidor da loja sem ninguém olhando.
       - run: shellcheck --version && shellcheck -S warning ./*.sh docker/*.sh testes/pilha/*.sh

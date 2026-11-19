@@ -139,9 +139,9 @@ jobs:
     # outros. O padrão do GitHub seria 6 h de minutos.
     timeout-minutes: ${{ (github.event_name == 'push' || inputs.completo) && 150 || inputs.aparelhos && 90 || 20 }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
           cache: npm
