@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { ABA, medidasDaBarraDeAbas, respiroDeBaixo, respiroDeCima } from './areaSegura';
+import {
+  ABA,
+  areaAbaixoDasFaixas,
+  medidasDaBarraDeAbas,
+  respiroDeBaixo,
+  respiroDeCima,
+} from './areaSegura';
 
 /**
  * A área segura de cada família de iPhone que o app atende (iOS 15.1+, retrato), em pt:
@@ -78,4 +84,21 @@ test('topo sem cabeçalho: a barra de status inteira e mais a folga', () => {
   for (const [aparelho, cima] of IPHONES) {
     assert.equal(respiroDeCima(cima, 12), cima + 12, aparelho);
   }
+});
+
+test('com faixa no topo, a navegação de baixo não soma a barra de status de novo', () => {
+  for (const [aparelho, cima, baixo] of IPHONES) {
+    const janela = { top: cima, right: 0, bottom: baixo, left: 0 };
+    // A faixa cobriu a barra de status: o cabeçalho começa colado nela. A base é a do
+    // aparelho: a barra de abas e os rodapés seguem acima do indicador de início.
+    assert.deepEqual(areaAbaixoDasFaixas(janela, true), { top: 0, right: 0, bottom: baixo, left: 0 }, aparelho);
+  }
+});
+
+test('sem faixa, a área é a MESMA (o mesmo objeto): nada redesenha à toa', () => {
+  const janela = { top: 59, right: 0, bottom: 34, left: 0 };
+  assert.equal(areaAbaixoDasFaixas(janela, false), janela);
+  // Topo já zero (export web, aparelho sem recorte): nada a tirar.
+  const semTopo = { top: 0, right: 0, bottom: 0, left: 0 };
+  assert.equal(areaAbaixoDasFaixas(semTopo, true), semTopo);
 });

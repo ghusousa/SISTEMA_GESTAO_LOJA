@@ -594,6 +594,11 @@ export interface ConfiguracaoPublica {
   segmento: string;
   /** Fuso da loja (IANA). Opcional: servidor antigo não manda, e aí vale São Paulo. */
   timezone?: string;
+  /**
+   * Loja de demonstração, com dados fictícios (ADR-46): o app mostra a faixa no topo.
+   * Opcional: servidor antigo não manda, e a demonstração da Vercel não liga — sem faixa.
+   */
+  demonstracao?: boolean;
   vocabulario: {
     icone: string;
     exemplo_produto: string;

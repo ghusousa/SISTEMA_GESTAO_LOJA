@@ -7,7 +7,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { registrarPerdaDeSessao } from '@/api/client';
-import { BannerConexao } from '@/components/BannerConexao';
+import { ComFaixasNoTopo } from '@/components/FaixasDoTopo';
 import { Carregando } from '@/components/ui';
 import { queryClient } from '@/lib/queryClient';
 import { cores } from '@/lib/tema';
@@ -58,8 +58,8 @@ export default function RootLayout() {
           {carregando || servidorCarregando ? (
             <Carregando texto="Abrindo a loja…" />
           ) : (
-            <>
-              <BannerConexao />
+            // Sem conexão e loja de demonstração (ADR-46): faixas por cima de toda tela.
+            <ComFaixasNoTopo>
               <Stack screenOptions={{ headerShown: false }}>
                 {/* Stack.Protected troca de área sozinho quando a sessão cai. */}
                 {/* Quem manda aqui é só a sessão. O endereço do servidor não entra na
@@ -73,7 +73,7 @@ export default function RootLayout() {
                   <Stack.Screen name="(auth)" />
                 </Stack.Protected>
               </Stack>
-            </>
+            </ComFaixasNoTopo>
           )}
         </QueryClientProvider>
       </SafeAreaProvider>

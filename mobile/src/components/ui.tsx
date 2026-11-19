@@ -18,6 +18,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { useAreaDaJanela } from '@/hooks/useAreaDaJanela';
 import { respiroDeBaixo, respiroDeCima } from '@/lib/areaSegura';
 import { ALVO_TOQUE, cores, espaco, fonte, raio, sombra } from '@/lib/tema';
 
@@ -33,10 +34,12 @@ export function useRespiroDeBaixo(minimo: number = espaco.lg): number {
 
 /**
  * Respiro de cima para o que começa no topo da tela SEM cabeçalho: o Modal de tela cheia
- * desenha a partir do zero, debaixo da barra de status e da ilha.
+ * desenha a partir do zero, debaixo da barra de status e da ilha — por cima até das faixas
+ * do topo (sem conexão, demonstração), que zeram o topo só para a navegação. Por isso lê a
+ * área da janela, não a da navegação (`hooks/useAreaDaJanela.ts`).
  */
 export function useRespiroDeCima(folga: number = espaco.md): number {
-  return respiroDeCima(useSafeAreaInsets().top, folga);
+  return respiroDeCima(useAreaDaJanela().top, folga);
 }
 
 // ------------------------------------------------------------------ Botão
