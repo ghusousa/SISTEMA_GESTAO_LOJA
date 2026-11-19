@@ -195,13 +195,17 @@ completo ao lado é para conferir com o painel — posto no campo, muito painel 
 `loja.minhaloja.com.br.minhaloja.com.br`.
 
 Se houver um registro **AAAA** (IPv6) levando a outra máquina, ele manda apagar — o Let's Encrypt
-tenta o IPv6 primeiro. A pergunta vai ao DNS, como a do Let's Encrypt: o `/etc/hosts` da máquina não
-conta, e o AAAA aparece mesmo numa máquina sem IPv6 (num `getent` antigo, que não consegue mostrá-lo,
-o instalador diz que o AAAA não foi conferido, em vez do ✓). Com `--sim` ele não espera: a pendência
-volta no resumo do fim. A conferida vem antes de gravar a configuração: sair no meio da espera
-(Ctrl+C, a conexão que cai) não deixa nada gravado, e rodar o instalador de novo pergunta tudo outra
-vez. Um registro só serve às duas: a demonstração mora no **mesmo** domínio, em `/demo`, sem DNS a
-mais.
+tenta o IPv6 primeiro. A pergunta vai ao DNS, como a do Let's Encrypt, e não ao `/etc/hosts` da
+máquina: com o systemd-resolved (o `127.0.0.53` no `/etc/resolv.conf`, o padrão do Ubuntu), que
+responde pelo `/etc/hosts` mesmo a um `getent -s dns`, pelo `resolvectl query --synthesize=no`; nas
+outras máquinas, pelo `getent -A -s dns`. O AAAA aparece mesmo numa máquina sem IPv6. Só em dois
+casos não dá para ver tudo: um `getent` antigo, sem o `-A`, esconde o AAAA numa máquina sem IPv6 (aí
+o instalador diz que o AAAA não foi conferido, em vez do ✓); e, com um `resolvectl` que não conhece o
+`--synthesize=no` ou um `getent` sem o `-s`, um nome posto no `/etc/hosts` ainda conta. Com `--sim`
+ele não espera: a pendência volta no resumo do fim. A conferida vem antes de gravar a configuração:
+sair no meio da espera (Ctrl+C, a conexão que cai) não deixa nada gravado, e rodar o instalador de
+novo pergunta tudo outra vez. Um registro só serve às duas: a demonstração mora no **mesmo**
+domínio, em `/demo`, sem DNS a mais.
 
 Acompanhe a emissão com `docker compose logs -f proxy`. Sem domínio, o instalador usa HTTP puro e
 ajusta o resto sozinho — inclusive o cookie de sessão, que em HTTP não pode ser marcado `Secure`

@@ -909,44 +909,104 @@ exit 0
 
 # O resolvedor da máquina: ahostsv4/ahostsv6 dão os endereços de ctr/dns-v4 e ctr/dns-v6 (um
 # por linha), no formato do getent; sem nada, "não achei" (sai 2), como o de verdade. Cada
-# pergunta vai para ctr/getent.log, com as opções. Como o de verdade, sem `-s dns` entra também
-# o /etc/hosts da máquina (ctr/hosts-v4, ctr/hosts-v6), e sem `-A` (o AI_ADDRCONFIG ligado) uma
-# máquina sem IPv6 (ctr/sem-ipv6) não vê AAAA nenhum. Com FAKE_GETENT_ANTIGO, é o getent de
-# antes do -A: recusa a opção com o "uso" do argp, saída 64.
+# pergunta vai para ctr/getent.log, com as opções. Como o de verdade, o /etc/hosts da máquina
+# (ctr/hosts-v4, ctr/hosts-v6) entra sem `-s dns` — e com ele também, quando o resolv.conf
+# ($RESOLV_CONF) aponta para o stub do systemd-resolved (127.0.0.53), que responde pelo
+# /etc/hosts —, e um nome achado lá é respondido só por ele (o 127.0.1.1 do hostname esconde o
+# registro de verdade). Sem `-A` (o AI_ADDRCONFIG ligado), uma máquina sem IPv6 fora do loopback
+# ($IF_INET6) não vê AAAA nenhum. Com FAKE_GETENT_ANTIGO, é o getent de antes do -A: recusa a
+# opção com o "uso" do argp, saída 64; com FAKE_GETENT_SEM_S, recusa também o -s.
 GETENT_DE_MENTIRA = r"""#!/usr/bin/env bash
 echo "getent $*" >> "$FAKE_CTR/getent.log"
+recusar() {
+    echo "getent: invalid option -- '$1'" >&2
+    echo "Try \`getent --help' or \`getent --usage' for more information." >&2
+    exit 64
+}
 sem_addrconfig=0; so_dns=0
 while :; do
     case "${1:-}" in
-        -A) if [ -n "${FAKE_GETENT_ANTIGO:-}" ]; then
-                echo "getent: invalid option -- 'A'" >&2
-                echo "Try \`getent --help' or \`getent --usage' for more information." >&2
-                exit 64
-            fi
-            sem_addrconfig=1; shift ;;
-        -s) [ "$2" = dns ] && so_dns=1; shift 2 ;;
-        -*) echo "getent: invalid option -- '${1#-}'" >&2; exit 64 ;;
+        -A) [ -z "${FAKE_GETENT_ANTIGO:-}" ] || recusar A; sem_addrconfig=1; shift ;;
+        -s) [ -z "${FAKE_GETENT_SEM_S:-}" ] || recusar s; [ "$2" = dns ] && so_dns=1; shift 2 ;;
+        -*) recusar "${1#-}" ;;
         *) break ;;
     esac
 done
 v="${1#ahosts}"
-[ "$v" = v6 ] && [ -e "$FAKE_CTR/sem-ipv6" ] && [ "$sem_addrconfig" -eq 0 ] && exit 2
-arquivos="$FAKE_CTR/dns-$v"
-[ "$so_dns" -eq 1 ] || arquivos="$FAKE_CTR/hosts-$v $arquivos"
+if [ "$v" = v6 ] && [ "$sem_addrconfig" -eq 0 ] \
+    && ! awk 'NF >= 6 && $6 != "lo" {a = 1} END {exit !a}' "$IF_INET6" 2>/dev/null; then
+    exit 2
+fi
+arquivo="$FAKE_CTR/dns-$v"
+if { [ "$so_dns" -eq 0 ] || grep -qs '127\.0\.0\.53' "$RESOLV_CONF"; } \
+    && { [ -s "$FAKE_CTR/hosts-v4" ] || [ -s "$FAKE_CTR/hosts-v6" ]; }; then
+    arquivo="$FAKE_CTR/hosts-$v"
+fi
 achou=0
-for arquivo in $arquivos; do
-    [ -s "$arquivo" ] || continue
+if [ -s "$arquivo" ]; then
     while read -r ip; do [ -n "$ip" ] && printf '%-15s STREAM %s\n' "$ip" "$2" && achou=1; done < "$arquivo"
-done
+fi
 [ "$achou" -eq 1 ] || exit 2
 exit 0
 """
+
+# O resolvectl do systemd-resolved: `query -t A|AAAA <nome>` responde do DNS (ctr/dns-v4,
+# ctr/dns-v6; o /etc/hosts nunca entra, é o --synthesize=no), no formato dele, com o CNAME de
+# ctr/cname antes dos endereços, quando houver. Cada chamada vai para ctr/resolvectl.log. Com
+# FAKE_RESOLVECTL_ANTIGO, é um resolvectl de antes do --synthesize=: recusa a opção.
+RESOLVECTL_DE_MENTIRA = r"""#!/usr/bin/env bash
+echo "resolvectl $*" >> "$FAKE_CTR/resolvectl.log"
+tipo=""; nome=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --synthesize=*) if [ -n "${FAKE_RESOLVECTL_ANTIGO:-}" ]; then
+                            echo "resolvectl: unrecognized option '$1'" >&2; exit 1
+                        fi
+                        shift ;;
+        --help) echo "resolvectl [OPTIONS...] COMMAND ..."; exit 0 ;;
+        -t) tipo="$2"; shift 2 ;;
+        query|--*) shift ;;
+        *) nome="$1"; shift ;;
+    esac
+done
+v=v4; [ "$tipo" = AAAA ] && v=v6
+alvo="$nome"
+if [ -s "$FAKE_CTR/cname" ]; then
+    alvo="$(cat "$FAKE_CTR/cname")"
+    printf '%s IN CNAME %s                -- link: eth0\n' "$nome" "$alvo"
+fi
+achou=0
+if [ -s "$FAKE_CTR/dns-$v" ]; then
+    while read -r ip; do
+        [ -n "$ip" ] && printf '%s IN %s %s                -- link: eth0\n' "$alvo" "$tipo" "$ip" && achou=1
+    done < "$FAKE_CTR/dns-$v"
+fi
+if [ "$achou" -eq 0 ]; then
+    echo "$nome: resolve call failed: '$nome' does not have any RR of the requested type" >&2
+    exit 1
+fi
+"""
+
+# O /proc/net/if_inet6 da máquina de mentira: o loopback sempre; com IPv6, também a placa.
+IF_INET6_SO_LO = "00000000000000000000000000000001 01 80 10 80       lo\n"
+IF_INET6_COM_IPV6 = IF_INET6_SO_LO + "20010db8000000000000000000000010 02 40 00 00     eth0\n"
+
+
+def _sem_ipv6(tmp_path: Path) -> None:
+    """A máquina sem IPv6 fora do loopback: é aí que o AI_ADDRCONFIG esconde o AAAA."""
+    (tmp_path / "ctr" / "if_inet6").write_text(IF_INET6_SO_LO)
+
+
+def _com_systemd_resolved(tmp_path: Path) -> None:
+    """O resolv.conf do Ubuntu: o stub do systemd-resolved, que responde pelo /etc/hosts."""
+    (tmp_path / "ctr" / "resolv.conf").write_text(
+        "# This is /run/systemd/resolve/stub-resolv.conf\nnameserver 127.0.0.53\noptions edns0 trust-ad\n")
 
 
 def _instalador(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     env = _maquina(tmp_path)
     for nome, corpo in (("docker", DOCKER_DO_INSTALADOR), ("curl", CURL_DE_MENTIRA),
-                        ("getent", GETENT_DE_MENTIRA)):
+                        ("getent", GETENT_DE_MENTIRA), ("resolvectl", RESOLVECTL_DE_MENTIRA)):
         (tmp_path / "bin" / nome).write_text(corpo)
         (tmp_path / "bin" / nome).chmod(0o755)
     loja = tmp_path / "loja"
@@ -955,8 +1015,14 @@ def _instalador(tmp_path: Path) -> tuple[Path, dict[str, str]]:
                  "docker-compose.yml"):
         shutil.copy(RAIZ / nome, loja / nome)
     (tmp_path / "run-systemd").mkdir()
+    # O resolvedor e as placas da máquina: um DNS qualquer no resolv.conf (não o stub do
+    # systemd-resolved) e IPv6 fora do loopback. Os testes que precisam de outra trocam.
+    ctr = tmp_path / "ctr"
+    (ctr / "resolv.conf").write_text("nameserver 192.0.2.53\n")
+    (ctr / "if_inet6").write_text(IF_INET6_COM_IPV6)
     # "Há systemd no comando" (o /run/systemd/system da máquina de verdade).
-    return loja, env | {"DIR_SYSTEMD_RODANDO": str(tmp_path / "run-systemd")}
+    return loja, env | {"DIR_SYSTEMD_RODANDO": str(tmp_path / "run-systemd"),
+                        "RESOLV_CONF": str(ctr / "resolv.conf"), "IF_INET6": str(ctr / "if_inet6")}
 
 
 def _instalar(loja: Path, env: dict[str, str], dominio: str, *mais: str) -> subprocess.CompletedProcess:
@@ -1578,7 +1644,7 @@ async def test_dns_e_conferido_no_dns_e_nao_no_que_a_maquina_acha(
     loja, env = _instalador(tmp_path)
     if maquina == "sem-ipv6":
         _dns(tmp_path, ip="203.0.113.10", v4=("203.0.113.10",), v6=("2001:db8::dead",))
-        (tmp_path / "ctr" / "sem-ipv6").touch()
+        _sem_ipv6(tmp_path)
     else:
         _dns(tmp_path, ip="203.0.113.10", v4=())
         (tmp_path / "ctr" / "hosts-v4").write_text("203.0.113.10\n")
@@ -1596,12 +1662,12 @@ async def test_dns_e_conferido_no_dns_e_nao_no_que_a_maquina_acha(
 
 @precisa_do_bash
 async def test_getent_antigo_diz_que_o_aaaa_nao_foi_conferido(tmp_path: Path) -> None:
-    """O getent de antes do -A recusa as opções (saída 64): a conferida pergunta do jeito
-    antigo, e, numa máquina sem IPv6, onde ele esconde o AAAA, diz que o AAAA não foi conferido
-    — em vez de dar ✓ só pelo registro A."""
+    """O getent de antes do -A recusa as opções (saída 64): a conferida pergunta só com o
+    `-s dns`, e, numa máquina sem IPv6, onde ele esconde o AAAA, diz que o AAAA não foi
+    conferido — em vez de dar ✓ só pelo registro A."""
     loja, env = _instalador(tmp_path)
     _dns(tmp_path, ip="203.0.113.10", v4=("203.0.113.10",), v6=("2001:db8::dead",))
-    (tmp_path / "ctr" / "sem-ipv6").touch()
+    _sem_ipv6(tmp_path)
 
     r = _instalar(loja, env | {"FAKE_GETENT_ANTIGO": "1"}, "loja.seudominio.com.br")
 
@@ -1613,7 +1679,133 @@ async def test_getent_antigo_diz_que_o_aaaa_nao_foi_conferido(tmp_path: Path) ->
     assert "Falta acertar o DNS" not in r.stdout
     perguntas = (tmp_path / "ctr" / "getent.log").read_text().splitlines()
     recusada = perguntas.index("getent -A -s dns ahostsv6 loja.seudominio.com.br")
-    assert perguntas[recusada + 1] == "getent ahostsv6 loja.seudominio.com.br"
+    assert perguntas[recusada + 1] == "getent -s dns ahostsv6 loja.seudominio.com.br"
+
+
+@precisa_do_bash
+async def test_getent_antigo_numa_maquina_com_ipv6_da_o_certo(tmp_path: Path) -> None:
+    """Numa máquina com IPv6 fora do loopback o AI_ADDRCONFIG não esconde nada: o getent antigo
+    vê o AAAA, e o domínio sem AAAA ganha o ✓. A nota "não foi conferido" saía também aqui, e
+    todo domínio sem AAAA perdia o ✓."""
+    loja, env = _instalador(tmp_path)  # a máquina de mentira tem IPv6 na eth0
+    _dns(tmp_path, ip="203.0.113.10", v4=("203.0.113.10",))
+
+    r = _instalar(loja, env | {"FAKE_GETENT_ANTIGO": "1"}, "loja.seudominio.com.br")
+
+    assert r.returncode == 0, _saida(r, loja)
+    assert "✓ loja.seudominio.com.br aponta para este servidor (203.0.113.10)" in r.stdout, _saida(r, loja)
+    assert "não foi conferido" not in r.stdout
+
+    # E o AAAA que leva a outra máquina, o getent antigo vê: continua pendência.
+    _dns(tmp_path, ip="203.0.113.10", v4=("203.0.113.10",), v6=("2001:db8::dead",))
+    com_aaaa = _instalar(loja, env | {"FAKE_GETENT_ANTIGO": "1"}, "loja.seudominio.com.br", "--forcar")
+    assert "Apague o registro AAAA de loja.seudominio.com.br (2001:db8::dead)" in com_aaaa.stdout
+
+
+@precisa_do_bash
+@pytest.mark.parametrize(("caso", "recado"), [
+    # Só no /etc/hosts, no IP da máquina: a forma antiga largava também o `-s dns`, e o nome
+    # passava "pelo registro A" sem registro nenhum no DNS.
+    ("so-no-hosts", "Crie no painel do domínio:   Tipo A  ·  Nome loja — o registro completo é "
+                    "loja.seudominio.com.br  ·  Valor 203.0.113.10"),
+    # O hostname da VPS igual ao domínio, em 127.0.1.1: escondia o registro de verdade.
+    ("hostname-127", "✓ loja.seudominio.com.br aponta para este servidor (203.0.113.10)"),
+])
+async def test_getent_antigo_ainda_pergunta_sem_o_etc_hosts(tmp_path: Path, caso: str, recado: str) -> None:
+    """O getent de antes do -A (glibc anterior à 2.35: Debian 11, Ubuntu 20.04) já tem o
+    `-s dns`: a conferida pergunta com ele, e o /etc/hosts continua de fora."""
+    loja, env = _instalador(tmp_path)
+    _dns(tmp_path, ip="203.0.113.10", v4=() if caso == "so-no-hosts" else ("203.0.113.10",))
+    (tmp_path / "ctr" / "hosts-v4").write_text("203.0.113.10\n" if caso == "so-no-hosts" else "127.0.1.1\n")
+
+    r = _instalar(loja, env | {"FAKE_GETENT_ANTIGO": "1"}, "loja.seudominio.com.br")
+
+    assert r.returncode == 0, _saida(r, loja)
+    assert recado in r.stdout, _saida(r, loja)
+    perguntas = (tmp_path / "ctr" / "getent.log").read_text().splitlines()
+    recusada = perguntas.index("getent -A -s dns ahostsv4 loja.seudominio.com.br")
+    assert perguntas[recusada + 1] == "getent -s dns ahostsv4 loja.seudominio.com.br"
+    assert "getent ahostsv4 loja.seudominio.com.br" not in perguntas
+
+
+@precisa_do_bash
+async def test_getent_sem_o_s_recebe_a_pergunta_sem_opcoes(tmp_path: Path) -> None:
+    """Um getent que não conhece nem o -s (fora da glibc) recebe a pergunta sem opções, a única
+    que ele entende — por último, depois das duas que deixam o /etc/hosts de fora."""
+    loja, env = _instalador(tmp_path)
+    _dns(tmp_path, ip="203.0.113.10", v4=("203.0.113.10",))
+
+    r = _instalar(loja, env | {"FAKE_GETENT_ANTIGO": "1", "FAKE_GETENT_SEM_S": "1"},
+                  "loja.seudominio.com.br")
+
+    assert r.returncode == 0, _saida(r, loja)
+    assert "✓ loja.seudominio.com.br aponta para este servidor (203.0.113.10)" in r.stdout, _saida(r, loja)
+    assert (tmp_path / "ctr" / "getent.log").read_text().splitlines()[:3] == [
+        "getent -A -s dns ahostsv4 loja.seudominio.com.br",
+        "getent -s dns ahostsv4 loja.seudominio.com.br",
+        "getent ahostsv4 loja.seudominio.com.br",
+    ]
+
+
+@precisa_do_bash
+@pytest.mark.parametrize(("caso", "recado"), [
+    # O hostname da VPS igual ao domínio, em 127.0.1.1 no /etc/hosts: o stub respondia por ele e
+    # escondia o registro de verdade (aqui, por um CNAME) — "Crie no painel" falso.
+    ("hostname-127", "✓ loja.seudominio.com.br aponta para este servidor (203.0.113.10)"),
+    # O nome só no /etc/hosts, no IP da máquina: o stub o dava por certo, sem registro nenhum.
+    ("so-no-hosts", "Crie no painel do domínio:   Tipo A  ·  Nome loja — o registro completo é "
+                    "loja.seudominio.com.br  ·  Valor 203.0.113.10"),
+    # E o AAAA velho numa máquina sem IPv6: o resolvectl o pergunta ao DNS do mesmo jeito.
+    ("aaaa-sem-ipv6", "Apague o registro AAAA de loja.seudominio.com.br (2001:db8::dead)"),
+])
+async def test_com_o_systemd_resolved_a_pergunta_vai_pelo_resolvectl(
+    tmp_path: Path, caso: str, recado: str
+) -> None:
+    """No Ubuntu, o resolv.conf aponta para o stub do systemd-resolved (127.0.0.53), que responde
+    pelo /etc/hosts mesmo a um `getent -s dns`: lá o "/etc/hosts não conta" era falso. A
+    conferida pergunta pelo resolvectl, sem sintetizar (sem o /etc/hosts) e sem cache, e segue o
+    CNAME até o endereço; o getent, que passaria pelo stub, nem é chamado."""
+    loja, env = _instalador(tmp_path)
+    _com_systemd_resolved(tmp_path)
+    ctr = tmp_path / "ctr"
+    if caso == "hostname-127":
+        _dns(tmp_path, ip="203.0.113.10", v4=("203.0.113.10",))
+        (ctr / "cname").write_text("loja-1234.provedor.example\n")
+        (ctr / "hosts-v4").write_text("127.0.1.1\n")
+    elif caso == "so-no-hosts":
+        _dns(tmp_path, ip="203.0.113.10", v4=())
+        (ctr / "hosts-v4").write_text("203.0.113.10\n")
+    else:
+        _dns(tmp_path, ip="203.0.113.10", v4=("203.0.113.10",), v6=("2001:db8::dead",))
+        _sem_ipv6(tmp_path)
+
+    r = _instalar(loja, env, "loja.seudominio.com.br")
+
+    assert r.returncode == 0, _saida(r, loja)
+    assert recado in r.stdout, _saida(r, loja)
+    if caso == "hostname-127":
+        assert "Falta acertar o DNS" not in r.stdout
+    perguntas = (ctr / "resolvectl.log").read_text()
+    for tipo in ("A", "AAAA"):
+        assert f"resolvectl query --synthesize=no --cache=no --legend=no -t {tipo} loja.seudominio.com.br" in perguntas
+    assert not (ctr / "getent.log").exists()
+
+
+@precisa_do_bash
+async def test_resolvectl_sem_o_synthesize_deixa_a_pergunta_com_o_getent(tmp_path: Path) -> None:
+    """Um resolvectl de antes do --synthesize= recusa a opção: a conferida não o usa (sem ela, ele
+    responderia pelo /etc/hosts como o stub) e pergunta pelo getent, como nas outras máquinas."""
+    loja, env = _instalador(tmp_path)
+    _com_systemd_resolved(tmp_path)
+    _dns(tmp_path, ip="203.0.113.10", v4=("203.0.113.10",))
+
+    r = _instalar(loja, env | {"FAKE_RESOLVECTL_ANTIGO": "1"}, "loja.seudominio.com.br")
+
+    assert r.returncode == 0, _saida(r, loja)
+    assert "✓ loja.seudominio.com.br aponta para este servidor (203.0.113.10)" in r.stdout, _saida(r, loja)
+    assert "resolvectl --synthesize=no --cache=no --legend=no --help" in (tmp_path / "ctr" / "resolvectl.log").read_text()
+    assert "query" not in (tmp_path / "ctr" / "resolvectl.log").read_text()
+    assert "getent -A -s dns ahostsv4 loja.seudominio.com.br" in (tmp_path / "ctr" / "getent.log").read_text()
 
 
 def _nome_no_painel(dominio: str) -> str:

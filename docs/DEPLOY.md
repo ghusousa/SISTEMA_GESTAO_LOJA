@@ -46,11 +46,16 @@ de cada separação está na ADR-46 de [ARQUITETURA.md](ARQUITETURA.md).
 
   (no campo Nome, só o `loja`, ou `@`; o nome completo é para conferir — no `.br` o domínio
   registrado sempre leva a categoria, `minhaloja.com.br`, `minhaloja.tec.br`...) e manda apagar um
-  **AAAA** que leve a outra máquina (o Let's Encrypt tenta o IPv6 primeiro). Pergunta ao DNS
-  (`getent -A -s dns`), não ao `/etc/hosts` da máquina, e vê o AAAA mesmo sem IPv6 nela; com um
-  `getent` antigo, sem o `-A`, diz que o AAAA não foi conferido. No
-  terminal, ele espera conferindo a cada 15 s (Enter segue sem esperar); com `--sim`, não espera e
-  repete a pendência no resumo do fim.
+  **AAAA** que leve a outra máquina (o Let's Encrypt tenta o IPv6 primeiro). Pergunta ao DNS, não
+  ao `/etc/hosts` da máquina — pelo `resolvectl query --synthesize=no` quando o `/etc/resolv.conf`
+  aponta para o systemd-resolved (`127.0.0.53`, o padrão do Ubuntu, que responde pelo `/etc/hosts`
+  mesmo a um `getent -s dns`), e pelo `getent -A -s dns` nas outras — e vê o AAAA mesmo sem IPv6 na
+  máquina. Com um `getent` antigo, sem o `-A`, pergunta com o `-s dns` e, numa máquina sem IPv6
+  (onde ele esconde o AAAA), diz que o AAAA não foi conferido; o `/etc/hosts` só ainda conta com um
+  `resolvectl` que não aceite o `--synthesize=no` ou com um `getent` sem o `-s`. Tudo isso antes de
+  gravar o `.env`: sair no meio da espera não deixa meia instalação. No terminal, ele espera
+  conferindo a cada 15 s (Enter segue sem esperar); com `--sim`, não espera e repete a pendência no
+  resumo do fim.
 - **O endereço.** A loja fica em `https://<domínio>/app/` e a demonstração em
   `https://<domínio>/demo` — no navegador e no app (o endereço do servidor no app é o da loja com o
   `/demo` no fim). Numa instalação local, `http://localhost/demo`, só para testar na rede: a Apple

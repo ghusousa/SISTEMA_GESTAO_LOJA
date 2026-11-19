@@ -391,24 +391,58 @@ ip_desta_maquina() {  # ip_desta_maquina <4|6>
 }
 
 # Para onde o nome aponta, perguntado ao DNS (o que o Let's Encrypt vai ver) e não ao que a
-# máquina acha: `-s dns` deixa o /etc/hosts de fora (um nome posto lá no IP público passaria
-# sem registro nenhum), e `-A` tira o AI_ADDRCONFIG, que numa máquina sem IPv6 esconde o AAAA
-# — um AAAA velho, que leva a outra máquina, passaria por certo e o certificado não sairia. O
-# getent antigo, sem o -A, recusa as opções (o "uso" do argp, saída 64): aí a pergunta vai
-# como antes, e a função sai 3 para quem chama saber que um AAAA pode ter ficado escondido.
-# Fora da conta: a própria máquina (o /etc/hosts de muita VPS põe o nome dela em 127.0.1.1) e
-# o IPv4 vestido de IPv6 (::ffff:) que o getent devolve quando o nome não tem AAAA.
-enderecos_do_dominio() {  # enderecos_do_dominio <4|6> <domínio>
-    local saida rc=0 antigo=0
-    saida="$(getent -A -s dns "ahostsv$1" "$2" 2>/dev/null)" || rc=$?
-    # 0 (achou) e 2 (não achou) são resposta; o resto é o getent que não aceitou as opções.
-    if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then
-        antigo=1
-        saida="$(getent "ahostsv$1" "$2" 2>/dev/null)" || true
+# máquina acha. Duas coisas da máquina mentem: o /etc/hosts (um nome posto lá no IP público
+# passaria sem registro nenhum, e o de muita VPS põe o próprio nome dela em 127.0.1.1, que
+# esconde o registro de verdade) e o AI_ADDRCONFIG, que numa máquina sem IPv6 esconde o AAAA
+# (um AAAA velho, que leva a outra máquina, passaria por certo e o certificado não sairia).
+#
+# Com o systemd-resolved (o stub 127.0.0.53 no resolv.conf, o padrão do Ubuntu), a pergunta vai
+# pelo resolvectl, sem sintetizar e sem cache: o stub responde pelo /etc/hosts mesmo a um
+# `getent -s dns`. Nos outros casos, e com um resolvectl que não conhece essas opções, vai pelo
+# getent: `-s dns` deixa o /etc/hosts de fora e `-A` tira o AI_ADDRCONFIG. O getent antigo
+# recusa o -A (o "uso" do argp, saída 64): aí vai o `-s dns` sem ele e, se esse também for
+# recusado, a forma sem opções. Sem o -A, numa máquina sem IPv6, a função sai 3: quem chama fica
+# sabendo que o AAAA pode ter ficado escondido. Fora da conta, de todo jeito: a própria máquina
+# (127.*, ::1) e o IPv4 vestido de IPv6 (::ffff:) que o getent devolve quando o nome não tem AAAA.
+#: Quem resolve os nomes desta máquina e quais IPv6 ela tem (os testes trocam, como o DIR_SYSTEMD).
+RESOLV_CONF="${RESOLV_CONF:-/etc/resolv.conf}"
+IF_INET6="${IF_INET6:-/proc/net/if_inet6}"
+FORMA_DNS=""
+escolher_forma_dns() {  # decide uma vez: resolvectl ou getent
+    [ -z "$FORMA_DNS" ] || return 0
+    FORMA_DNS=getent
+    if grep -qE '^[[:space:]]*nameserver[[:space:]]+127\.0\.0\.53([[:space:]]|$)' "$RESOLV_CONF" 2>/dev/null \
+        && command -v resolvectl >/dev/null 2>&1 \
+        && resolvectl --synthesize=no --cache=no --legend=no --help >/dev/null 2>&1; then
+        FORMA_DNS=resolvectl
+    fi
+}
+
+# Esta máquina tem IPv6 fora do loopback? É o que o AI_ADDRCONFIG olha para esconder o AAAA.
+tem_ipv6() { [ -r "$IF_INET6" ] && awk 'NF >= 6 && $6 != "lo" {achou = 1} END {exit !achou}' "$IF_INET6"; }
+
+enderecos_do_dominio() {  # enderecos_do_dominio <4|6> <domínio> — depois do escolher_forma_dns
+    local saida rc=0 tipo=A sem_o_a=0
+    if [ "$FORMA_DNS" = resolvectl ]; then
+        [ "$1" = 6 ] && tipo=AAAA
+        # Um CNAME vem na resposta antes dos endereços do nome a que ele leva: vale todo "IN A".
+        saida="$(resolvectl query --synthesize=no --cache=no --legend=no -t "$tipo" "$2" 2>/dev/null \
+            | awk -v t="$tipo" '$2 == "IN" && $3 == t {print $4}')" || true
+    else
+        saida="$(getent -A -s dns "ahostsv$1" "$2" 2>/dev/null)" || rc=$?
+        # 0 (achou) e 2 (não achou) são resposta; o resto é o getent que não aceitou as opções.
+        if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then
+            sem_o_a=1; rc=0
+            saida="$(getent -s dns "ahostsv$1" "$2" 2>/dev/null)" || rc=$?
+            if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then
+                saida="$(getent "ahostsv$1" "$2" 2>/dev/null)" || true
+            fi
+        fi
     fi
     printf '%s\n' "$saida" | awk 'NF {print tolower($1)}' \
         | grep -vE '^(127\.|::1$|::ffff:)' | sort -u || true
-    [ "$antigo" -eq 0 ] || return 3
+    if [ "$sem_o_a" -eq 1 ] && ! tem_ipv6; then return 3; fi
+    return 0
 }
 
 # O "Nome" que o painel do domínio pede: a parte antes do domínio registrado ("loja" em
@@ -452,11 +486,13 @@ avaliar_dns() {
     # painel acrescenta a zona sozinho, e o registro nasceria com o nome em dobro.
     nome="$(nome_no_painel "$DOMINIO") — o registro completo é $DOMINIO"
     if [ "$PERGUNTOU_IPV4" -eq 0 ]; then MEU_IPV4="$(ip_desta_maquina 4 || true)"; PERGUNTOU_IPV4=1; fi
+    escolher_forma_dns   # aqui, e não dentro do $(...): lá a escolha morreria com o subshell
     v4="$(enderecos_do_dominio 4 "$DOMINIO")" || true
     v6="$(enderecos_do_dominio 6 "$DOMINIO")" || aaaa_visto=0
-    # Pelo getent antigo, "sem AAAA" pode ser o AAAA escondido: não conferido, e não certo.
+    # Pelo getent antigo numa máquina sem IPv6, "sem AAAA" pode ser o AAAA escondido: não
+    # conferido, e não certo. Com IPv6 na máquina, o AI_ADDRCONFIG não esconde nada.
     if [ "$aaaa_visto" -eq 0 ] && [ -z "$v6" ]; then
-        DNS_NOTA_AAAA="o AAAA (IPv6) de $DOMINIO não foi conferido: o getent desta máquina é antigo (sem o -A), e numa máquina sem IPv6 ele o esconde. Veja no painel que nenhum AAAA leva a outra máquina — o Let's Encrypt tenta o IPv6 primeiro."
+        DNS_NOTA_AAAA="o AAAA (IPv6) de $DOMINIO não foi conferido: o getent desta máquina é antigo (sem o -A), e nesta máquina, sem IPv6, ele o esconde. Veja no painel que nenhum AAAA leva a outra máquina — o Let's Encrypt tenta o IPv6 primeiro."
     fi
     DNS_IPS="$(printf '%s\n' "$v4" | juntar)"
     if [ -z "$v4" ]; then

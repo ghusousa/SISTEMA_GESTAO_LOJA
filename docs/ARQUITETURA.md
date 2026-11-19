@@ -2189,12 +2189,20 @@ navegador: as duas dividem a mesma origem.
   profile desligado, e o `down` sem o profile a deixa rodando (ou falha, abaixo do 2.18); (R4)
   nenhum serviço sem profile depende de um da demo. Um `.env` antigo, sem as variáveis novas,
   continua dando só `db`, `api` e `proxy`.
-- **Instalação e operação.** O `instalar.sh` liga a demo por padrão (`--sem-demo` a deixa de fora),
-  grava as variáveis e confere o DNS do domínio ANTES do `up` — o certificado só sai com o nome
-  apontando para esta máquina, e o Let's Encrypt limita as tentativas que falham —, mostrando o
-  registro exato a criar (Tipo A · Nome · Valor, com o IP público perguntado a serviços de eco) e o
-  AAAA de outra máquina a apagar; no interativo, espera conferindo a cada 15 s (Enter segue sem
-  esperar), e com `--sim` não espera e repete a pendência no resumo. O resumo final traz a URL da
+- **Instalação e operação.** O `instalar.sh` liga a demo por padrão (`--sem-demo` a deixa de fora)
+  e confere o DNS do domínio ANTES de gravar o `.env` — e, com isso, antes do `up`: o certificado só
+  sai com o nome apontando para esta máquina, o Let's Encrypt limita as tentativas que falham, e uma
+  espera interrompida (o Ctrl+C de quem foi acertar o painel, o SSH que cai) não deixa um `.env`
+  que a rodada seguinte reaproveitaria sem criar o dono. A pergunta vai ao DNS, e não ao que a
+  máquina acha: pelo `resolvectl query --synthesize=no --cache=no` quando o `resolv.conf` aponta
+  para o stub do systemd-resolved (`127.0.0.53`, que responde pelo `/etc/hosts` mesmo a um
+  `getent -s dns`), e pelo `getent -A -s dns` nos outros — sem o `/etc/hosts` (um nome posto lá,
+  ou o 127.0.1.1 do hostname, decidiriam no lugar do registro) e sem o AI_ADDRCONFIG (numa máquina
+  sem IPv6 ele esconde o AAAA); o getent antigo, sem o `-A`, pergunta com o `-s dns` e, numa
+  máquina sem IPv6, diz que o AAAA não foi conferido. Mostra o registro exato a criar (Tipo A ·
+  Nome · Valor, com o IP público perguntado a serviços de eco) e o AAAA de outra máquina a apagar;
+  no interativo, espera conferindo a cada 15 s (Enter segue sem esperar), e com `--sim` não espera
+  e repete a pendência no resumo. O resumo final traz a URL da
   demo, o e-mail e a senha — a senha só quando acabou de ser sorteada; depois, `./demo.sh
   --mostrar`. O `atualizar.sh` nunca escreve no `.env`: a loja que já existia ganha a demo pelo
   `./demo.sh --ligar` (ou rodando o `./instalar.sh` de novo, que respeita quem a desligou). O
