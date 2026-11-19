@@ -119,11 +119,13 @@ preparar_destino() {
 # — levava o banco inteiro: CPF e telefone das clientes, hashes de senha, o diário com IPs, e
 # o próprio rclone_token, que mora numa coluna do banco e vai junto no dump.
 #
-# A senha nasce AQUI e mora só aqui: backups/.chave-do-backup, 600, numa pasta 700. Não vai
-# para o banco (iria dentro do dump que ela protege), nem para o .env (o `instalar.sh
-# --forcar` o reescreve), nem para docker/estado/ (montado no contêiner da API, que nunca vê
-# credencial — ADR-28). Sem ela a cópia de fora não abre: por isso é mostrada uma vez, ao
-# nascer, com a ordem de guardar FORA da máquina, e o `--mostrar-chave` a mostra de novo.
+# A senha nasce AQUI e mora só aqui: backups/.chave-do-backup, 600, numa pasta 700, e só este
+# script a lê. Não vai para o banco (iria dentro do dump que ela protege), nem para o .env (que
+# o docker compose, o instalador e os outros scripts leem, que se abre para editar e que vai
+# junto quando a configuração é copiada para outra pasta ou máquina), nem para docker/estado/
+# (montado no contêiner da API, que nunca vê credencial — ADR-28). Sem ela a cópia de fora não
+# abre: por isso é mostrada uma vez, ao nascer, com a ordem de guardar FORA da máquina, e o
+# `--mostrar-chave` a mostra de novo.
 CHAVE="$DESTINO/.chave-do-backup"
 
 # Quem digita a chave no papel erra maiúscula, espaço e hífen; nada disso conta.

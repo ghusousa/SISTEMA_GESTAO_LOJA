@@ -1307,6 +1307,32 @@ async def test_forcar_leva_adiante_o_que_o_modelo_nao_escreve(tmp_path: Path) ->
 
 
 @precisa_do_bash
+async def test_forcar_leva_a_linha_com_export_como_estava(tmp_path: Path) -> None:
+    """O docker compose aceita `export CHAVE=valor` no .env (e quem copia de uma receita de
+    shell escreve assim), mas o --forcar só via `CHAVE=`: a linha sumia calada e a NFC-e voltava
+    a "desligado". Agora ela vai como estava. E a de uma chave que o modelo já escreve não volta
+    duplicada: o valor dela entra na linha do modelo."""
+    loja, env = _instalador(tmp_path)
+    assert _instalar(loja, env, "192.168.0.10").returncode == 0
+    texto = (loja / ".env").read_text()
+    assert "\nBACKUP_REMOTO=\n" in texto
+    (loja / ".env").write_text(
+        texto.replace("\nBACKUP_REMOTO=\n", "\nexport BACKUP_REMOTO=gdrive:loja-backups\n")
+        + "export FISCAL_EMISSOR=focusnfe\nexport\tFOCUSNFE_AMBIENTE=producao\n")
+
+    r = _instalar(loja, env, "loja.exemplo.com.br", "--forcar")
+
+    assert r.returncode == 0, _saida(r, loja)
+    linhas = (loja / ".env").read_text().splitlines()
+    assert linhas.count("export FISCAL_EMISSOR=focusnfe") == 1
+    assert linhas.count("export\tFOCUSNFE_AMBIENTE=producao") == 1
+    assert [linha for linha in linhas if "BACKUP_REMOTO=" in linha] == ["BACKUP_REMOTO=gdrive:loja-backups"]
+    mantidas = next(linha for linha in r.stdout.splitlines() if "do .env de antes, mantidas:" in linha)
+    assert set(mantidas.split("mantidas:")[1].replace(",", " ").split()) == {
+        "BACKUP_REMOTO", "FISCAL_EMISSOR", "FOCUSNFE_AMBIENTE"}
+
+
+@precisa_do_bash
 async def test_religar_sem_loja_chega_ao_fim_e_ganha_a_demo(tmp_path: Path) -> None:
     """O caminho que reaproveita o .env morria em "LOJA: unbound variable" depois do `up`:
     sem rotinas religadas e sem resumo. É por ele que a loja de antes ganha a demonstração,

@@ -1096,7 +1096,9 @@ cuida do servidor). `filename_encryption = off`: no Drive o arquivo é
 `loja-AAAAMMDD-HHMMSS.dump.bin`, o nome mostra a data e a rotação por nome continua igual; o
 conteúdo é que não abre. A chave nasce na máquina (`backups/.chave-do-backup`, 600, 24 letras
 sem as que se confundem no papel) e **não** vai para o banco (iria dentro do dump que protege),
-nem para o `.env` (o `instalar.sh --forcar` o reescreve), nem para `docker/estado/` (montado na
+nem para o `.env` (que o docker compose, o instalador e os outros scripts leem, que se abre para
+editar e que vai junto quando a configuração é copiada para outra pasta ou máquina — a chave mora
+só naquele arquivo, que só o `backup.sh` lê), nem para `docker/estado/` (montado na
 API, que nunca vê credencial). Sem ela a cópia não abre, então ela é mostrada UMA vez ao nascer
 com alguém no terminal (o instalador), nunca no journal (pelo timer sai só o recado, também no
 celular), e `--mostrar-chave` a mostra de novo. `--restaurar` reconhece a cópia cifrada pelo
@@ -2202,7 +2204,13 @@ navegador: as duas dividem a mesma origem.
   máquina sem IPv6, diz que o AAAA não foi conferido. Mostra o registro exato a criar (Tipo A ·
   Nome · Valor, com o IP público perguntado a serviços de eco) e o AAAA de outra máquina a apagar;
   no interativo, espera conferindo a cada 15 s (Enter segue sem esperar), e com `--sim` não espera
-  e repete a pendência no resumo. O resumo final traz a URL da
+  e repete a pendência no resumo. O `--forcar` refaz o `.env` pelo modelo (domínio, portas, fuso,
+  o segredo do login de novo) e leva adiante o que o modelo não escreve, como estava — a NFC-e
+  (`FISCAL_*`, `FOCUSNFE_*`: só o `.env` a liga, ADR-41), o `DEMO_MEMORIA`, uma linha à mão, também
+  a `export CHAVE=valor` —, além das senhas da demo (a da conta é a que está na Apple) e do
+  `BACKUP_REMOTO` e do `NOTIFICAR_URL` quando a rodada não traz outros; a saída diz, pelo nome, o
+  que ficou. O `-Forcar` do Windows (`instalar.ps1`) ainda refaz só com o modelo, e o README diz o
+  que copiar de volta. O resumo final traz a URL da
   demo, o e-mail e a senha — a senha só quando acabou de ser sorteada; depois, `./demo.sh
   --mostrar`. O `atualizar.sh` nunca escreve no `.env`: a loja que já existia ganha a demo pelo
   `./demo.sh --ligar` (ou rodando o `./instalar.sh` de novo, que respeita quem a desligou). O

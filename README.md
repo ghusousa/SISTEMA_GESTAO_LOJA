@@ -243,10 +243,18 @@ Outras opções: `--senha-banco`, `--fuso`, `--porta-http`, `--porta-https`, `--
 (o tópico do ntfy), `--forcar` (refaz o `.env` pelo modelo, com domínio, portas, fuso e o segredo
 do login de novo — e mantém o resto: as senhas da demonstração, porque a da conta dela é a que está
 na Apple; toda linha que o modelo não escreve, como a NFC-e (`FISCAL_*`, `FOCUSNFE_*`) e o
-`DEMO_MEMORIA`, com o valor exato; e a cópia de fora (`BACKUP_REMOTO`) e os avisos (`NOTIFICAR_URL`)
-quando a rodada não traz outros. A saída diz, pelo nome, o que ficou), `--sem-demo` (sem a
-demonstração) e `--sem-docker` (não instala o Docker automaticamente). Rodar o instalador de novo é
-seguro: sem `--forcar`, ele reaproveita a configuração e só religa o que estiver parado.
+`DEMO_MEMORIA`, como estava (também a escrita `export CHAVE=valor`); e a cópia de fora
+(`BACKUP_REMOTO`) e os avisos (`NOTIFICAR_URL`) quando a rodada não traz outros. A saída diz, pelo
+nome, o que ficou), `--sem-demo` (sem a demonstração) e `--sem-docker` (não instala o Docker
+automaticamente). Rodar o instalador de novo é seguro: sem `--forcar`, ele reaproveita a
+configuração e só religa o que estiver parado.
+
+**No Windows o `-Forcar` ainda não mantém nada disso.** O `instalar.bat -Forcar` (o
+`instalar.ps1`) refaz o `.env` só com o modelo — domínio, portas, senha do banco, segredo do login,
+ambiente, CORS e fuso — e o resto do `.env` de antes se perde: a NFC-e (`FISCAL_*`, `FOCUSNFE_*`),
+a cópia de fora (`BACKUP_REMOTO`), os avisos (`NOTIFICAR_URL`), o que for da demonstração
+(`DEMO_*`) e qualquer linha posta à mão. Antes do `-Forcar`, copie o `.env`; depois, traga essas
+linhas da cópia para o `.env` novo e rode o `instalar.bat` de novo, sem o `-Forcar`.
 
 ### O dia a dia
 

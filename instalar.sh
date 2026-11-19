@@ -789,19 +789,26 @@ DEMO_SENHA="$(valor_no_env DEMO_ADMIN_SENHA)"
 # estava escrito (aspas e tudo), sem passar pelo valor_no_env.
 ENV_ANTES=""
 if [ "$FORCAR" -eq 1 ] && [ -f .env ]; then ENV_ANTES="$(cat .env 2>/dev/null || true)"; fi
-cru_de_antes() { printf '%s\n' "$ENV_ANTES" | grep -E "^$1=" | tail -1 | cut -d= -f2- || true; }
+# A linha pode vir como `export CHAVE=valor`, que o docker compose aceita (quem copia de uma
+# receita de shell escreve assim): o valor é o mesmo.
+cru_de_antes() {
+    printf '%s\n' "$ENV_ANTES" | grep -E "^(export[[:blank:]]+)?$1=" | tail -1 | cut -d= -f2- || true
+}
 BACKUP_ANTES="$(cru_de_antes BACKUP_REMOTO)"
 NOTIFICAR_ANTES="$(cru_de_antes NOTIFICAR_URL)"
 NOTIFICAR_MANTIDO=0
 
 # As linhas CHAVE= do .env de antes cuja chave o .env recém-gravado não tem, na ordem em que
-# estavam e com o valor exato. As da demonstração ficam de fora: sobre elas o modelo decide.
+# estavam e como estavam — a `export CHAVE=valor` também. A chave é o nome sem o `export`: a
+# linha `export BACKUP_REMOTO=...` não volta ao lado da que o modelo já escreveu com o valor
+# dela. As da demonstração ficam de fora: sobre elas o modelo decide.
 linhas_que_o_modelo_nao_escreve() {
     [ -n "$ENV_ANTES" ] || return 0
-    printf '%s\n' "$ENV_ANTES" | awk -F= '
-        NR == FNR { if ($0 ~ /^[A-Za-z_][A-Za-z0-9_]*=/) novo[$1] = 1; next }
-        /^[A-Za-z_][A-Za-z0-9_]*=/ && !($1 in novo) &&
-            $1 !~ /^(DEMO_SENHA_BANCO|DEMO_JWT_SECRET|DEMO_ADMIN_EMAIL|DEMO_ADMIN_SENHA)$/' .env -
+    printf '%s\n' "$ENV_ANTES" | awk '
+        function chave(linha) { sub(/^export[ \t]+/, "", linha); sub(/=.*/, "", linha); return linha }
+        NR == FNR { if ($0 ~ /^(export[ \t]+)?[A-Za-z_][A-Za-z0-9_]*=/) novo[chave($0)] = 1; next }
+        /^(export[ \t]+)?[A-Za-z_][A-Za-z0-9_]*=/ && !(chave($0) in novo) &&
+            chave($0) !~ /^(DEMO_SENHA_BANCO|DEMO_JWT_SECRET|DEMO_ADMIN_EMAIL|DEMO_ADMIN_SENHA)$/' .env -
 }
 
 # ------------------------------------------------------------------ perguntas
@@ -1019,7 +1026,7 @@ FIM
     if [ -n "$BACKUP_ANTES" ]; then MANTIDAS+=(BACKUP_REMOTO); fi
     if [ "$NOTIFICAR_MANTIDO" -eq 1 ]; then MANTIDAS+=(NOTIFICAR_URL); fi
     while IFS= read -r chave; do MANTIDAS+=("$chave"); done \
-        < <(printf '%s\n' "$LEVADAS" | cut -d= -f1 | awk 'NF && !visto[$0]++')
+        < <(printf '%s\n' "$LEVADAS" | cut -d= -f1 | sed -E 's/^export[[:blank:]]+//' | awk 'NF && !visto[$0]++')
     if [ "${#MANTIDAS[@]}" -gt 0 ]; then
         certo "do .env de antes, mantidas: $(printf '%s\n' "${MANTIDAS[@]}" | juntar)"
     fi
