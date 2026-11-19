@@ -2198,7 +2198,9 @@ navegador: as duas dividem a mesma origem.
   demo, o e-mail e a senha — a senha só quando acabou de ser sorteada; depois, `./demo.sh
   --mostrar`. O `atualizar.sh` nunca escreve no `.env`: a loja que já existia ganha a demo pelo
   `./demo.sh --ligar` (ou rodando o `./instalar.sh` de novo, que respeita quem a desligou). O
-  `demo.sh` mostra (`--mostrar`: endereço, conta e o que levar ao GitHub e à Apple), liga, renova,
+  `demo.sh` mostra (`--mostrar`: endereço, conta e o que levar ao GitHub e à Apple — e, com
+  domínio, as URLs de privacidade e de exclusão de dados que o Play Console tem de receber ANTES de
+  o servidor antigo, a Vercel, ser desligado: o Google Play não passa pelo publicador), liga, renova,
   desliga (os dados ficam) e, com `--desligar --apagar`, apaga banco, role, fotos e as `DEMO_*` do
   `.env`; `--automatico` liga o timer. O `desinstalar.sh` derruba a demo junto (`--profile demo`) e
   desliga o timer; o `diagnostico.sh` a mostra (o `demo-banco` "exited (0)" é o normal de um

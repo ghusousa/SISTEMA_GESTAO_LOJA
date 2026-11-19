@@ -472,7 +472,11 @@ Para a **revisão da Apple** usar esta demonstração, o `./demo.sh --mostrar` d
 GitHub: as Variables `APPLE_SERVIDOR_DEMO` (o endereço **com** o `/demo`) e `APPLE_EMAIL_DEMO`, e
 a senha pelo workflow "Senha da conta demo na Apple" (detalhes em
 [mobile/publicar/README.md](mobile/publicar/README.md)). O app do celular conecta nela pelo mesmo
-endereço, com o `/demo`.
+endereço, com o `/demo`. Trocando a Vercel por esta demonstração, ele lembra também do Google Play,
+que não passa pelo publicador: **antes de desligar o servidor antigo**, troque no Play Console a URL
+da política de privacidade e a de exclusão de dados por `<endereço>/privacidade` e
+`<endereço>/exclusao-de-dados`. Na App Store, a URL de suporte segue a `APPLE_SERVIDOR_DEMO` sozinha
+(ou a `APPLE_URL_SUPORTE`), mas só vale lá quando a versão com ela estiver no ar.
 
 A demonstração é uma segunda API no servidor, com teto de **512 MB** de memória (`DEMO_MEMORIA` no
 `.env`): numa máquina apertada, ela é a primeira a ceder, nunca a loja. Ela vem com o

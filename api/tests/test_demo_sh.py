@@ -163,6 +163,30 @@ async def test_mostrar_diz_endereco_senha_e_o_que_levar_a_apple(tmp_path: Path) 
 
 
 @precisa_do_bash
+async def test_mostrar_lembra_do_play_console_antes_de_desligar_o_servidor_antigo(tmp_path: Path) -> None:
+    """As fichas das lojas apontam para as páginas legais do servidor da demonstração. O Google
+    Play não passa pelo publicador: quem troca a Vercel por esta demonstração e desliga a de lá
+    sem trocar as URLs no Play Console deixa a ficha apontando para páginas fora do ar. Na App
+    Store a URL de suporte segue sozinha, mas só quando a versão com ela estiver no ar."""
+    loja, env = _loja(tmp_path, ENV_COM_A_DEMO)
+
+    r = _demo(loja, env, "--mostrar")
+
+    assert r.returncode == 0, _saida(r, loja)
+    assert "ANTES de desligar o servidor antigo, troque no Play Console" in r.stdout
+    assert "https://loja.exemplo.com.br/demo/privacidade\n" in r.stdout
+    assert "https://loja.exemplo.com.br/demo/exclusao-de-dados\n" in r.stdout
+    assert "a URL de suporte segue APPLE_SERVIDOR_DEMO sozinha (ou a Variable\n  APPLE_URL_SUPORTE)" in r.stdout
+    assert "só vale lá quando a versão com ela estiver no ar" in r.stdout
+
+    # Na instalação local, nenhuma loja de apps alcança o endereço: não há o que trocar.
+    (loja / ".env").write_text(ENV_COM_A_DEMO.replace("ENDERECO_PROXY=loja.exemplo.com.br", "ENDERECO_PROXY=:80"))
+    sem_https = _demo(loja, env, "--mostrar")
+    assert sem_https.returncode == 0, _saida(sem_https, loja)
+    assert "Play Console" not in sem_https.stdout
+
+
+@precisa_do_bash
 async def test_mostrar_sem_demonstracao_diz_como_ligar(tmp_path: Path) -> None:
     loja, env = _loja(tmp_path, ENV_DA_LOJA)
 

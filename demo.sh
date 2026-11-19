@@ -369,6 +369,19 @@ mostrar() {
     printf '  A senha: Actions > "Senha da conta demo na Apple", com a senha acima\n'
     printf '  (ou o Secret APPLE_DEMO_PASSWORD).\n\n'
     printf '  A senha só muda com ./demo.sh --desligar --apagar; aí ela volta a ser sorteada.\n\n'
+    # As fichas das lojas apontam para as páginas legais do servidor da demonstração. O Google
+    # Play não passa pelo publicador: trocado de servidor sem trocar lá, a ficha fica apontando
+    # para páginas fora do ar (docs/LOJAS-DE-APP.md).
+    if [ "$local_" -eq 0 ]; then
+        titulo "Ao trocar de servidor (da Vercel para este)"
+        printf '  ANTES de desligar o servidor antigo, troque no Play Console a URL da política\n'
+        printf '  de privacidade e a de exclusão de dados por:\n'
+        printf '      %s/privacidade\n' "$endereco"
+        printf '      %s/exclusao-de-dados\n' "$endereco"
+        printf '  Na App Store, a URL de suporte segue APPLE_SERVIDOR_DEMO sozinha (ou a Variable\n'
+        printf '  APPLE_URL_SUPORTE), e só vale lá quando a versão com ela estiver no ar: até lá,\n'
+        printf '  o servidor antigo fica ligado.\n\n'
+    fi
 }
 
 ligar() {
