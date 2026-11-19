@@ -289,6 +289,12 @@ for raiz in "" /demo; do
         test "$(curl -s -o "$TMP/resposta" -w '%{http_code}' -H 'Expect:' \
             -H 'Content-Type: application/json' --data-binary "@$TMP/grande.json" \
             "$BASE$raiz/api/v1/auth/login")" = 413
+    # O mesmo JSON em pedaços: sem Content-Length, o Caddy não recusa de antemão; corta no teto
+    # o que o login LÊ, e ele lê o corpo antes de conferir a senha — é o caso que o teto protege.
+    conferir "JSON de 3 MB em pedaços, sem Content-Length, sem login, em ${raiz}/api/v1/auth/login: 413 do proxy" \
+        test "$(curl -s -o "$TMP/resposta" -w '%{http_code}' -H 'Expect:' \
+            -H 'Content-Type: application/json' -H 'Transfer-Encoding: chunked' \
+            --data-binary "@$TMP/grande.json" "$BASE$raiz/api/v1/auth/login")" = 413
     conferir "PUT de 7 MB sem login em ${raiz}/api/v1/produtos/1/foto: 413 do proxy" \
         test "$(put_foto "$TMP/grande.jpg" "$BASE$raiz/api/v1/produtos/1/foto")" = 413
     # Em pedaços, sem Content-Length, o proxy não recusa de antemão: corta no teto o que a API
