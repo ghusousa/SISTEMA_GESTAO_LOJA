@@ -226,16 +226,23 @@ def test_conta_invalida_da_demonstracao_para_antes_de_gravar() -> None:
     sorteada = vercel_build.contas_da_demonstracao(certo)[1]["senha"]
     assert len(sorteada) >= 8 and sorteada != vercel_build.contas_da_demonstracao(certo)[1]["senha"]
 
-    for errado, variavel in (
-        ({**certo, "DEMO_VENDEDORA_SENHA": "Zq7!x"}, "DEMO_VENDEDORA_SENHA"),
-        ({**certo, "DEMO_ADMIN_SENHA": "Zq7!x"}, "DEMO_ADMIN_SENHA"),
-        ({**certo, "DEMO_ADMIN_EMAIL": "Zq7!x-sem-arroba"}, "DEMO_ADMIN_EMAIL"),
+    # 42 caracteres (o cadastro aceita até 72) e 78 BYTES: o bcrypt recusa no meio da carga.
+    longa_em_bytes = "Zq7!x-" + "ç" * 36
+    for errado, variavel, valor in (
+        ({**certo, "DEMO_VENDEDORA_SENHA": "Zq7!x"}, "DEMO_VENDEDORA_SENHA", "Zq7!x"),
+        ({**certo, "DEMO_ADMIN_SENHA": "Zq7!x"}, "DEMO_ADMIN_SENHA", "Zq7!x"),
+        ({**certo, "DEMO_ADMIN_EMAIL": "Zq7!x-sem-arroba"}, "DEMO_ADMIN_EMAIL", "Zq7!x"),
+        ({**certo, "DEMO_ADMIN_SENHA": longa_em_bytes}, "DEMO_ADMIN_SENHA", longa_em_bytes),
+        ({**certo, "DEMO_VENDEDORA_SENHA": longa_em_bytes}, "DEMO_VENDEDORA_SENHA",
+         longa_em_bytes),
+        # O e-mail da vendedora que a carga cria, com outra caixa e espaços em volta.
+        ({**certo, "DEMO_ADMIN_EMAIL": "  Ana@LOJA.com "}, "DEMO_ADMIN_EMAIL", "Ana@LOJA"),
     ):
         with pytest.raises(SystemExit) as parou:
             vercel_build.contas_da_demonstracao(errado)
         mensagem = str(parou.value)
         assert variavel in mensagem and "nada foi gravado" in mensagem
-        assert "Zq7!x" not in mensagem
+        assert valor not in mensagem
 
 
 def test_estado_da_demonstracao_vem_dos_marcos_e_do_movimento() -> None:

@@ -390,26 +390,45 @@ async def test_renovar_com_a_conta_invalida_para_antes_de_zerar(
 ) -> None:
     """O .env perdeu a DEMO_ADMIN_SENHA, ou ganhou uma curta: a renovação da madrugada para
     ANTES do TRUNCATE, e a demo de ontem segue no ar com a conta do revisor. Zerar primeiro a
-    deixava vazia (0 usuários) com a frase dizendo "nada foi feito"."""
+    deixava vazia (0 usuários) com a frase dizendo "nada foi feito".
+
+    O mesmo com o que só o meio da carga descobria: senha de até 72 caracteres e mais de 72
+    BYTES (o bcrypt recusa) e o dono com o e-mail da vendedora — que o PREPARO também
+    recusa, em vez de transformar a vendedora no dono."""
     await _marcar_o_banco()
     feito = _rodar("preparar-demonstracao", _da_demo(), tmp_path)
     assert feito.returncode == 0, _sem_segredo(feito)[-3000:]
     retrato = tuple((await _consultar(RETRATO))[0])
     assert retrato[0] == 2 and retrato[1] == 10 and retrato[3] > 100
+    contas = sorted(tuple(u) for u in await _consultar("SELECT email, role FROM users"))
     foto = _foto_de_quem_testou(tmp_path)
 
     curta = "Curta-7"  # 7 caracteres: a régua da API pede 8
+    longa = "Senha-" + "ç" * 36  # 42 caracteres, 78 bytes
     sem_senha = _ambiente(LOJA_DEMONSTRACAO="1", DEMO_ADMIN_EMAIL=EMAIL_DO_DONO)
     senha_curta = _ambiente(
         LOJA_DEMONSTRACAO="1", DEMO_ADMIN_EMAIL=EMAIL_DO_DONO, DEMO_ADMIN_SENHA=curta
     )
-    for ambiente, frase in ((sem_senha, "nada foi feito"), (senha_curta, "nada foi gravado")):
-        renovou = _rodar("renovar-demonstracao", ambiente, tmp_path)
+    casos = [
+        ("renovar-demonstracao", sem_senha, "nada foi feito"),
+        ("renovar-demonstracao", senha_curta, "nada foi gravado"),
+    ]
+    for comando in ("renovar-demonstracao", "preparar-demonstracao"):
+        casos += [
+            (comando, {**_da_demo(), "DEMO_ADMIN_SENHA": longa}, "DEMO_ADMIN_SENHA"),
+            (comando, _da_demo(DEMO_VENDEDORA_SENHA=longa), "DEMO_VENDEDORA_SENHA"),
+            (comando, {**_da_demo(), "DEMO_ADMIN_EMAIL": " ANA@Loja.com "}, "DEMO_ADMIN_EMAIL"),
+        ]
+    for comando, ambiente, frase in casos:
+        renovou = _rodar(comando, ambiente, tmp_path)
         saida = _sem_segredo(renovou)
-        assert curta not in saida, "a saída da CLI levou a senha"
-        assert renovou.returncode == 1, saida[-3000:]
-        assert frase in renovou.stderr and "zerada" not in renovou.stdout
-        assert tuple((await _consultar(RETRATO))[0]) == retrato
+        assert curta not in saida and longa not in saida, "a saída da CLI levou a senha"
+        assert renovou.returncode == 1, (comando, frase, saida[-3000:])
+        assert frase in renovou.stderr and "zerada" not in renovou.stdout, (comando, saida)
+        assert "nada foi" in renovou.stderr
+        assert tuple((await _consultar(RETRATO))[0]) == retrato, (comando, frase)
+        assert sorted(tuple(u) for u in await _consultar("SELECT email, role FROM users")) \
+            == contas, (comando, frase)
         assert foto.exists()
 
 

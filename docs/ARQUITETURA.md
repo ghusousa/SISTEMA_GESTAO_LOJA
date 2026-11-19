@@ -2123,8 +2123,13 @@ navegador: as duas dividem a mesma origem.
   banco de uma loja recém-instalada está vazio, que é exatamente o "pode semear" da carga: uma
   variável copiada por engano para o contêiner da loja não basta para tocar no banco dela. Sem as
   duas, saem com código ≠ 0 e a frase de qual faltou, sem tocar em nada; nunca imprimem senha nem a
-  URL do banco. Na instalação, preparo e renovação esperam um pelo outro (`pg_advisory_lock` de
-  sessão, numa conexão própria); na Vercel, não — uma trava presa no Neon seguraria o próximo deploy.
+  URL do banco. As contas (`DEMO_ADMIN_*`, `DEMO_VENDEDORA_SENHA`) são conferidas ANTES do TRUNCATE
+  e de qualquer escrita — a régua do cadastro (`UsuarioCreate`), mais a senha de até 72 BYTES (o
+  bcrypt; o cadastro conta caracteres) e o dono com e-mail diferente do da vendedora (`ana@loja.com`,
+  que a carga cria) —: inválidas, a renovação sai ≠ 0 sem tocar em nada e a demo de ontem segue no
+  ar, com a conta do revisor (o preparo também para sem gravar). Na instalação, preparo e renovação
+  esperam um pelo outro (`pg_advisory_lock` de sessão, numa conexão própria); na Vercel, não — uma
+  trava presa no Neon seguraria o próximo deploy.
 - **Renovação diária, porque o seed é relativo a hoje.** As vendas da carga se espalham pelos 25 dias
   ANTES do dia em que ela rodou: semanas depois, o "hoje", a semana e o mês da demo estariam vazios,
   e o que cada revisor vendeu, cancelou ou excluiu ficaria para o próximo — inclusive o saldo do

@@ -182,6 +182,12 @@ def _erros_sem_valor(erro: ValidationError, nomes: dict[str, str]) -> str:
     )
 
 
+def _conta_invalida(motivo: str, jeito: _Jeito) -> SystemExit:
+    return SystemExit(
+        f"Conta da demonstração inválida: {motivo}. {jeito.corrigir_conta} (nada foi gravado)."
+    )
+
+
 def contas_da_demonstracao(
     ambiente: Mapping[str, str], origem: Origem | str
 ) -> tuple[dict[str, str], dict[str, str]] | None:
@@ -189,8 +195,14 @@ def contas_da_demonstracao(
 
     `None` sem DEMO_ADMIN_EMAIL/DEMO_ADMIN_SENHA. Conta inválida para aqui, com o nome da
     variável e o jeito de corrigir de cada origem: criar o dono e cair na vendedora deixava a
-    carga pela metade.
+    carga pela metade — e a renovação, que zera antes de semear, deixava a demo vazia.
+
+    Além da régua do cadastro (`UsuarioCreate`), duas que só o meio da carga descobria: a
+    senha conta BYTES para o bcrypt (`hash_senha` recusa mais de 72, e o cadastro conta
+    caracteres: 'ç' vale 2), e o dono não pode ter o e-mail da vendedora, que a carga cria
+    (o preparo transformava a vendedora no dono; a renovação parava no seed, sem produto).
     """
+    from app.core.security import MAX_SENHA_BYTES
     from app.modules.usuarios.models import Papel
     from app.modules.usuarios.schemas import UsuarioCreate
 
@@ -221,10 +233,19 @@ def contas_da_demonstracao(
                 nome=conta["nome"], email=conta["email"], senha=conta["senha"], papel=papel
             )
         except ValidationError as erro:
-            raise SystemExit(
-                f"Conta da demonstração inválida: {_erros_sem_valor(erro, nomes)}. "
-                f"{jeito.corrigir_conta} (nada foi gravado)."
-            ) from None
+            raise _conta_invalida(_erros_sem_valor(erro, nomes), jeito) from None
+        if len(conta["senha"].encode("utf-8")) > MAX_SENHA_BYTES:
+            raise _conta_invalida(
+                f"{nomes['senha']} precisa ter no máximo {MAX_SENHA_BYTES} bytes (letra "
+                "acentuada e símbolo contam 2 ou mais)",
+                jeito,
+            )
+    if admin["email"].lower() == VENDEDORA_EMAIL:
+        raise _conta_invalida(
+            f"DEMO_ADMIN_EMAIL não pode ser {VENDEDORA_EMAIL}, o e-mail da vendedora que a "
+            "carga cria",
+            jeito,
+        )
     return admin, vendedora
 
 
