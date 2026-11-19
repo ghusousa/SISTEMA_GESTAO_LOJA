@@ -2,7 +2,8 @@
 /**
  * Gera o guia em PDF para o revisor da Apple (app-review-guide.pdf, nesta pasta) a partir do
  * texto de guia.mjs, com o Playwright (page.pdf), e grava a impressão digital das entradas
- * (app-review-guide.entradas.json). O PDF vai para o git; o publicador o anexa à revisão.
+ * (app-review-guide.entradas.json). O PDF vai para o git; o publicador o anexa à revisão quando
+ * ainda não há gravação de tela (a Apple aceita UM anexo, e o vídeo vem primeiro).
  *
  *   node publicar/revisao/gerar-guia.mjs        (de dentro de mobile/)
  *

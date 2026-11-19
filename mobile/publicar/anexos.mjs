@@ -1,14 +1,22 @@
 /**
- * Os anexos da revisão (App Review Information → Attachments): o guia em PDF para o revisor e
- * a gravação de tela que a Apple pediu na Guideline 2.1. A API 4.6 tem a rota
+ * O anexo da revisão (App Review Information → Attachments): a gravação de tela que a Apple
+ * pediu na Guideline 2.1 ou, sem ela, o guia em PDF para o revisor. A API 4.6.1 tem a rota
  * (`/v1/appStoreReviewAttachments`, presa ao appStoreReviewDetail da versão) — o dono não
  * precisa anexar nada no site.
  *
- * Subir = reservar (nome e tamanho) → PUT dos bytes nas uploadOperations que a Apple devolve
- * → confirmar com o MD5 (a Apple compara com o que recebeu) → esperar o processamento.
- * O reenvio SUBSTITUI o anexo de mesmo nome e nunca duplica: o igual (mesmo MD5, processado)
- * fica como está; o diferente sobe primeiro e só então o antigo sai — se o novo falhar, a
- * reserva pela metade é apagada e o antigo continua lá.
+ * A Apple aceita UM anexo por detalhe de revisão: o POST com outro já lá volta 409 STATE_ERROR
+ * ("There can be max of 1 attachment, please delete the existing attachment before loading a
+ * new one" — a rodada nº 8 parou nele, subindo o guia ao lado do vídeo). Por isso a rodada
+ * escolhe um só (escolherAnexo), e as notas citam só ele (ficha.mjs): o vídeo novo desta
+ * rodada; senão, o vídeo que já está anexado e processado — um vídeo bom nunca sai para o guia
+ * entrar; senão, o guia.
+ *
+ * Trocar (trocarAnexo): o que já está lá IGUAL ao escolhido (mesmo nome, mesmo MD5, processado)
+ * fica, e os outros saem. Senão, TODOS os que estão lá saem ANTES e o escolhido sobe: reservar
+ * (nome e tamanho) → PUT dos bytes nas uploadOperations que a Apple devolve → confirmar com o
+ * MD5 (a Apple compara com o que recebeu) → esperar o processamento. Entre o apagar e o subir a
+ * revisão fica sem anexo; se o envio falhar, a reserva pela metade sai e a pendência diz isso —
+ * a próxima rodada sobe de novo (e o `--enviar` não manda revisão sem o anexo).
  *
  * O vídeo vem de um arquivo ou de um endereço https (`--video-revisao`; no Actions, a entrada
  * "video_revisao_url"): baixado para a pasta temporária do runner, conferido (MP4/MOV de
@@ -24,7 +32,7 @@ import { pipeline } from 'node:stream/promises';
 
 /** Nome do guia na Apple (e no repositório: publicar/revisao/). */
 export const NOME_DO_GUIA = 'app-review-guide.pdf';
-/** O vídeo sobe sempre com este nome (+ .mp4 ou .mov): é o que deixa o reenvio substituir. */
+/** O vídeo sobe sempre com este nome (+ .mp4 ou .mov): o mesmo vídeo de novo é reconhecido e fica. */
 export const NOME_DO_VIDEO = 'screen-recording';
 export const MAXIMO_DO_VIDEO = 500 * 1024 * 1024;
 export const MINIMO_DO_VIDEO = 64 * 1024;
@@ -157,56 +165,131 @@ export async function lerAnexos(asc, detalheId) {
   return (await asc.get(`/v1/appStoreReviewDetails/${detalheId}/appStoreReviewAttachments?limit=50`)).data ?? [];
 }
 
+/**
+ * Anexo que uma rodada anterior deixou processando (UPLOAD_COMPLETE): espera a Apple terminar
+ * ANTES da escolha — o vídeo que acabou de subir não perde o lugar para o guia só por ainda
+ * estar processando. Só leitura; devolve a lista com o estado de agora.
+ */
+export async function esperarOsQueProcessam(asc, anexos, esperaMs) {
+  const agora = [];
+  for (const anexo of anexos) {
+    if (estadoDoAnexo(anexo) !== 'UPLOAD_COMPLETE') {
+      agora.push(anexo);
+      continue;
+    }
+    const estado = await esperarProcessamento(asc, anexo.id, esperaMs);
+    agora.push({ ...anexo, attributes: { ...anexo.attributes, assetDeliveryState: estado } });
+  }
+  return agora;
+}
+
 /** O vídeo já anexado e processado (o mais novo, se houver mais de um), ou null. */
 export function videoAnexado(anexos) {
   return anexos.find((a) => ehVideo(a.attributes?.fileName) && estadoDoAnexo(a) === 'COMPLETE') ?? null;
 }
 
 /**
- * Sobe UM anexo com a regra do reenvio (ver o topo). Devolve { id, mantido, substituidos,
- * processando }; lança Error com o motivo se a Apple recusar.
+ * O ÚNICO anexo da revisão (ver o topo): o vídeo novo desta rodada; senão, o vídeo que já está
+ * anexado e processado (fica como está: `existente`, sem os bytes); senão, o guia PDF.
+ * Devolve { tipo: 'video' | 'guia', nome, dados?, md5?, existente? }.
  */
-export async function subirAnexo(asc, { detalheId, nome, dados, md5: soma, existentes, esperaMs, relatorio }) {
-  const mesmoNome = existentes.filter((a) => a.attributes?.fileName === nome);
-  const igual = mesmoNome.find((a) => a.attributes?.sourceFileChecksum === soma && estadoDoAnexo(a) === 'COMPLETE');
+export function escolherAnexo({ video = null, guia, anexos = [] }) {
+  if (video) return { tipo: 'video', nome: video.nome, dados: video.dados, md5: video.md5 };
+  const jaAnexado = videoAnexado(anexos);
+  if (jaAnexado) return { tipo: 'video', nome: jaAnexado.attributes.fileName, existente: jaAnexado };
+  return { tipo: 'guia', nome: guia.nome, dados: guia.dados, md5: guia.md5 };
+}
+
+const nomeDoAnexo = (anexo) => anexo.attributes?.fileName ?? anexo.id;
+
+/** Apaga um anexo; o que já sumiu (404, apagado no site) conta como apagado. */
+async function apagarAnexo(asc, anexo) {
+  try {
+    await asc.del(`/v1/appStoreReviewAttachments/${anexo.id}`);
+  } catch (erro) {
+    if (erro.status !== 404) throw erro;
+  }
+}
+
+/**
+ * Deixa na revisão só o `escolhido` de escolherAnexo (a regra está no topo). Devolve { id,
+ * mantido, apagados, sobras, processando } — `sobras`: outro anexo que não saiu ao lado do
+ * escolhido que ficou (aviso, não pendência: o que as notas citam está lá). Lança Error com o
+ * motivo; `semAnexo` quando os de antes já saíram e o escolhido não entrou.
+ */
+export async function trocarAnexo(asc, { detalheId, escolhido, existentes, esperaMs, relatorio }) {
+  const processado = (a) => estadoDoAnexo(a) === 'COMPLETE';
+  const igual = escolhido.existente
+    ? existentes.find((a) => a.id === escolhido.existente.id && processado(a))
+    : existentes.find(
+        (a) => a.attributes?.fileName === escolhido.nome && a.attributes?.sourceFileChecksum === escolhido.md5 && processado(a),
+      );
   if (igual) {
-    // Sobra de uma rodada que caiu entre subir o novo e apagar o velho: some agora.
-    for (const outro of mesmoNome) if (outro !== igual) await asc.del(`/v1/appStoreReviewAttachments/${outro.id}`);
-    return { id: igual.id, mantido: true, substituidos: mesmoNome.length - 1, processando: false };
+    // Fica. Os outros — o guia que o vídeo substitui, a reserva pela metade de uma rodada que
+    // caiu, os dois anexos de antes da regra de um só — saem.
+    let apagados = 0;
+    const sobras = [];
+    for (const outro of existentes.filter((a) => a !== igual)) {
+      try {
+        await apagarAnexo(asc, outro);
+        apagados += 1;
+      } catch (erro) {
+        sobras.push(`${nomeDoAnexo(outro)} (${erro.message})`);
+      }
+    }
+    return { id: igual.id, mantido: true, apagados, sobras, processando: false };
+  }
+  if (escolhido.existente) {
+    // Sem os bytes, o vídeo que sumiu entre o começo da rodada e agora não tem como voltar daqui.
+    throw new Error(`o vídeo ${escolhido.nome}, que estava anexado no começo da rodada, não está mais lá — passe a gravação de novo (--video-revisao)`);
   }
 
-  const reserva = (
-    await asc.post('/v1/appStoreReviewAttachments', {
-      data: {
-        type: 'appStoreReviewAttachments',
-        attributes: { fileName: nome, fileSize: dados.length },
-        relationships: { appStoreReviewDetail: { data: { type: 'appStoreReviewDetails', id: detalheId } } },
-      },
-    })
-  ).data;
+  // A Apple recusaria o novo com outro lá: TODOS saem antes. A revisão fica sem anexo até o
+  // escolhido entrar — e, se ele não entrar, a próxima rodada o sobe de novo.
+  let apagados = 0;
+  for (const antigo of existentes) {
+    try {
+      await apagarAnexo(asc, antigo);
+      apagados += 1;
+    } catch (erro) {
+      throw new Error(`o anexo ${nomeDoAnexo(antigo)}, que já estava lá, não saiu (${erro.message}) e a Apple aceita um só — ${escolhido.nome} nem subiu`);
+    }
+  }
+  let reserva = null;
   let estado;
   try {
-    await asc.subirArquivo(reserva.attributes.uploadOperations, dados);
+    reserva = (
+      await asc.post('/v1/appStoreReviewAttachments', {
+        data: {
+          type: 'appStoreReviewAttachments',
+          attributes: { fileName: escolhido.nome, fileSize: escolhido.dados.length },
+          relationships: { appStoreReviewDetail: { data: { type: 'appStoreReviewDetails', id: detalheId } } },
+        },
+      })
+    ).data;
+    await asc.subirArquivo(reserva.attributes.uploadOperations, escolhido.dados);
     // A Apple confere o MD5 com os bytes que recebeu: arquivo truncado não passa calado.
     await asc.patch(`/v1/appStoreReviewAttachments/${reserva.id}`, {
-      data: { type: 'appStoreReviewAttachments', id: reserva.id, attributes: { uploaded: true, sourceFileChecksum: soma } },
+      data: { type: 'appStoreReviewAttachments', id: reserva.id, attributes: { uploaded: true, sourceFileChecksum: escolhido.md5 } },
     });
     estado = await esperarProcessamento(asc, reserva.id, esperaMs);
     if (estado.state === 'FAILED') {
       const motivo = (estado.errors ?? []).map((e) => [e.code, e.description].filter(Boolean).join(': ')).join('; ');
-      throw new Error(`a Apple recusou ao processar ${nome} (${motivo || 'sem motivo'})`);
+      throw new Error(`a Apple recusou ao processar ${escolhido.nome} (${motivo || 'sem motivo'})`);
     }
   } catch (erro) {
-    try {
-      await asc.del(`/v1/appStoreReviewAttachments/${reserva.id}`);
-    } catch {
-      relatorio?.ok(`a reserva ${reserva.id} pela metade não saiu; a próxima rodada a substitui`);
+    if (reserva) {
+      try {
+        await apagarAnexo(asc, reserva);
+      } catch {
+        relatorio?.ok(`a reserva ${reserva.id} pela metade não saiu; a próxima rodada a apaga antes de subir`);
+      }
     }
+    erro.semAnexo = true;
+    erro.apagados = apagados;
     throw erro;
   }
-  // O novo entrou inteiro: agora o de mesmo nome que estava lá sai.
-  for (const antigo of mesmoNome) await asc.del(`/v1/appStoreReviewAttachments/${antigo.id}`);
-  return { id: reserva.id, mantido: false, substituidos: mesmoNome.length, processando: estado.state !== 'COMPLETE' };
+  return { id: reserva.id, mantido: false, apagados, sobras: [], processando: estado.state !== 'COMPLETE' };
 }
 
 /** A Apple processa o anexo depois do upload: UPLOAD_COMPLETE → COMPLETE (ou FAILED). */

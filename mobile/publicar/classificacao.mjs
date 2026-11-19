@@ -1,8 +1,8 @@
 /**
- * Classificação etária COMPLETA (AgeRatingDeclaration da API 4.6): as respostas de um app
+ * Classificação etária COMPLETA (AgeRatingDeclaration da API 4.6.1): as respostas de um app
  * de gestão de loja, e o envio que aguenta a Apple mexer no questionário.
  *
- * Toda pergunta da 4.6 tem resposta aqui — frequência = NONE, sim/não = false. O teste
+ * Toda pergunta da 4.6.1 tem resposta aqui — frequência = NONE, sim/não = false. O teste
  * (teste/rodar.mjs) cruza esta lista com a especificação oficial gerada em
  * teste/esquema-asc.mjs: pergunta nova numa versão nova da API quebra o teste até ganhar
  * resposta. Não são perguntas, e ficam como o dono deixou: a faixa da Kids Category, os
@@ -12,9 +12,11 @@
  * Duas mudanças da Apple, dois caminhos:
  *  - a Apple RECUSA um atributo (409/422 que o nomeia — saiu da API, por exemplo): sai só
  *    ele, tenta de novo, e vira AVISO;
- *  - a Apple tem pergunta que a 4.6 não tem (16/11/2026 vieram duas): ela volta em branco
+ *  - a Apple tem pergunta que a especificação daqui ainda não tem: ela volta em branco
  *    (null) na declaração — vira PENDÊNCIA com os nomes, e o envio para a revisão mostra a
- *    mensagem da Apple se ela exigir.
+ *    mensagem da Apple se ela exigir. Foi o que houve com as duas de 16/11/2026
+ *    (datingAndRelationships e sharedLocation): pararam a revisão até a 4.6.1 publicá-las, e
+ *    desde então têm resposta abaixo.
  */
 
 const NENHUM = 'NONE';
@@ -38,11 +40,13 @@ export const RESPOSTAS = {
   // Sim ou não? Não.
   advertising: false, // sem anúncio, sem SDK de publicidade
   ageAssurance: false, // não verifica a idade de ninguém
+  datingAndRelationships: false, // sem namoro nem relacionamento: é estoque, venda e caixa
   gambling: false, // sem aposta
   healthOrWellnessTopics: false, // não trata de saúde
   lootBox: false, // sem caixa de recompensa paga
   messagingAndChat: false, // sem conversa entre usuários
   parentalControls: false, // sem controle parental
+  sharedLocation: false, // não pede nem compartilha a localização de ninguém (sem GPS)
   socialMedia: false, // não é rede social
   socialMediaAgeRestricted: false,
   unrestrictedWebAccess: false, // sem navegador nem WebView: só a API da loja

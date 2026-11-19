@@ -1,6 +1,6 @@
 /**
  * Teste de ponta a ponta do publicador: sobe a App Store de mentira (que confere cada rota,
- * parâmetro e corpo contra a especificação oficial 4.6) e um servidor de demonstração de
+ * parâmetro e corpo contra a especificação oficial 4.6.1) e um servidor de demonstração de
  * mentira, gera uma chave descartável, capturas PNG sintéticas nos dois tamanhos, uma lista
  * de aparelhos, um vídeo e uma árvore de telas do app, roda `publicar.mjs` de verdade em cada
  * cenário e confere o que chegou.
@@ -250,6 +250,15 @@ const infoPt = (estado, infoId) =>
   Object.values(estado.infoLocs).find((l) => l.info === infoId && l.atributos.locale === 'pt-BR')?.atributos;
 const itensDoEnvio = (envio) => envio.itens.filter((i) => i.estado !== 'REMOVED').map((i) => i.versao).join();
 const anexosPorNome = (estado, nome) => Object.values(estado.anexos).filter((a) => a.nome === nome);
+/** O 409 "There can be max of 1 attachment" (ou outra recusa) no POST de anexo. */
+const recusasDeAnexo = (estado) => estado.recusas.filter((r) => r.rota === 'POST /v1/appStoreReviewAttachments');
+/** Na rodada que começou na requisição `desde`, o anexo de antes saiu ANTES de o novo ser reservado? */
+function apagouAntesDeSubir(estado, desde) {
+  const rodada = estado.requisicoes.slice(desde);
+  const apagou = rodada.indexOf('DELETE /v1/appStoreReviewAttachments/{id}');
+  const subiu = rodada.indexOf('POST /v1/appStoreReviewAttachments');
+  return apagou >= 0 && subiu >= 0 && apagou < subiu;
+}
 const chamadasDaDemo = (desde = 0) => DEMO.chamadas.slice(desde).map((c) => `${c.metodo} ${c.caminho}`);
 
 /** As capturas de um conjunto batem com a pasta: mesmos nomes, mesma ordem, bytes e MD5. */
@@ -301,7 +310,7 @@ const baseSintetica = REAIS ? null : capturasSinteticas();
 const baseDaPrimeira = REAIS ? join(RAIZ, 'media', 'app-store') : baseSintetica;
 
 await cenario(
-  `Primeira publicação, com --enviar (${REAIS ? 'capturas REAIS de media/app-store' : 'capturas sintéticas 6,5" + 6,9"'}), guia e vídeo anexados`,
+  `Primeira publicação, com --enviar (${REAIS ? 'capturas REAIS de media/app-store' : 'capturas sintéticas 6,5" + 6,9"'}), e o vídeo como O anexo da revisão`,
   async ({ conferir, guardar }) => {
     const mock = await subirMock();
     const resumoDoActions = join(mkdtempSync(join(TEMP, 'resumo-')), 'resumo.md');
@@ -357,10 +366,14 @@ await cenario(
     conferir(/SCREEN RECORDING/.test(notas) && /EXTERNAL SERVICES/.test(notas) && /REGIONS/.test(notas) && /REGULATION/.test(notas), 'notas em inglês, com os 7 itens da Apple');
     conferir(notas.includes(APARELHOS.join('; ')) && notas.includes(`made on a physical ${APARELHOS[0]}`), 'notas com a lista de aparelhos testados e o aparelho da gravação');
     conferir(notas.includes('"screen-recording.mp4"') && !notas.includes('(pending)'), 'notas citam o vídeo anexado, nada pendente');
+    conferir(!notas.includes('app-review-guide.pdf'), 'notas não prometem o guia PDF, que não vai anexado');
     conferir(notas.includes('Mais > Minha conta > Excluir minha conta') && notas.includes('Mais > Usuários > (pessoa) > Excluir conta'), 'notas com os dois caminhos da exclusão de conta');
     conferir([...notas].length <= 4000, `notas dentro dos 4000 (${[...notas].length})`);
-    conferirAnexo(conferir, e, 'app-review-guide.pdf', GUIA);
     conferirAnexo(conferir, e, 'screen-recording.mp4', readFileSync(VIDEO));
+    conferir(
+      Object.keys(e.anexos).length === 1 && recusasDeAnexo(e).length === 0,
+      'um anexo só na revisão — o vídeo; o guia não sobe ao lado (a Apple recusaria com 409)',
+    );
     const demo = chamadasDaDemo(antesDaDemo);
     conferir(
       ['GET /health', 'POST /api/v1/auth/login', 'GET /api/v1/variantes/codigo-barras/7890000000000', 'GET /api/v1/leitor/pareamentos/0', 'DELETE /api/v1/usuarios/me', 'POST /api/v1/auth/logout', 'GET /privacidade', 'GET /suporte'].every((c) => demo.includes(c)),
@@ -411,7 +424,10 @@ if (!REAIS) {
     conferir(e.capturasApagadas.length === antes && antes === 20, `reenvio apagou as ${antes} capturas antigas`);
     conferirConjunto(conferir, e, 'APP_IPHONE_65', join(capturas, 'iphone-6.5'));
     conferirConjunto(conferir, e, 'APP_IPHONE_67', join(capturas, 'iphone-6.9'));
-    conferir(contar(e, 'POST /v1/appStoreReviewAttachments') === 2 && anexosPorNome(e, 'screen-recording.mp4').length === 1, 'os anexos iguais não subiram de novo na 2ª rodada');
+    conferir(
+      contar(e, 'POST /v1/appStoreReviewAttachments') === 1 && anexosPorNome(e, 'screen-recording.mp4').length === 1 && Object.keys(e.anexos).length === 1,
+      'o vídeo da 1ª rodada ficou: nada subiu de novo na 2ª (sem --video-revisao), e o guia não entrou ao lado',
+    );
     conferir(e.envios.length === 1 && e.envios[0].estado === 'WAITING_FOR_REVIEW', 'ENVIADO para revisão');
     conferir(recusasInesperadas(e).length === 0, 'todo corpo e parâmetro conforme a especificação');
   });
@@ -475,16 +491,17 @@ if (!REAIS) {
     const e = mock.estado;
     mock.rejeitar({ estadoDaVersao: 'METADATA_REJECTED' });
     const videoAntigo = Object.entries(e.anexos).find(([, a]) => a.nome === 'screen-recording.mp4')?.[0];
-    const guiaAntigo = Object.entries(e.anexos).find(([, a]) => a.nome === 'app-review-guide.pdf')?.[0];
     const anexosAntes = contar(e, 'POST /v1/appStoreReviewAttachments');
+    const desde = e.requisicoes.length;
     const novoVideo = videoSintetico(2);
     const segunda = await publicar(['--enviar', '--mesmo-build', '--video-revisao', novoVideo], { porta: mock.porta, capturas: baseSintetica });
     guardar(segunda.saida);
     await mock.fechar();
     conferir(segunda.codigo === 0, 'reenviou sem erro');
-    conferir(contar(e, 'POST /v1/appStoreReviewAttachments') - anexosAntes === 1, 'só o vídeo novo subiu (o guia igual ficou)');
-    conferir(e.anexosApagados.includes(videoAntigo) && !e.anexosApagados.includes(guiaAntigo), 'o vídeo antigo saiu depois de o novo entrar; o guia ficou');
+    conferir(contar(e, 'POST /v1/appStoreReviewAttachments') - anexosAntes === 1, 'só o vídeo novo subiu');
+    conferir(e.anexosApagados.includes(videoAntigo) && apagouAntesDeSubir(e, desde), 'o vídeo antigo saiu ANTES de o novo subir (a Apple aceita um só)');
     conferirAnexo(conferir, e, 'screen-recording.mp4', readFileSync(novoVideo));
+    conferir(Object.keys(e.anexos).length === 1, 'um anexo só na revisão');
     conferir(segunda.saida.includes('o mesmo que já estava preso'), 'o log diz que é o mesmo build, de propósito');
     conferir(e.buildPreso.VER1 === 'B1' && e.envios.length === 1 && e.envios[0].estado === 'WAITING_FOR_REVIEW', 'mesmo build, mesmo envio, de volta à fila');
   });
@@ -599,8 +616,14 @@ if (!REAIS) {
     const e = mock.estado;
     await mock.fechar();
     conferir(codigo === 0, 'terminou sem erro');
-    conferir((e.revisoes.VER1?.atributos.notes ?? '').includes('(pending)'), 'as notas marcam o que falta como "(pending)"');
+    const notas = e.revisoes.VER1?.atributos.notes ?? '';
+    conferir(notas.includes('(pending)'), 'as notas marcam o que falta como "(pending)"');
+    conferir(
+      notas.includes('The attached "app-review-guide.pdf" has them in full') && notas.includes('1) SCREEN RECORDING: attachment (pending)'),
+      'sem vídeo, o anexo é o guia: as notas citam o guia, e a gravação fica "(pending)"',
+    );
     conferirAnexo(conferir, e, 'app-review-guide.pdf', GUIA);
+    conferir(Object.keys(e.anexos).length === 1, 'um anexo só na revisão — o guia');
     conferir(e.envios.length === 0, 'nada enviado para revisão');
   });
 
@@ -853,6 +876,138 @@ if (!REAIS) {
     conferir(e.envios.length === 0, 'nada enviado para revisão');
   });
 
+  // ------------------------------------------------ um anexo só na revisão
+  // A Apple aceita UM anexo por detalhe de revisão: a rodada nº 8 de verdade parou no 409 ao
+  // subir o guia com o vídeo lá. Em cada cenário, a 1ª rodada (só a ficha, sem vídeo) cria a
+  // versão e o detalhe com o guia anexado; anexosNaRevisao() troca isso pelo que outra rodada —
+  // ou o publicador de antes da regra — deixou lá.
+  const GUIA_VELHO = Buffer.from('%PDF-1.7\n% o guia de uma rodada antiga, com outro MD5\n%%EOF\n');
+  const BYTES_DO_VIDEO = readFileSync(VIDEO);
+  const notasDe = (estado) => estado.revisoes.VER1?.atributos.notes ?? '';
+  const idDoAnexo = (estado, nome) => Object.entries(estado.anexos).find(([, a]) => a.nome === nome)?.[0];
+
+  await cenario('Um anexo só: o guia velho sai ANTES de o guia novo subir (a Apple recusaria o segundo)', async ({ conferir, guardar }) => {
+    const mock = await subirMock();
+    const primeira = await publicar([], { porta: mock.porta, capturas: baseSintetica });
+    guardar(primeira.saida);
+    const e = mock.estado;
+    const [velho] = mock.anexosNaRevisao([{ nome: 'app-review-guide.pdf', dados: GUIA_VELHO }]);
+    const desde = e.requisicoes.length;
+    const segunda = await publicar([], { porta: mock.porta, capturas: baseSintetica });
+    guardar(segunda.saida);
+    await mock.fechar();
+    conferir(primeira.codigo === 0 && segunda.codigo === 0 && !segunda.saida.includes('não foi anexado'), 'as duas rodadas (só a ficha) terminaram sem erro nem pendência de anexo');
+    conferir(e.anexosApagados.includes(velho) && apagouAntesDeSubir(e, desde), 'o guia velho saiu antes de o novo ser reservado');
+    conferirAnexo(conferir, e, 'app-review-guide.pdf', GUIA);
+    conferir(Object.keys(e.anexos).length === 1 && recusasDeAnexo(e).length === 0, 'um anexo só, sem o 409 "max of 1 attachment"');
+    conferir(notasDe(e).includes('The attached "app-review-guide.pdf"'), 'as notas citam o guia, que é o anexo');
+  });
+
+  await cenario('Um anexo só: o guia igual fica (nada sobe de novo) e a sobra ao lado dele sai', async ({ conferir, guardar }) => {
+    const mock = await subirMock();
+    const primeira = await publicar([], { porta: mock.porta, capturas: baseSintetica });
+    guardar(primeira.saida);
+    const e = mock.estado;
+    // O mesmo guia, processado, e a reserva pela metade de um vídeo de uma rodada que caiu.
+    const [guia, sobra] = mock.anexosNaRevisao([
+      { nome: 'app-review-guide.pdf', dados: GUIA },
+      { nome: 'screen-recording.mp4', dados: BYTES_DO_VIDEO, estado: 'AWAITING_UPLOAD' },
+    ]);
+    const reservasAntes = contar(e, 'POST /v1/appStoreReviewAttachments');
+    const segunda = await publicar([], { porta: mock.porta, capturas: baseSintetica });
+    guardar(segunda.saida);
+    await mock.fechar();
+    conferir(segunda.codigo === 0, 'terminou sem erro');
+    conferir(
+      contar(e, 'POST /v1/appStoreReviewAttachments') === reservasAntes && Boolean(e.anexos[guia]) && segunda.saida.includes('já estava anexado, igual (mesmo MD5)'),
+      'o guia igual (mesmo nome e MD5, processado) ficou: nada subiu de novo',
+    );
+    conferir(e.anexosApagados.includes(sobra) && Object.keys(e.anexos).length === 1, 'a reserva pela metade ao lado saiu: um anexo só');
+    conferir(notasDe(e).includes('The attached "app-review-guide.pdf"') && notasDe(e).includes('attachment (pending)'), 'as notas citam o guia, e a gravação segue "(pending)"');
+  });
+
+  await cenario('Um anexo só: vídeo novo com o guia já lá — o guia sai antes, só o vídeo fica, e as notas citam o vídeo', async ({ conferir, guardar }) => {
+    const mock = await subirMock();
+    const primeira = await publicar([], { porta: mock.porta, capturas: baseSintetica });
+    guardar(primeira.saida);
+    const e = mock.estado;
+    const guiaDaPrimeira = idDoAnexo(e, 'app-review-guide.pdf');
+    const desde = e.requisicoes.length;
+    const segunda = await publicar(['--enviar', ...COM_VIDEO], { porta: mock.porta, capturas: baseSintetica });
+    guardar(segunda.saida);
+    await mock.fechar();
+    conferir(primeira.codigo === 0 && Boolean(guiaDaPrimeira), '1ª rodada (só a ficha, sem vídeo): o guia é o anexo');
+    conferir(segunda.codigo === 0, '2ª rodada (--enviar com o vídeo) terminou sem erro');
+    conferir(e.anexosApagados.includes(guiaDaPrimeira) && apagouAntesDeSubir(e, desde), 'o guia saiu antes de o vídeo ser reservado');
+    conferirAnexo(conferir, e, 'screen-recording.mp4', BYTES_DO_VIDEO);
+    conferir(Object.keys(e.anexos).length === 1 && recusasDeAnexo(e).length === 0, 'um anexo só, sem o 409 "max of 1 attachment"');
+    const notas = notasDe(e);
+    conferir(notas.includes('1) SCREEN RECORDING: attachment "screen-recording.mp4"') && !notas.includes('app-review-guide.pdf'), 'as notas citam o vídeo e não prometem o guia');
+    conferir(e.envios[0]?.estado === 'WAITING_FOR_REVIEW', 'ENVIADO para revisão');
+  });
+
+  await cenario('Um anexo só: vídeo já anexado e rodada sem vídeo — o vídeo fica, e o guia de antes sai e não volta', async ({ conferir, guardar }) => {
+    const mock = await subirMock();
+    const primeira = await publicar([], { porta: mock.porta, capturas: baseSintetica });
+    guardar(primeira.saida);
+    const e = mock.estado;
+    // O que o publicador de antes da regra deixava: o guia E o vídeo, os dois processados.
+    const [guia, video] = mock.anexosNaRevisao([
+      { nome: 'app-review-guide.pdf', dados: GUIA },
+      { nome: 'screen-recording.mp4', dados: BYTES_DO_VIDEO },
+    ]);
+    const reservasAntes = contar(e, 'POST /v1/appStoreReviewAttachments');
+    const segunda = await publicar(['--enviar'], { porta: mock.porta, capturas: baseSintetica });
+    guardar(segunda.saida);
+    await mock.fechar();
+    conferir(segunda.codigo === 0, '--enviar sem --video-revisao terminou sem erro: o vídeo anexado basta');
+    conferir(Boolean(e.anexos[video]) && !e.anexosApagados.includes(video), 'o vídeo que já estava lá ficou (um vídeo bom nunca sai para o guia entrar)');
+    conferir(e.anexosApagados.includes(guia) && Object.keys(e.anexos).length === 1, 'o guia saiu: um anexo só');
+    conferir(contar(e, 'POST /v1/appStoreReviewAttachments') === reservasAntes, 'nada subiu de novo');
+    const notas = notasDe(e);
+    conferir(notas.includes('1) SCREEN RECORDING: attachment "screen-recording.mp4"') && !notas.includes('app-review-guide.pdf'), 'as notas citam o vídeo anexado e não prometem o guia');
+    conferir(e.envios[0]?.estado === 'WAITING_FOR_REVIEW', 'ENVIADO para revisão');
+  });
+
+  await cenario('Um anexo só: vídeo de uma rodada anterior ainda processando — espera a Apple, e ele fica no lugar do guia', async ({ conferir, guardar }) => {
+    const mock = await subirMock();
+    const primeira = await publicar([], { porta: mock.porta, capturas: baseSintetica });
+    guardar(primeira.saida);
+    const e = mock.estado;
+    const [video] = mock.anexosNaRevisao([{ nome: 'screen-recording.mp4', dados: BYTES_DO_VIDEO, estado: 'UPLOAD_COMPLETE' }]);
+    const segunda = await publicar(['--enviar'], { porta: mock.porta, capturas: baseSintetica });
+    guardar(segunda.saida);
+    await mock.fechar();
+    conferir(segunda.codigo === 0 && e.envios[0]?.estado === 'WAITING_FOR_REVIEW', 'esperou o processamento, e a revisão saiu com o vídeo');
+    conferir(e.anexos[video]?.estado === 'COMPLETE' && Object.keys(e.anexos).length === 1, 'o vídeo ficou, sozinho: o guia não entrou no lugar dele');
+  });
+
+  await cenario('Um anexo só: o vídeo novo falha no envio — pendência clara (a revisão ficou sem anexo), nada enviado, e a rodada seguinte sobe', async ({ conferir, guardar }) => {
+    const mock = await subirMock({ falharUploadDoAnexo: 'screen-recording.mp4' });
+    const primeira = await publicar([], { porta: mock.porta, capturas: baseSintetica });
+    guardar(primeira.saida);
+    const e = mock.estado;
+    const guiaDaPrimeira = idDoAnexo(e, 'app-review-guide.pdf');
+    const desde = e.requisicoes.length;
+    const segunda = await publicar(['--enviar', ...COM_VIDEO], { porta: mock.porta, capturas: baseSintetica });
+    guardar(segunda.saida);
+    conferir(segunda.codigo === 1 && e.envios.length === 0, 'saiu com erro, e nada foi enviado para revisão');
+    conferir(
+      /PENDENTE: Gravação de tela screen-recording\.mp4 não foi anexado \(.*HTTP 500.*\) — a revisão ficou SEM anexo .*rode de novo e ele sobe/.test(segunda.saida),
+      'a pendência diz o motivo, que a revisão ficou sem anexo e que a próxima rodada o sobe',
+    );
+    conferir(segunda.saida.includes('O anexo da revisão não ficou lá'), 'o --enviar para dizendo que o anexo não ficou');
+    conferir(e.anexosApagados.includes(guiaDaPrimeira) && apagouAntesDeSubir(e, desde), 'o guia saiu antes (a janela sem anexo é aceita)');
+    conferir(Object.keys(e.anexos).length === 0, 'a reserva pela metade também saiu: nada pela metade na revisão');
+    mock.consertarUploadDoAnexo();
+    const terceira = await publicar(['--enviar', ...COM_VIDEO], { porta: mock.porta, capturas: baseSintetica });
+    guardar(terceira.saida);
+    await mock.fechar();
+    conferir(terceira.codigo === 0 && e.envios[0]?.estado === 'WAITING_FOR_REVIEW', 'a rodada seguinte subiu o vídeo e enviou');
+    conferirAnexo(conferir, e, 'screen-recording.mp4', BYTES_DO_VIDEO);
+    conferir(Object.keys(e.anexos).length === 1, 'um anexo só na revisão');
+  });
+
   await cenario('Falha no upload do 6,9" vira aviso, o 6,5" fica inteiro e a publicação termina', async ({ conferir, guardar }) => {
     const mock = await subirMock({ falharUploadDoTipo: 'APP_IPHONE_67', semDisponibilidade: 'nulo' });
     const { codigo, saida } = await publicar(['--enviar', ...COM_VIDEO], { porta: mock.porta, capturas: baseSintetica });
@@ -880,7 +1035,7 @@ if (!REAIS) {
     conferir(e.envios[0]?.estado === 'WAITING_FOR_REVIEW', 'ENVIADO para revisão');
   });
 
-  await cenario('Perguntas de idade novas (fora da 4.6) exigidas: erro claro, pendência; respondidas na tela, a 2ª rodada retoma o envio', async ({ conferir, guardar }) => {
+  await cenario('Perguntas de idade novas (fora da especificação) exigidas: erro claro, pendência; respondidas na tela, a 2ª rodada retoma o envio', async ({ conferir, guardar }) => {
     const novos = ['descritorNovoA', 'descritorNovoB'];
     const mock = await subirMock({ descritoresNovos: novos });
     const resumoDoActions = join(mkdtempSync(join(TEMP, 'resumo-')), 'resumo.md');

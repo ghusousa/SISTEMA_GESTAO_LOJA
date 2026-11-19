@@ -1,4 +1,5 @@
-B2B APP FOR SHOP STAFF; IT NEEDS THE SHOP'S SERVER. Answers to Guideline 2.1 below; the attached "app-review-guide.pdf" has them in full, with screenshots.
+B2B APP FOR SHOP STAFF; IT NEEDS THE SHOP'S SERVER. Answers to Guideline 2.1 below.
+{{SE_GUIA_ANEXADO}}The attached {{GUIA}} has them in full, with screenshots.
 
 DEMO SERVER (stays online after the review; it also serves our privacy policy)
 Server: {{SERVIDOR_DEMO}}

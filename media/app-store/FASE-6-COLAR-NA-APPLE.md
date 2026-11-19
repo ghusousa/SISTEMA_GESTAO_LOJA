@@ -2,14 +2,15 @@
 
 > **Isto virou UM comando (ou um clique).** `mobile/publicar/` faz esta página inteira sozinho
 > pela API da Apple — ficha, capturas, classificação, disponibilidade, revisão (notas em inglês e
-> os anexos: o guia PDF e a gravação de tela), preço e envio, inclusive o REENVIO depois de uma
-> recusa ou de um pedido de informação: caixa **completo** no GitHub Actions, etiqueta
+> o anexo — UM só, que a Apple não aceita dois: a gravação de tela ou, sem ela, o guia PDF), preço
+> e envio, inclusive o REENVIO depois de uma recusa ou de um pedido de informação: caixa
+> **completo** no GitHub Actions, etiqueta
 > `ios-v<versão>` ou `npm run publicar -- --enviar --aguardar-build 60`. Leia
 > `mobile/publicar/README.md` (lá está também a resposta à Guideline 2.1).
 > Esta página fica como referência do que sobe — e das **duas** coisas que nenhum programa faz
-> (a API 4.6 da Apple não tem rota para elas): criar o registro do app e a ficha de
+> (a API 4.6.1 da Apple não tem rota para elas): criar o registro do app e a ficha de
 > Privacidade do App. Responder na Central de Resolução também não tem API, mas não precisa: o
-> reenvio leva as notas e os anexos novos.
+> reenvio leva as notas e o anexo novos.
 
 ## Capturas — dois tamanhos
 
@@ -54,12 +55,12 @@ iPhone o cabeçalho é o nativo (título centralizado, "‹ Voltar") e o Cobrar 
 | Categoria | principal **Business**, secundária **Productivity** | fixo |
 | URL de privacidade | `https://loja-tria.vercel.app/privacidade` | a página que o próprio sistema serve |
 | URL de suporte | a mesma da privacidade (`<servidor demo>/privacidade`: troca junto com `APPLE_SERVIDOR_DEMO`) | outra página: `APPLE_URL_SUPORTE` |
-| Classificação etária | **4+**: "Não/Nenhum" nas 24 perguntas da API 4.6, inclusive as novas (conteúdo gerado por usuário, conversa, rede social, anúncios, verificação de idade, controle parental, caixa de recompensa, saúde, armas) | `mobile/publicar/classificacao.mjs` |
+| Classificação etária | **4+**: "Não/Nenhum" nas 26 perguntas da API 4.6.1, inclusive as novas (conteúdo gerado por usuário, conversa, rede social, anúncios, verificação de idade, controle parental, caixa de recompensa, saúde, armas, namoro e relacionamentos, localização compartilhada) | `mobile/publicar/classificacao.mjs` |
 | Direitos de conteúdo | **não usa conteúdo de terceiros** | fixo |
 | Disponibilidade | **só Brasil**, sem entrar sozinho em países novos — se a conta ainda não tiver; se tiver, fica como está | fixo |
 | Preço | **grátis** | fixo |
 | Revisão | login exigido, conta demo e as notas **em inglês** de `ficha/notas-revisao.txt` (com a lista de `ficha/aparelhos-testados.txt`) | config / Secrets |
-| Anexos da revisão | o guia `app-review-guide.pdf` (os sete itens da Guideline 2.1, com os prints) e a gravação de tela num iPhone físico | `mobile/publicar/revisao/` e o link `video_revisao_url` |
+| Anexo da revisão (UM só: a Apple recusa o segundo) | a gravação de tela num iPhone físico — a do link ou a que já está anexada; sem vídeo, o guia `app-review-guide.pdf` (os sete itens da Guideline 2.1, com os prints). As notas citam só o que está anexado | o link `video_revisao_url` e `mobile/publicar/revisao/` |
 
 Kids Category: **não** inscrever (é ferramenta de trabalho). O publicador não mexe na faixa
 infantil nem nos ajustes manuais de idade.

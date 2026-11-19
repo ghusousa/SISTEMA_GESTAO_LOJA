@@ -4,7 +4,9 @@
  *
  * O texto mora AQUI (em inglês: o revisor lê inglês; os rótulos das telas entre aspas, em
  * português, como aparecem no app). Quem imprime o PDF é gerar-guia.mjs (Playwright). O PDF
- * fica commitado ao lado (app-review-guide.pdf) e sobe como anexo da revisão pelo publicador.
+ * fica commitado ao lado (app-review-guide.pdf) e o publicador o anexa à revisão quando não há
+ * gravação de tela: a Apple aceita UM anexo, e o vídeo vem primeiro (anexos.mjs). Por isso o
+ * guia nunca diz que a gravação está anexada junto — quem diz onde ela está são as notas.
  *
  * Nada que muda por loja ou que é segredo entra no PDF (servidor, conta demo, senha, código
  * de barras): eles estão nas notas e em "Sign-in information". Entram: este arquivo, a lista
@@ -113,9 +115,10 @@ const rotulo = (texto) => `<span class="rotulo">"${esc(texto)}"</span>`;
  */
 export function montarHtml({ aparelhos = [], prints = [] } = {}) {
   // Só o que se sabe: o aparelho da gravação é a 1ª linha da lista; sem lista, as notas dizem.
+  // Onde a gravação está, também: a Apple aceita UM anexo, e com este guia anexado ela não está.
   const gravacao = aparelhos.length
-    ? `made on a physical ${esc(aparelhos[0])}`
-    : 'made on a physical iPhone (the model and iOS version are in the App Review notes, item 1)';
+    ? `made on a physical ${esc(aparelhos[0])}; the App Review notes (item 1) say where it is`
+    : 'made on a physical iPhone; the App Review notes (item 1) give the model, the iOS version and where it is';
   const listaDeAparelhos = aparelhos.length
     ? `<table class="tabela"><thead><tr><th>Physical device — iOS version</th></tr></thead><tbody>${aparelhos
         .map((a, i) => `<tr><td>${esc(a)}${i === 0 ? ' <em>(screen recording)</em>' : ''}</td></tr>`)
@@ -176,8 +179,7 @@ sample barcode are in the App Review notes and in Sign-in information.</p>
 
 <section>
 <h2><span class="n">1</span>Screen recording on a physical device</h2>
-<p>The screen recording is attached to this submission (App Review attachments), ${gravacao}. It starts when the app
-is opened and follows the steps of section 4:</p>
+<p>The screen recording was ${gravacao}. It starts when the app is opened and follows the steps of section 4:</p>
 <ul>
   <li>connecting the app to the shop's server (${rotulo('Conectar à loja')}) and signing in;</li>
   <li>the <b>camera permission</b> prompt, when the barcode reader is opened for the first time;</li>

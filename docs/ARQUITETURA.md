@@ -1833,11 +1833,12 @@ os segredos são os mesmos do Obras e moram no GitHub, nunca no repositório nem
 (`ci.test.mjs` procura a senha e a chave na saída). O CI roda `ci.test.mjs` e `rodar.mjs`.
 *Ficha completa (nov/2026):* o dono pediu não fazer nada no site da Apple, então o publicador
 passou a responder tudo o que a API 4.6 alcança, conferido contra a especificação OFICIAL:
-**classificação etária completa** — as 24 perguntas da `AgeRatingDeclaration` (frequência
-NONE, sim/não false, inclusive as novas: conteúdo gerado por usuário, conversa, rede social,
-anúncios, verificação de idade, controle parental, caixa de recompensa, saúde, armas), sem
+**classificação etária completa** — as perguntas da `AgeRatingDeclaration` (24 na 4.6, 26 na
+4.6.1; frequência NONE, sim/não false, inclusive as novas: conteúdo gerado por usuário, conversa,
+rede social, anúncios, verificação de idade, controle parental, caixa de recompensa, saúde, armas;
+na 4.6.1, namoro e relacionamentos e localização compartilhada), sem
 tocar na faixa infantil nem nos ajustes manuais; atributo que a Apple recusar nomeando-o sai
-sozinho e vira aviso; pergunta que a Apple criar depois da 4.6 (vieram duas em 16/11/2026)
+sozinho e vira aviso; pergunta que a Apple criar antes da especificação (vieram duas em 16/11/2026)
 volta em branco e vira pendência com o nome, e a recusa do envio aparece inteira
 (`associatedErrors`) — a rodada seguinte retoma o envio que ficou aberto; **direitos de
 conteúdo** = não usa conteúdo de terceiros; **disponibilidade** só no Brasil
@@ -1878,18 +1879,28 @@ aparecem), até 4000 contados como a Apple, com os sete itens; a lista de aparel
 da gravação) e o nome do vídeo entram por marcador e, sem eles, viram "(pending)": a ficha sobe,
 mas o `--enviar` é RECUSADO antes de qualquer escrita na Apple — também com o guia PDF
 desatualizado ou o servidor de demonstração fora do que as notas dizem. Nada é inventado: lista e
-vídeo vêm de teste real. *Anexos pela API* (`/v1/appStoreReviewAttachments`, presos ao
-appStoreReviewDetail; reserva → partes → MD5 → processamento): o guia `revisao/app-review-guide.pdf`
-(os sete itens por extenso e os prints, impresso de `revisao/guia.mjs` pelo Playwright e
-commitado; a impressão digital das entradas — texto, lista, prints — é conferida pelo CI e pelo
-`--enviar`, e o `capturas/gerar.sh` o refaz) e o vídeo (`--video-revisao` arquivo ou https; no
-Actions, `video_revisao_url`, baixado para `$RUNNER_TEMP`, MP4/MOV pelo cabeçalho, até 500 MB).
-O reenvio substitui o anexo de mesmo nome sem duplicar: igual (MD5) fica, diferente sobe antes e
-o antigo sai depois, falha apaga a reserva pela metade. *Reenvio:* a Apple aceita um envio ativo
+vídeo vêm de teste real. *Anexo pela API* (`/v1/appStoreReviewAttachments`, preso ao
+appStoreReviewDetail; reserva → partes → MD5 → processamento): o vídeo (`--video-revisao` arquivo
+ou https; no Actions, `video_revisao_url`, baixado para `$RUNNER_TEMP`, MP4/MOV pelo cabeçalho, até
+500 MB) ou o guia `revisao/app-review-guide.pdf` (os sete itens por extenso e os prints, impresso
+de `revisao/guia.mjs` pelo Playwright e commitado; a impressão digital das entradas — texto,
+lista, prints — é conferida pelo CI e pelo `--enviar`, e o `capturas/gerar.sh` o refaz). *Um anexo
+só (rodada nº 8, 19/11/2026):* a Apple aceita UM anexo por detalhe de revisão — o segundo POST
+volta 409 `STATE_ERROR` ("There can be max of 1 attachment, please delete the existing attachment
+before loading a new one") —, e o publicador subia o guia E o vídeo, o novo antes de apagar o
+velho. Agora escolhe um (`escolherAnexo`): o vídeo novo da rodada; senão, o vídeo já anexado e
+processado (`COMPLETE`; o que a Apple ainda processa é esperado antes da escolha — um vídeo bom
+nunca sai para o guia entrar); senão, o guia. Na troca (`trocarAnexo`), o que já está lá igual
+(mesmo nome, mesmo MD5, processado) fica e os outros saem; senão TODOS saem ANTES e o escolhido
+sobe — a janela sem anexo é aceita, e o envio que falha vira pendência dizendo que a revisão
+ficou sem anexo (a reserva pela metade sai; o `--enviar` não manda a revisão; a rodada seguinte
+sobe de novo). As notas citam só o escolhido (linha `{{SE_GUIA_ANEXADO}}` com o guia; o item 1
+com o vídeo, sem prometer o guia), e o guia não diz mais que a gravação está anexada junto. A Apple
+de mentira cobra a mesma regra, com a frase da Apple. *Reenvio:* a Apple aceita um envio ativo
 por plataforma; o que voltou `UNRESOLVED_ISSUES` (recusa ou pedido de informação) é retomado — item
 da versão garantido, o recusado marcado `resolved` (se a Apple recusar a marca, segue) e
 `PATCH submitted: true` no MESMO envio; envio em andamento para a rodada. A Central de Resolução
-não tem API e não é preciso: o reenvio leva notas e anexos (texto opcional em
+não tem API e não é preciso: o reenvio leva notas e anexo (texto opcional em
 `revisao/resposta-ao-app-review.txt`). *Build desta rodada:* o modo completo lê o
 `appBuildVersion` do `eas build --wait --json` e passa `--build N`; só esse build é preso
 (`filter[version]`) — antes, um VALID mais antigo da mesma versão ia para a revisão no lugar dele.

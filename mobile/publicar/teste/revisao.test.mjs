@@ -4,9 +4,11 @@
  *   node --test publicar/teste/revisao.test.mjs
  *
  * O que não pode quebrar: o vídeo só passa se for vídeo de verdade e no tamanho (inclusive o
- * baixado de um link, que nunca vira arquivo pela metade); a lista de aparelhos não aceita
- * linha inventada fora do formato; a ficha não cita tela que o app não tem; o guia PDF
- * commitado é o das entradas de agora; e as notas cabem nos 4000 da Apple no pior caso.
+ * baixado de um link, que nunca vira arquivo pela metade); a revisão leva UM anexo (a Apple
+ * recusa o segundo) — o vídeo antes do guia, e o que está lá sai antes de o novo subir; as
+ * notas citam só o anexo que vai estar lá; a lista de aparelhos não aceita linha inventada fora
+ * do formato; a ficha não cita tela que o app não tem; o guia PDF commitado é o das entradas de
+ * agora; e as notas cabem nos 4000 da Apple no pior caso.
  */
 
 import { createServer } from 'node:http';
@@ -17,7 +19,19 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 
-import { baixarVideo, ehVideo, guardarVideo, lerVideo, md5, MINIMO_DO_VIDEO, obterVideo, tipoDoVideo, videoAnexado } from '../anexos.mjs';
+import {
+  baixarVideo,
+  ehVideo,
+  escolherAnexo,
+  guardarVideo,
+  lerVideo,
+  md5,
+  MINIMO_DO_VIDEO,
+  obterVideo,
+  tipoDoVideo,
+  trocarAnexo,
+  videoAnexado,
+} from '../anexos.mjs';
 import { LIMITES, lerAparelhosTestados, lerFicha, PENDENTE, TELAS_CITADAS, telasQueFaltam } from '../ficha.mjs';
 import { diferencas, impressaoAtual, IMPRESSAO, lerGuia } from '../revisao/guia.mjs';
 
@@ -154,6 +168,118 @@ test('anexo já na Apple: só conta o vídeo processado (COMPLETE), nunca o PDF 
   assert.equal(videoAnexado([anexo('screen-recording.mov', 'COMPLETE')])?.attributes.fileName, 'screen-recording.mov');
 });
 
+/** Um anexo como a Apple lista: id, nome, MD5 e estado. */
+const naApple = (id, fileName, state = 'COMPLETE', sourceFileChecksum = `md5-${id}`) => ({
+  id,
+  attributes: { fileName, sourceFileChecksum, assetDeliveryState: { state } },
+});
+const GUIA = { nome: 'app-review-guide.pdf', dados: Buffer.from('%PDF-guia'), md5: 'md5-guia' };
+const VIDEO = { nome: 'screen-recording.mp4', dados: Buffer.from('video'), md5: 'md5-video' };
+
+test('anexo da revisão: UM só — o vídeo desta rodada, senão o já anexado e processado, senão o guia', () => {
+  const guiaLa = naApple('A1', 'app-review-guide.pdf');
+  const videoLa = naApple('A2', 'screen-recording.mov');
+  // Vídeo novo vence tudo, inclusive o vídeo que já está lá.
+  assert.deepEqual(escolherAnexo({ video: VIDEO, guia: GUIA, anexos: [guiaLa, videoLa] }), { tipo: 'video', ...VIDEO });
+  // Sem vídeo novo, o processado que está lá fica (sem os bytes): um vídeo bom não sai para o guia entrar.
+  const fica = escolherAnexo({ guia: GUIA, anexos: [guiaLa, videoLa] });
+  assert.equal(fica.tipo, 'video');
+  assert.equal(fica.nome, 'screen-recording.mov');
+  assert.equal(fica.existente, videoLa);
+  // Vídeo que falhou ou que nunca terminou de subir não conta: o guia é o anexo.
+  for (const estado of ['FAILED', 'AWAITING_UPLOAD']) {
+    assert.deepEqual(escolherAnexo({ guia: GUIA, anexos: [naApple('A3', 'screen-recording.mp4', estado)] }), { tipo: 'guia', ...GUIA });
+  }
+  assert.deepEqual(escolherAnexo({ guia: GUIA }), { tipo: 'guia', ...GUIA });
+});
+
+/** Uma Apple mínima, só para trocarAnexo: anota as chamadas; `del` falha com o status pedido por id. */
+function appleDeMentira({ falhaAoApagar = {} } = {}) {
+  const chamadas = [];
+  const erro = (status) => Object.assign(new Error(`HTTP ${status}`), { status });
+  return {
+    chamadas,
+    async del(caminho) {
+      chamadas.push(`DELETE ${caminho}`);
+      const id = caminho.split('/').pop();
+      if (falhaAoApagar[id]) throw erro(falhaAoApagar[id]);
+    },
+    async post(caminho) {
+      chamadas.push(`POST ${caminho}`);
+      return { data: { id: 'NOVO', attributes: { uploadOperations: [] } } };
+    },
+    async subirArquivo() {
+      chamadas.push('PUT bytes');
+    },
+    async patch(caminho) {
+      chamadas.push(`PATCH ${caminho}`);
+    },
+    async get(caminho) {
+      chamadas.push(`GET ${caminho}`);
+      return { data: { attributes: { assetDeliveryState: { state: 'COMPLETE' } } } };
+    },
+  };
+}
+
+test('trocar o anexo: o que está lá sai ANTES de o novo subir; o igual fica e só os outros saem', async () => {
+  const asc = appleDeMentira();
+  const existentes = [naApple('A1', 'app-review-guide.pdf'), naApple('A2', 'screen-recording.mp4', 'AWAITING_UPLOAD')];
+  const r = await trocarAnexo(asc, { detalheId: 'REV', escolhido: { tipo: 'video', ...VIDEO }, existentes, esperaMs: 0 });
+  assert.deepEqual(asc.chamadas.slice(0, 3), [
+    'DELETE /v1/appStoreReviewAttachments/A1',
+    'DELETE /v1/appStoreReviewAttachments/A2',
+    'POST /v1/appStoreReviewAttachments',
+  ]);
+  assert.equal(r.mantido, false);
+  assert.equal(r.apagados, 2);
+
+  // Mesmo nome, mesmo MD5 e processado: fica, nada sobe; a sobra ao lado sai.
+  const igual = appleDeMentira();
+  const mantido = await trocarAnexo(igual, {
+    detalheId: 'REV',
+    escolhido: { tipo: 'guia', ...GUIA },
+    existentes: [naApple('A1', 'app-review-guide.pdf', 'COMPLETE', 'md5-guia'), naApple('A2', 'screen-recording.mp4', 'FAILED')],
+    esperaMs: 0,
+  });
+  assert.equal(mantido.mantido, true);
+  assert.equal(mantido.id, 'A1');
+  assert.deepEqual(igual.chamadas, ['DELETE /v1/appStoreReviewAttachments/A2']);
+});
+
+test('trocar o anexo: o que não sai impede a subida (a Apple recusaria), e o 404 conta como já apagado', async () => {
+  const travado = appleDeMentira({ falhaAoApagar: { A1: 500 } });
+  await assert.rejects(
+    trocarAnexo(travado, { detalheId: 'REV', escolhido: { tipo: 'video', ...VIDEO }, existentes: [naApple('A1', 'app-review-guide.pdf')], esperaMs: 0 }),
+    (erro) => /app-review-guide\.pdf, que já estava lá, não saiu \(HTTP 500\) e a Apple aceita um só/.test(erro.message) && !erro.semAnexo,
+  );
+  assert.ok(!travado.chamadas.some((c) => c.startsWith('POST')), 'subiu com o outro lá');
+
+  const sumiu = appleDeMentira({ falhaAoApagar: { A1: 404 } });
+  const r = await trocarAnexo(sumiu, { detalheId: 'REV', escolhido: { tipo: 'video', ...VIDEO }, existentes: [naApple('A1', 'app-review-guide.pdf')], esperaMs: 0 });
+  assert.equal(r.mantido, false);
+  assert.ok(sumiu.chamadas.includes('POST /v1/appStoreReviewAttachments'));
+
+  // O vídeo que ficaria sumiu no meio da rodada: sem os bytes, pede a gravação de novo.
+  const video = naApple('A9', 'screen-recording.mp4');
+  await assert.rejects(
+    trocarAnexo(appleDeMentira(), { detalheId: 'REV', escolhido: { tipo: 'video', nome: 'screen-recording.mp4', existente: video }, existentes: [], esperaMs: 0 }),
+    /não está mais lá — passe a gravação de novo \(--video-revisao\)/,
+  );
+});
+
+test('trocar o anexo: falha no envio depois de apagar diz que a revisão ficou sem anexo, e a reserva sai', async () => {
+  const asc = appleDeMentira();
+  asc.subirArquivo = async () => {
+    asc.chamadas.push('PUT bytes');
+    throw new Error('upload de arquivo falhou: HTTP 500');
+  };
+  await assert.rejects(
+    trocarAnexo(asc, { detalheId: 'REV', escolhido: { tipo: 'video', ...VIDEO }, existentes: [naApple('A1', 'app-review-guide.pdf')], esperaMs: 0 }),
+    (erro) => erro.semAnexo === true && erro.apagados === 1 && /HTTP 500/.test(erro.message),
+  );
+  assert.equal(asc.chamadas.at(-1), 'DELETE /v1/appStoreReviewAttachments/NOVO', 'a reserva pela metade ficou');
+});
+
 test('aparelhos testados: comentário e linha vazia não contam; linha fora do formato para, com a linha', () => {
   const arquivo = join(TEMP, 'aparelhos.txt');
   writeFileSync(arquivo, '# cabeçalho\n\niPhone 18 Pro Max — iOS 27.0.1\niPhone SE (3rd generation) - iOS 15.8 (BrowserStack)\n');
@@ -215,9 +341,12 @@ const SETE_APARELHOS = [
 test('notas da revisão: em inglês, os 7 itens, os dois caminhos da exclusão e dentro dos 4000 no pior caso', () => {
   process.env.PUBLICAR_TELAS = telas();
   try {
-    const ficha = lerFicha(CONFIG_PIOR_CASO, { aparelhos: SETE_APARELHOS, video: 'screen-recording.mp4' });
+    const ficha = lerFicha(CONFIG_PIOR_CASO, { aparelhos: SETE_APARELHOS, anexo: { tipo: 'video', nome: 'screen-recording.mov' } });
     const notas = ficha.notasRevisao;
     assert.ok([...notas].length <= LIMITES.notasRevisao, `${[...notas].length} caracteres`);
+    // O outro anexo possível (o guia) também cabe — é a variante com uma linha a mais.
+    const comOGuia = lerFicha(CONFIG_PIOR_CASO, { aparelhos: SETE_APARELHOS, anexo: { tipo: 'guia', nome: 'app-review-guide.pdf' } }).notasRevisao;
+    assert.ok([...comOGuia].length <= LIMITES.notasRevisao, `com o guia: ${[...comOGuia].length} caracteres`);
     for (const item of ['1) SCREEN RECORDING', '2) TESTED ON', '3) PURPOSE', '4) SET UP AND ACCESS', '5) EXTERNAL SERVICES', '6) REGIONS', '7) REGULATION']) {
       assert.ok(notas.includes(item), item);
     }
@@ -233,6 +362,23 @@ test('notas da revisão: em inglês, os 7 itens, os dois caminhos da exclusão e
     // Sem lista e sem vídeo a ficha sobe, com "(pending)" — a revisão é que não sai (publicar.mjs).
     const semNada = lerFicha(CONFIG_PIOR_CASO).notasRevisao;
     assert.ok(semNada.includes(`attachment ${PENDENTE}`) && semNada.includes(`TESTED ON (physical devices): ${PENDENTE}`));
+  } finally {
+    delete process.env.PUBLICAR_TELAS;
+  }
+});
+
+test('notas da revisão: citam só o anexo que vai estar lá (a Apple aceita um)', () => {
+  process.env.PUBLICAR_TELAS = telas();
+  try {
+    const comVideo = lerFicha(CONFIG_PIOR_CASO, { aparelhos: SETE_APARELHOS, anexo: { tipo: 'video', nome: 'screen-recording.mp4' } }).notasRevisao;
+    assert.ok(comVideo.includes('1) SCREEN RECORDING: attachment "screen-recording.mp4"'), 'o item 1 cita o vídeo');
+    assert.ok(!comVideo.includes('app-review-guide.pdf') && !/attached .*guide/i.test(comVideo), 'com o vídeo anexado, as notas prometem o guia');
+    assert.ok(comVideo.startsWith("B2B APP FOR SHOP STAFF; IT NEEDS THE SHOP'S SERVER. Answers to Guideline 2.1 below.\n\nDEMO SERVER"));
+
+    const comGuia = lerFicha(CONFIG_PIOR_CASO, { aparelhos: SETE_APARELHOS, anexo: { tipo: 'guia', nome: 'app-review-guide.pdf' } }).notasRevisao;
+    assert.ok(comGuia.includes('\nThe attached "app-review-guide.pdf" has them in full, with screenshots.\n'), 'com o guia anexado, a 2ª linha o cita');
+    assert.ok(comGuia.includes(`1) SCREEN RECORDING: attachment ${PENDENTE}`), 'sem vídeo anexado, o item 1 fica "(pending)" (a revisão não sai)');
+    assert.ok(!/\{\{/.test(comVideo) && !/\{\{/.test(comGuia), 'marcador sobrando');
   } finally {
     delete process.env.PUBLICAR_TELAS;
   }

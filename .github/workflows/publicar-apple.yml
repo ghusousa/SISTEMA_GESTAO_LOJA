@@ -30,10 +30,11 @@
 #               App Store Connect depois do build, ou o envio automático falhou).
 #   ficha     → nome, textos, capturas (media/app-store/iphone-6.5 e iphone-6.9), classificação
 #               etária completa, direitos de conteúdo, disponibilidade, preço grátis, a conta demo,
-#               as notas em inglês e os anexos da revisão (o guia PDF e, com o link, o vídeo).
+#               as notas em inglês e o anexo da revisão — UM só, que a Apple não aceita dois: o
+#               vídeo (o do link, ou o que já está anexado) ou, sem vídeo, o guia PDF.
 #   revisao   → depois de a Apple processar o build (~10 a 30 min após o envio; chega e-mail),
 #               prende o build à versão e ENVIA PARA A REVISÃO — ou REENVIA, se a Apple devolveu
-#               (recusa ou pedido de informação): o mesmo envio, com as notas e os anexos novos.
+#               (recusa ou pedido de informação): o mesmo envio, com as notas e o anexo novos.
 #               Recusado sem a lista de aparelhos testados e sem a gravação de tela. Fora do
 #               completo, NÃO vai junto com "compilar" nem "enviar" (o build novo ainda não chegou
 #               à Apple quando a revisão sai) — e, num envio devolvido, recusa reenviar o MESMO
@@ -47,8 +48,9 @@
 # ENTRADAS DE TEXTO:
 #   video_revisao_url → link https direto do vídeo (MP4/MOV) da gravação de tela que a Apple pediu;
 #               o runner baixa UMA vez, no começo da rodada (link pré-assinado vence), para a pasta
-#               temporária, confere tipo e tamanho e anexa à revisão (o anexo de mesmo nome é
-#               substituído, nunca duplicado). Fica anexado para as próximas rodadas desta versão.
+#               temporária, confere tipo e tamanho e anexa à revisão no lugar do que estiver lá (a
+#               Apple aceita um anexo só: o de antes sai primeiro). Fica anexado para as próximas
+#               rodadas desta versão — e o guia PDF não volta a ocupar o lugar dele.
 #   udid_aparelho → o UDID de um iPhone para registrar na conta da Apple (caixa "aparelhos").
 # O resumo de cada rodada (feito, avisos, pendências) aparece na página da execução.
 #
