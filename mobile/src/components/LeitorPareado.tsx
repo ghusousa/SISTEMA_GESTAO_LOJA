@@ -18,6 +18,13 @@
  * chamados (até 10 por login), o alerta, os bipes e o "Desligar" moram na rolagem de baixo.
  * Com três chamados abertos no iPhone SE, as linhas lá em cima espremiam a lista e empurravam
  * o "Desligar" para fora da tela — e a câmera pulava para baixo a cada chamado novo.
+ *
+ * O "Digitar código" (o `CodigoManual` do Vender, da Entrada e do Inventário) abre a rolagem,
+ * colado na câmera: a etiqueta que a câmera não lê sai do celular pelo MESMO caminho da leitura
+ * — o `ler` da fila, com o `client_uuid` e a instalação —, e a câmera para enquanto a caixa está
+ * na frente dela. Na rolagem, e não numa faixa fixa: fixa, ela comia a altura da lista e do
+ * "Desligar" no SE com o Texto Maior. Fora do `Scanner`, de propósito: a câmera sai de cena com o
+ * app no fundo (e volta nova), e a caixa com o código pela metade fica.
  */
 
 import { useQuery } from '@tanstack/react-query';
@@ -28,6 +35,7 @@ import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { leitor } from '@/api/endpoints';
 import type { Pareamento } from '@/api/tipos';
+import { CodigoManual } from '@/components/CodigoManual';
 import { ROTULOS_DO_CHAMADO } from '@/components/FaixaDoChamado';
 import { Scanner, type ScannerRef } from '@/components/Scanner';
 import { Botao, Cartao, useRespiroDeBaixo } from '@/components/ui';
@@ -166,6 +174,8 @@ export function LeitorPareado({ pareamento, visivel, atendimento, destaque, avis
   // Em estado da TELA, não só na pausa de dentro do Scanner: o celular que bloqueia com o
   // diálogo aberto desmonta a câmera, e a que volta nasceria lendo por baixo dele.
   const [perguntando, setPerguntando] = useState(false);
+  // A caixa do "Digitar código" na frente da câmera: a mesma regra do diálogo.
+  const [digitando, setDigitando] = useState(false);
 
   const consulta = useQuery({
     queryKey: chaves.leitor(pareamento.id),
@@ -191,6 +201,17 @@ export function LeitorPareado({ pareamento, visivel, atendimento, destaque, avis
   }, [consulta.error, encerrar]);
 
   const aoLer = useCallback((codigo: string) => ler(codigo), [ler]);
+
+  // O "Digitar código" abriu: a câmera para, senão a etiqueta embaixo da lente entra sozinha
+  // enquanto a pessoa digita. Fechou (com o código ou sem): volta, com as travas recomeçando.
+  const pararParaDigitar = useCallback(() => {
+    scanner.current?.pausar();
+    setDigitando(true);
+  }, []);
+  const voltarALer = useCallback(() => {
+    setDigitando(false);
+    scanner.current?.retomar();
+  }, []);
 
   function confirmarDesligar() {
     // Diálogo na frente da câmera: ela para, senão segue lendo por baixo (CLAUDE.md).
@@ -238,7 +259,7 @@ export function LeitorPareado({ pareamento, visivel, atendimento, destaque, avis
           <Scanner
             aoLer={aoLer}
             modo="continuo"
-            ativo={!perguntando && !desligando}
+            ativo={!perguntando && !digitando && !desligando}
             controle={scanner}
             dica="Bipe as peças: cada uma vai para o computador"
           />
@@ -248,6 +269,16 @@ export function LeitorPareado({ pareamento, visivel, atendimento, destaque, avis
       </View>
 
       <ScrollView contentContainerStyle={[s.conteudo, { paddingBottom: respiroDeBaixo }]}>
+        {/* A etiqueta que a câmera não lê (barras apagadas, amassadas): o número dela vai ao
+            computador como a leitura da câmera. */}
+        <View style={s.linhaDoCodigo}>
+          <CodigoManual
+            aoConfirmar={aoLer}
+            acao="Enviar"
+            aoAbrir={pararParaDigitar}
+            aoFechar={voltarALer}
+          />
+        </View>
         {/* Na rolagem, e não acima da câmera: quantos forem, o "Desligar" continua ao alcance. */}
         <OutrosChamando atendimento={atendimento} destaque={destaque} avisoDoToque={avisoDoToque} />
         {!!alerta && (
@@ -303,6 +334,8 @@ const s = StyleSheet.create({
   outroAviso: { fontSize: fonte.pequena, color: cores.perigo },
   cameraArea: { height: '42%', backgroundColor: '#000' },
   cameraParada: { flex: 1, backgroundColor: '#000' },
+  // Em linha: o toque fica no rótulo, não na largura inteira da rolagem.
+  linhaDoCodigo: { flexDirection: 'row' },
   conteudo: { padding: espaco.lg, gap: espaco.md },
   vazio: { color: cores.textoSuave, fontSize: fonte.base, textAlign: 'center' },
   lista: { gap: espaco.sm },
