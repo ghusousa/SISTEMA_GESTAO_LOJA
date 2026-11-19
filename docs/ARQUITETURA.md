@@ -686,6 +686,13 @@ Consequências: `expo`, `expo-*`, `react-native` e `react` seguem a tabela do SD
 schema no 54 não o aceita — e passou para o plugin `expo-build-properties`; e o Node precisa ser
 **≥ 20.19.4**, exigência do Metro e do React Native 0.81. Para subir de SDK no futuro, o preço a
 pagar é trocar o Expo Go por um *development build*.
+Correção nativa sem subir o SDK: o react-native-screens 4.16 do SDK 54 deixava o "Voltar" do
+cabeçalho morto no iOS 26+ depois de voltar à tela das abas, que não tem cabeçalho
+(software-mansion/react-native-screens#3294). A correção oficial está na 4.17. O JS dessa versão,
+porém, rodaria sobre o nativo 4.16 do Expo Go. Por isso o conserto é um patch de três linhas no
+nativo da 4.16 (`mobile/patches/`, aplicado pelo `postinstall` com patch-package), que entra em
+todo build da Expo. O teste `src/lib/voltarNoIos.test.ts` reprova se o patch se perder e pede
+para apagá-lo quando o pacote subir.
 
 **ADR-15 — Capacidades numa tabela só, nunca `if papel == X` espalhado.**
 Com dois papéis dava para escrever `if user.role != ADMIN` em cada rota. Com quatro isso
