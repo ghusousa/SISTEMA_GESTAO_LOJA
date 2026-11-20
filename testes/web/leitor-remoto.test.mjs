@@ -699,6 +699,60 @@ test('criarDonaDaAba: a cópia de "Duplicar aba" não retoma o leitor da aba de 
   assert.equal(await depois, false);
 });
 
+test('criarDonaDaAba: a cópia que pergunta enquanto a origem ainda espera a resposta dela ouve que a origem cuida — só a origem retoma', async () => {
+  // O F5 da origem (o leitor guardado, ou a chave do chamado reenviada) pergunta e espera; a cópia
+  // de "Duplicar aba" feita nesse meio carrega rápido e pergunta pelo MESMO leitor antes de a
+  // origem retomar. Ela nunca ouviu a pergunta da origem (nem existia), e a origem ainda não é
+  // dona: sem resposta, as duas retomariam, e os bipes se dividiriam entre dois carrinhos.
+  const novaAba = abas();
+  const r = relogio();
+  const origem = criarDonaDaAba({ canal: novaAba(), meu: () => null, agendar: r.agendar, agora: () => r.agora });
+  const daOrigem = origem.outraCuida(7);
+  await r.andar(50);
+  const copia = criarDonaDaAba({ canal: novaAba(), meu: () => null, agendar: r.agendar, agora: () => r.agora });
+  const daCopia = copia.outraCuida(7);
+  await microtarefas(); // as mensagens chegam na hora, bem antes de a espera de qualquer uma vencer
+  await r.andar(ESPERA_DA_DONA_MS);
+  assert.equal(await daCopia, true, 'a origem perguntou antes: responde, e a cópia não retoma');
+  assert.equal(await daOrigem, false, 'ninguém respondeu à origem: ela retoma');
+});
+
+test('criarDonaDaAba: duas abas que perguntam juntas pelo mesmo leitor — vence a que perguntou primeiro, e no mesmo instante o sorteio: uma retoma, nunca as duas nem nenhuma', async () => {
+  for (const [quandoA, sorteioA, quandoB, sorteioB, venceA] of [
+    [0, 0.9, 1, 0.1, true], // A perguntou 1 ms antes: o sorteio não conta
+    [1, 0.1, 0, 0.9, false],
+    [0, 0.2, 0, 0.8, true], // o mesmo instante: o menor sorteio
+    [0, 0.8, 0, 0.2, false],
+  ]) {
+    const novaAba = abas();
+    const r = relogio();
+    const canalA = novaAba();
+    const canalB = novaAba(); // as duas já abertas: cada uma ouve a pergunta da outra
+    const a = criarDonaDaAba({ canal: canalA, meu: () => null, agendar: r.agendar, agora: () => r.agora + quandoA, sortear: () => sorteioA });
+    const b = criarDonaDaAba({ canal: canalB, meu: () => null, agendar: r.agendar, agora: () => r.agora + quandoB, sortear: () => sorteioB });
+    const deA = a.outraCuida(7);
+    const deB = b.outraCuida(7);
+    await microtarefas();
+    await r.andar(ESPERA_DA_DONA_MS);
+    assert.deepEqual([await deA, await deB], [!venceA, venceA], `quem vence: ${venceA ? 'A' : 'B'}`);
+  }
+});
+
+test('criarDonaDaAba: três abas perguntando pelo mesmo leitor — a resposta de quem ainda pergunta só vale para quem perguntou depois dela, e a primeira retoma', async () => {
+  // C pergunta primeiro, A logo depois, B em seguida. A responde a B (perguntou antes dele), mas a
+  // resposta vai a todas as abas: se C a aceitasse, as três desistiriam e ninguém retomaria.
+  const novaAba = abas();
+  const r = relogio();
+  const aba = (atraso) => criarDonaDaAba({ canal: novaAba(), meu: () => null, agendar: r.agendar, agora: () => r.agora + atraso });
+  const [c, a, b] = [aba(0), aba(50), aba(51)];
+  const deC = c.outraCuida(7);
+  const deA = a.outraCuida(7);
+  const deB = b.outraCuida(7);
+  await microtarefas();
+  await r.andar(ESPERA_DA_DONA_MS);
+  assert.deepEqual([await deC, await deA, await deB], [false, true, true], 'só C retoma');
+});
+
 test('criarDonaDaAba: sem BroadcastChannel, ninguém responde e nada muda', async () => {
   const dona = criarDonaDaAba({ canal: null, meu: () => 7 });
   assert.equal(await dona.outraCuida(7), false);

@@ -413,6 +413,16 @@ export const ESPERA_DA_DONA_MS = 300;
  * `BroadcastChannel`, que não exige HTTPS: a loja na rede local é HTTP) se outra já cuida dele;
  * a que cuida (`meu()` devolve o id dela) responde, e quem perguntou não retoma.
  *
+ * A aba que ainda espera a resposta sobre um leitor também responde por ele — a quem perguntou
+ * DEPOIS dela. A cópia de "Duplicar aba" feita durante a pergunta da origem (o F5 que retoma o
+ * leitor guardado, ou o reenvio da chave do chamado) pode perguntar antes de a espera da origem
+ * acabar (no Chromium, com o servidor perto, ela pergunta ~100 ms depois de nascer): a origem não
+ * é dona ainda, a cópia nunca ouviu a pergunta dela, e sem resposta as duas retomariam o mesmo
+ * leitor. Vence a primeira a perguntar (a hora da pergunta; no mesmo milissegundo, um sorteio):
+ * a resposta de quem ainda pergunta leva a hora da pergunta dela e só vale para quem perguntou
+ * depois, e todas comparam os mesmos pares — uma retoma, nunca duas nem nenhuma. A pergunta de
+ * uma página antiga (sem a hora) só ouve a dona, como antes.
+ *
  * Sem `canal` (navegador muito antigo), a pergunta responde "ninguém" e nada muda.
  */
 export function criarDonaDaAba({
@@ -423,29 +433,50 @@ export function criarDonaDaAba({
     const t = setTimeout(fn, ms);
     return () => clearTimeout(t);
   },
+  agora = () => Date.now(),
+  sortear = Math.random,
 }) {
+  /** As perguntas desta aba ainda sem resposta, por leitor: `{ quando, sorteio, responder }`. */
   const perguntas = new Map();
+  /** A pergunta `a` saiu antes da `b`? A hora; no mesmo milissegundo, o sorteio. */
+  const antes = (a, b) => a.quando < b.quando || (a.quando === b.quando && a.sorteio < b.sorteio);
   canal?.addEventListener('message', (evento) => {
-    const { tipo, id } = evento?.data ?? {};
+    const dados = evento?.data ?? {};
+    const { tipo, id } = dados;
     if (!Number.isInteger(id)) return;
-    if (tipo === 'quem-cuida' && meu() === id) canal.postMessage({ tipo: 'eu-cuido', id });
-    else if (tipo === 'eu-cuido') perguntas.get(id)?.(true);
+    const minha = perguntas.get(id);
+    if (tipo === 'quem-cuida') {
+      if (meu() === id) canal.postMessage({ tipo: 'eu-cuido', id });
+      // Quem ainda pergunta responde com a hora da PRÓPRIA pergunta: a resposta vai a todas as
+      // abas, e só vale para as que perguntaram depois dela — a que perguntou antes (três abas no
+      // meio) a ignora, senão todas desistiriam e ninguém retomaria.
+      else if (minha && Number.isFinite(dados.quando) && antes(minha, dados)) {
+        canal.postMessage({ tipo: 'eu-cuido', id, quando: minha.quando, sorteio: minha.sorteio });
+      }
+    } else if (tipo === 'eu-cuido' && minha && (!Number.isFinite(dados.quando) || antes(dados, minha))) {
+      // A dona responde sem hora, e vale para todas.
+      minha.responder(true);
+    }
   });
 
   return {
-    /** Resolve `true` se outra aba já cuida do leitor `id`. */
+    /** Resolve `true` se outra aba já cuida do leitor `id` (ou perguntou por ele antes desta). */
     outraCuida(id) {
       if (!canal) return Promise.resolve(false);
       return new Promise((resolve) => {
         let desistir = () => {};
-        const responder = (sim) => {
-          desistir();
-          perguntas.delete(id);
-          resolve(sim);
+        const pergunta = {
+          quando: agora(),
+          sorteio: sortear(),
+          responder(sim) {
+            desistir();
+            if (perguntas.get(id) === pergunta) perguntas.delete(id);
+            resolve(sim);
+          },
         };
-        perguntas.set(id, responder);
-        desistir = agendar(() => responder(false), esperaMs);
-        canal.postMessage({ tipo: 'quem-cuida', id });
+        perguntas.set(id, pergunta);
+        desistir = agendar(() => pergunta.responder(false), esperaMs);
+        canal.postMessage({ tipo: 'quem-cuida', id, quando: pergunta.quando, sorteio: pergunta.sorteio });
       });
     },
   };

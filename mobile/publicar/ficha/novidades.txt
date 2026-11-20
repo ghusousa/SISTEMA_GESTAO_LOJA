@@ -1,3 +1,7 @@
-Nesta versão: correções e ajustes nas telas de venda, estoque e financeiro.
+Nesta versão:
+• O computador chama o celular para ler os códigos de barras: no computador, "Abrir no app o leitor de código"; no celular com o mesmo login e o app aberto, desce a faixa "O computador está chamando" — um toque em "Abrir o leitor" e a câmera passa a ler para aquele computador. O QR continua valendo.
+• No celular ligado como leitor, "Digitar código" manda ao computador a etiqueta que a câmera não consegue ler.
+• O botão de voltar, no alto das telas, volta a funcionar no iPhone com iOS 26 ou mais novo.
+• Correções e ajustes nas telas de venda, estoque e financeiro.
 
 Lembrete: o app conversa com o servidor da sua própria loja. As funções novas do sistema chegam quando o servidor também é atualizado — quem cuida do sistema da loja faz isso.

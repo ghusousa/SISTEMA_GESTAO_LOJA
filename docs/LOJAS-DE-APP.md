@@ -178,7 +178,7 @@ Android 7.0 ou superior; conexão com o servidor da loja (rede local ou internet
 | 7 | Informações financeiras › **Outras informações financeiras** | Obrigatório | Funcionalidade do app | Pagamentos (só forma e valor), despesas, saldo do fiado, fechamento de caixa. **Não há número de cartão em lugar nenhum** — o modelo guarda apenas forma de pagamento e valor |
 | 8 | Fotos e vídeos › **Fotos** | Opcional | Funcionalidade do app | Foto da peça, tirada pela câmera ou escolhida da galeria |
 | 9 | Atividade no app › **Interações no app** | Obrigatório | Funcionalidade do app; **Prevenção de fraudes, segurança e conformidade** | `audit_log`: quem mudou o quê e quando, mais tentativas de login |
-| 10 | IDs do dispositivo ou outros › **IDs do dispositivo ou outros** | Obrigatório | **Funcionalidade do app**; **Prevenção de fraudes, segurança e conformidade** | **Endereço IP**, gravado em `audit_log` e em `login_attempts` (anti-força-bruta). O formulário não tem um tipo "endereço IP"; como o IP fica **armazenado** (não é efêmero), ele precisa ser declarado, e esta é a caixa mais próxima. E o **id aleatório desta instalação do app** (o chamado do leitor, ADR-47): o app o registra no servidor da loja a cada sessão, e o leitor ligado aceita só as leituras dele |
+| 10 | IDs do dispositivo ou outros › **IDs do dispositivo ou outros** | Obrigatório | **Funcionalidade do app**; **Prevenção de fraudes, segurança e conformidade** | **Endereço IP**, gravado em `audit_log` e em `login_attempts` (anti-força-bruta). O formulário não tem um tipo "endereço IP"; como o IP fica **armazenado** (não é efêmero), ele precisa ser declarado, e esta é a caixa mais próxima. E o **id aleatório desta instalação do app** (o chamado do leitor, ADR-47): o app o registra no servidor da loja a cada sessão, e o leitor ligado aceita só as leituras dele (no registro do leitor, ele fica só enquanto o leitor está ligado) |
 
 Nenhum dos itens acima deve ser marcado para "Publicidade ou marketing", "Personalização" nem "Análise" — nada disso existe no app.
 
@@ -379,12 +379,18 @@ Política de privacidade: {{URL_PRIVACIDADE}}
 
 ---
 
-## 4. NOVIDADES DESTA VERSÃO — 252 caracteres (limite 4.000)
+## 4. NOVIDADES DESTA VERSÃO — 760 caracteres (limite 4.000)
 
 **Só a partir da 2ª versão**: na primeira a Apple recusa o campo, e o publicador não manda. Reescreva `ficha/novidades.txt` a cada versão nova.
 
+A desta versão conta o chamado do leitor (ADR-47) como ele funciona para todos — com o app aberto, sem prometer notificação, que nasce desligada no servidor —, o "Digitar código" do leitor ligado e o "Voltar" do cabeçalho que voltou a funcionar no iOS 26+ (o patch do `react-native-screens`, ADR-14). Os rótulos citados estão em `TELAS_CITADAS`, e o publicador confere no código.
+
 ```
-Nesta versão: correções e ajustes nas telas de venda, estoque e financeiro.
+Nesta versão:
+• O computador chama o celular para ler os códigos de barras: no computador, "Abrir no app o leitor de código"; no celular com o mesmo login e o app aberto, desce a faixa "O computador está chamando" — um toque em "Abrir o leitor" e a câmera passa a ler para aquele computador. O QR continua valendo.
+• No celular ligado como leitor, "Digitar código" manda ao computador a etiqueta que a câmera não consegue ler.
+• O botão de voltar, no alto das telas, volta a funcionar no iPhone com iOS 26 ou mais novo.
+• Correções e ajustes nas telas de venda, estoque e financeiro.
 
 Lembrete: o app conversa com o servidor da sua própria loja. As funções novas do sistema chegam quando o servidor também é atualizado — quem cuida do sistema da loja faz isso.
 ```
@@ -439,13 +445,13 @@ Dois campos obrigatórios que precisam bater com esta ficha: **URL da Política 
 
 ---
 
-## 6. NOTAS PARA A REVISÃO (App Review Notes) — 3.612 caracteres com os marcadores (limite 4.000)
+## 6. NOTAS PARA A REVISÃO (App Review Notes) — 3.625 caracteres com os marcadores (limite 4.000)
 
-**Em inglês** (o revisor lê inglês), com os rótulos das telas entre aspas em português, como aparecem no app, e os sete itens que a Apple pediu na Guideline 2.1. O publicador troca `{{SERVIDOR_DEMO}}`, `{{EMAIL_DEMO}}`, `{{SENHA_DEMO}}`, `{{CODIGO_DEMO}}` e `{{EMAIL_SUPORTE}}` pelos valores do config/Secrets; `{{APARELHOS_TESTADOS}}` e `{{APARELHO_DO_VIDEO}}` pela lista de `mobile/publicar/ficha/aparelhos-testados.txt` (a 1ª linha é o aparelho da gravação); `{{VIDEO}}` pelo nome do vídeo anexado; e `{{LINHA_ETIQUETAS}}` pela frase da folha de etiquetas (ou some, sem `url_etiquetas_demo`). A revisão leva UM anexo (a Apple recusa o segundo), e as notas citam só ele: a linha que começa com `{{SE_GUIA_ANEXADO}}` (com `{{GUIA}}`, o nome do guia) só fica quando o anexo é o guia — com o vídeo anexado ela sai, e as notas não prometem o guia. Sem lista ou sem vídeo, os marcadores viram "(pending)": a ficha sobe, mas o `--enviar` é recusado. Com endereços, e-mails e sete aparelhos de nomes longos o texto chega perto dos 4.000 — o publicador confere depois da troca e para, dizendo o tamanho, se passar (o teste mede o pior caso, com o vídeo e com o guia: 3.922 e 3.981 depois do chamado do leitor, ADR-47).
+**Em inglês** (o revisor lê inglês), com os rótulos das telas entre aspas em português, como aparecem no app, e os sete itens que a Apple pediu na Guideline 2.1. O publicador troca `{{SERVIDOR_DEMO}}`, `{{EMAIL_DEMO}}`, `{{SENHA_DEMO}}`, `{{CODIGO_DEMO}}` e `{{EMAIL_SUPORTE}}` pelos valores do config/Secrets; `{{APARELHOS_TESTADOS}}` e `{{APARELHO_DO_VIDEO}}` pela lista de `mobile/publicar/ficha/aparelhos-testados.txt` (a 1ª linha é o aparelho da gravação); `{{VIDEO}}` pelo nome do vídeo anexado; e `{{LINHA_ETIQUETAS}}` pela frase da folha de etiquetas (ou some, sem `url_etiquetas_demo`). A revisão leva UM anexo (a Apple recusa o segundo), e as notas citam só ele: a linha que começa com `{{SE_GUIA_ANEXADO}}` (com `{{GUIA}}`, o nome do guia) só fica quando o anexo é o guia — com o vídeo anexado ela sai, e as notas não prometem o guia. Sem lista ou sem vídeo, os marcadores viram "(pending)": a ficha sobe, mas o `--enviar` é recusado. Com endereços, e-mails e sete aparelhos de nomes longos o texto chega perto dos 4.000 — o publicador confere depois da troca e para, dizendo o tamanho, se passar (o teste mede o pior caso, com o vídeo e com o guia: 3.935 e 3.994, com o endereço do servidor na linha do leitor).
 
-Os serviços externos (item 5) são o que o código faz: dado e login só do servidor da loja (a demonstração é uma loja como outra, sem provedor a citar: a da Vercel, com Neon e Vercel Blob, ou a que sobe com a loja em `<domínio>/demo`, ADR-46 — as notas não nomeiam nenhum); NFC-e opcional pela Focus NFe, desligada na demonstração; nada de pagamento, IA, login de terceiros, analytics ou anúncio. A única outra chamada é a da biblioteca de rede do React Native (NetInfo), que, no iPhone, testa a conexão com um pedido vazio ao `generate_204` do Google — sem dado nenhum; as notas dizem isso para não afirmar "nenhum outro servidor". O push do chamado do leitor (Expo + APNs, ADR-47) não entra no item 5: ele nasce desligado no servidor (também na demonstração), e as notas não o prometem — a permissão aparece só como "notifications (optional)", e o guia PDF conta como funciona quando a loja liga. A política de privacidade conta os dois serviços, como opcionais.
+Os serviços externos (item 5) são o que o código faz: dado e login só do servidor da loja (a demonstração é uma loja como outra, sem provedor a citar: a da Vercel, com Neon e Vercel Blob, ou a que sobe com a loja em `<domínio>/demo`, ADR-46 — as notas não nomeiam nenhum); NFC-e opcional pela Focus NFe, desligada na demonstração; nada de pagamento, IA, login de terceiros, analytics ou anúncio. A única outra chamada é a da biblioteca de rede do React Native (NetInfo), que, no iPhone, testa a conexão com um pedido vazio ao `generate_204` do Google — sem dado nenhum; as notas dizem isso para não afirmar "nenhum outro servidor". O push do chamado do leitor (Expo + APNs, ADR-47) não entra no item 5: ele nasce desligado no servidor (também na demonstração), e as notas não o prometem — a permissão aparece só como "notifications (optional)", e o guia PDF conta como funciona quando a loja liga. A política de privacidade conta os dois serviços, como opcionais. Por isso, antes de mandar à revisão, o servidor da demonstração das notas fica com o push desligado (o padrão) — ou com a chave APNs já na Expo e testada: ligado sem ela, o revisor veria o pedido de notificação e, no computador, "falta um passo de quem publica o app" (`mobile/publicar/README.md`, "Notificações no iPhone").
 
-O leitor pelo celular, nas notas, é o chamado (ADR-47): no navegador do computador, com a MESMA conta, "Abrir no app o leitor de código"; no app aberto, "Abrir o leitor" — e o QR como alternativa ("Ler o QR" ali, e Mais > Leitor do computador > "Ler o QR do computador"). Para caber, o item 3 perdeu "and spreadsheets" e o item 7 o "by the accredited issuer" (o item 5 já diz Focus NFe).
+O leitor pelo celular, nas notas, é o chamado (ADR-47): o servidor de demonstração ("the server above") aberto no navegador do computador, com a MESMA conta, "Abrir no app o leitor de código"; no app aberto, "Abrir o leitor" — e o QR como alternativa ("Ler o QR" ali, e Mais > Leitor do computador > "Ler o QR do computador"). A frase dizia só "in a computer browser": com o vídeo anexado, sem o guia, o revisor teria de deduzir qual endereço abrir. Para caber, o item 3 perdeu "and spreadsheets", o item 7 o "by the accredited issuer" (o item 5 já diz Focus NFe) e o "own" do certificado, e a linha do leitor e o passo 2 perderam uma vírgula cada. O "Digitar código" da tela do leitor ligado não coube nas notas: está no guia PDF.
 
 ```
 B2B APP FOR SHOP STAFF; IT NEEDS THE SHOP'S SERVER. Answers to Guideline 2.1 below.
@@ -466,13 +472,13 @@ Shop OWNER account: every screen is visible. Fictitious data only, isolated from
 
 4) SET UP AND ACCESS
 1. On the sign-in screen tap the GEAR (top right): "Conectar à loja" opens.
-2. In "Endereço do servidor" type the server above exactly as written (with https://), and tap "Conectar".
+2. In "Endereço do servidor" type the server above exactly as written (with https://) and tap "Conectar".
 3. Enter e-mail and password, tap "Entrar": the "Vender" tab (point of sale) opens.
 4. Add an item: "Ler código de barras" (camera), "Digitar código" (type the barcode above) or "Buscar" (part of a name, e.g. "cami").
 {{LINHA_ETIQUETAS}}
 5. Tap "Cobrar", "Dinheiro", then "Confirmar venda". The completed sale opens; tap "Recibo para a cliente" to see the receipt.
 More in the "Produtos", "Estoque", "Financeiro" and "Mais" tabs.
-Phone as the computer's barcode reader: in a computer browser, sign in with the same account and click "Abrir no app o leitor de código"; tap "Abrir o leitor" in the open app. Or "Ler o QR" there, and Mais > Leitor do computador > "Ler o QR do computador".
+Phone as the computer's barcode reader: open the server above in a computer browser, sign in with the same account, click "Abrir no app o leitor de código"; tap "Abrir o leitor" in the open app. Or "Ler o QR" there and Mais > Leitor do computador > "Ler o QR do computador".
 
 ACCOUNTS: no sign-up. The owner creates staff accounts in Mais > Usuários > "+" (bottom right).
 ACCOUNT DELETION (5.1.1(v)), inside the app:
@@ -484,7 +490,7 @@ The demo account is protected (can't be deleted) for the next reviewer: please c
 
 6) REGIONS: Brazil only, in Portuguese (Brazil); the same everywhere.
 
-7) REGULATION: not a regulated industry; no third-party protected content. The optional NFC-e is issued with the shop's own digital certificate.
+7) REGULATION: not a regulated industry; no third-party protected content. The optional NFC-e is issued with the shop's digital certificate.
 
 USER CONTENT: item names, photos and notes stay private to one shop's team. No publishing, feed or messaging between users, so nothing to report or block.
 PERMISSIONS: camera (barcode reader, item photo), photos (pick an item photo), local network (only when the server is on the shop's network), notifications (optional).
@@ -543,6 +549,7 @@ O `--enviar` do publicador (caixa "revisao" no GitHub) confere tudo o que é con
 - **Gravação de tela** num iPhone FÍSICO, iOS mais novo, desde a abertura do app (roteiro em `mobile/publicar/README.md`): o anexo da revisão pela API (`/v1/appStoreReviewAttachments`) — o único: a Apple aceita um, e o vídeo entra no lugar do guia — `--video-revisao <arquivo ou https://...>`, no GitHub a entrada `video_revisao_url`. Sem ela (nem já anexada à versão), a revisão não sai.
 - **Aparelhos testados**: `mobile/publicar/ficha/aparelhos-testados.txt`, uma linha por iPhone em que o teste rodou de verdade (`iPhone 17 — iOS 26.1`; a 1ª é a da gravação). Vazia, a revisão não sai. Mudou? Refaça o guia PDF (`node publicar/revisao/gerar-guia.mjs`) e faça commit.
 - **Telas citadas** — leitor do computador (ADR-43), o chamado dele (ADR-47) e exclusão de conta (ADR-45): a descrição e as notas citam "Abrir no app o leitor de código", "Abrir o leitor", "Mais > Leitor do computador" e "Mais > Minha conta > Excluir minha conta". O publicador recusa a ficha de um commit cujo app (ou web) não tenha esses rótulos — o CI também, no `revisao.test.mjs` —, e confere no servidor de demonstração as rotas do leitor, do chamado e da exclusão — publique com o servidor na mesma versão.
+- **O push no servidor da demonstração** (ADR-47): desligado (o padrão), ou com a chave APNs já na Expo e testada no TestFlight. Ligado sem a chave, o revisor veria o pedido de notificação e um "falta um passo de quem publica o app" no computador. Não é trava do publicador (a emenda E2): é conferência sua, no passo único de `mobile/publicar/README.md` ("Notificações no iPhone").
 - **Privacidade do App, de novo, antes da versão com o chamado** (ADR-47): "Identificadores › ID do dispositivo" passa a coletado (§5), e no Play Console o item 10 da Segurança dos dados ganha a finalidade Funcionalidade do app (§4.2). As duas só na tela.
 - `{{EMAIL_DEMO}}`, `{{SENHA_DEMO}}`: conta de perfil **dono** no servidor de demonstração (a Apple exige conta de demonstração sempre que o login não é público) — variável `APPLE_EMAIL_DEMO` e segredo `APPLE_DEMO_PASSWORD`. O publicador entra com ela antes de enviar e recusa se não for dona.
 - `{{CODIGO_DEMO}}`: um código de barras que exista no banco de demonstração (`APPLE_CODIGO_DEMO`) — é o caminho sem câmera. O publicador o procura lá antes de enviar.

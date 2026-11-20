@@ -83,10 +83,12 @@ falar com a Apple** se citar tela que o app deste commit não tem (`TELAS_CITADA
 `ficha.mjs`: rótulo citado → arquivo do app que o mostra; rótulo novo nas notas = uma linha lá),
 e o CI reprova antes disso (`revisao.test.mjs` confere cada rótulo no código do commit).
 
-O **leitor pelo celular** nas notas e no guia é o do chamado (ADR-47), antes do QR: no navegador
-do computador, com a MESMA conta do app, "Abrir no app o leitor de código"; no app aberto, a faixa
-"O computador está chamando" → "Abrir o leitor". O QR fica como alternativa
-(`Mais > Leitor do computador > "Ler o QR do computador"`). As notas não prometem notificação —
+O **leitor pelo celular** nas notas e no guia é o do chamado (ADR-47), antes do QR: o servidor
+de demonstração aberto no navegador do computador ("open the server above in a computer browser"),
+com a MESMA conta do app, "Abrir no app o leitor de código"; no app aberto, a faixa "O computador
+está chamando" → "Abrir o leitor". O QR fica como alternativa
+(`Mais > Leitor do computador > "Ler o QR do computador"`), e o guia acrescenta o "Digitar código"
+da tela do leitor ligado, para quem não tem etiqueta à mão. As notas não prometem notificação —
 o push nasce desligado no servidor (ver "Notificações no iPhone", abaixo) — e só citam a
 permissão, opcional; o guia conta como ela funciona quando a loja liga.
 
@@ -242,6 +244,14 @@ ela funciona (`GET /configuracao` → `notificacoes_push`), e ninguém vê um pe
 que não chegaria. **Nada disto trava o envio à Apple**: o revisor testa o chamado com o app
 aberto e o QR, e as notas não prometem push.
 
+**Onde está hoje.** Conferido no seu iPhone (build 6 no TestFlight, com a Vercel em
+`NOTIFICACOES_PUSH=expo`): a faixa desce com o app aberto; o log da API disse `SEM_NOTIFICACAO`
+(o iPhone registrado, ainda sem token) e, depois de você permitir as notificações,
+`SEM_CHAVE_DA_APPLE` — o iPhone mandou o token, a Expo aceitou o pedido e recusou o aviso por
+`InvalidCredentials`. **Falta só a chave APNs na Expo**, e só você pode criá-la: ela pede o login
+da Apple com os dois fatores. A API da Apple não cria chave de push, e o eas-cli não a cria com a
+chave da API do App Store Connect (a dos Secrets) — por isso não sai do GitHub Actions.
+
 O que já é automático: o `ci.mjs preparar` liga a capacidade **Push Notifications** no App ID
 antes de compilar (`garantirPushNoAppId`, saída `push_no_app_id`: `ligado`, `ligou`,
 `sem-bundle` ou `falhou`). O plugin do `expo-notifications` grava `aps-environment` no app em
@@ -253,28 +263,70 @@ ad hoc já usa `--refresh-ad-hoc-provisioning-profile`. **Plano B**, se o build 
 e compilar de novo. No primeiro `.ipa` com notificações, `codesign -d --entitlements :- <app>`
 mostra `aps-environment` `production`.
 
-O que só quem publica o app faz, **uma vez** (a chave é do time da Apple, não de cada loja):
+**O passo único**, feito uma vez por quem publica o app (a chave é do time da Apple, não de cada
+loja; serve a todos os apps do time, vale para sandbox e produção — TestFlight, App Store e o
+`.ipa` ad hoc — e não vence):
 
-1. **A chave APNs.** developer.apple.com → Certificates, Identifiers & Profiles → **Keys** → "+" →
-   marque **Apple Push Notifications service (APNs)** → baixe a `.p8` (a Apple só deixa baixar
-   UMA vez) e anote o **Key ID** e o **Team ID** (o `apple_team_id` do `padroes.json`).
-2. **Entregar à Expo.** Num computador com Node, dentro de `mobile/`: `npx eas-cli login` e
-   `npx eas-cli credentials -p ios` → production → **Push Notifications** → suba a `.p8` (ou deixe
-   o eas criar uma, entrando com a conta da Apple). Tem de ser interativo: o eas recusa este passo
-   com `--non-interactive`, e a chave da App Store Connect (a dos Secrets) não serve para ele —
-   por isso não dá para fazer no Actions. A chave vale para sandbox e produção (TestFlight, App
-   Store e o `.ipa` ad hoc) e não vence.
-3. **Testar no TestFlight**, num iPhone de verdade, contra um servidor com o push ligado
-   (`NOTIFICACOES_PUSH=expo`; na demonstração da instalação, `DEMO_NOTIFICACOES_PUSH=expo`, que só
-   vale para ela): toque em "Abrir o leitor" e permita as notificações; feche o app; no
-   computador, "Abrir no app o leitor de código". A notificação tem de chegar, com o mesmo sinal
-   do computador, e o toque abre a câmera. Se o computador disser que o iPhone ainda não recebe as
-   notificações ("falta um passo de quem publica o app"), a Expo não tem a chave: volte ao passo 2.
-4. **Depois do teste no TestFlight, ligue `NOTIFICACOES_PUSH=expo` no servidor** de cada loja —
-   na Vercel, a variável do projeto (Settings → Environment Variables) e um Redeploy; numa VPS ou
-   no computador da loja, a linha no `.env` da raiz e `docker compose up -d api` (vale ao recriar
-   a api; a demo da instalação tem a sua, `DEMO_NOTIFICACOES_PUSH`, e o `api-demo`). O app já
-   aprovado passa a pedir a permissão no próximo "Abrir o leitor", **sem build novo**.
+1. **Criar a chave na Apple.** Abra https://developer.apple.com/account/resources/authkeys/add e
+   entre com a conta da Apple (os dois fatores). Dê um nome à chave (sem acento, por exemplo
+   `Push Gestao de Loja`) → marque **Apple Push Notifications service (APNs)** → **Configure** →
+   em Environment, **Sandbox & Production** (e, se aparecer a restrição da chave, **Team Scoped
+   (All Topics)**) → **Save** → **Continue** → **Register** → **Download**. Guarde o arquivo
+   `AuthKey_<KEYID>.p8`: **a Apple só deixa baixar uma vez**. Anote o **Key ID** (os 10
+   caracteres depois de `AuthKey_` no nome do arquivo; também na página da chave) e o **Team ID**
+   (o `apple_team_id` do `padroes.json`; aparece no canto de cima do portal).
+2. **Entregar a chave à Expo** — um dos dois caminhos:
+   - **Pelo site:** expo.dev → a sua conta → **Settings** → **Credentials** → **Apple Push Keys**
+     → **Add** → o `.p8`, o Key ID e o Team ID → salvar. Depois, no projeto do app (`gestao-loja`):
+     **Credentials** → **iOS** → o identificador `com.gestaoloja.app` → **Push Notifications** →
+     escolha a chave que acabou de subir.
+   - **Num computador** com Node, dentro de `mobile/`: `npx eas-cli login` e
+     `npx eas-cli credentials` → **iOS** → production → **Push Notifications** → deixe o eas criar a
+     chave e associá-la sozinho (ele pede o login da Apple, e aí o passo 1 nem é preciso) ou suba o
+     `.p8` do passo 1. Tem de ser interativo: o eas recusa este passo com `--non-interactive`.
+3. **Ligar no servidor: `NOTIFICACOES_PUSH=expo`.** Na Vercel, Settings → Environment Variables →
+   `NOTIFICACOES_PUSH` = `expo` e um **Redeploy**; numa VPS ou no computador da loja, a linha
+   `NOTIFICACOES_PUSH=expo` no `.env` da raiz e `docker compose up -d api` (vale ao recriar a api;
+   a demo da instalação tem a sua, `DEMO_NOTIFICACOES_PUSH`, e o `api-demo`). Primeiro no servidor
+   em que você testa; **depois do teste no TestFlight, ligue `NOTIFICACOES_PUSH=expo` no servidor**
+   de cada loja. O app já aprovado passa a pedir a permissão no próximo "Abrir o leitor", **sem
+   build novo**.
+4. **No iPhone** (o build do TestFlight — o Expo Go e o Android desta versão nunca recebem): entre
+   com o MESMO login do computador e toque em "Abrir o leitor" na faixa (ou abra Mais → Leitor do
+   computador): é nesse primeiro toque que o iOS pergunta pelas notificações — permita. Se já
+   recusou: Ajustes → Notificações → o app → Permitir. Feche o app (com ele na frente, o aviso não
+   vira banner: quem mostra é a faixa) e, no computador, "Abrir no app o leitor de código". A
+   notificação chega com o mesmo sinal do computador, e o toque nela abre a câmera.
+5. **Não chegou? O diagnóstico.** O computador diz a situação na hora, e o log da API a repete
+   numa linha `chamado do leitor: <SITUAÇÃO> (<n> celular(es))` (na Vercel, em Logs; na
+   instalação, `docker compose logs api`):
+   - `SEM_CELULAR` — nenhum app atualizado com este login se registrou neste servidor: entre no
+     app novo, com o mesmo login, no mesmo servidor.
+   - `DESLIGADA` — o servidor está com o push desligado: passo 3.
+   - `SEM_NOTIFICACAO` — o iPhone está registrado, mas sem token: a permissão ainda não foi dada
+     (passo 4), ou o app foi desinstalado.
+   - `SEM_CHAVE_DA_APPLE` — a Expo recusou por `InvalidCredentials`: a chave APNs não está na
+     Expo, ou foi revogada (passos 1 e 2). Nada a mudar no servidor da loja.
+   - `FALHOU` — a rede deste servidor até a Expo, ou a Expo fora do ar; a linha `push da Expo: …`
+     logo antes traz o código da recusa.
+   - `ENVIADA` — a Expo aceitou; se mesmo assim nada aparecer, a Apple pode ter recusado depois.
+
+   Para tirar a dúvida sem passar pelo computador da venda, rode o teste: na instalação, `docker
+   compose exec api python -m app.cli testar-push --email <o login>`; fora do Docker, dentro de `api/`,
+   `.venv/bin/python -m app.cli testar-push --email <o login>`, com o `DATABASE_URL` do banco que o
+   app usa (na Vercel, o valor da variável do projeto). Ele manda um aviso de teste ("Teste de
+   notificação") aos celulares desse login — com o push do servidor ligado ou não —, espera o
+   recibo da entrega (até 60 s; `--espera` muda) e diz, por aparelho: `entregue à Apple`;
+   `a Expo recusou o aviso (InvalidCredentials)` ou `a Apple recusou (InvalidCredentials)` — a
+   chave falta ou foi revogada (passos 1 e 2); outro código entre parênteses, da lista da Expo; ou
+   `este servidor não conseguiu falar com a Expo (…)` — a rede da máquina, não a Apple. Depois diz
+   o que fazer. Nunca imprime o token; sai com 0 só quando a entrega foi aceita.
+
+**Antes de mandar uma versão à revisão**, confira o push do servidor da demonstração que vai nas
+notas (`loja-tria.vercel.app`, o padrão): ligado sem a chave na Expo, o revisor veria o pedido de
+notificação e, no computador, "falta um passo de quem publica o app". Ou a chave já está lá e
+testada, ou o servidor da demonstração fica com `NOTIFICACOES_PUSH=desligado` (o padrão) até ela
+estar.
 
 **Onde se testa o quê.** No BrowserStack, o `.ipa` é reassinado para os aparelhos de lá (por isso
 qualquer iPhone registrado serve ao perfil ad hoc), e notificação de app reassinado não é prova:
@@ -487,9 +539,14 @@ o que está lá sai antes de o novo subir; o que não sai impede a subida), a li
 (formato), as telas citadas (na árvore de mentira e no código DESTE commit: cada rótulo de
 `TELAS_CITADAS` tem de estar no arquivo do app ou do web), as notas (os sete itens, os dois
 caminhos da exclusão, só o anexo que vai estar lá, até 4000 no pior caso com o vídeo e com o guia,
-o chamado do leitor antes do QR e nenhuma promessa de push), que a política de privacidade conta
-os serviços que as notas e o guia contam (Expo e APNs inclusive) e que o **guia PDF commitado é o
-das entradas de agora**. `ci.test.mjs` confere o preparo do Actions: segredos fora do log, a versão
+o chamado do leitor antes do QR, com o endereço a abrir no computador, e nenhuma promessa de
+push), que a política de privacidade conta os serviços que as notas e o guia contam (Expo e APNs
+inclusive) e diz do registro do aparelho o que o código faz (o título real do aviso e o de teste,
+o pedido só no iPhone, a faxina dos 30 dias no login e no registro, o id da instalação no leitor
+ligado e nas cópias de segurança), que o guia conta o "Digitar código" do leitor ligado se e só se
+a tela o tem, que o `docs/LOJAS-DE-APP.md` mostra as notas, a descrição e as novidades como estão
+nos arquivos, com o tamanho certo no título, e que o **guia PDF commitado é o das entradas de
+agora**. `ci.test.mjs` confere o preparo do Actions: segredos fora do log, a versão
 já enviada dita antes de compilar, os iPhones do perfil de teste e o Push Notifications no App ID
 (já ligado não escreve; desligado, liga uma vez, com o corpo da especificação; App ID que não
 existe — só a extensão de prefixo parecido — ou chave sem permissão viram aviso, e o preparar
