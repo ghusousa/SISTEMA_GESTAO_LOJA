@@ -117,6 +117,8 @@ interface LeitorState {
   /** A tela do leitor pega o pedido (uma vez só); vencido, `null`. */
   consumirPedido: () => Omit<PedidoDeAtendimento, 'em'> | null;
   marcarServidorSemChamados: () => void;
+  /** O servidor ganhou o chamado (a configuração mostrou): a lista volta a ser consultada. */
+  desmarcarServidorSemChamados: () => void;
 }
 
 const estadoInicial = () => ({
@@ -327,5 +329,9 @@ export const useLeitorStore = create<LeitorState>((set, get) => ({
 
   marcarServidorSemChamados() {
     if (!get().servidorSemChamados) set({ servidorSemChamados: true });
+  },
+
+  desmarcarServidorSemChamados() {
+    if (get().servidorSemChamados) set({ servidorSemChamados: false });
   },
 }));

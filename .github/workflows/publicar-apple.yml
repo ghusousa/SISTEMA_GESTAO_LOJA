@@ -298,6 +298,7 @@ jobs:
           APP_ID: ${{ steps.apple.outputs.app_id }}
           PUBLICAR_CONFIG: ${{ steps.apple.outputs.config }}
           VIDEO: ${{ steps.video.outputs.caminho }}
+          PUSH_TESTADO: ${{ vars.PUSH_TESTADO }}
         run: |
           if [ "$TEM_FICHA" != "sim" ]; then
             echo "::error::Modo completo sem a ficha: faltam $FALTANDO (Secrets/Variables do repositório; guia em mobile/publicar/README.md)."
@@ -477,6 +478,7 @@ jobs:
           BUILD: ${{ steps.compilar.outputs.build_numero }}
           MESMO_BUILD: ${{ inputs.mesmo_build }}
           VIDEO: ${{ steps.video.outputs.caminho }}
+          PUSH_TESTADO: ${{ vars.PUSH_TESTADO }}
         run: |
           if [ "$TEM_FICHA" != "sim" ]; then
             echo "::error::A ficha não pode subir: faltam $FALTANDO (Secrets/Variables do repositório; guia em mobile/publicar/README.md)."

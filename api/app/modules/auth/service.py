@@ -183,6 +183,12 @@ class AuthService:
 
         await self.repo.revogar(jti)  # rotação: o token usado morre aqui
         tokens = await self._emitir(user, family_id=family_id)
+        # A faxina dos aparelhos calados há 30 dias também aqui, e não só no login por senha: a
+        # loja que só usa o navegador volta por esta rota a cada abertura e F5, e a sessão desliza
+        # 30 dias a cada renovação — sem ela, o token de push de quem parou de usar o app ficava
+        # para sempre. Mesma ordem do login (flush antes; a faxina usa SKIP LOCKED, nunca espera).
+        await self.session.flush()
+        await NotificacoesService(self.session).faxina()
         await self.session.commit()
         return tokens
 

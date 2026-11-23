@@ -107,7 +107,7 @@ const comoFalhou = (r) => (r.status ? `HTTP ${r.status}${r.json?.code ? ` ${r.js
  * problema), 'aviso' (fora dele, não abriu daqui) ou 'nao-conferido' (parou antes, no /health
  * ou no login).
  */
-export async function conferirServidorDemo({ base, servidor = base, email, senha, codigo, urlPrivacidade, urlSuporte, tempoMs = ESPERA_MS }) {
+export async function conferirServidorDemo({ base, servidor = base, email, senha, codigo, urlPrivacidade, urlSuporte, pushTestado = false, tempoMs = ESPERA_MS }) {
   const problemas = [];
   const conferidos = [];
   const avisos = [];
@@ -123,6 +123,30 @@ export async function conferirServidorDemo({ base, servidor = base, email, senha
     return { problemas, conferidos, avisos, suporte: 'nao-conferido' };
   }
   conferidos.push(`${servidor}/health no ar`);
+
+  // O push do chamado (ADR-47). Ligado na demo e sem a chave APNs na Expo, o revisor veria o
+  // pedido de notificação no primeiro "Abrir o leitor" para um aviso que nunca chega — e o web
+  // ainda diria "falta um passo de quem publica o app": recurso incompleto à vista, risco de
+  // recusa por 2.1. A rota é a aberta, sem login; servidor sem o campo é de antes da ADR-47.
+  const configuracao = await chamar(em(base, '/api/v1/configuracao'), opcoes);
+  if (configuracao.status === 200 && configuracao.json?.notificacoes_push === true) {
+    if (pushTestado) {
+      conferidos.push('o push do chamado está LIGADO na demo, declarado testado (--push-testado)');
+    } else {
+      problemas.push(
+        'O servidor de demonstração está com o push do chamado LIGADO (notificacoes_push: true). O revisor veria o ' +
+          'pedido de notificação no primeiro "Abrir o leitor" e, sem a chave APNs na Expo, nada chegaria — o web diria ' +
+          '"falta um passo de quem publica o app". Desligue o push na demo (Vercel: NOTIFICACOES_PUSH=desligado e ' +
+          'Redeploy; na instalação: DEMO_NOTIFICACOES_PUSH=desligado no .env e recriar a api-demo) ou, com a chave APNs ' +
+          'na Expo e o testar-push entregue no iPhone, rode com --push-testado (no GitHub: a variável do repositório ' +
+          'PUSH_TESTADO=1).',
+      );
+    }
+  } else if (configuracao.status === 200) {
+    conferidos.push('o push do chamado está desligado na demo (o revisor não vê pedido de notificação)');
+  } else {
+    avisos.push(`Não deu para ler a configuração da demo (${comoFalhou(configuracao)}): o push do chamado não foi conferido.`);
+  }
 
   const login = await chamar(em(base, '/api/v1/auth/login'), { ...opcoes, metodo: 'POST', corpo: { email, senha } });
   if (login.status !== 200 || !login.json?.access_token) {

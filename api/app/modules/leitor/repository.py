@@ -168,6 +168,23 @@ class LeitorRepository:
             stmt = stmt.where(LeitorPareamento.aparelho_instalacao == instalacao)
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
+    async def travar_conta(self, user_id: int) -> bool:
+        """Trava a conta ANTES de qualquer pareamento dela, na mesma ordem da exclusão (ADR-45).
+
+        A exclusão trava a conta (`travar_viva`, FOR UPDATE) e DEPOIS apaga os pareamentos dela.
+        Sem esta trava, o leitor fazia o inverso — segurava um pareamento do login (o
+        `_substituir` do "Chamar de novo" e do "Gerar código novo", a linha do chamado no
+        atender) e só então pedia a conta, na FK do que grava —, e o Postgres derrubava um dos
+        dois com 40P01 (500). FOR KEY SHARE só conflita com o FOR UPDATE da exclusão, que
+        passa a esperar na fila: o UPDATE comum da conta (FOR NO KEY UPDATE) não espera nada.
+        Devolve False se a conta já não existe (excluída enquanto este pedido esperava).
+        """
+        achou = await self.session.scalar(
+            text("SELECT 1 FROM users WHERE id = :id AND deleted_at IS NULL FOR KEY SHARE"),
+            {"id": user_id},
+        )
+        return achou is not None
+
     async def travar_aparelho(self, user_id: int) -> None:
         """Um aceite (ou chamado, ou atender) por vez do MESMO login, até o commit.
 
@@ -253,8 +270,9 @@ class LeitorRepository:
         Roda no fim do código e do chamado, logo antes do commit, e não espera ninguém
         (`SKIP LOCKED`; a linha travada sai na próxima). Depois dela a transação só faz
         commit: quem esperar pela linha que ela pegou — a exclusão da conta, que apaga os
-        pareamentos dela — espera o commit, sem fechar ciclo com a FK do pareamento novo,
-        que é onde o código e o chamado esperam pela conta travada.
+        pareamentos dela — espera o commit, sem fechar ciclo. (A outra metade da mesma regra
+        é `travar_conta`: o código, o chamado, o aceite e o atender pegam a conta ANTES de
+        qualquer pareamento, na ordem da exclusão.)
         """
         com_instalacao = (
             select(LeitorPareamento.id)

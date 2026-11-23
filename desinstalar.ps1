@@ -55,7 +55,8 @@ if ((-not $ManterDados) -and (-not $SemBackup)) {
         # corrompido só se descobre no dia em que ele é necessário.
         $anteriorEAP = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
-        docker compose exec -T db pg_dump -U loja -Fc -f /tmp/backup.dump loja 2>&1 | Out-Null
+        # Sem os DADOS de notificacao_aparelhos (ADR-47): o token de push não vai para backup.
+        docker compose exec -T db pg_dump --exclude-table-data=notificacao_aparelhos -U loja -Fc -f /tmp/backup.dump loja 2>&1 | Out-Null
         if ($LASTEXITCODE -eq 0) {
             docker compose cp db:/tmp/backup.dump $arquivo 2>&1 | Out-Null
             docker compose exec -T db rm -f /tmp/backup.dump 2>&1 | Out-Null

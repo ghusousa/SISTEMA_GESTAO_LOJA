@@ -21,6 +21,7 @@ import {
   proximoFim,
   razaoDeContraste,
   ROTA_DO_LEITOR,
+  servidorGanhouOChamado,
   VIDA_DO_CHAMADO_MS,
 } from './chamadoDoLeitor';
 import { cores } from './tema';
@@ -259,4 +260,26 @@ test('leitor ligado: entre o cabeçalho e a câmera não entra nada que cresça;
   const dentro = jsx.slice(rolagem, jsx.indexOf('</ScrollView>'));
   assert.match(dentro, /<OutrosChamando\b/, 'os outros chamados não estão na rolagem');
   assert.match(dentro, /titulo="Desligar"/, 'o "Desligar" saiu da rolagem');
+});
+
+test('servidor atualizado com o app aberto: a configuração com notificacoes_push apaga a marca de servidor antigo', () => {
+  // A loja atualizou o servidor (ADR-47) com o app aberto: a configuração relida traz o campo.
+  assert.equal(servidorGanhouOChamado(true, { notificacoes_push: false }), true);
+  assert.equal(servidorGanhouOChamado(true, { notificacoes_push: true }), true);
+  // Ainda o servidor antigo (sem o campo), ou configuração que não chegou: a marca fica.
+  assert.equal(servidorGanhouOChamado(true, {}), false);
+  assert.equal(servidorGanhouOChamado(true, null), false);
+  assert.equal(servidorGanhouOChamado(true, undefined), false);
+  // Sem marca, nada a apagar.
+  assert.equal(servidorGanhouOChamado(false, { notificacoes_push: false }), false);
+});
+
+test('a marca de servidor antigo tem quem a apague com o app aberto (não só a saída da conta)', () => {
+  // O vigia mora na raiz do app, em toda plataforma (não só onde há expo-notifications).
+  const raiz = readFileSync(join(__dirname, '..', 'app', '_layout.tsx'), 'utf8');
+  assert.match(raiz, /vigiarServidorNovo\(\)/, 'a raiz do app não liga o vigia do servidor novo');
+  const hook = readFileSync(join(__dirname, '..', 'hooks', 'useChamadosDoLeitor.ts'), 'utf8');
+  assert.match(hook, /servidorGanhouOChamado\(/);
+  assert.match(hook, /desmarcarServidorSemChamados\(\)/);
+  assert.match(hook, /invalidateQueries\(\{ queryKey: chaves\.chamadosDoLeitor \}\)/);
 });

@@ -30,6 +30,7 @@ const PADRAO = {
   suporte: 200, // /suporte: a página de suporte, quando a ficha usa outra que não a privacidade
   fora: false, // /health devolve 503
   prefixo: '', // '/demo': a demo mora debaixo dele, e a loja de verdade na raiz
+  push: false, // GET /configuracao: notificacoes_push (true, false, ou undefined = servidor de antes da ADR-47)
 };
 
 export function subirDemoFalso(opcoes = {}) {
@@ -66,6 +67,11 @@ export function subirDemoFalso(opcoes = {}) {
         return json(res, 404, { detail: 'Not Found' });
       }
       if (caminho === '/health') return o.fora ? json(res, 503, { detail: 'fora' }) : json(res, 200, { status: 'ok', ambiente: 'producao' });
+      if (caminho === '/api/v1/configuracao' && req.method === 'GET') {
+        const config = { nome: 'Loja Demo', segmento: 'ROUPAS', timezone: 'America/Sao_Paulo', demonstracao: true };
+        if (o.push !== undefined) config.notificacoes_push = o.push;
+        return json(res, 200, config);
+      }
       if (caminho === '/privacidade' && req.method === 'GET') {
         res.writeHead(o.privacidade, { 'Content-Type': 'text/html; charset=utf-8' });
         return res.end('<!doctype html><title>Política de privacidade</title>');

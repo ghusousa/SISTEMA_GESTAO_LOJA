@@ -482,17 +482,27 @@ async def test_backup_nao_leva_os_aparelhos_de_notificacao(
 
 
 def test_todo_pg_dump_da_loja_deixa_os_aparelhos_de_fora() -> None:
-    """Guarda de texto: todo `pg_dump` dos scripts da raiz (o backup diário, o da nuvem, o de
-    antes de restaurar, o de antes de atualizar e o de antes de desinstalar) leva o
-    `--exclude-table-data` da tabela dos tokens de push."""
+    """Guarda de texto: todo `pg_dump` dos scripts da raiz leva o `--exclude-table-data` da tabela
+    dos tokens de push — os do Linux (o backup diário, o da nuvem, o de antes de restaurar, o de
+    antes de atualizar e o de antes de desinstalar) E os do Windows (`backup.ps1`, o da Tarefa
+    Agendada diária, e o de antes de desinstalar). O Windows também é caminho suportado
+    (`instalar.bat`), e o backup dele vai para pen drive e nuvem do mesmo jeito.
+    `utf-8-sig`: o `backup.ps1` começa com BOM, que o PowerShell 5 precisa."""
     comandos = [
         (script.name, numero, linha)
-        for script in sorted(RAIZ.glob("*.sh"))
-        for numero, linha in enumerate(script.read_text(encoding="utf-8").splitlines(), 1)
+        for padrao in ("*.sh", "*.ps1")
+        for script in sorted(RAIZ.glob(padrao))
+        for numero, linha in enumerate(script.read_text(encoding="utf-8-sig").splitlines(), 1)
         if not linha.lstrip().startswith("#") and re.search(r"\bpg_dump\s+-", linha)
     ]
-    assert {nome for nome, _, _ in comandos} == {"atualizar.sh", "backup.sh", "desinstalar.sh"}
-    assert len(comandos) >= 5, comandos
+    assert {nome for nome, _, _ in comandos} == {
+        "atualizar.sh",
+        "backup.sh",
+        "desinstalar.sh",
+        "backup.ps1",
+        "desinstalar.ps1",
+    }
+    assert len(comandos) >= 7, comandos
     for nome, numero, linha in comandos:
         assert "--exclude-table-data=notificacao_aparelhos" in linha, f"{nome}:{numero}"
 

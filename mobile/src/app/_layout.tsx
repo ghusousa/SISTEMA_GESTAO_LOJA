@@ -9,6 +9,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { registrarPerdaDeSessao } from '@/api/client';
 import { ComFaixasNoTopo } from '@/components/FaixasDoTopo';
 import { Carregando } from '@/components/ui';
+import { vigiarServidorNovo } from '@/hooks/useChamadosDoLeitor';
 import { configurarNotificacoes, registrarNaVolta } from '@/lib/pushDoLeitor';
 import { queryClient } from '@/lib/queryClient';
 import { cores } from '@/lib/tema';
@@ -36,6 +37,8 @@ export default function RootLayout() {
     // notificação liga o leitor (ADR-47). Só no app nativo: no web e no Expo Go, nada.
     // Isto não pede permissão nenhuma — pedir é só no toque em "Abrir o leitor".
     const desligarNotificacoes = configurarNotificacoes();
+    // O servidor atualizado com o app aberto: a lista dos chamados volta (ADR-47).
+    const pararDeVigiarServidor = vigiarServidorNovo();
 
     // Celular dorme no bolso, entra no elevador, troca Wi-Fi por 4G. Enquanto esteve
     // fora, o servidor avisou de mudanças que este aparelho não ouviu — voltar ao ativo
@@ -56,6 +59,7 @@ export default function RootLayout() {
     return () => {
       assinatura.remove();
       desligarNotificacoes();
+      pararDeVigiarServidor();
     };
   }, [restaurar, restaurarServidor, encerrarPorTokenInvalido]);
 

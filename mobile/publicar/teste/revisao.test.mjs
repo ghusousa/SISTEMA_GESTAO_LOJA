@@ -501,16 +501,27 @@ test('política de privacidade e exclusão de dados: o aviso, o Android e o que 
   // O registro do aparelho sai a cada sessão, com ou sem push: o "opcional" é das notificações.
   assert.doesNotMatch(politica, /Registro do aparelho[^<]*\(opcionais\)/);
 
-  // Os 30 dias não são "sozinhos": a faxina roda no registro e no login — e só por isso a loja que
-  // parou de usar o app não guarda o token para sempre.
+  // Os 30 dias não são "sozinhos": a faxina roda no registro, no login e na renovação da sessão — e
+  // só por isso a loja que parou de usar o app (e só abre o navegador) não guarda o token para sempre.
+  const auth = ler('api/app/modules/auth/service.py');
+  const corpo = (nome) => auth.slice(auth.indexOf(`async def ${nome}(`), auth.indexOf('\n    async def ', auth.indexOf(`async def ${nome}(`) + 1));
+  for (const rota of ['login', 'refresh']) {
+    assert.match(
+      corpo(rota),
+      /NotificacoesService\(self\.session\)\.faxina\(\)/,
+      `o ${rota} parou de fazer a faxina dos aparelhos: ajuste a política e este teste`,
+    );
+  }
   assert.match(
-    ler('api/app/modules/auth/service.py'),
-    /NotificacoesService\(self\.session\)\.faxina\(\)/,
-    'o login parou de fazer a faxina dos aparelhos: ajuste a política e este teste',
+    ler('api/app/modules/notificacoes/service.py'),
+    /async def registrar\([\s\S]*?await self\.repo\.faxina\(\)[\s\S]*?async def faxina\(/,
+    'o registro do aparelho parou de fazer a faxina: ajuste a política e este teste',
   );
   for (const [nome, pagina] of paginas) {
     assert.doesNotMatch(pagina, /sozinhos? depois de 30 dias/, `${nome}: "sozinho depois de 30 dias"`);
     assert.match(pagina, /30 dias sem o app ser usado, na limpeza automática que roda sempre que alguém entra no sistema/, nome);
+    assert.match(pagina, /sessão ainda aberta/, `${nome}: a limpeza também roda na volta com a sessão aberta`);
+    assert.match(pagina, /ou que um aparelho se registra/, `${nome}: a limpeza também roda no registro do aparelho`);
   }
 
   // O id da instalação também mora no pareamento do leitor ligado, e essa tabela entra nos

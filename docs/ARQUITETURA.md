@@ -519,16 +519,17 @@ aceito, ATIVO até `expira_em` e EXPIRADO depois; sem aceite, AGUARDANDO até `c
 EXPIRADO depois. As duas tabelas são de vida curta e não são histórico da loja: a faxina (a cada
 código gerado ou chamado) apaga bipe com mais de 1 dia e pareamento terminado há mais de 30, e os
 FKs para `users` são CASCADE — excluir a conta de alguém não trava num pareamento de ontem. O
-`aparelho_instalacao` vive menos que a linha: só enquanto o leitor está ligado. Quem encerra o
-anula (`_encerrar`), e o do pareamento que só venceu sai no fim do próximo código ou chamado
-(`esquecer_instalacoes`, 5 min depois do fim, com `SKIP LOCKED`) — o pareamento terminado fica até
-30 dias, mas sem o id do aparelho.
+`aparelho_instalacao` vive menos que a linha: sai quando o celular deixa de ser o leitor. Quem
+encerra o anula na hora (`_encerrar`), e o do pareamento que só venceu sai no primeiro código ou
+chamado (de qualquer login) feito 5 min ou mais depois do fim (`esquecer_instalacoes`, com
+`SKIP LOCKED`) — o pareamento terminado fica até 30 dias, mas sem o id do aparelho; até a limpeza,
+o id do que venceu fica na linha e entra nas cópias de segurança como o resto do banco.
 
 O chamado (ADR-47) é um pareamento com `chamado = true`: o código continua sorteado (o NOT NULL e
 o UNIQUE parcial pedem), mas nunca sai em resposta nem abre o aceite por código. A
 `notificacao_aparelhos` é o registro de cada instalação do app neste servidor, com ou sem token
 de push: até 10 por login (os de registro mais recente), faxina dos sem registro há 30 dias a cada
-registro e a cada login (com `SKIP LOCKED`: nunca espera), CASCADE com a conta. O token é
+registro, a cada login e a cada renovação da sessão (com `SKIP LOCKED`: nunca espera), CASCADE com a conta. O token é
 credencial ao portador — nunca sai em rota, log ou `repr`, e os `pg_dump` dos scripts levam a
 tabela só como estrutura (`--exclude-table-data`). Fica FORA do mapa do tempo real: nenhuma tela
 acompanha essa tabela. Nenhum índice novo (ADR-31): as leituras
@@ -2457,7 +2458,8 @@ o app cria, com o login da Apple; e o servidor de cada loja é dela, não de que
   (`leitor-celular`). **Em momento nenhum a aba fica sem a chave e sem o id.** A janela que isso
   fecha: no reenvio (200, `notificacao` nula), a aba pergunta às outras abas quem cuida do chamado
   (a dona da aba, ADR-43: até 300 ms sem resposta); a chave fica durante a pergunta, e o F5 — ou
-  a aba fechada e reaberta — nesse meio reenvia a MESMA chave e retoma o mesmo chamado. Antes ela
+  a aba fechada e reaberta pelo navegador (Ctrl+Shift+T), que devolve o `sessionStorage` dela;
+  abrir o sistema numa aba nova começa do zero — nesse meio reenvia a MESMA chave e retoma o mesmo chamado. Antes ela
   saía antes da pergunta e o id só entrava depois: a página nova ficava livre, e o chamado,
   órfão — 5 min na faixa do celular, com as leituras indo para ninguém. A chave também sai em
   `esquecer()` (Cancelar, Desligar, o chamado que venceu ou terminou), no QR novo e no leitor
@@ -2486,13 +2488,18 @@ o app cria, com o login da Apple; e o servidor de cada loja é dela, não de que
   grava nada) sai em `esquecer_instalacoes`, no fim de cada código ou chamado de qualquer login:
   5 min depois do fim (`FOLGA_PARA_ESQUECER_A_INSTALACAO` — nenhuma transação viva ainda o vê
   ligado), com `SKIP LOCKED` e por último, logo antes do commit. Com ela no começo, junto da
-  faxina, o código e o chamado que esperam a conta na FK do pareamento novo fechavam ciclo com a
-  exclusão da conta (que trava a conta e apaga os pareamentos dela), e o Postgres derrubava um dos
-  dois. Sem o id — o leitor encerrado, ou o vencido depois da limpeza —, o bipe tardio de
+  faxina, o código e o chamado fechavam ciclo com a exclusão da conta (que trava a conta e apaga os
+  pareamentos dela), e o Postgres derrubava um dos dois. A outra metade da mesma regra é
+  `travar_conta`: o código, o chamado, o aceite e o atender travam a conta (FOR KEY SHARE) ANTES de
+  qualquer pareamento, na ordem da exclusão — sem ela, o "Chamar de novo" (`_substituir`) e o
+  atender (`chamado_para_atender`) seguravam o pareamento e esperavam a conta pela FK, e a exclusão
+  segurava a conta e esperava o pareamento: 40P01, um 500 para um dos dois
+  (`tests/test_leitor_trava_da_conta.py`). Conta excluída enquanto o pedido esperava: 404. Sem o id — o leitor encerrado, ou o vencido depois da limpeza —, o bipe tardio de
   qualquer instalação do login é o 409 `LEITOR_DESLIGADO` (a de outra ouvia o 404; o app trata os
-  dois igual, e o login já lê o pareamento pelo GET). É o que deixa a política de privacidade dizer que o registro do aparelho
-  não fica depois que o celular deixa de ser o leitor: enquanto ele está ligado, o id entra nas
-  cópias de segurança como o resto do banco.
+  dois igual, e o login já lê o pareamento pelo GET). É o que a política de privacidade descreve:
+  o id sai quando o celular deixa de ser o leitor — na hora, se alguém encerra; no primeiro código
+  ou chamado feito 5 min depois do fim, se só venceu —, e enquanto ele está ali entra nas cópias
+  de segurança como o resto do banco.
 - **Com o app aberto, sem push nenhum.** O assunto novo `leitor_pareamento` (criado, aceito,
   atendido, encerrado — raro) separa o pareamento do bipe (`leitor`, a cada leitura): o app ouve
   só ele e refaz `GET /leitor/chamados/abertos` (chave `['leitor','chamados']`, também na volta ao
@@ -2532,9 +2539,11 @@ o app cria, com o login da Apple; e o servidor de cada loja é dela, não de que
   abertura falhou). O erro do banco no registro vira 503 `NOTIFICACAO_INDISPONIVEL`, que o app
   trata em silêncio e repete na próxima volta. Uma instalação é de um login por vez, um token mora
   numa instalação só, cada login guarda até 10 aparelhos (os mais recentes) e a faxina — em todo
-  registro e em todo login com senha, com `SKIP LOCKED` — leva os sem registro há 30 dias: sem a do
-  login, a loja que parou de usar o app (nenhum registro novo) guardaria o token para sempre. No
-  login ela vem por último, depois do flush do refresh novo (é na FK dele que o login pode esperar
+  registro, em todo login com senha e em toda renovação da sessão (`/auth/refresh`), com
+  `SKIP LOCKED` — leva os sem registro há 30 dias: sem a do login e a da renovação, a loja que parou
+  de usar o app (nenhum registro novo) e só abre o navegador — a sessão desliza 30 dias a cada
+  renovação, então ninguém digita a senha de novo — guardaria o token para sempre. No login e na
+  renovação ela vem por último, depois do flush do refresh novo (é na FK dele que o login pode esperar
   a exclusão da própria conta, que trava a conta e apaga os aparelhos dela), e a linha travada sai
   na próxima. `DELETE /notificacoes/aparelho` é **sem sessão** (o app sai, a sessão caiu, ou limpa
   o servidor de antes): o id é aleatório (122 bits), nenhuma rota o devolve, e quem o tiver só tira
@@ -2599,7 +2608,7 @@ o app cria, com o login da Apple; e o servidor de cada loja é dela, não de que
   desinstalar) levam `--exclude-table-data=notificacao_aparelhos`, e depois de um restore cada app
   registra de novo; ele some no logout (o DELETE sem sessão), na troca ou redefinição da senha, na
   desativação e na exclusão da conta (`_derrubar_sessoes`, e o CASCADE quando a linha sai) e,
-  passados 30 dias sem registro, na faxina do próximo registro ou login. Quem tem o banco já tem o
+  passados 30 dias sem registro, na faxina do próximo registro, login ou renovação da sessão. Quem tem o banco já tem o
   resto. Nem o erro do banco o leva ao log: no registro, ele vira 503 `NOTIFICACAO_INDISPONIVEL`,
   levantado FORA do `except` (sem o erro pendurado no `__context__`), e o log diz só o nome do erro
   e o SQLSTATE — subindo, o uvicorn escreveria o comando com os parâmetros e, no UNIQUE, o DETAIL
@@ -2653,12 +2662,15 @@ diz a verdade com o QR ao lado); travar o envio à Apple até a chave APNs ser c
 nas rotas novas e o recurso some em silêncio (`ponta` e `instalacao` são ignorados lá): a tela do
 leitor volta ao texto da ADR-43 (o QR e o código de 6, `instrucaoDoLeitor`) e não mostra linha de
 notificação — `lerPushDoServidor` separa o campo AUSENTE (servidor antigo) do `false` —, e nada
-promete o chamado; aba velha do web (JS em cache) ouve só "leitor", perde o atender na hora e cai na
+promete o chamado. Atualizado o servidor, o app volta sozinho, sem ser fechado: a configuração que
+passa a trazer `notificacoes_push` desmarca o servidor antigo (`vigiarServidorNovo`, ligado na raiz
+do app; a regra é `servidorGanhouOChamado`, com teste), refaz a lista de chamados e registra o
+aparelho de novo — antes, o app que viu o 404 ficava sem chamados e sem registro até ser fechado; aba velha do web (JS em cache) ouve só "leitor", perde o atender na hora e cai na
 consulta de 2 s / 10 s até o F5. Backup restaurado traz a tabela de aparelhos vazia: `SEM_CELULAR`
 até cada app registrar de novo (na abertura, ou na volta depois de 1 h). Na conta compartilhada da
 demo, todo aparelho registrado nela vê (e, com o push ligado, recebe) todo chamado: contido pelo
 teto de 2 s, pelos 10 aparelhos, pelo texto fixo com o sinal e, na instalação, pelo TRUNCATE da
-madrugada; na Vercel, pela faxina de 30 dias (no registro e no login) e pelo DELETE da saída. Com o
+madrugada; na Vercel, pela faxina de 30 dias (no registro, no login e na renovação da sessão) e pelo DELETE da saída. Com o
 push ligado, o chamado soma até 4 s ao POST — a tela mostra "Chamando…" já no clique, e o app aberto
 vê a faixa antes de o computador mostrar o sinal (o commit vem antes do push). Sem índice novo
 (§2.12). **Confirmado no iPhone do dono** (o build 6 no TestFlight, contra a Vercel com
@@ -2954,7 +2966,7 @@ o contrário. A instalação do app (`aparelho_instalacao`) nunca sai.
 
 | método | rota | papel | notas |
 |---|---|---|---|
-| PUT | `/notificacoes/aparelho` | qualquer logado | `{instalacao, plataforma: ios\|android, token?}` → 204. `token` tem três estados: AUSENTE mantém o que o servidor tem (o app não falou com a Expo agora), `null` apaga (sem permissão, Android sem FCM, Expo Go, push desligado no servidor) e texto grava. Texto: aparado, 1–200, `ExponentPushToken[…]` ou `ExpoPushToken[…]`, sem espaço nem caractere de controle (o `isExpoPushToken` do SDK); fora disso, 422 `VALIDACAO`. Numa transação, em SQL Core (não avisa o tempo real): o mesmo token em outra instalação sai; upsert pela instalação (um login por vez); o login fica com os 10 de registro mais recente; a faxina leva os sem registro há 30 dias (`SKIP LOCKED`; ela roda também no login). O banco que não grava agora → 503 `NOTIFICACAO_INDISPONIVEL`, e o log diz só o nome do erro e o SQLSTATE (a corrida de duas instalações com o mesmo token tem uma nova tentativa antes) |
+| PUT | `/notificacoes/aparelho` | qualquer logado | `{instalacao, plataforma: ios\|android, token?}` → 204. `token` tem três estados: AUSENTE mantém o que o servidor tem (o app não falou com a Expo agora), `null` apaga (sem permissão, Android sem FCM, Expo Go, push desligado no servidor) e texto grava. Texto: aparado, 1–200, `ExponentPushToken[…]` ou `ExpoPushToken[…]`, sem espaço nem caractere de controle (o `isExpoPushToken` do SDK); fora disso, 422 `VALIDACAO`. Numa transação, em SQL Core (não avisa o tempo real): o mesmo token em outra instalação sai; upsert pela instalação (um login por vez); o login fica com os 10 de registro mais recente; a faxina leva os sem registro há 30 dias (`SKIP LOCKED`; ela roda também no login e na renovação da sessão). O banco que não grava agora → 503 `NOTIFICACAO_INDISPONIVEL`, e o log diz só o nome do erro e o SQLSTATE (a corrida de duas instalações com o mesmo token tem uma nova tentativa antes) |
 | DELETE | `/notificacoes/aparelho` | **sem sessão** | `{instalacao}` → 204 SEMPRE (inexistente também); 422 com corpo torto. O app chama ao sair, depois de a sessão cair, ou para limpar o servidor de antes |
 
 Nenhuma rota devolve o token nem a instalação. O push em si não tem rota: sai do `POST
@@ -3055,7 +3067,8 @@ caixa do dia, sem o resumo do mês. Guarda por capacidade no `_layout`.
   token nunca vai para log. `lib/notificacoesNativas.ts` é o único lugar que carrega o
   `expo-notifications`, e só onde há módulo nativo — nunca no export web nem no Expo Go. Duas
   constantes do app espelham a API: `VIDA_DO_CHAMADO_MS` (5 min, `lib/chamadoDoLeitor.ts`) =
-  `VALIDADE_DO_CHAMADO_S` (`notificacoes/service.py`), e `VALIDADE_DA_LIMPEZA_MS` (30 dias) =
+  `PRAZO_DO_CODIGO` (`leitor/service.py`; o ttl do push, `VALIDADE_DO_CHAMADO_S`, segue o mesmo
+  valor), e `VALIDADE_DA_LIMPEZA_MS` (30 dias) =
   `VIDA_DO_APARELHO` (`notificacoes/repository.py`): mudou lá, muda aqui.
 
 - `lib/areaSegura.ts` (com teste): a área segura de cada iPhone (iOS 15.1+, do SE de 4,7" ao Pro
@@ -3167,9 +3180,13 @@ por aparelho (o token de outro projeto não cala o iPhone certo, e o teto total 
 (o recibo da entrega, a rede caída que não é recusa da Expo, nunca o token na saída); o erro do
 banco no registro é 503, sem o token no log; número além do INTEGER/BIGINT é 422 em qualquer rota
 (`test_erros_do_banco.py`); o id da instalação sai quando o leitor desliga ou é trocado, e o do
-que venceu sai no próximo código ou chamado; e a faxina dos aparelhos roda no login — nas duas,
-sem esperar trava e sem impasse com a exclusão da conta (os testes reproduzem o impasse da ordem
-ingênua). No web (`testes/web/`): a chave do chamado só vale enquanto descreve a aba e só sai com
+que venceu sai no primeiro código ou chamado feito 5 min depois do fim; e a faxina dos aparelhos roda no
+login e na renovação da sessão — nas duas, sem esperar trava e sem impasse com a exclusão da conta
+(os testes reproduzem o impasse da ordem ingênua). O código, o chamado, o aceite e o atender travam
+a conta antes de qualquer pareamento: "Chamar de novo", "Gerar código novo" e o atender no meio da
+exclusão da conta esperam e recebem 404, nunca 40P01, e a exclusão que chega depois do atender
+espera e conclui (`test_leitor_trava_da_conta.py`, com e sem histórico). Os sete `pg_dump` dos
+scripts (cinco `.sh` e os dois `.ps1` do Windows) levam a tabela dos aparelhos sem os dados. No web (`testes/web/`): a chave do chamado só vale enquanto descreve a aba e só sai com
 o id guardado — o F5 durante a pergunta às outras abas retoma o mesmo chamado (com um
 `BroadcastChannel` de mentira que faz a pergunta esperar como no navegador, `abasConversando`; o
 teste que simula o F5 com o canal ligado chama `abas.fecharAsAbertas()`, senão a pergunta da

@@ -5,7 +5,9 @@
  * computador está chamando" do leitor ligado: uma consulta só, que se refaz ao montar, no
  * assunto `leitor_pareamento` do tempo real, a cada "conectado" e volta ao app (o tempo real
  * recarrega o que está na tela) e no push que chega com o app na frente. Servidor de antes da
- * ADR-47 (404 sem `code`): lista vazia, e ninguém pergunta de novo até a próxima sessão.
+ * ADR-47 (404 sem `code`): lista vazia, e ninguém pergunta de novo até a próxima sessão — ou até
+ * a configuração mostrar o servidor novo (`vigiarServidorNovo`: a loja atualizou o servidor com o
+ * app aberto, e o "conectado" do tempo real relê a configuração).
  *
  * Vencer (5 min) não avisa ninguém — o status é calculado das datas, nenhuma linha muda —, então
  * com chamado na lista o servidor a reconfirma de 30 em 30 s, e o que venceu sai da tela na hora
@@ -13,16 +15,16 @@
  * próximo.
  */
 
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { hashKey, useMutation, useQuery } from '@tanstack/react-query';
 import axios from 'axios';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { codigoDoErro, mensagemDoErro } from '@/api/client';
 import { leitor } from '@/api/endpoints';
 import type { ChamadoAberto, ErroApi } from '@/api/tipos';
-import { chamadosVivos, intervaloDaConferencia, proximoFim } from '@/lib/chamadoDoLeitor';
+import { chamadosVivos, intervaloDaConferencia, proximoFim, servidorGanhouOChamado } from '@/lib/chamadoDoLeitor';
 import { idDaInstalacao } from '@/lib/instalacao';
-import { pedirPermissaoNoToque, tirarDaCentral } from '@/lib/pushDoLeitor';
+import { pedirPermissaoNoToque, registrarAparelho, tirarDaCentral } from '@/lib/pushDoLeitor';
 import { chaves, queryClient } from '@/lib/queryClient';
 import { useAuthStore } from '@/stores/authStore';
 import { useLeitorStore } from '@/stores/leitorStore';
@@ -41,6 +43,32 @@ export async function buscarChamadosAbertos(): Promise<ChamadoAberto[]> {
     useLeitorStore.getState().marcarServidorSemChamados();
     return [];
   }
+}
+
+const HASH_DA_CONFIGURACAO = hashKey(chaves.configuracao);
+
+/**
+ * A marca de servidor antigo cai quando a configuração mostra o servidor novo (ADR-47).
+ *
+ * O celular abriu o app novo antes de a loja atualizar o servidor (o `--automatico` é opcional):
+ * a lista deu o 404 sem `code` e a consulta se desligou. A atualização derruba o tempo real, o
+ * "conectado" relê a configuração — e ela chega com `notificacoes_push`. Sem este vigia, só a
+ * saída da conta religava a lista: o chamado não aparecia no app aberto, e o computador dizia
+ * "atualize o app" a quem já tinha o novo. Junto, o aparelho se registra na hora: o registro da
+ * abertura da sessão tinha dado 404 no servidor antigo. Uma vez, na raiz do app, em toda
+ * plataforma (não só onde há `expo-notifications`).
+ */
+export function vigiarServidorNovo(): () => void {
+  return queryClient.getQueryCache().subscribe((evento) => {
+    if (evento.type !== 'updated' || evento.action.type !== 'success') return;
+    if (evento.query.queryHash !== HASH_DA_CONFIGURACAO) return;
+    const leitorAgora = useLeitorStore.getState();
+    const configuracao = evento.query.state.data as { notificacoes_push?: unknown } | undefined;
+    if (!servidorGanhouOChamado(leitorAgora.servidorSemChamados, configuracao)) return;
+    leitorAgora.desmarcarServidorSemChamados();
+    void queryClient.invalidateQueries({ queryKey: chaves.chamadosDoLeitor });
+    if (useAuthStore.getState().usuario) void registrarAparelho();
+  });
 }
 
 const SEM_CHAMADOS: readonly ChamadoAberto[] = [];

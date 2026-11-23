@@ -892,9 +892,11 @@ async def test_chamado_durante_a_exclusao_da_propria_conta_nao_se_abraca_com_a_f
 ) -> None:
     """A vendedora chama o celular enquanto o dono exclui a conta dela, que tem um leitor
     vencido ainda com o id da instalação. A exclusão trava a conta e depois apaga os
-    pareamentos dela; o chamado pega a conta pela FK do pareamento novo. Se a faxina da
-    instalação segurasse o vencido antes disso, cada um esperaria o outro e o Postgres
-    derrubaria um. Por isso ela roda por último, logo antes do commit."""
+    pareamentos dela; o chamado trava a conta ANTES de qualquer pareamento (`travar_conta`,
+    a ordem da exclusão). Se a faxina da instalação segurasse o vencido antes disso, cada um
+    esperaria o outro e o Postgres derrubaria um. Por isso ela roda por último, logo antes do
+    commit. E o chamado que esperou a conta a acha excluída: 404, sem deixar pareamento novo
+    de uma conta que a exclusão acabou de limpar."""
     from app.modules.usuarios.repository import UsuarioRepository
 
     vencido = await _ligado(client, auth_vendedor, uuid.uuid4())
@@ -932,10 +934,14 @@ async def test_chamado_durante_a_exclusao_da_propria_conta_nao_se_abraca_com_a_f
     exclusao = asyncio.create_task(excluir())
     await asyncio.wait_for(travou.wait(), timeout=10)
     chamado = asyncio.create_task(chamar())
-    # O chamado para na conta travada (a FK do pareamento novo); só então a exclusão segue.
+    # O chamado para na conta travada (`travar_conta`); só então a exclusão segue.
     await _alguem_esperando_trava()
     seguir.set()
     excluiu, chamou = await asyncio.wait_for(asyncio.gather(exclusao, chamado), timeout=30)
     assert excluiu.status_code == 204, excluiu.text
-    assert chamou.status_code == 201, chamou.text
+    # A conta já não existe quando o chamado passa da trava: 404 (ou 401, se o login caiu antes).
+    assert chamou.status_code in (401, 404), chamou.text
     assert await _sql("SELECT id FROM leitor_pareamentos WHERE id = :id", id=vencido) == []
+    assert await _sql(
+        "SELECT id FROM leitor_pareamentos WHERE computador_user_id = :u", u=vendedor.id
+    ) == [], "a exclusão limpou os pareamentos e o chamado não deixou um novo"

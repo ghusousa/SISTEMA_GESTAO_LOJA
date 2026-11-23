@@ -9,7 +9,7 @@
  * sinal: quem desambigua é a pessoa, comparando o sinal das duas telas.
  */
 
-import { sinalValido } from './notificacoes';
+import { lerPushDoServidor, sinalValido } from './notificacoes';
 
 /** A rota do leitor (Mais → Leitor do computador): lá a própria tela mostra os chamados. */
 export const ROTA_DO_LEITOR = '/mais/leitor';
@@ -26,7 +26,8 @@ export interface ChamadoNaFaixa {
 // ------------------------------------------------------------------ o prazo do chamado
 
 /**
- * O chamado vale 5 min no servidor (`VALIDADE_DO_CHAMADO_S` da API). Aqui só serve quando a
+ * O chamado vale 5 min no servidor (`PRAZO_DO_CODIGO` de `leitor/service.py`; o ttl do push,
+ * `VALIDADE_DO_CHAMADO_S`, segue o mesmo valor). Aqui só serve quando a
  * lista não traz o `criado_em` legível: a vida de cada um sai das datas dele.
  */
 export const VIDA_DO_CHAMADO_MS = 5 * 60_000;
@@ -186,4 +187,18 @@ export function luminancia(hex: string): number {
 export function razaoDeContraste(a: string, b: string): number {
   const [clara, escura] = [luminancia(a), luminancia(b)].sort((x, y) => y - x);
   return (clara + 0.05) / (escura + 0.05);
+}
+
+/**
+ * O servidor ganhou o chamado (ADR-47) depois de o app o marcar como antigo? A marca
+ * (`servidorSemChamados`: o 404 sem `code` da lista) desliga a consulta dos chamados, e só a
+ * saída da conta a apagava — o celular aberto antes de a loja atualizar o servidor ficava cego
+ * aos chamados, calado. A configuração que chega com `notificacoes_push` (ligado OU desligado)
+ * é do servidor novo: a marca cai e a lista volta a ser consultada. Sem o campo, nada muda.
+ */
+export function servidorGanhouOChamado(
+  semChamados: boolean,
+  configuracao: { notificacoes_push?: unknown } | null | undefined,
+): boolean {
+  return semChamados && lerPushDoServidor(configuracao) !== 'servidor-antigo';
 }

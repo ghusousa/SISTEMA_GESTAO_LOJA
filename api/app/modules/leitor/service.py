@@ -197,10 +197,18 @@ class LeitorService:
         #: reenviado por quem já ligou (nada mudou: fora do diário).
         self.replay = False
 
+    async def _travar_conta(self, usuario_id: int) -> None:
+        """A conta antes de qualquer pareamento dela (`LeitorRepository.travar_conta`): a
+        ordem da exclusão da conta, para as duas nunca se abraçarem. Excluída enquanto este
+        pedido esperava: 404, nunca 500."""
+        if not await self.repo.travar_conta(usuario_id):
+            raise NaoEncontrado("Conta não encontrada.")
+
     # ------------------------------------------------------------------ pareamento por QR
 
     async def criar(self, dados: PareamentoIn, usuario: User) -> PareamentoOut:
         usuario_id = usuario.id
+        await self._travar_conta(usuario_id)
         agora = await self.repo.agora()
         await self.repo.faxina(agora)
         await self._substituir(dados.substitui_id, usuario_id, agora)
@@ -218,6 +226,7 @@ class LeitorService:
             raise CodigoInvalido()
 
         await self.repo.travar_aparelho(usuario_id)
+        await self._travar_conta(usuario_id)
         agora = await self.repo.agora()
         pareamento = await self.repo.aguardando_por_codigo(codigo, agora)
         if pareamento is None:
@@ -259,6 +268,7 @@ class LeitorService:
         existente = await self.repo.chamado_por_client_uuid(dados.client_uuid)
         if existente is not None:
             return await self._replay_do_chamado(existente, usuario_id)
+        await self._travar_conta(usuario_id)
 
         agora = await self.repo.agora()
         await self.repo.faxina(agora)
@@ -319,6 +329,7 @@ class LeitorService:
         """
         usuario_id = usuario.id
         await self.repo.travar_aparelho(usuario_id)
+        await self._travar_conta(usuario_id)
         agora = await self.repo.agora()
         chamado = await self.repo.chamado_para_atender(pareamento_id, usuario_id, agora)
         if chamado is None:

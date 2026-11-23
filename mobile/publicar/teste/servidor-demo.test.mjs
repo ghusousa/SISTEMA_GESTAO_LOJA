@@ -112,6 +112,42 @@ test('demo com o leitor por QR, mas sem o chamado (deploy anterior ao ADR-47): s
   }
 });
 
+test('push do chamado LIGADO na demo segura o envio, a não ser declarado testado; desligado ou servidor antigo passa', async () => {
+  // Ligado e sem a chave APNs na Expo, o revisor veria o pedido de notificação para um aviso
+  // que nunca chega (e "falta um passo de quem publica o app" no web): recusa por 2.1.
+  const ligado = await subirDemoFalso({ push: true });
+  try {
+    const r = await conferirServidorDemo({ ...CONTA, base: ligado.base, urlPrivacidade: `${ligado.base}/privacidade` });
+    assert.equal(r.problemas.length, 1, r.problemas.join('\n'));
+    assert.match(r.problemas[0], /push do chamado LIGADO.*NOTIFICACOES_PUSH=desligado.*DEMO_NOTIFICACOES_PUSH=desligado.*--push-testado.*PUSH_TESTADO=1/);
+    // A rota é a aberta: lida sem a conta, e nada de POST de chamado (mandaria push).
+    assert.ok(ligado.chamadas.some((c) => c.metodo === 'GET' && c.caminho === '/api/v1/configuracao'));
+    assert.ok(!ligado.chamadas.some((c) => c.metodo === 'POST' && c.caminho.startsWith('/api/v1/leitor')));
+
+    const testado = await conferirServidorDemo({
+      ...CONTA,
+      base: ligado.base,
+      urlPrivacidade: `${ligado.base}/privacidade`,
+      pushTestado: true,
+    });
+    assert.deepEqual(testado.problemas, []);
+    assert.ok(testado.conferidos.some((c) => /LIGADO na demo, declarado testado/.test(c)), testado.conferidos.join(' | '));
+  } finally {
+    await ligado.fechar();
+  }
+  for (const push of [false, undefined]) {
+    const demo = await subirDemoFalso({ push });
+    try {
+      const r = await conferirServidorDemo({ ...CONTA, base: demo.base, urlPrivacidade: `${demo.base}/privacidade` });
+      assert.deepEqual(r.problemas, [], `push=${push}`);
+      assert.deepEqual(r.avisos, [], `push=${push}`);
+      assert.ok(r.conferidos.some((c) => /push do chamado está desligado/.test(c)), r.conferidos.join(' | '));
+    } finally {
+      await demo.fechar();
+    }
+  }
+});
+
 test('URL de suporte: outra página também tem de abrir; a mesma da privacidade abre uma vez só', async () => {
   const demo = await subirDemoFalso({ prefixo: '/demo' });
   try {

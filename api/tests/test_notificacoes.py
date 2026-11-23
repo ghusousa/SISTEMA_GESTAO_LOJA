@@ -229,6 +229,25 @@ async def test_aparelho_calado_ha_30_dias_sai_no_login_sem_registro_novo(
     assert [(i, t) for i, _, _, t in await _aparelhos()] == [(str(recente), _token("recente"))]
 
 
+async def test_aparelho_calado_ha_30_dias_sai_na_sessao_renovada_sem_senha(
+    client, admin, auth_admin, auth_vendedor
+) -> None:
+    """A loja que só usa o navegador quase nunca digita a senha: o web volta por
+    POST /auth/refresh, com o cookie, a cada abertura e F5, e a sessão desliza 30 dias a cada
+    renovação. Sem a faxina na renovação, o token calado de quem parou de usar o app ficava
+    para sempre, ao contrário do que a política de privacidade promete."""
+    login = await client.post("/auth/login", json={"email": admin.email, "senha": "senha1234"})
+    assert login.status_code == 200, login.text
+    calado, recente = uuid.uuid4(), uuid.uuid4()
+    await _registrar(client, auth_admin, calado, token=_token("calado"))
+    await _registrar(client, auth_vendedor, recente, token=_token("recente"))
+    await _calar(calado)
+
+    r = await client.post("/auth/refresh", json={"refresh_token": login.json()["refresh_token"]})
+    assert r.status_code == 200, r.text
+    assert [(i, t) for i, _, _, t in await _aparelhos()] == [(str(recente), _token("recente"))]
+
+
 async def test_faxina_do_login_nao_espera_a_linha_travada(client, admin, auth_admin) -> None:
     """O login nunca para atrás da faxina. A linha calada que alguém trava agora (o registro
     do aparelho que voltou: o upsert dela já a tira do prazo) fica para a próxima, e o login

@@ -65,7 +65,10 @@ $arquivo = "backups\loja-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".dump"
 
 # O dump é escrito DENTRO do contêiner e depois copiado: é binário, e passar pelo cano do
 # PowerShell traduziria fim de linha e corromperia o arquivo sem aviso.
-if ((RodarDocker compose exec -T db pg_dump -U loja -d loja -Fc -f /tmp/backup.dump) -ne 0) {
+# Sem os DADOS de notificacao_aparelhos (ADR-47), como em todo pg_dump dos scripts: o token de
+# push é credencial ao portador e esta cópia vai para pen drive e nuvem. A tabela vai só como
+# estrutura; depois de um restore, cada app registra de novo.
+if ((RodarDocker compose exec -T db pg_dump --exclude-table-data=notificacao_aparelhos -U loja -d loja -Fc -f /tmp/backup.dump) -ne 0) {
     Registrar "ERRO: o pg_dump falhou. O banco está no ar? (docker compose ps)"
     exit 1
 }
