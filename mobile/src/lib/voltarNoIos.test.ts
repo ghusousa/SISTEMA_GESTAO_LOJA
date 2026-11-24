@@ -52,3 +52,22 @@ test('o patch do Voltar vale só para a 4.16.0: subiu o pacote, apague o patch',
     `react-native-screens ${pacote.version} instalado com patches/react-native-screens+4.16.0.patch: a 4.17+ já traz a correção; apague o patch`,
   );
 });
+
+// Do lado do JavaScript, duas armadilhas deixavam a pessoa sem caminho de volta. As duas
+// precisam de build novo para chegar ao celular, como o patch.
+const telas = join(raiz, 'src', 'app', '(app)');
+
+test('aberto por link, o app tem as abas por baixo da tela (o leitor do QR não nasce sozinho)', () => {
+  const layout = readFileSync(join(telas, '_layout.tsx'), 'utf8');
+  assert.match(
+    layout,
+    /export const unstable_settings = \{ initialRouteName: '\(tabs\)' \};/,
+    'sem o initialRouteName, o convite do QR (gestaoloja://leitor) com o app fechado abre a tela do leitor sem "Voltar" e sem abas',
+  );
+});
+
+test('"Nova venda" volta ao Vender tirando a pilha, sem empilhar abas novas', () => {
+  const venda = readFileSync(join(telas, 'venda', '[id].tsx'), 'utf8');
+  assert.doesNotMatch(venda, /router\.replace\('\/\(app\)\/\(tabs\)'\)/, 'replace para as abas empilha abas sobre abas');
+  assert.match(venda, /titulo="Nova venda" onPress=\{\(\) => router\.dismissTo\('\/'\)\}/);
+});

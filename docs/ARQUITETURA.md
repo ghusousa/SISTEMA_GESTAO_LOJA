@@ -707,7 +707,12 @@ cabeçalho morto no iOS 26+ depois de voltar à tela das abas, que não tem cabe
 porém, rodaria sobre o nativo 4.16 do Expo Go. Por isso o conserto é um patch de três linhas no
 nativo da 4.16 (`mobile/patches/`, aplicado pelo `postinstall` com patch-package), que entra em
 todo build da Expo. O teste `src/lib/voltarNoIos.test.ts` reprova se o patch se perder e pede
-para apagá-lo quando o pacote subir.
+para apagá-lo quando o pacote subir. Na mesma conta, dois buracos de pilha do JS: o grupo `(app)`
+fixa `unstable_settings.initialRouteName = '(tabs)'`, para o app aberto por link (o convite do QR
+com o app fechado) ter as abas por baixo e o "Voltar" no cabeçalho; e o "Nova venda" volta ao
+Vender por `router.dismissTo('/')`, que tira da pilha a venda e a lista — o `replace` para as abas
+deixava as duas escondidas embaixo de uma segunda pilha de abas. Como o app não tem
+`expo-updates`, nada disso chega ao celular sem build novo.
 
 **ADR-15 — Capacidades numa tabela só, nunca `if papel == X` espalhado.**
 Com dois papéis dava para escrever `if user.role != ADMIN` em cada rota. Com quatro isso

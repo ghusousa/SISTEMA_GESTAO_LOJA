@@ -4,6 +4,13 @@ import { useToqueNaNotificacao } from '@/hooks/useToqueNaNotificacao';
 import { cores } from '@/lib/tema';
 
 /**
+ * As abas ficam sempre por baixo, também quando o app abre direto numa tela pelo link (o
+ * convite do QR, `gestaoloja://leitor?c=…`, com o app fechado). Sem isto, a tela do leitor
+ * nascia sozinha na pilha: sem "Voltar" e sem as abas, presa até fechar o app.
+ */
+export const unstable_settings = { initialRouteName: '(tabs)' };
+
+/**
  * Stack por fora, abas por dentro: telas de detalhe (pagamento, cadastro, recibo) empilham
  * por cima das abas em vez de virarem uma aba cada.
  */

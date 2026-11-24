@@ -250,7 +250,10 @@ export default function DetalheVenda() {
             onPress={pedirMotivo}
           />
         )}
-        <Botao titulo="Nova venda" onPress={() => router.replace('/(app)/(tabs)')} />
+        {/* Volta ao Vender tirando da pilha o que estava por cima (esta venda, a lista de
+            vendas). O `replace` punha abas novas sobre as velhas, e o "Voltar" seguinte caía
+            numa venda antiga. */}
+        <Botao titulo="Nova venda" onPress={() => router.dismissTo('/')} />
       </View>
     </ScrollView>
   );

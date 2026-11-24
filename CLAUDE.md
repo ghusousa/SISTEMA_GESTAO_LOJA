@@ -484,7 +484,13 @@ estoque, concorrência do último item, idempotência por `client_uuid`.
   em todo `npm install`/`npm ci`, inclusive no build da Expo. Não subimos o pacote porque o JS
   da 4.17 sobre o nativo 4.16 do Expo Go quebraria o teste por QR (ADR-14). O guarda é
   `src/lib/voltarNoIos.test.ts`, que reprova se o patch se perder; quando o pacote subir, apague
-  o patch. É código nativo: só chega ao celular num build novo, nunca por atualização OTA.
+  o patch. É código nativo: só chega ao celular num build novo, nunca por atualização OTA (o app
+  não tem `expo-updates`: TODA mudança do app, também em JS, só chega num build novo). Do lado do
+  JS, duas armadilhas de pilha, com guarda no mesmo teste: o grupo `(app)` exporta
+  `unstable_settings = { initialRouteName: '(tabs)' }` — sem ele, o app aberto por link (o convite
+  do QR, `gestaoloja://leitor`, com o app fechado) punha a tela sozinha na pilha, sem "Voltar" e
+  sem abas —, e voltar ao Vender é `router.dismissTo('/')`, nunca `router.replace('/(app)/(tabs)')`,
+  que empilha abas novas sobre as velhas e deixa a lista e a venda escondidas embaixo.
 
 ## graphify
 
