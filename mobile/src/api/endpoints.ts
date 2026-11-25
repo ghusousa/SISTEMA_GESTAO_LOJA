@@ -5,12 +5,15 @@
 
 import axios from 'axios';
 
+import { urlDaApi } from '../lib/enderecoDoServidor';
 import { api } from './client';
 import type {
   Backup,
   BipeEnviado,
   BipesRetirados,
+  ChamadoAberto,
   Pareamento,
+  PontaDoLeitor,
   ConfiguracaoLoja,
   ConfiguracaoPublica,
   CurvaAbc,
@@ -772,9 +775,13 @@ export const leitor = {
     const { data } = await api.post<Pareamento>('/leitor/pareamentos', { substitui_id });
     return data;
   },
-  /** Celular: aceita o código lido ou digitado. 404 `LEITOR_CODIGO_INVALIDO` para tudo. */
-  async aceitar(codigo: string) {
-    const { data } = await api.post<Pareamento>('/leitor/pareamentos/aceitar', { codigo });
+  /**
+   * Celular: aceita o código lido ou digitado. 404 `LEITOR_CODIGO_INVALIDO` para tudo. A
+   * `instalacao` (ADR-47) prende o leitor a ESTE aparelho: o reenvio só vale para ele, e o
+   * bipe de outro aparelho do mesmo login é recusado. Servidor antigo ignora o campo.
+   */
+  async aceitar(codigo: string, instalacao?: string) {
+    const { data } = await api.post<Pareamento>('/leitor/pareamentos/aceitar', { codigo, instalacao });
     return data;
   },
   async consultar(id: number) {
@@ -783,19 +790,71 @@ export const leitor = {
   },
   /**
    * Desliga (204). O `timeout` curto serve ao logout: sair do app não pode esperar 15 s
-   * por um servidor que não responde.
+   * por um servidor que não responde. `ponta: 'celular'`: com o mesmo login nas duas pontas,
+   * o diário diz que foi o celular que desligou (sem ela, o servidor entende "computador").
    */
-  async desligar(id: number, opcoes: { timeout?: number } = {}) {
-    await api.delete(`/leitor/pareamentos/${id}`, opcoes);
+  async desligar(id: number, opcoes: { timeout?: number; ponta?: PontaDoLeitor } = {}) {
+    const { ponta, ...resto } = opcoes;
+    await api.delete(`/leitor/pareamentos/${id}`, { ...resto, params: ponta ? { ponta } : undefined });
   },
   /** Idempotente por `client_uuid`: o reenvio idêntico volta 200 com o mesmo bipe. */
-  async enviarBipe(dados: { client_uuid: string; pareamento_id: number; codigo: string }) {
+  async enviarBipe(dados: { client_uuid: string; pareamento_id: number; codigo: string; instalacao?: string }) {
     const { data } = await api.post<BipeEnviado>('/leitor/bipes', dados);
+    return data;
+  },
+  /**
+   * Celular: os chamados do computador esperando o celular deste login (ADR-47), do mais novo
+   * ao mais velho. O servidor guarda no máximo 10 vivos por login: cabem numa página.
+   */
+  async chamadosAbertos() {
+    const { data } = await api.get<Pagina<ChamadoAberto>>('/leitor/chamados/abertos', {
+      params: { page: 1, size: 10 },
+    });
+    return data.items;
+  },
+  /**
+   * Celular: atende o chamado, sem código. Depois disso é um leitor ligado como o do QR. 404
+   * `LEITOR_CHAMADO_INVALIDO` é a mesma resposta para tudo que não serve (venceu, foi
+   * cancelado, outro aparelho atendeu): sem oráculo.
+   */
+  async atender(id: number, instalacao: string) {
+    const { data } = await api.post<Pareamento>(`/leitor/chamados/${id}/atender`, { instalacao });
     return data;
   },
   /** Computador: retira até 50 bipes, cada um entregue uma vez só. */
   async retirar(id: number) {
     const { data } = await api.post<BipesRetirados>(`/leitor/pareamentos/${id}/retirar`);
     return data;
+  },
+};
+
+// ------------------------------------------------------------ notificações do leitor (ADR-47)
+/**
+ * Esta instalação do app no servidor da loja, para o login da sessão: é o que faz o computador
+ * saber se há um app capaz de atender o chamado, e (com o push ligado no servidor) para onde
+ * mandar a notificação. O token da Expo é credencial ao portador: só entra, nunca sai.
+ */
+export const notificacoes = {
+  /**
+   * `PUT /notificacoes/aparelho` (204). O `token` tem três estados, e o JSON os carrega como
+   * são: AUSENTE (`undefined` some do corpo) mantém o que o servidor tem — o app não falou
+   * com a Expo agora; `null` diz que este aparelho não recebe push e apaga o guardado; texto
+   * é o token.
+   */
+  async registrar(dados: { instalacao: string; plataforma: 'ios' | 'android'; token?: string | null }) {
+    await api.put('/notificacoes/aparelho', dados);
+  },
+  /**
+   * `DELETE /notificacoes/aparelho` (204 sempre), SEM sessão: na saída, depois de a sessão
+   * cair, ou na limpeza que ficou pendente para um servidor de antes. Por isso o axios puro,
+   * sem o interceptor (que renovaria uma sessão que já foi) — e no servidor de quem chama, que
+   * pode não ser o atual. A base junta por texto (`urlDaApi`): vale em `<domínio>/demo`.
+   */
+  async esquecer(base: string, instalacao: string, opcoes: { timeout?: number } = {}) {
+    await axios.delete(`${urlDaApi(base)}/notificacoes/aparelho`, {
+      data: { instalacao },
+      headers: { 'Content-Type': 'application/json' },
+      timeout: opcoes.timeout ?? 15000,
+    });
   },
 };

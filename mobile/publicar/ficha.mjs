@@ -126,6 +126,12 @@ export const TELAS_CITADAS = [
   ['Leitor do computador', 'mobile/src/app/(app)/(tabs)/mais.tsx'],
   ['Ler o QR do computador', 'mobile/src/app/(app)/mais/leitor.tsx'],
   ['Celular como leitor', 'web/js/main.js'],
+  // O chamado do leitor (ADR-47): o botão das telas do computador que leem código e o link do
+  // QR ao lado dele (os rótulos moram em ROTULOS_DO_CHAMADO), e a faixa que desce no app aberto.
+  ['Abrir no app o leitor de código', 'web/js/leitor-remoto.js'],
+  ['Ler o QR', 'web/js/leitor-remoto.js'],
+  ['O computador está chamando', 'mobile/src/components/FaixaDoChamado.tsx'],
+  ['Abrir o leitor', 'mobile/src/components/FaixaDoChamado.tsx'],
   ['Minha conta', 'mobile/src/app/(app)/(tabs)/mais.tsx'],
   ['Excluir minha conta', 'mobile/src/app/(app)/mais/conta.tsx'],
   ['Excluir conta', 'mobile/src/app/(app)/mais/usuarios.tsx'],
@@ -177,6 +183,11 @@ export function lerConfig() {
   // em APPLE_URL_PRIVACIDADE — o endereço permanente dele vale para as duas, em vez de deixar
   // o suporte preso a um servidor que pode ser desligado. Na Vercel e na /demo dá o mesmo.
   c.url_suporte = String(c.url_suporte || c.url_privacidade).trim();
+  // Os códigos para a câmera (Apple 2.1(a): o build 7 voltou pedindo "um QR de demonstração ou
+  // uma imagem"): sem APPLE_URL_ETIQUETAS_DEMO, a página que o servidor da demo serve. Por texto,
+  // como a privacidade: a barra do começo apagaria o /demo.
+  c.url_etiquetas_demo = String(c.url_etiquetas_demo || `${c.url_servidor_demo}/codigos-para-teste`).trim();
+  if (!/^https:\/\//i.test(c.url_etiquetas_demo)) throw new Error('url_etiquetas_demo tem de começar com https://');
   // A Apple quer uma URL de verdade no suporte; "loja.com.br" sem esquema vira https://.
   if (!/^[a-z]+:\/\//i.test(c.url_suporte)) c.url_suporte = `https://${c.url_suporte}`;
   if (!/^https:\/\/[^\s]+$/i.test(c.url_suporte)) throw new Error(`url_suporte tem de ser https://...: ${c.url_suporte}`);
@@ -236,9 +247,6 @@ export function telasQueFaltam(textos, raiz = process.env.PUBLICAR_TELAS || RAIZ
  */
 export function lerFicha(config, { aparelhos = [], anexo = null } = {}) {
   const ler = (nome) => readFileSync(join(AQUI, 'ficha', nome), 'utf8').trim();
-  const linhaEtiquetas = config.url_etiquetas_demo
-    ? `   No label? Open ${config.url_etiquetas_demo} on another screen to scan sample barcodes.`
-    : null;
   const video = anexo?.tipo === 'video' ? anexo.nome : null;
   const guia = anexo?.tipo === 'guia' ? anexo.nome : null;
   // Linha que começa com um destes marcadores só fica (sem ele) quando a condição vale.
@@ -251,6 +259,7 @@ export function lerFicha(config, { aparelhos = [], anexo = null } = {}) {
     // Sem a senha (Secret APPLE_DEMO_PASSWORD) a ficha sobe; a revisão, não (--enviar confere).
     SENHA_DEMO: config.senha_demo || PENDENTE,
     CODIGO_DEMO: config.codigo_demo,
+    URL_CODIGOS: config.url_etiquetas_demo,
     APARELHOS_TESTADOS: aparelhos.length ? aparelhos.join('; ') : PENDENTE,
     APARELHO_DO_VIDEO: aparelhos[0] ?? PENDENTE,
     VIDEO: video ? `"${video}"` : PENDENTE,
@@ -263,7 +272,6 @@ export function lerFicha(config, { aparelhos = [], anexo = null } = {}) {
       .reduce((t, [marcador, valor]) => t.replaceAll(`{{${marcador}}}`, () => valor), texto)
       .split('\n')
       .flatMap((linha) => {
-        if (linha.includes('{{LINHA_ETIQUETAS}}')) return linhaEtiquetas ? [linhaEtiquetas] : [];
         const condicao = Object.keys(condicionais).find((marcador) => linha.startsWith(marcador));
         if (condicao) return condicionais[condicao] ? [linha.slice(condicao.length)] : [];
         return [linha];

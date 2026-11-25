@@ -90,7 +90,7 @@ let appExiste = null;
 // ---------- argumentos e ambiente ----------
 
 function lerArgumentos(argv) {
-  const args = { simular: false, enviar: false, conferirEnvio: false, aguardarMinutos: 0, build: null, mesmoBuild: false, video: null };
+  const args = { simular: false, enviar: false, conferirEnvio: false, aguardarMinutos: 0, build: null, mesmoBuild: false, video: null, pushTestado: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const valor = () => (a.includes('=') ? a.slice(a.indexOf('=') + 1) : argv[++i]);
@@ -98,6 +98,7 @@ function lerArgumentos(argv) {
     else if (a === '--enviar') args.enviar = true;
     else if (a === '--conferir-envio') args.conferirEnvio = true;
     else if (a === '--mesmo-build') args.mesmoBuild = true;
+    else if (a === '--push-testado') args.pushTestado = true;
     else if (a === '--aguardar-build' || a.startsWith('--aguardar-build=')) {
       const bruto = valor();
       const minutos = Number(bruto);
@@ -350,6 +351,10 @@ async function conferirAntesDeEnviar({ asc, app, versaoDoApp, situacao, args, ap
       codigo: config.codigo_demo,
       urlPrivacidade: privacidade,
       urlSuporte: trocarBase(config.url_suporte, config.url_servidor_demo, base),
+      urlCodigos: trocarBase(config.url_etiquetas_demo, config.url_servidor_demo, base),
+      // O push ligado na demo só passa declarado testado (a chave APNs na Expo e o testar-push
+      // entregue): --push-testado, ou a variável PUSH_TESTADO=1 (no GitHub, a do repositório).
+      pushTestado: args.pushTestado || ['1', 'sim', 'true'].includes(String(process.env.PUSH_TESTADO ?? '').trim().toLowerCase()),
     });
     for (const c of demo.conferidos) relatorio.ok(c);
     // Aviso, não falta (hoje, o da página de suporte de fora do servidor da demo que não abriu

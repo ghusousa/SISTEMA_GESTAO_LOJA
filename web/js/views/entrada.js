@@ -24,6 +24,7 @@ import { ligarBuscaDePeca } from '../busca-peca.js';
 import { formatar, paraDecimalString, somar } from '../dinheiro.js';
 import { notaDepoisDoDuplicado, tirarOQueJaEntrou } from '../entrada-gravada.js';
 import { criarLeitor, digitandoEm, manterFoco } from '../leitor.js';
+import { ligarBotaoDoCelular } from '../leitor-chamado.js';
 import { ir } from '../router.js';
 import { conferencia, limparConferencia, novoClientUuid } from '../store.js';
 import { PODE, pode } from '../permissoes.js';
@@ -42,6 +43,7 @@ export function render(raiz) {
     <div class="pagina pagina--larga pdv">
       <div>
         <div class="pdv__leitura">
+          <div class="leitor-chamado" data-leitor-chamado></div>
           <div class="pdv__campo">
             <label class="so-leitor" for="leitura-entrada">Código de barras ou nome da peça</label>
             <input id="leitura-entrada" data-leitor type="text" autocomplete="off"
@@ -340,11 +342,13 @@ export function render(raiz) {
     ocupadoQuando: () => enviando || digitandoEm(areaItens),
   });
   leitor.ligar();
+  const soltarChamado = ligarBotaoDoCelular(raiz.querySelector('[data-leitor-chamado]'));
   const pararFoco = manterFoco(campo);
   pintar();
 
   return () => {
     leitor.desligar();
+    soltarChamado();
     busca.desligar();
     pararFoco();
   };

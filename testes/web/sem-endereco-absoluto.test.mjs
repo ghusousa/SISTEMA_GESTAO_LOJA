@@ -385,10 +385,23 @@ const infracoes = () => infracoesEm(arquivosDoWeb().map((nome) => ({ nome, texto
 
 test('a varredura enxerga o web inteiro (sem isso, passar não provaria nada)', () => {
   const nomes = arquivosDoWeb();
-  for (const esperado of ['index.html', 'js/api.js', 'js/main.js', 'js/views/produtos.js', 'legal/privacidade.html', 'css/estilo.css']) {
+  for (const esperado of [
+    'index.html',
+    'js/api.js',
+    'js/main.js',
+    'js/views/produtos.js',
+    'legal/privacidade.html',
+    'css/estilo.css',
+    // O chamado do celular (ADR-47): a área das telas e a chave do chamado no sessionStorage.
+    'js/leitor-chamado.js',
+    'js/leitor-celular.js',
+  ]) {
     assert.ok(nomes.includes(esperado), `${esperado} ficou de fora`);
   }
   assert.ok(!nomes.some((n) => n.startsWith('js/vendor/')), 'vendor entrou na varredura');
+  // A chave do chamado entra na regra por ser declarada com a raiz no próprio arquivo.
+  const celular = readFileSync(join(WEB, 'js/leitor-celular.js'), 'utf8');
+  assert.match(celular, /const CHAVE_DO_CHAMADO = nomeNaRaiz\('leitor-celular-chamado'\);/);
 });
 
 test('a varredura reprova o que o ADR-46 corrigiu, e não o que está certo (sem isso, passar não provaria nada)', () => {

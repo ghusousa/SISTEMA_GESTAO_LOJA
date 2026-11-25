@@ -9,6 +9,8 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { registrarPerdaDeSessao } from '@/api/client';
 import { ComFaixasNoTopo } from '@/components/FaixasDoTopo';
 import { Carregando } from '@/components/ui';
+import { vigiarServidorNovo } from '@/hooks/useChamadosDoLeitor';
+import { configurarNotificacoes, registrarNaVolta } from '@/lib/pushDoLeitor';
 import { queryClient } from '@/lib/queryClient';
 import { cores } from '@/lib/tema';
 import { useAuthStore } from '@/stores/authStore';
@@ -31,6 +33,12 @@ export default function RootLayout() {
     });
     void restaurarServidor();
     void restaurar();
+    // O chamado do computador com o app na frente vira faixa, não banner; e o toque numa
+    // notificação liga o leitor (ADR-47). Só no app nativo: no web e no Expo Go, nada.
+    // Isto não pede permissão nenhuma — pedir é só no toque em "Abrir o leitor".
+    const desligarNotificacoes = configurarNotificacoes();
+    // O servidor atualizado com o app aberto: a lista dos chamados volta (ADR-47).
+    const pararDeVigiarServidor = vigiarServidorNovo();
 
     // Celular dorme no bolso, entra no elevador, troca Wi-Fi por 4G. Enquanto esteve
     // fora, o servidor avisou de mudanças que este aparelho não ouviu — voltar ao ativo
@@ -42,9 +50,17 @@ export default function RootLayout() {
     // O foco volta ANTES de acordar: é ele que libera a recarga.
     const assinatura = AppState.addEventListener('change', (estado) => {
       focusManager.setFocused(estado === 'active');
-      if (estado === 'active') acordarTempoReal();
+      if (estado !== 'active') return;
+      acordarTempoReal();
+      // O registro do aparelho envelhece (1 h), e a pessoa pode ter mudado a permissão nos
+      // Ajustes: registra de novo só quando há motivo (`lib/notificacoes.ts`).
+      if (useAuthStore.getState().usuario) void registrarNaVolta();
     });
-    return () => assinatura.remove();
+    return () => {
+      assinatura.remove();
+      desligarNotificacoes();
+      pararDeVigiarServidor();
+    };
   }, [restaurar, restaurarServidor, encerrarPorTokenInvalido]);
 
   return (

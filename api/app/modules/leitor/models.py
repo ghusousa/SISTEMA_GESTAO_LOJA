@@ -1,4 +1,4 @@
-"""O celular como leitor de código de barras do computador (ADR-43).
+"""O celular como leitor de código de barras do computador (ADR-43, ADR-47).
 
 Duas tabelas pequenas e de vida curta. Nada aqui é histórico da loja: o pareamento é uma
 ligação de expediente (no máximo 12 h depois do aceite) e o bipe é uma tecla do leitor que
@@ -8,7 +8,8 @@ token: excluir a conta de alguém (LGPD) não pode travar num pareamento de onte
 
 **O status não é coluna.** AGUARDANDO, ATIVO, EXPIRADO e ENCERRADO saem das datas, no
 servidor (`service.status_do_pareamento`): coluna de status precisaria de alguém para virar
-EXPIRADO na hora certa, e o relógio não avisa ninguém.
+EXPIRADO na hora certa, e o relógio não avisa ninguém. O CHAMADO (ADR-47) é a mesma máquina:
+um pareamento que nasceu do botão do computador para o celular do mesmo login.
 """
 
 import uuid
@@ -17,6 +18,7 @@ from enum import StrEnum
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -39,17 +41,22 @@ class MotivoEncerramento(StrEnum):
     """Desligado no celular."""
 
     TROCOU = "TROCOU"
-    """O mesmo celular aceitou o código de outro computador: um celular, um computador."""
+    """O mesmo celular (a mesma instalação do app, ADR-47) aceitou ou atendeu outro
+    computador: um celular, um computador."""
 
     SUBSTITUIDO = "SUBSTITUIDO"
-    """O computador gerou um código novo no lugar deste (ou passou do teto de abertos)."""
+    """O computador gerou um código (ou chamado) novo no lugar deste, ou passou do teto."""
 
 
 _MOTIVOS = "','".join(MotivoEncerramento)
 
 
 class LeitorPareamento(Base):
-    """Um computador e (depois do aceite) o celular que lê por ele."""
+    """Um computador e (depois do aceite) o celular que lê por ele.
+
+    chamado (ADR-47): criado pelo computador para o celular do MESMO login; só ele atende,
+    sem código, pelo sinal; o código sorteado nunca sai em resposta nem abre aceite.
+    """
 
     __tablename__ = "leitor_pareamentos"
     __table_args__ = (
@@ -63,6 +70,21 @@ class LeitorPareamento(Base):
             "(aceito_em IS NULL) = (aparelho_user_id IS NULL)"
             " AND (aceito_em IS NULL) = (expira_em IS NULL)",
             name="aceite",
+        ),
+        # O chamado é do login que chamou: nenhum outro atende, nem por SQL direto.
+        CheckConstraint(
+            "NOT chamado OR aparelho_user_id IS NULL OR aparelho_user_id = computador_user_id",
+            name="chamado_do_mesmo_login",
+        ),
+        # Sinal existe se e só se é chamado, e sempre no formato que as telas mostram.
+        CheckConstraint(
+            "chamado = (sinal IS NOT NULL)"
+            " AND (sinal IS NULL OR sinal ~ '^[2-9][A-HJ-NP-Z][2-9]$')",
+            name="sinal_do_chamado",
+        ),
+        CheckConstraint("client_uuid IS NULL OR chamado", name="chave_do_chamado"),
+        CheckConstraint(
+            "aparelho_instalacao IS NULL OR aceito_em IS NOT NULL", name="instalacao_do_aceite"
         ),
         # O código só precisa ser único enquanto alguém pode digitá-lo. Depois do aceite (ou
         # do encerramento) ele pode voltar a sair do sorteio sem confundir ninguém.
@@ -93,6 +115,19 @@ class LeitorPareamento(Base):
     expira_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     encerrado_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     motivo_encerramento: Mapped[str | None] = mapped_column(String(20))
+    #: Nasceu do botão "Abrir no app o leitor de código" (ADR-47), não do QR.
+    chamado: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("false"), default=False, nullable=False
+    )
+    #: Só do chamado: 3 caracteres (ex.: 7K3) que a pessoa confere no computador e no
+    #: celular. Com o mesmo login em vários caixas, é ele que diz qual chamado é o de cada um.
+    sinal: Mapped[str | None] = mapped_column(String(3))
+    #: Só do chamado: a chave do POST, que a tela grava antes de pedir (o F5 retoma).
+    client_uuid: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), unique=True)
+    #: A instalação do app que aceitou ou atendeu, e só enquanto o leitor está ligado: quem
+    #: encerra a tira, e o próximo código ou chamado a tira do que venceu. Preenchida, só ela
+    #: bipa e só ela recebe o reenvio; NULL num leitor ligado = aceito por app antigo.
+    aparelho_instalacao: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True))
 
 
 class LeitorBipe(Base):

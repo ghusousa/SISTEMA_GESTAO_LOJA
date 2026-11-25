@@ -16,8 +16,9 @@
  *     como página (Accept: text/html, como o navegador). O suporte FORA do servidor da demo
  *     (a página de contato do dono, de terceiro) que não abre daqui vira aviso, não pendência:
  *     proteção contra robô ou negociação de conteúdo dariam um "não abre" falso;
- *   - as duas coisas que as notas mandam testar têm rota lá: o leitor pelo celular (ADR-43) e
- *     a exclusão da própria conta (ADR-45). Servidor com deploy velho = revisor sem a tela.
+ *   - o que as notas mandam testar tem rota lá: o leitor pelo celular (ADR-43), o chamado dele
+ *     pelo botão "Abrir no app o leitor de código" (ADR-47) e a exclusão da própria conta
+ *     (ADR-45). Servidor com deploy velho = revisor sem a tela.
  *
  * Antes, nada disso era conferido: senha trocada, código digitado errado ou banco recarregado
  * só apareciam dias depois, numa recusa por 2.1. Agora cada falha vira pendência e o envio não
@@ -82,7 +83,7 @@ async function chamar(url, { metodo = 'GET', token, corpo, tempoMs = ESPERA_MS, 
       signal: AbortSignal.timeout(tempoMs),
     });
   } catch (erro) {
-    return { status: 0, json: null, tipo: '', erro: erro.cause?.code ?? erro.name ?? erro.message };
+    return { status: 0, json: null, texto: '', tipo: '', erro: erro.cause?.code ?? erro.name ?? erro.message };
   }
   const texto = await r.text();
   let json = null;
@@ -91,7 +92,7 @@ async function chamar(url, { metodo = 'GET', token, corpo, tempoMs = ESPERA_MS, 
   } catch {
     /* página HTML */
   }
-  return { status: r.status, json, tipo: r.headers.get('content-type') ?? '', erro: null };
+  return { status: r.status, json, texto, tipo: r.headers.get('content-type') ?? '', erro: null };
 }
 
 const comoFalhou = (r) => (r.status ? `HTTP ${r.status}${r.json?.code ? ` ${r.json.code}` : ''}` : `sem resposta: ${r.erro}`);
@@ -106,7 +107,7 @@ const comoFalhou = (r) => (r.status ? `HTTP ${r.status}${r.json?.code ? ` ${r.js
  * problema), 'aviso' (fora dele, não abriu daqui) ou 'nao-conferido' (parou antes, no /health
  * ou no login).
  */
-export async function conferirServidorDemo({ base, servidor = base, email, senha, codigo, urlPrivacidade, urlSuporte, tempoMs = ESPERA_MS }) {
+export async function conferirServidorDemo({ base, servidor = base, email, senha, codigo, urlPrivacidade, urlSuporte, urlCodigos, pushTestado = false, tempoMs = ESPERA_MS }) {
   const problemas = [];
   const conferidos = [];
   const avisos = [];
@@ -122,6 +123,30 @@ export async function conferirServidorDemo({ base, servidor = base, email, senha
     return { problemas, conferidos, avisos, suporte: 'nao-conferido' };
   }
   conferidos.push(`${servidor}/health no ar`);
+
+  // O push do chamado (ADR-47). Ligado na demo e sem a chave APNs na Expo, o revisor veria o
+  // pedido de notificação no primeiro "Abrir o leitor" para um aviso que nunca chega — e o web
+  // ainda diria "falta um passo de quem publica o app": recurso incompleto à vista, risco de
+  // recusa por 2.1. A rota é a aberta, sem login; servidor sem o campo é de antes da ADR-47.
+  const configuracao = await chamar(em(base, '/api/v1/configuracao'), opcoes);
+  if (configuracao.status === 200 && configuracao.json?.notificacoes_push === true) {
+    if (pushTestado) {
+      conferidos.push('o push do chamado está LIGADO na demo, declarado testado (--push-testado)');
+    } else {
+      problemas.push(
+        'O servidor de demonstração está com o push do chamado LIGADO (notificacoes_push: true). O revisor veria o ' +
+          'pedido de notificação no primeiro "Abrir o leitor" e, sem a chave APNs na Expo, nada chegaria — o web diria ' +
+          '"falta um passo de quem publica o app". Desligue o push na demo (Vercel: NOTIFICACOES_PUSH=desligado e ' +
+          'Redeploy; na instalação: DEMO_NOTIFICACOES_PUSH=desligado no .env e recriar a api-demo) ou, com a chave APNs ' +
+          'na Expo e o testar-push entregue no iPhone, rode com --push-testado (no GitHub: a variável do repositório ' +
+          'PUSH_TESTADO=1).',
+      );
+    }
+  } else if (configuracao.status === 200) {
+    conferidos.push('o push do chamado está desligado na demo (o revisor não vê pedido de notificação)');
+  } else {
+    avisos.push(`Não deu para ler a configuração da demo (${comoFalhou(configuracao)}): o push do chamado não foi conferido.`);
+  }
 
   const login = await chamar(em(base, '/api/v1/auth/login'), { ...opcoes, metodo: 'POST', corpo: { email, senha } });
   if (login.status !== 200 || !login.json?.access_token) {
@@ -183,6 +208,19 @@ export async function conferirServidorDemo({ base, servidor = base, email, senha
       );
     }
 
+    // O chamado do leitor (ADR-47): as notas mandam clicar em "Abrir no app o leitor de código",
+    // que o web só tem com a rota dos chamados no deploy. A lista dos abertos só LÊ — o POST
+    // chamaria os celulares da conta demo —, e responde a página mesmo vazia.
+    const chamados = await chamar(em(base, '/api/v1/leitor/chamados/abertos?size=1'), { ...opcoes, token });
+    if (chamados.status === 200 && Array.isArray(chamados.json?.items)) {
+      conferidos.push('o chamado do leitor ("Abrir no app o leitor de código") tem rota no servidor');
+    } else {
+      problemas.push(
+        `O servidor de demonstração não tem o chamado do leitor (${comoFalhou(chamados)}), que as notas mandam testar ` +
+          `("Abrir no app o leitor de código"): ${ATUALIZE_A_DEMO}.`,
+      );
+    }
+
     // Exclusão da própria conta (ADR-45): corpo {} — sem senha a validação recusa ANTES de a
     // rota rodar, então isto nunca exclui nada; só diz se a rota existe. Sem ela no deploy,
     // "/usuarios/me" cai na rota do dono, /usuarios/{id}, e o erro é no id, não na senha.
@@ -235,6 +273,22 @@ export async function conferirServidorDemo({ base, servidor = base, email, senha
       );
     }
   }
+  // A página com as etiquetas e o passo a passo do QR que as notas citam (Apple 2.1(a): o build 7
+  // voltou pedindo "um QR de demonstração ou uma imagem"). Ela tem de abrir e mostrar o MESMO
+  // código das notas, senão o revisor aponta a câmera para uma peça que não existe lá.
+  if (urlCodigos) {
+    const pagina = await chamar(urlCodigos, comoPagina);
+    if (pagina.status === 200 && /text\/html/i.test(pagina.tipo) && pagina.texto.includes(String(codigo))) {
+      conferidos.push('a página dos códigos para a câmera abre e mostra o código das notas');
+    } else {
+      problemas.push(
+        `A página dos códigos para a câmera (${urlCodigos}) não abre ou não mostra o código ${codigo} ` +
+          `(${pagina.status === 200 ? 'sem o código' : comoFalhou(pagina)}). As notas a citam (Apple 2.1(a)): suba o servidor ` +
+          'de demonstração com web/legal/codigos-para-teste.html (api/scripts/codigos_para_teste.py) ou corrija APPLE_URL_ETIQUETAS_DEMO.',
+      );
+    }
+  }
+
   // Sem APPLE_URL_SUPORTE o suporte É a privacidade (já aberta acima); outra página também
   // vai à ficha e também tem de estar no ar — senão ninguém percebe que ela caiu. Debaixo do
   // servidor da demo, é página do sistema e segura o envio como a privacidade. Fora dele (a

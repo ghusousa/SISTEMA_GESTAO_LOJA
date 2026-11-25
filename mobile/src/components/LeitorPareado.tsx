@@ -5,7 +5,26 @@
  *
  * A câmera é o `Scanner` de sempre, com as mesmas travas de `lib/leitura.ts` (e a vibração
  * de sucesso dele a cada leitura aceita). A tela confere o pareamento a cada 15 s enquanto
- * está na frente de alguém: o computador pode ter desligado, ou as 12 h passado.
+ * está na frente de alguém: o computador pode ter desligado, ou as 12 h passado — e na hora,
+ * quando o tempo real avisa que um pareamento mudou (`leitor_pareamento`).
+ *
+ * Ligado pelo chamado do computador (ADR-47), mostra o sinal ("Lendo para o computador do
+ * sinal 7K3"). Outro computador chamando este login aparece numa linha com [Trocar]: a faixa
+ * do topo só avisa, e trocar é aqui, onde se vê para quem as leituras vão agora. Sem diálogo:
+ * a câmera segue lendo, e o que não tiver saído para o computador anterior fica na lista como
+ * "não enviado" (`leitorStore.ligar`).
+ *
+ * Entre o cabeçalho e a câmera (42% da tela) não entra nada que cresça: as linhas dos outros
+ * chamados (até 10 por login), o alerta, os bipes e o "Desligar" moram na rolagem de baixo.
+ * Com três chamados abertos no iPhone SE, as linhas lá em cima espremiam a lista e empurravam
+ * o "Desligar" para fora da tela — e a câmera pulava para baixo a cada chamado novo.
+ *
+ * O "Digitar código" (o `CodigoManual` do Vender, da Entrada e do Inventário) abre a rolagem,
+ * colado na câmera: a etiqueta que a câmera não lê sai do celular pelo MESMO caminho da leitura
+ * — o `ler` da fila, com o `client_uuid` e a instalação —, e a câmera para enquanto a caixa está
+ * na frente dela. Na rolagem, e não numa faixa fixa: fixa, ela comia a altura da lista e do
+ * "Desligar" no SE com o Texto Maior. Fora do `Scanner`, de propósito: a câmera sai de cena com o
+ * app no fundo (e volta nova), e a caixa com o código pela metade fica.
  */
 
 import { useQuery } from '@tanstack/react-query';
@@ -16,9 +35,13 @@ import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { leitor } from '@/api/endpoints';
 import type { Pareamento } from '@/api/tipos';
+import { CodigoManual } from '@/components/CodigoManual';
+import { ROTULOS_DO_CHAMADO } from '@/components/FaixaDoChamado';
 import { Scanner, type ScannerRef } from '@/components/Scanner';
 import { Botao, Cartao, useRespiroDeBaixo } from '@/components/ui';
+import { useChamadosDoLeitor, type AtenderChamado } from '@/hooks/useChamadosDoLeitor';
 import { useLoja } from '@/hooks/useLoja';
+import { sinalValido } from '@/lib/notificacoes';
 import { chaves } from '@/lib/queryClient';
 import { cores, espaco, fonte, raio } from '@/lib/tema';
 import {
@@ -88,9 +111,55 @@ interface Props {
   pareamento: Pareamento;
   /** Tela em foco e app na frente: só assim a câmera e a consulta ligam. */
   visivel: boolean;
+  /** O atender da tela do leitor (o Trocar). */
+  atendimento: AtenderChamado;
+  /** O sinal do chamado que a pessoa tocou na notificação com o leitor ligado: em destaque. */
+  destaque: string | null;
+  /** O toque numa notificação cujo chamado já acabou (ou a busca que não respondeu). */
+  avisoDoToque: string | null;
 }
 
-export function LeitorPareado({ pareamento, visivel }: Props) {
+/**
+ * Outro computador chamando este login, com o leitor ligado: uma linha por chamado que ainda
+ * vale, cada uma com o seu sinal e o [Trocar]. O que a pessoa tocou na notificação vem em
+ * destaque. Mora no topo da rolagem, logo abaixo da câmera (ver o cabeçalho do arquivo).
+ */
+function OutrosChamando({
+  atendimento,
+  destaque,
+  avisoDoToque,
+}: {
+  atendimento: AtenderChamado;
+  destaque: string | null;
+  avisoDoToque: string | null;
+}) {
+  const { vivos } = useChamadosDoLeitor();
+  const chamados = vivos.filter((c) => sinalValido(c.sinal));
+  const aviso = atendimento.aviso ?? avisoDoToque;
+  if (chamados.length === 0 && !aviso) return null;
+  return (
+    <Cartao estilo={s.outros}>
+      {chamados.map((chamado) => (
+        <View key={chamado.id} style={[s.outro, chamado.sinal === destaque && s.outroDestaque]}>
+          <Text style={s.outroTexto}>
+            {ROTULOS_DO_CHAMADO.outro} (sinal <Text style={s.outroSinal}>{chamado.sinal}</Text>)
+          </Text>
+          <Botao
+            titulo={ROTULOS_DO_CHAMADO.trocar}
+            variante="secundario"
+            carregando={atendimento.atendendoId === chamado.id}
+            desabilitado={atendimento.atendendo && atendimento.atendendoId !== chamado.id}
+            // Sem pedir a permissão de notificação aqui: a câmera está montada (5.1.1).
+            onPress={() => atendimento.atender(chamado.id, { pedirPermissao: false })}
+          />
+        </View>
+      ))}
+      {!!aviso && <Text style={s.outroAviso}>{aviso}</Text>}
+    </Cartao>
+  );
+}
+
+export function LeitorPareado({ pareamento, visivel, atendimento, destaque, avisoDoToque }: Props) {
   const loja = useLoja();
   const bipes = useLeitorStore((e) => e.bipes);
   const ler = useLeitorStore((e) => e.ler);
@@ -105,6 +174,8 @@ export function LeitorPareado({ pareamento, visivel }: Props) {
   // Em estado da TELA, não só na pausa de dentro do Scanner: o celular que bloqueia com o
   // diálogo aberto desmonta a câmera, e a que volta nasceria lendo por baixo dele.
   const [perguntando, setPerguntando] = useState(false);
+  // A caixa do "Digitar código" na frente da câmera: a mesma regra do diálogo.
+  const [digitando, setDigitando] = useState(false);
 
   const consulta = useQuery({
     queryKey: chaves.leitor(pareamento.id),
@@ -130,6 +201,17 @@ export function LeitorPareado({ pareamento, visivel }: Props) {
   }, [consulta.error, encerrar]);
 
   const aoLer = useCallback((codigo: string) => ler(codigo), [ler]);
+
+  // O "Digitar código" abriu: a câmera para, senão a etiqueta embaixo da lente entra sozinha
+  // enquanto a pessoa digita. Fechou (com o código ou sem): volta, com as travas recomeçando.
+  const pararParaDigitar = useCallback(() => {
+    scanner.current?.pausar();
+    setDigitando(true);
+  }, []);
+  const voltarALer = useCallback(() => {
+    setDigitando(false);
+    scanner.current?.retomar();
+  }, []);
 
   function confirmarDesligar() {
     // Diálogo na frente da câmera: ela para, senão segue lendo por baixo (CLAUDE.md).
@@ -166,6 +248,9 @@ export function LeitorPareado({ pareamento, visivel }: Props) {
         <Text style={s.titulo} numberOfLines={2}>
           Ligado ao computador de {pareamento.computador_nome}
         </Text>
+        {pareamento.chamado && sinalValido(pareamento.sinal) && (
+          <Text style={s.sinal}>Lendo para o computador do sinal {pareamento.sinal}</Text>
+        )}
         {!!ate && <Text style={s.ate}>até {ate}</Text>}
       </View>
 
@@ -174,7 +259,7 @@ export function LeitorPareado({ pareamento, visivel }: Props) {
           <Scanner
             aoLer={aoLer}
             modo="continuo"
-            ativo={!perguntando && !desligando}
+            ativo={!perguntando && !digitando && !desligando}
             controle={scanner}
             dica="Bipe as peças: cada uma vai para o computador"
           />
@@ -184,6 +269,18 @@ export function LeitorPareado({ pareamento, visivel }: Props) {
       </View>
 
       <ScrollView contentContainerStyle={[s.conteudo, { paddingBottom: respiroDeBaixo }]}>
+        {/* A etiqueta que a câmera não lê (barras apagadas, amassadas): o número dela vai ao
+            computador como a leitura da câmera. */}
+        <View style={s.linhaDoCodigo}>
+          <CodigoManual
+            aoConfirmar={aoLer}
+            acao="Enviar"
+            aoAbrir={pararParaDigitar}
+            aoFechar={voltarALer}
+          />
+        </View>
+        {/* Na rolagem, e não acima da câmera: quantos forem, o "Desligar" continua ao alcance. */}
+        <OutrosChamando atendimento={atendimento} destaque={destaque} avisoDoToque={avisoDoToque} />
         {!!alerta && (
           <Cartao estilo={s.alerta}>
             <Text style={s.alertaTexto}>{alerta}</Text>
@@ -217,9 +314,28 @@ const s = StyleSheet.create({
     gap: espaco.xs,
   },
   titulo: { fontSize: fonte.media, fontWeight: '700', color: cores.primaria },
+  // `primariaClara`, e não o azul da faixa: sobre o fundo claro do cabeçalho ele não dá 4,5:1.
+  sinal: { fontSize: fonte.base, fontWeight: '700', color: cores.primariaClara },
   ate: { fontSize: fonte.pequena, color: cores.textoSuave },
+  outros: { gap: espaco.sm },
+  outro: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: espaco.sm,
+    borderRadius: raio.sm,
+    paddingHorizontal: espaco.sm,
+    paddingVertical: espaco.xs,
+  },
+  outroDestaque: { borderWidth: 2, borderColor: cores.chamadoDoLeitor, backgroundColor: cores.primariaFraca },
+  outroTexto: { flex: 1, minWidth: 160, fontSize: fonte.base, color: cores.texto, fontWeight: '600' },
+  outroSinal: { fontWeight: '800', color: cores.primariaClara, letterSpacing: 1 },
+  outroAviso: { fontSize: fonte.pequena, color: cores.perigo },
   cameraArea: { height: '42%', backgroundColor: '#000' },
   cameraParada: { flex: 1, backgroundColor: '#000' },
+  // Em linha: o toque fica no rótulo, não na largura inteira da rolagem.
+  linhaDoCodigo: { flexDirection: 'row' },
   conteudo: { padding: espaco.lg, gap: espaco.md },
   vazio: { color: cores.textoSuave, fontSize: fonte.base, textAlign: 'center' },
   lista: { gap: espaco.sm },

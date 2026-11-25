@@ -7,8 +7,11 @@
  * baixado de um link, que nunca vira arquivo pela metade); a revisão leva UM anexo (a Apple
  * recusa o segundo) — o vídeo antes do guia, e o que está lá sai antes de o novo subir; as
  * notas citam só o anexo que vai estar lá; a lista de aparelhos não aceita linha inventada fora
- * do formato; a ficha não cita tela que o app não tem; o guia PDF commitado é o das entradas de
- * agora; e as notas cabem nos 4000 da Apple no pior caso.
+ * do formato; a ficha não cita tela que o app não tem (e o código deste commit mostra cada rótulo
+ * de TELAS_CITADAS); o guia PDF commitado é o das entradas de agora; as notas cabem nos 4000 da
+ * Apple no pior caso, nas duas variantes de anexo, e não prometem push (ADR-47: nasce desligado);
+ * a política de privacidade e a página de exclusão dizem do registro do aparelho o que o código
+ * faz; e o docs/LOJAS-DE-APP.md mostra os textos da ficha como eles estão.
  */
 
 import { createServer } from 'node:http';
@@ -33,7 +36,7 @@ import {
   videoAnexado,
 } from '../anexos.mjs';
 import { LIMITES, lerAparelhosTestados, lerFicha, PENDENTE, TELAS_CITADAS, telasQueFaltam } from '../ficha.mjs';
-import { diferencas, impressaoAtual, IMPRESSAO, lerGuia } from '../revisao/guia.mjs';
+import { diferencas, impressaoAtual, IMPRESSAO, lerGuia, montarHtml } from '../revisao/guia.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const MOBILE = resolve(AQUI, '..', '..');
@@ -315,6 +318,18 @@ test('telas citadas: rótulo que o app não mostra, ou tela que não existe, vir
   assert.deepEqual(telasQueFaltam({ 'descricao.txt': 'nada citado aqui' }, join(TEMP, 'vazio')), [], 'quem não cita não cobra');
 });
 
+test('telas citadas: cada rótulo de TELAS_CITADAS está no arquivo DESTE commit (o app e o web de verdade)', () => {
+  // Os outros testes usam árvores de mentira: provam o publicador. Este olha o código de verdade
+  // — rótulo trocado no app ou no web (ou tela citada que ainda não chegou à branch) quebra aqui,
+  // no CI, e não na hora de publicar, quando o publicador pararia antes de falar com a Apple.
+  const raiz = resolve(MOBILE, '..');
+  const faltam = TELAS_CITADAS.filter(([rotulo, arquivo]) => {
+    const caminho = join(raiz, arquivo);
+    return !existsSync(caminho) || !readFileSync(caminho, 'utf8').includes(rotulo);
+  }).map(([rotulo, arquivo]) => `"${rotulo}" em ${arquivo}`);
+  assert.deepEqual(faltam, [], `rótulo citado que o código deste commit não mostra:\n${faltam.join('\n')}`);
+});
+
 // O servidor da demo que sobe com a loja tem CAMINHO (<domínio>/demo, ADR-46): num domínio
 // comprido, é o endereço mais longo que as notas carregam (na linha do servidor e na das
 // etiquetas) — mais que o da Vercel.
@@ -352,6 +367,13 @@ test('notas da revisão: em inglês, os 7 itens, os dois caminhos da exclusão e
     }
     assert.ok(notas.includes('Mais > Minha conta > Excluir minha conta') && notas.includes('Mais > Usuários > (pessoa) > Excluir conta'));
     assert.ok(notas.includes('Mais > Leitor do computador > "Ler o QR do computador"'));
+    // O chamado (ADR-47) vem antes do QR, com o app ABERTO: a demo nasce com o push desligado,
+    // e as notas não prometem notificação — no máximo a permissão, opcional.
+    assert.ok(notas.includes('"Abrir no app o leitor de código"') && notas.includes('"Abrir o leitor" in the open app'));
+    assert.ok(notas.indexOf('Abrir no app o leitor de código') < notas.indexOf('Ler o QR do computador'), 'o QR é a alternativa');
+    assert.ok(!/push|APNs/i.test(notas), 'as notas prometem push');
+    assert.deepEqual(notas.match(/notification\w*/gi), ['notifications'], 'notificação nas notas só como permissão opcional');
+    assert.ok(notas.includes('notifications (optional)'));
     assert.ok(notas.includes(`made on a physical ${SETE_APARELHOS[0]}`) && notas.includes(SETE_APARELHOS.join('; ')));
     assert.ok(notas.includes('Password: Senha-Longa-Da-Demo-2026!$&'), 'a senha com $& chegou estragada (troca por texto em vez de função)');
     assert.ok(notas.includes(`Server: ${DEMO_COMPRIDA}\n`), 'o servidor chega às notas com o caminho');
@@ -373,7 +395,12 @@ test('notas da revisão: citam só o anexo que vai estar lá (a Apple aceita um)
     const comVideo = lerFicha(CONFIG_PIOR_CASO, { aparelhos: SETE_APARELHOS, anexo: { tipo: 'video', nome: 'screen-recording.mp4' } }).notasRevisao;
     assert.ok(comVideo.includes('1) SCREEN RECORDING: attachment "screen-recording.mp4"'), 'o item 1 cita o vídeo');
     assert.ok(!comVideo.includes('app-review-guide.pdf') && !/attached .*guide/i.test(comVideo), 'com o vídeo anexado, as notas prometem o guia');
-    assert.ok(comVideo.startsWith("B2B APP FOR SHOP STAFF; IT NEEDS THE SHOP'S SERVER. Answers to Guideline 2.1 below.\n\nDEMO SERVER"));
+    assert.ok(comVideo.startsWith("POINT OF SALE FOR SMALL SHOPS; IT NEEDS THE SHOP'S OWN SERVER. Answers to Guideline 2.1 below.\n\nDEMO SERVER"));
+    // A abertura "B2B APP FOR SHOP STAFF" levou a revisão do build 7 à diretriz 3.2 (app de uma
+    // empresa só): o público limitado vai na resposta e no pedido de distribuição não listada.
+    assert.ok(!/\bB2B\b/.test(comVideo), 'as notas voltaram a abrir com "B2B"');
+    // E o que a 2.1(a) pediu: a página com as etiquetas e o QR, logo depois do servidor da demo.
+    assert.ok(/\nCODES TO SCAN: https:\/\/\S+ \(on a computer screen\)/.test(comVideo), 'sem a página dos códigos para a câmera');
 
     const comGuia = lerFicha(CONFIG_PIOR_CASO, { aparelhos: SETE_APARELHOS, anexo: { tipo: 'guia', nome: 'app-review-guide.pdf' } }).notasRevisao;
     assert.ok(comGuia.includes('\nThe attached "app-review-guide.pdf" has them in full, with screenshots.\n'), 'com o guia anexado, a 2ª linha o cita');
@@ -402,15 +429,20 @@ test('guia PDF: o commitado é o das entradas de agora (texto, aparelhos e print
   assert.deepEqual(diferencas({}, atual).length, Object.keys(atual).length);
 });
 
-test('política de privacidade (a URL da ficha) e notas contam os mesmos serviços externos', () => {
-  // O revisor lê o item 5 das notas e abre a política pelo link da ficha: um documento não pode
-  // desmentir o outro. A política dizia "não fala com nenhum outro endereço" enquanto as notas
-  // contavam a checagem de conexão do NetInfo e as fotos da demo no Vercel Blob.
+test('política de privacidade (a URL da ficha), notas e guia contam os mesmos serviços externos', () => {
+  // O revisor lê o item 5 das notas (ou do guia) e abre a política pelo link da ficha: um
+  // documento não pode desmentir o outro. A política dizia "não fala com nenhum outro endereço"
+  // enquanto as notas contavam a checagem de conexão do NetInfo e as fotos da demo no Vercel Blob.
   const notas = readFileSync(join(MOBILE, 'publicar', 'ficha', 'notas-revisao.txt'), 'utf8');
+  const guia = montarHtml();
   const politica = readFileSync(join(MOBILE, '..', 'web', 'legal', 'privacidade.html'), 'utf8');
-  for (const servico of ['generate_204', 'Vercel Blob', 'Neon']) {
+  for (const servico of ['generate_204', 'Vercel Blob', 'Neon', 'Expo', 'APNs']) {
     if (notas.includes(servico)) assert.ok(politica.includes(servico), `as notas citam ${servico} e a política não`);
+    if (guia.includes(servico)) assert.ok(politica.includes(servico), `o guia cita ${servico} e a política não`);
   }
+  // O push do chamado (ADR-47) é opcional — a loja liga —, e a política diz isso, não que ele sempre existe.
+  assert.ok(guia.includes('Expo') && guia.includes('APNs'), 'o guia conta o push opcional');
+  assert.match(politica, /quando a loja liga as notificações/);
   assert.ok(!/não fala com nenhum outro endereço|única conexão que o app faz/i.test(politica), 'a política ainda nega qualquer outra conexão');
 });
 
@@ -421,4 +453,111 @@ test('LOJAS-DE-APP.md: as páginas legais das fichas são as do servidor da loja
   const doc = readFileSync(join(MOBILE, '..', 'docs', 'LOJAS-DE-APP.md'), 'utf8');
   const paginas = doc.match(/https?:\/\/(?:[\w-]+\.)*sistemaobras\.com\.br\/[^\s`)]+/g) ?? [];
   assert.deepEqual(paginas, [], `página do sistemaobras para colar numa ficha:\n${paginas.join('\n')}`);
+});
+
+test('notas da revisão: a linha do leitor diz qual endereço abrir no computador', () => {
+  // Com o vídeo anexado, sem o guia, "in a computer browser" sozinho deixava o revisor deduzir
+  // o endereço pela linha "Server:" lá de cima. A linha do leitor aponta para ela.
+  process.env.PUBLICAR_TELAS = telas();
+  try {
+    for (const anexo of [
+      { tipo: 'video', nome: 'screen-recording.mov' },
+      { tipo: 'guia', nome: 'app-review-guide.pdf' },
+    ]) {
+      const notas = lerFicha(CONFIG_PIOR_CASO, { aparelhos: SETE_APARELHOS, anexo }).notasRevisao;
+      const linha = notas.split('\n').find((l) => l.includes('"Abrir no app o leitor de código"'));
+      assert.ok(linha, `${anexo.tipo}: a linha do leitor sumiu`);
+      assert.match(linha, /open the server above in a computer browser/, `${anexo.tipo}: ${linha}`);
+    }
+  } finally {
+    delete process.env.PUBLICAR_TELAS;
+  }
+});
+
+test('política de privacidade e exclusão de dados: o aviso, o Android e o que sai, como o código faz (ADR-47)', () => {
+  const raiz = resolve(MOBILE, '..');
+  const ler = (caminho) => readFileSync(join(raiz, caminho), 'utf8');
+  const politica = ler('web/legal/privacidade.html');
+  const exclusao = ler('web/legal/exclusao-de-dados.html');
+  const paginas = [
+    ['privacidade', politica],
+    ['exclusão de dados', exclusao],
+  ];
+
+  // O aviso é o que o servidor manda (o título de lá), não o rótulo da faixa do app aberto; e o
+  // aviso de teste do diagnóstico do dono também usa o token.
+  const servico = ler('api/app/modules/notificacoes/service.py');
+  const titulo = servico.match(/^TITULO_DO_CHAMADO = "([^"]+)"/m)?.[1];
+  const teste = servico.match(/^TITULO_DO_TESTE = "([^"]+)"/m)?.[1];
+  assert.ok(titulo && teste, 'os títulos do push saíram de notificacoes/service.py: ajuste este teste');
+  assert.ok(politica.includes(`"${titulo}"`), `a política não cita o título do aviso ("${titulo}")`);
+  assert.ok(politica.includes(teste), `a política não conta o aviso de teste ("${teste}")`);
+  for (const [nome, pagina] of paginas) {
+    assert.doesNotMatch(pagina, /aviso "O computador está chamando"/, `${nome}: o rótulo da faixa vira o texto do aviso`);
+  }
+
+  // Nesta versão só o iPhone pede a permissão (podeReceberPush): a política não promete o pedido
+  // no Android. Quando o Android ganhar FCM, este teste lembra de mudar a política.
+  const notificacoes = readFileSync(join(MOBILE, 'src', 'lib', 'notificacoes.ts'), 'utf8');
+  if (/plataforma\s*===\s*'ios'/.test(notificacoes)) {
+    assert.match(politica, /no Android desta versão, o aplicativo não pede/);
+  }
+
+  // O registro do aparelho sai a cada sessão, com ou sem push: o "opcional" é das notificações.
+  assert.doesNotMatch(politica, /Registro do aparelho[^<]*\(opcionais\)/);
+
+  // Os 30 dias não são "sozinhos": a faxina roda no registro, no login e na renovação da sessão — e
+  // só por isso a loja que parou de usar o app (e só abre o navegador) não guarda o token para sempre.
+  const auth = ler('api/app/modules/auth/service.py');
+  const corpo = (nome) => auth.slice(auth.indexOf(`async def ${nome}(`), auth.indexOf('\n    async def ', auth.indexOf(`async def ${nome}(`) + 1));
+  for (const rota of ['login', 'refresh']) {
+    assert.match(
+      corpo(rota),
+      /NotificacoesService\(self\.session\)\.faxina\(\)/,
+      `o ${rota} parou de fazer a faxina dos aparelhos: ajuste a política e este teste`,
+    );
+  }
+  assert.match(
+    ler('api/app/modules/notificacoes/service.py'),
+    /async def registrar\([\s\S]*?await self\.repo\.faxina\(\)[\s\S]*?async def faxina\(/,
+    'o registro do aparelho parou de fazer a faxina: ajuste a política e este teste',
+  );
+  for (const [nome, pagina] of paginas) {
+    assert.doesNotMatch(pagina, /sozinhos? depois de 30 dias/, `${nome}: "sozinho depois de 30 dias"`);
+    assert.match(pagina, /30 dias sem o app ser usado, na limpeza automática que roda sempre que alguém entra no sistema/, nome);
+    assert.match(pagina, /sessão ainda aberta/, `${nome}: a limpeza também roda na volta com a sessão aberta`);
+    assert.match(pagina, /ou que um aparelho se registra/, `${nome}: a limpeza também roda no registro do aparelho`);
+  }
+
+  // O id da instalação também mora no pareamento do leitor ligado, e essa tabela entra nos
+  // backups (só a dos aparelhos fica de fora): as páginas dizem quando ele sai e que entra lá.
+  assert.match(ler('api/app/modules/leitor/service.py'), /p\.aparelho_instalacao = None/, '_encerrar parou de tirar o id');
+  assert.match(politica, /Identificador da instalação no leitor ligado/);
+  assert.match(politica, /entra nas cópias de segurança da loja como o resto do banco/);
+  assert.match(exclusao, /Celular ligado como leitor:<\/strong>[^<]*entra nas cópias de segurança como o resto do banco/);
+});
+
+test('guia: o "Digitar código" do leitor ligado está no passo a passo do leitor se, e só se, a tela o tem', () => {
+  const leitor = readFileSync(join(MOBILE, 'src', 'components', 'LeitorPareado.tsx'), 'utf8');
+  const guia = montarHtml();
+  const inicio = guia.indexOf("Phone as the computer's barcode reader");
+  const secao = guia.slice(inicio, guia.indexOf('QR instead', inicio));
+  assert.ok(inicio >= 0 && secao, 'a seção do leitor sumiu do guia');
+  assert.equal(secao.includes('Digitar código'), leitor.includes('<CodigoManual'), 'o guia e a tela do leitor ligado não batem');
+});
+
+test('LOJAS-DE-APP.md: as notas, a descrição e as novidades do doc são os arquivos da ficha, com o tamanho no título', () => {
+  // O doc mostra o texto que vai à Apple e o tamanho dele (com os marcadores): mudou o arquivo,
+  // muda o doc no mesmo commit — senão quem lê o doc confere um texto que não é o publicado.
+  const doc = readFileSync(join(MOBILE, '..', 'docs', 'LOJAS-DE-APP.md'), 'utf8');
+  const blocos = [...doc.matchAll(/```\n([\s\S]*?)```/g)].map((m) => m[1].replace(/\n+$/, ''));
+  for (const [arquivo, titulo] of [
+    ['notas-revisao.txt', /^## 6\. NOTAS PARA A REVISÃO[^\n]* — ([\d.]+) caracteres com os marcadores/m],
+    ['descricao.txt', /^## 3\. DESCRIÇÃO — ([\d.]+) caracteres com os marcadores/m],
+    ['novidades.txt', /^## 4\. NOVIDADES DESTA VERSÃO — ([\d.]+) caracteres/m],
+  ]) {
+    const texto = readFileSync(join(MOBILE, 'publicar', 'ficha', arquivo), 'utf8').trim();
+    assert.ok(blocos.includes(texto), `docs/LOJAS-DE-APP.md não tem o texto de ficha/${arquivo} como ele está`);
+    assert.equal(doc.match(titulo)?.[1], [...texto].length.toLocaleString('pt-BR'), `o título de ficha/${arquivo} no doc diz outro tamanho`);
+  }
 });

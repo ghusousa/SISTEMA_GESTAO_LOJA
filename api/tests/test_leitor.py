@@ -8,6 +8,7 @@ abas retirando a mesma fila) rodam de verdade, em sessões separadas.
 
 import asyncio
 import contextlib
+import time
 import uuid
 from datetime import timedelta
 
@@ -42,6 +43,20 @@ async def _sql(sql: str, **params: object) -> list:
     async with engine.begin() as conn:
         resultado = await conn.execute(text(sql), params)
         return list(resultado.all()) if resultado.returns_rows else []
+
+
+async def _alguem_esperando_trava() -> None:
+    """Espera até alguma conexão deste banco ficar parada numa trava (a corrida chegou ao
+    ponto de espera de verdade, e não por sorte do escalonador)."""
+    prazo = time.monotonic() + 10
+    while not (
+        await _sql(
+            "SELECT count(*) FROM pg_stat_activity "
+            "WHERE datname = current_database() AND wait_event_type = 'Lock'"
+        )
+    )[0][0]:
+        assert time.monotonic() < prazo, "ninguém chegou a esperar a trava"
+        await asyncio.sleep(0.05)
 
 
 async def _criar(client: AsyncClient, auth: dict[str, str], **corpo: object) -> dict:
@@ -171,6 +186,8 @@ async def test_parear_bipar_e_retirar_entrega_uma_vez(
     assert criado["computador_nome"] == admin.name
     assert criado["aparelho_nome"] is None
     assert normalizar_codigo(criado["codigo"]) == criado["codigo"]
+    # O QR continua sendo o QR: com código, sem chamado nem sinal (ADR-47).
+    assert criado["chamado"] is False and criado["sinal"] is None
 
     # Digitado do jeito da pessoa: minúsculo e com hífen.
     digitado = f"{criado['codigo'][:3].lower()}-{criado['codigo'][3:].lower()}"
@@ -765,6 +782,10 @@ async def test_excluir_a_conta_de_quem_pareou_nao_trava(
 async def test_tempo_real_avisa_pareamento_e_bipe_mas_nao_a_retirada(
     client, auth_admin, auth_vendedor
 ) -> None:
+    """Pareamento e bipe saem por assuntos SEPARADOS (ADR-47): o app acompanha o pareamento
+    (é por ele que fica sabendo do chamado do computador) e não pode refazer consulta a cada
+    bipe, que sai um por leitura."""
+
     def drenar(fila) -> list:
         eventos = []
         while not fila.empty():
@@ -773,10 +794,11 @@ async def test_tempo_real_avisa_pareamento_e_bipe_mas_nao_a_retirada(
 
     async with central.inscrever() as fila:
         criado = await _criar(client, auth_admin)
-        assert Assunto.LEITOR in {e.assunto for e in drenar(fila)}
+        assert criado["chamado"] is False and criado["sinal"] is None
+        assert {e.assunto for e in drenar(fila)} == {Assunto.LEITOR_PAREAMENTO}
 
         await _aceitar(client, auth_vendedor, criado["codigo"])
-        assert {e.assunto for e in drenar(fila)} == {Assunto.LEITOR}
+        assert {e.assunto for e in drenar(fila)} == {Assunto.LEITOR_PAREAMENTO}
 
         await _bipar(client, auth_vendedor, criado["id"], "7891234567895")
         eventos = drenar(fila)
@@ -789,7 +811,7 @@ async def test_tempo_real_avisa_pareamento_e_bipe_mas_nao_a_retirada(
         assert drenar(fila) == [], "a retirada avisou — cada tela retiraria de novo, em eco"
 
         await client.delete(f"/leitor/pareamentos/{criado['id']}", headers=auth_admin)
-        assert {e.assunto for e in drenar(fila)} == {Assunto.LEITOR}
+        assert {e.assunto for e in drenar(fila)} == {Assunto.LEITOR_PAREAMENTO}
 
 
 async def test_diario_registra_ligar_e_desligar_e_so(client, auth_admin, auth_vendedor) -> None:

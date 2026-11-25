@@ -1,0 +1,23 @@
+diff --git a/node_modules/react-native-screens/ios/RNSScreenStack.mm b/node_modules/react-native-screens/ios/RNSScreenStack.mm
+index 229dc58..d1c8ed8 100644
+--- a/node_modules/react-native-screens/ios/RNSScreenStack.mm
++++ b/node_modules/react-native-screens/ios/RNSScreenStack.mm
+@@ -230,13 +230,11 @@ namespace react = facebook::react;
+     // which we check indirectly by checking if transitionCoordinator is set.
+     // If it's not, we are safe to proceed.
+     if (self.transitionCoordinator == nil) {
+-      // We still need to disable interactions for back button so click effects are not applied,
+-      // and there is unfortunately no better place for it currently
+-      UIView *button = [navigationBar rnscreens_findBackButtonWrapperView];
+-      if (button != nil) {
+-        button.userInteractionEnabled = false;
+-      }
+-
++      // SISTEMA_GESTAO_LOJA: the back button is no longer disabled here. When the screen popped
++      // back to hides its header (our tabs screen), didPopItem cannot find the button to
++      // re-enable it, iOS reuses that same button on the next push, and the back button is dead
++      // from then on (software-mansion/react-native-screens#3294, fixed upstream in 4.17.0).
++      // The transition check above still blocks a second pop while one is in progress.
+       return true;
+     }
+ 

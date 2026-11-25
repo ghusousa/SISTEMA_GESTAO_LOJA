@@ -40,8 +40,9 @@ o **app** (Android/iOS) para andar pela loja bipando com a câmera, e o **sistem
 computador do balcão, onde o leitor USB digita o código como teclado e o teclado resolve
 o que é chato no celular — digitar preço, lançar despesa, fechar o caixa, editar a grade.
 A loja consegue operar 100% sem celular. E o contrário também ajuda: sem leitor USB (ou
-com um só para dois caixas), **o celular vira o leitor do computador** — pareado por um QR,
-cada bipe na câmera cai no campo do leitor da tela do computador (ADR-43).
+com um só para dois caixas), **o celular vira o leitor do computador** — chamado do próprio
+computador ("Abrir no app o leitor de código", no celular do mesmo login, ADR-47) ou pareado por
+um QR, cada bipe na câmera cai no campo do leitor da tela do computador (ADR-43).
 
 ## Entidades centrais
 
@@ -143,23 +144,47 @@ cada bipe na câmera cai no campo do leitor da tela do computador (ADR-43).
     regime — aparece em lista; sem rede, fica pendente e tenta-se de novo. Cancelar a venda
     cancela a nota antes; se a SEFAZ recusar (passou de 30 minutos), a venda não é cancelada —
     nem quando não dá para confirmar com o emissor se a nota pendente foi autorizada.
-14. **Usar o celular como leitor do computador** — quem está no computador clica em
-    "📱 Celular como leitor", no rodapé da lateral (em qualquer tela, qualquer papel): aparece um
-    QR e um código de 6 letras e números (vale 5 min; "Gerar outro" troca). Qualquer pessoa da
-    equipe, logada no app, vai em Mais → "Leitor do computador", lê o QR (ou digita o código) e o
-    celular vira o leitor daquele computador: cada bipe na câmera cai no campo do leitor da tela
+14. **Usar o celular como leitor do computador** — dois caminhos, qualquer papel:
+    - **O chamado (ADR-47), o principal:** numa tela que lê código (PDV, Devolução, Entrada,
+      Inventário ou Condicional nova), acima do campo de leitura, quem está no computador clica
+      em "Abrir no app o leitor de código". A tela mostra "Chamando…" e um sinal de 3
+      caracteres ("Sinal 7K3 — confira o mesmo no celular"). No celular com o MESMO login e o app
+      aberto, em qualquer tela, desce a faixa "O computador está chamando · Sinal 7K3": um toque
+      em "Abrir o leitor" e a câmera já lê para aquele computador. Com o mesmo login em dois
+      caixas, cada aba tem o seu chamado e o seu sinal, e cada pessoa abre o do sinal da tela
+      dela. O chamado vale 5 min (vencido, some sozinho da faixa do celular); "Chamar de novo",
+      "Cancelar" e "Ler o QR" ficam ao lado, e o leitor USB segue funcionando (nada ali é janela).
+      O F5 (ou a aba fechada e reaberta pelo navegador, Ctrl+Shift+T) enquanto chama retoma o MESMO chamado, nunca um segundo.
+      Quando a loja liga as notificações no servidor (`NOTIFICACOES_PUSH=expo`; nascem desligadas),
+      o iPhone que permitiu recebe o chamado também com o app fechado — o toque na notificação abre
+      a câmera; o computador diz se a notificação saiu e, se não, por quê (nenhum celular com o app
+      atualizado nesse login, notificações desligadas no celular ou no servidor, falta o passo de
+      quem publica o app, ou a falha da vez), e quem cuida do servidor confere com um aviso de
+      teste (`python -m app.cli testar-push --email <login>`), que diz o que a Apple respondeu.
+    - **O QR (ADR-43), para o celular de outra pessoa:** "Celular de outra pessoa? Ler o QR", ao
+      lado do botão, ou "📱 Celular como leitor", no rodapé da lateral (em qualquer tela): aparece
+      um QR e um código de 6 letras e números (vale 5 min; "Gerar outro" troca). Qualquer pessoa
+      da equipe, logada no app, vai em Mais → "Leitor do computador", lê o QR (ou digita o
+      código).
+
+    Nos dois, o celular vira o leitor daquele computador: cada bipe na câmera cai no campo do leitor da tela
     aberta — PDV, Devolução, Entrada, Inventário ou Condicional nova —, como se fosse o leitor
     USB, e a lateral do computador mostra de quem é o celular ligado. Com uma janela aberta no
     computador o código não entra (a tela avisa para bipar de novo); numa tela sem leitor, a tela
     avisa qual abrir. Enquanto a tela grava (Registrar, Fechar contagem) ou a pessoa do computador
     digita uma quantidade na lista, o código espera a vez e entra depois — nada some no meio. O
     que chegou tarde demais (mais de 2 min) o computador avisa; o celular lista o que não saiu
-    quando o leitor para, e marca "confira no computador" o que a rede não confirmou. Vale até alguém desligar (de qualquer um dos dois), sair do sistema, ou 12 h
-    depois; o F5 não desliga. Um celular lê para um computador por vez: ler o código de outro
-    computador desliga o primeiro.
+    quando o leitor para, e marca "confira no computador" o que a rede não confirmou. Etiqueta que
+    a câmera não lê (barras apagadas, amassadas): "Digitar código", na tela do leitor ligado, manda
+    o número ao computador do mesmo jeito. Vale até alguém desligar (de qualquer um dos dois), sair
+    do sistema, ou 12 h depois; o F5 não desliga. Um celular lê para um computador por vez: ler o código de outro
+    computador (ou atender outro chamado) desliga o primeiro; outro celular com o mesmo login não
+    derruba o leitor deste. Com um leitor ligado, o computador não troca de celular por cima:
+    "Chamar de novo" desliga o atual antes.
 15. **Excluir uma conta** (ADR-45) — qualquer pessoa exclui a PRÓPRIA conta de dentro do app, em
     Mais → "Minha conta" → "Excluir minha conta" (no computador, "Minha conta"): a tela diz o que
-    some (o login, as sessões em todos os aparelhos, o celular-leitor, o e-mail no diário) e o que
+    some (o login, as sessões em todos os aparelhos, o celular-leitor e o registro dele para as
+    notificações, o e-mail no diário) e o que
     fica (as vendas e o diário, com o nome de quem fez), pede a senha e confirma. Senha errada não
     derruba a sessão: a tela só pede de novo. Deu certo, o app volta à entrada dizendo "Conta
     excluída". O único dono não se exclui — a tela diz para passar antes o papel de dono a outra
@@ -183,6 +208,16 @@ cada bipe na câmera cai no campo do leitor da tela do computador (ADR-43).
   **não** é entregue (não cai no carrinho de surpresa); só o celular que aceitou o código bipa por ele;
   um celular lê para um computador por vez; e o código lido nunca passa pelo aviso de tempo
   real, só pela rota que confere de quem é o pareamento.
+- Chamado do leitor (ADR-47): só o celular do MESMO login atende, e só um toque liga (na faixa,
+  no cartão da tela do leitor ou na notificação; link e QR nunca ligam sozinhos); o sinal é o
+  que separa dois caixas com o mesmo login, e o QR continua sendo o vínculo estrito. O app só
+  pede a permissão de notificação no iPhone, quando o servidor da loja manda push, e nunca ao
+  abrir. A notificação leva só um texto fixo e o sinal — nenhum nome, venda, cliente ou endereço
+  do servidor —, e o token dela é credencial: não sai em tela, log nem backup, e some ao sair do
+  app, ao trocar a senha, ao desativar ou excluir a conta e, depois de 30 dias sem uso, na limpeza
+  de cada entrada no sistema (ou de cada registro de aparelho). O identificador da instalação do
+  app sai do leitor quando ele é desligado ou trocado; o do leitor que só venceu sai no primeiro
+  QR ou chamado feito 5 min depois do fim, e até lá fica na linha (e nas cópias de segurança).
 - Vendedor não recebe custo em nenhuma resposta da API.
 - Retry de rede não duplica venda, entrada, devolução nem recebimento de fiado
   (idempotência por `client_uuid`). E a mesma chave com outro pedido (outras peças, outro
@@ -226,7 +261,8 @@ cada bipe na câmera cai no campo do leitor da tela do computador (ADR-43).
 - Toda pessoa com conta consegue excluí-la sozinha, de dentro do app, confirmando com a senha
   (Apple 5.1.1(v)); errar a senha não desloga ninguém. A loja nunca fica sem dono ativo — nem
   com dois donos saindo ao mesmo tempo. Excluir a conta derruba as sessões em todos os
-  aparelhos, desliga o celular-leitor e tira o e-mail do diário (vira máscara); não apaga venda,
+  aparelhos, desliga o celular-leitor (e o registro dele para as notificações) e tira o e-mail do
+  diário (vira máscara); não apaga venda,
   devolução, caixa nem linha do diário, que ficam com o nome de quem fez — inclusive de quem já
   vendeu, cuja conta sai do mesmo jeito. O e-mail de quem saiu volta a poder ser usado numa conta
   nova.

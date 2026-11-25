@@ -223,3 +223,20 @@ async def test_mudanca_da_loja_entra_no_diario(client: AsyncClient, auth_admin: 
     diario = await client.get("/auditoria", headers=auth_admin)
     acoes = [linha["acao"] for linha in diario.json()["items"]]
     assert "LOJA_CONFIGURADA" in acoes
+
+
+async def test_a_porta_diz_se_o_push_do_leitor_esta_ligado(
+    client: AsyncClient, auth_admin: dict, monkeypatch
+) -> None:
+    """O app só pede a permissão de notificação quando este servidor manda o push (ADR-47):
+    ninguém vê um pedido de notificação que não vai funcionar. O push nasce desligado — na
+    loja, na demo e na Vercel — e quem liga é o `.env` (`NOTIFICACOES_PUSH=expo`)."""
+    from app.core.config import Settings, settings
+
+    assert Settings.model_fields["notificacoes_push"].default == "desligado"
+    assert (await client.get("/configuracao")).json()["notificacoes_push"] is False
+
+    monkeypatch.setattr(settings, "notificacoes_push", "expo")
+    assert (await client.get("/configuracao")).json()["notificacoes_push"] is True
+    completa = await client.get("/configuracao/completa", headers=auth_admin)
+    assert completa.json()["notificacoes_push"] is True

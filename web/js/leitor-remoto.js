@@ -10,12 +10,17 @@
  * servidor e do prazo têm de se comportar IGUAL nas duas pontas — o web monta o convite
  * que o app lê. Mudou um, mude o outro. A fila de envio do bipe (espera entre tentativas,
  * destino da falha) só existe no app; a seção do fim ("só do web") trata do lado que
- * RECEBE, que só existe no computador.
+ * RECEBE, que só existe no computador — e, por último, do botão que chama o celular do
+ * mesmo login sem QR (ADR-47): o estado e as frases da área acima do campo de leitura.
  *
  * Tudo aqui é texto e regex, de propósito: o `URL` do React Native não entende esquema
  * próprio (`gestaoloja:`), não baixa a caixa do host e não sabe IPv6. Com o mesmo código
  * rodando no Node (teste), no navegador e no Hermes, o resultado é um só.
  */
+
+// Só o `plural` das frases do chamado (seção "só do web"): `ui.js` não importa nada e não toca
+// o DOM ao carregar, então este arquivo continua rodando no node do teste.
+import { plural } from './ui.js';
 
 /** Sem 0, O, 1 e I: ninguém confunde ao ler da tela e digitar no celular. */
 export const ALFABETO = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -408,6 +413,16 @@ export const ESPERA_DA_DONA_MS = 300;
  * `BroadcastChannel`, que não exige HTTPS: a loja na rede local é HTTP) se outra já cuida dele;
  * a que cuida (`meu()` devolve o id dela) responde, e quem perguntou não retoma.
  *
+ * A aba que ainda espera a resposta sobre um leitor também responde por ele — a quem perguntou
+ * DEPOIS dela. A cópia de "Duplicar aba" feita durante a pergunta da origem (o F5 que retoma o
+ * leitor guardado, ou o reenvio da chave do chamado) pode perguntar antes de a espera da origem
+ * acabar (no Chromium, com o servidor perto, ela pergunta ~100 ms depois de nascer): a origem não
+ * é dona ainda, a cópia nunca ouviu a pergunta dela, e sem resposta as duas retomariam o mesmo
+ * leitor. Vence a primeira a perguntar (a hora da pergunta; no mesmo milissegundo, um sorteio):
+ * a resposta de quem ainda pergunta leva a hora da pergunta dela e só vale para quem perguntou
+ * depois, e todas comparam os mesmos pares — uma retoma, nunca duas nem nenhuma. A pergunta de
+ * uma página antiga (sem a hora) só ouve a dona, como antes.
+ *
  * Sem `canal` (navegador muito antigo), a pergunta responde "ninguém" e nada muda.
  */
 export function criarDonaDaAba({
@@ -418,30 +433,210 @@ export function criarDonaDaAba({
     const t = setTimeout(fn, ms);
     return () => clearTimeout(t);
   },
+  agora = () => Date.now(),
+  sortear = Math.random,
 }) {
+  /** As perguntas desta aba ainda sem resposta, por leitor: `{ quando, sorteio, responder }`. */
   const perguntas = new Map();
+  /** A pergunta `a` saiu antes da `b`? A hora; no mesmo milissegundo, o sorteio. */
+  const antes = (a, b) => a.quando < b.quando || (a.quando === b.quando && a.sorteio < b.sorteio);
   canal?.addEventListener('message', (evento) => {
-    const { tipo, id } = evento?.data ?? {};
+    const dados = evento?.data ?? {};
+    const { tipo, id } = dados;
     if (!Number.isInteger(id)) return;
-    if (tipo === 'quem-cuida' && meu() === id) canal.postMessage({ tipo: 'eu-cuido', id });
-    else if (tipo === 'eu-cuido') perguntas.get(id)?.(true);
+    const minha = perguntas.get(id);
+    if (tipo === 'quem-cuida') {
+      if (meu() === id) canal.postMessage({ tipo: 'eu-cuido', id });
+      // Quem ainda pergunta responde com a hora da PRÓPRIA pergunta: a resposta vai a todas as
+      // abas, e só vale para as que perguntaram depois dela — a que perguntou antes (três abas no
+      // meio) a ignora, senão todas desistiriam e ninguém retomaria.
+      else if (minha && Number.isFinite(dados.quando) && antes(minha, dados)) {
+        canal.postMessage({ tipo: 'eu-cuido', id, quando: minha.quando, sorteio: minha.sorteio });
+      }
+    } else if (tipo === 'eu-cuido' && minha && (!Number.isFinite(dados.quando) || antes(dados, minha))) {
+      // A dona responde sem hora, e vale para todas.
+      minha.responder(true);
+    }
   });
 
   return {
-    /** Resolve `true` se outra aba já cuida do leitor `id`. */
+    /** Resolve `true` se outra aba já cuida do leitor `id` (ou perguntou por ele antes desta). */
     outraCuida(id) {
       if (!canal) return Promise.resolve(false);
       return new Promise((resolve) => {
         let desistir = () => {};
-        const responder = (sim) => {
-          desistir();
-          perguntas.delete(id);
-          resolve(sim);
+        const pergunta = {
+          quando: agora(),
+          sorteio: sortear(),
+          responder(sim) {
+            desistir();
+            if (perguntas.get(id) === pergunta) perguntas.delete(id);
+            resolve(sim);
+          },
         };
-        perguntas.set(id, responder);
-        desistir = agendar(() => responder(false), esperaMs);
-        canal.postMessage({ tipo: 'quem-cuida', id });
+        perguntas.set(id, pergunta);
+        desistir = agendar(() => pergunta.responder(false), esperaMs);
+        canal.postMessage({ tipo: 'quem-cuida', id, quando: pergunta.quando, sorteio: pergunta.sorteio });
       });
     },
   };
+}
+
+// ------------------------------------------------------------- o chamado (ADR-47), só do web
+
+/**
+ * "Abrir no app o leitor de código" (ADR-47): o computador chama o celular do MESMO login, sem
+ * QR. A área mora acima do campo de leitura das telas que leem código (`leitor-chamado.js` pinta;
+ * `leitor-celular.js` guarda o estado). Daqui saem só o estado e as frases, para o teste.
+ *
+ * Os rótulos são o que a vendedora procura na tela (e o que o guia do revisor cita).
+ */
+/**
+ * Os assuntos do tempo real que acordam o leitor da aba NA HORA (`ouvirNaHora`), sem a espera da
+ * rodada: "leitor" é o bipe da câmera, que tem de cair no carrinho já; "leitor_pareamento" é o
+ * celular que atendeu o chamado (ou aceitou o QR), e a área tem de dizer "ligado" já;
+ * "reconectado" é o canal de volta, que pode ter perdido os dois. Só o assunto: o que mudou, a
+ * aba busca pela rota REST.
+ */
+export const ASSUNTOS_DO_LEITOR = Object.freeze(['leitor', 'leitor_pareamento', 'reconectado']);
+
+export const ROTULOS_DO_CHAMADO = Object.freeze({
+  chamar: 'Abrir no app o leitor de código',
+  qrDeOutraPessoa: 'Celular de outra pessoa? Ler o QR',
+  chamarDeNovo: 'Chamar de novo',
+  cancelar: 'Cancelar',
+  lerQr: 'Ler o QR',
+  mostrarQr: 'Mostrar o QR',
+  desligar: 'Desligar',
+});
+
+/**
+ * Em que pé está o leitor desta aba, do ponto de vista da área do chamado:
+ *
+ * - `'pedindo'`: o POST do chamado está no ar — pintado no CLIQUE, antes da resposta (o envio
+ *   da notificação pode segurar a resposta uns segundos);
+ * - `'livre'`: nenhum pareamento vivo na aba (sem, ou o que havia venceu/terminou);
+ * - `'chamando'`: um chamado AGUARDANDO o celular atender;
+ * - `'qr'`: um código de QR AGUARDANDO (pareamento sem `chamado` também é QR);
+ * - `'ligado'`: ATIVO, de chamado ou de QR — é o "aceito".
+ */
+export function estadoDoChamado({ pareamento, pedindo } = {}) {
+  if (pedindo) return 'pedindo';
+  if (pareamento?.status === 'ATIVO') return 'ligado';
+  if (pareamento?.status === 'AGUARDANDO') return pareamento.chamado ? 'chamando' : 'qr';
+  return 'livre';
+}
+
+/** A dica com o push desligado no servidor: o chamado chega ao app ABERTO, pela faixa. */
+const SEM_PUSH = 'Com o app aberto no celular, o chamado aparece lá. Ou leia o QR.';
+
+/**
+ * Por que o celular foi avisado, ou não — a dica debaixo do sinal, pela `notificacao` da resposta
+ * do chamado. Nenhuma fala de dono nem de repositório: a chave da Apple é de quem publica o app,
+ * não de cada loja. E a do push desligado — o padrão do servidor — não fala de chave nem de Apple.
+ *
+ * Sem situação (F5, reenvio da mesma chave: o servidor não conta de novo), quem decide é
+ * `pushLigado` — o `notificacoes_push` de `GET /configuracao`. Desligado (o padrão, e o que vale
+ * enquanto a configuração não chega), a frase é a da DESLIGADA: ninguém espera uma notificação
+ * que não vai chegar.
+ * @param {string | null | undefined} situacao
+ * @param {{ celulares?: number, pushLigado?: boolean }} [extra]
+ */
+export function avisoDaNotificacao(situacao, { celulares = 0, pushLigado = false } = {}) {
+  switch (situacao) {
+    case 'ENVIADA':
+      return `Notificação enviada a ${plural(celulares, 'celular', 'celulares')} com o seu login: toque nela — ou abra o app, o chamado aparece lá.`;
+    case 'SEM_CELULAR':
+      return 'Nenhum celular com o seu login tem o app atualizado. Atualize o app, entre com o MESMO login e abra-o — ou leia o QR.';
+    case 'SEM_NOTIFICACAO':
+      return 'O celular com o seu login não recebe notificações deste app: com o app aberto, o chamado aparece lá. Para receber com o app fechado: no celular, Mais → Leitor do computador.';
+    case 'DESLIGADA':
+      return SEM_PUSH;
+    case 'SEM_CHAVE_DA_APPLE':
+      return 'O iPhone ainda não recebe as notificações deste app (falta um passo de quem publica o app): com o app aberto, o chamado aparece lá — ou leia o QR.';
+    case 'FALHOU':
+      return 'A notificação não saiu agora: com o app aberto, o chamado aparece lá — ou leia o QR.';
+    default:
+      return pushLigado ? 'Toque na notificação no celular — ou abra o app: o chamado aparece lá.' : SEM_PUSH;
+  }
+}
+
+/**
+ * O aviso do chamado que terminou sem ninguém atender, ou `null`. Cancelar foi a própria pessoa
+ * (sem aviso); o SUBSTITUIDO pelo "Chamar de novo" ou pelo QR desta mesma aba nem chega aqui —
+ * por fora, só o teto de 10 leitores vivos do login encerra o chamado de uma aba.
+ */
+export function avisoDoChamadoQueAcabou(pareamento) {
+  if (pareamento?.status === 'EXPIRADO') {
+    return 'O celular não atendeu em 5 min. Toque de novo em “Abrir no app o leitor de código” — ou leia o QR.';
+  }
+  if (pareamento?.status === 'ENCERRADO' && pareamento.motivo_encerramento === 'SUBSTITUIDO') {
+    return 'Este chamado foi encerrado: há leitores demais abertos com o seu login.';
+  }
+  return null;
+}
+
+const acao = (nome, rotulo, jeito = 'botao') => ({ acao: nome, rotulo, jeito });
+
+/**
+ * O que a área mostra em cada estado. `trechos` é a frase em pedaços: texto, e o sinal à parte
+ * (`{ sinal }`), que a tela destaca — tudo entra por `textContent`, nunca como HTML (o nome do
+ * celular vem do servidor). `texto` é a frase inteira. `acoes` são os botões, na ordem, como
+ * `{ acao, rotulo, jeito }`: `acao` vai no `data-acao`, e `jeito` é `'principal'`, `'botao'` ou
+ * `'link'`. `travado`: um pedido no ar (o do chamado, cancelar, desligar, o QR nascendo) — os
+ * botões ficam apagados até a resposta.
+ *
+ * O "ligado" pelo QR não oferece "Chamar de novo": pode ser o celular de OUTRA pessoa, e chamar
+ * o do próprio login o desligaria.
+ *
+ * `pushLigado` (o `notificacoes_push` de `GET /configuracao`) só muda a dica sem situação
+ * (`avisoDaNotificacao`).
+ * @param {string} estado o de `estadoDoChamado`
+ * @param {{ pareamento?: object | null, notificacao?: { situacao?: string | null, celulares?: number } | null, ocupado?: boolean, pushLigado?: boolean }} [leitor]
+ */
+export function oQueMostrar(estado, { pareamento = null, notificacao = null, ocupado = false, pushLigado = false } = {}) {
+  const sinal = pareamento?.sinal || null;
+  let trechos = [];
+  let dica = null;
+  let acoes;
+
+  if (estado === 'pedindo' || estado === 'chamando') {
+    // "Chamando…" já no clique; o sinal entra quando a resposta chega. Os mesmos botões nos
+    // dois: a resposta não mexe a área de lugar, só acende os botões.
+    trechos =
+      estado === 'chamando' && sinal
+        ? ['Chamando o leitor no seu celular… Sinal ', { sinal }, ' — confira o mesmo no celular.']
+        : ['Chamando o leitor no seu celular…'];
+    if (estado === 'chamando') {
+      dica = avisoDaNotificacao(notificacao?.situacao ?? null, {
+        celulares: notificacao?.celulares ?? 0,
+        pushLigado,
+      });
+    }
+    acoes = [
+      acao('chamar-de-novo', ROTULOS_DO_CHAMADO.chamarDeNovo),
+      acao('cancelar', ROTULOS_DO_CHAMADO.cancelar),
+      acao('qr', ROTULOS_DO_CHAMADO.lerQr, 'link'),
+    ];
+  } else if (estado === 'qr') {
+    trechos = ['Esperando um celular ler o QR…'];
+    acoes = [acao('mostrar-qr', ROTULOS_DO_CHAMADO.mostrarQr), acao('cancelar', ROTULOS_DO_CHAMADO.cancelar)];
+  } else if (estado === 'ligado') {
+    const quem = pareamento?.aparelho_nome || 'alguém';
+    const doChamado = !!pareamento?.chamado;
+    trechos =
+      doChamado && sinal
+        ? [`Celular de ${quem} ligado (sinal `, { sinal }, '): as leituras caem aqui.']
+        : [`Celular de ${quem} ligado: as leituras caem aqui.`];
+    acoes = doChamado
+      ? [acao('chamar-de-novo', ROTULOS_DO_CHAMADO.chamarDeNovo), acao('desligar', ROTULOS_DO_CHAMADO.desligar)]
+      : [acao('desligar', ROTULOS_DO_CHAMADO.desligar)];
+  } else {
+    acoes = [
+      acao('chamar', ROTULOS_DO_CHAMADO.chamar, 'principal'),
+      acao('qr', ROTULOS_DO_CHAMADO.qrDeOutraPessoa, 'link'),
+    ];
+  }
+  const texto = trechos.map((t) => (typeof t === 'string' ? t : t.sinal)).join('');
+  return { trechos, texto, dica, acoes, travado: estado === 'pedindo' || !!ocupado };
 }

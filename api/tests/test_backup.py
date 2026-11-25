@@ -450,6 +450,64 @@ async def test_sem_home_como_no_systemd_o_backup_roda(tmp_path: Path) -> None:
 
 
 @precisa_da_maquina
+async def test_backup_nao_leva_os_aparelhos_de_notificacao(
+    session: AsyncSession, tmp_path: Path
+) -> None:
+    """O token de push é credencial ao portador (ADR-47): com ele, qualquer um manda
+    notificação com o nome e o ícone do app. O backup leva a tabela só como estrutura — a
+    cópia de fora sai legível até alguém confirmar a chave do backup."""
+    await session.execute(
+        text(
+            "INSERT INTO users (name, email, password_hash, role, is_active) "
+            "VALUES ('Dona', 'dona@x.com', 'x', 'ADMIN', true)"
+        )
+    )
+    await session.execute(
+        text(
+            "INSERT INTO notificacao_aparelhos (user_id, instalacao, plataforma, token) "
+            "SELECT id, gen_random_uuid(), 'ios', 'ExponentPushToken[do-backup]' FROM users"
+        )
+    )
+    await session.commit()
+
+    r = _backup_sh(tmp_path, _maquina(tmp_path), "--sim")
+    assert r.returncode == 0, r.stdout + r.stderr
+    (dump,) = (tmp_path / "loja" / "backups").glob("loja-*.dump")
+    indice = subprocess.run(
+        ["pg_restore", "-l", str(dump)], capture_output=True, text=True, check=True, timeout=60
+    ).stdout
+    assert re.search(r"\bTABLE public notificacao_aparelhos\b", indice), indice
+    assert "TABLE DATA public notificacao_aparelhos" not in indice
+    assert "TABLE DATA public users" in indice, "o backup deixou de levar o resto"
+
+
+def test_todo_pg_dump_da_loja_deixa_os_aparelhos_de_fora() -> None:
+    """Guarda de texto: todo `pg_dump` dos scripts da raiz leva o `--exclude-table-data` da tabela
+    dos tokens de push — os do Linux (o backup diário, o da nuvem, o de antes de restaurar, o de
+    antes de atualizar e o de antes de desinstalar) E os do Windows (`backup.ps1`, o da Tarefa
+    Agendada diária, e o de antes de desinstalar). O Windows também é caminho suportado
+    (`instalar.bat`), e o backup dele vai para pen drive e nuvem do mesmo jeito.
+    `utf-8-sig`: o `backup.ps1` começa com BOM, que o PowerShell 5 precisa."""
+    comandos = [
+        (script.name, numero, linha)
+        for padrao in ("*.sh", "*.ps1")
+        for script in sorted(RAIZ.glob(padrao))
+        for numero, linha in enumerate(script.read_text(encoding="utf-8-sig").splitlines(), 1)
+        if not linha.lstrip().startswith("#") and re.search(r"\bpg_dump\s+-", linha)
+    ]
+    assert {nome for nome, _, _ in comandos} == {
+        "atualizar.sh",
+        "backup.sh",
+        "desinstalar.sh",
+        "backup.ps1",
+        "desinstalar.ps1",
+    }
+    assert len(comandos) >= 7, comandos
+    for nome, numero, linha in comandos:
+        assert "--exclude-table-data=notificacao_aparelhos" in linha, f"{nome}:{numero}"
+
+
+@precisa_da_maquina
 async def test_rotacao_do_drive_nao_congela_o_ultimo_backup(
     session: AsyncSession, tmp_path: Path
 ) -> None:

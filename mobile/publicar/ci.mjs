@@ -28,9 +28,14 @@
  * não é segredo (issuer da chave, time da Apple, contato, conta e código da demo) tem padrão
  * em publicar/padroes.json: com ele, o GitHub só precisa de EXPO_TOKEN, ASC_KEY_ID e
  * ASC_KEY_P8 para subir a ficha.
+ * Antes de compilar, liga a capacidade Push Notifications no App ID (o expo-notifications grava
+ * aps-environment no app, e sem ela a assinatura quebra — ADR-47); App ID que ainda não existe
+ * no portal, ou a Apple recusando, viram aviso: o eas tenta de novo no build.
+ *
  * Saídas (GITHUB_OUTPUT): issuer_id, team_id, team_type, faltando_revisao, tem_chave,
- * tem_ficha, faltando_ficha, chave_p8, config, app_id, versao_estado (inexistente | editavel |
- * travada) e versao_mensagem; no "aparelhos", aparelhos.
+ * tem_ficha, faltando_ficha, chave_p8, config, push_no_app_id (ligado | ligou | sem-bundle |
+ * falhou), app_id, versao_estado (inexistente | editavel | travada) e versao_mensagem; no
+ * "aparelhos", aparelhos.
  */
 
 import { createPrivateKey } from 'node:crypto';
@@ -233,6 +238,65 @@ export async function garantirAparelho(cliente, { udid = '', nome = '' } = {}) {
   return { aparelhos, registrado };
 }
 
+/** A capacidade que o expo-notifications exige do App ID (ADR-47). */
+export const CAPACIDADE_DO_PUSH = 'PUSH_NOTIFICATIONS';
+
+/**
+ * O plugin do expo-notifications grava aps-environment no app, em TODO build (com o push do
+ * servidor ligado ou não): num App ID sem a capacidade Push Notifications, a assinatura quebra.
+ * Liga a capacidade ANTES de compilar. O EAS também sincroniza as capacidades no build; aqui o
+ * passo fica explícito e testado. Ligar invalida os perfis desse App ID: o eas refaz o que não
+ * está ACTIVE, e o ad hoc já usa --refresh-ad-hoc-provisioning-profile.
+ * Devolve 'ligado' (já estava), 'ligou' ou 'sem-bundle' (o App ID ainda não existe no portal:
+ * o eas o registra no 1º build). Erro da Apple sobe: quem chama decide (o preparar avisa e segue).
+ */
+export async function garantirPushNoAppId(cliente, bundle) {
+  const resposta = await cliente.get(
+    `/v1/bundleIds?filter[identifier]=${encodeURIComponent(bundle)}` +
+      '&include=bundleIdCapabilities&limit=200&limit[bundleIdCapabilities]=50',
+  );
+  // O filtro da Apple casa pelo COMEÇO do identificador (com.x.app traz com.x.app.widget):
+  // vale só o exato, e só as capacidades DELE.
+  const appId = (resposta?.data ?? []).find((b) => b.attributes?.identifier === bundle);
+  if (!appId) return 'sem-bundle';
+  const dele = new Set((appId.relationships?.bundleIdCapabilities?.data ?? []).map((c) => c.id));
+  const ligada = (resposta.included ?? []).some(
+    (c) => c.type === 'bundleIdCapabilities' && dele.has(c.id) && c.attributes?.capabilityType === CAPACIDADE_DO_PUSH,
+  );
+  if (ligada) return 'ligado';
+  await cliente.post('/v1/bundleIdCapabilities', {
+    data: {
+      type: 'bundleIdCapabilities',
+      attributes: { capabilityType: CAPACIDADE_DO_PUSH },
+      relationships: { bundleId: { data: { type: 'bundleIds', id: appId.id } } },
+    },
+  });
+  return 'ligou';
+}
+
+/**
+ * O passo do preparar: garantirPushNoAppId com a frase de cada desfecho. Falhar aqui não para a
+ * ficha nem o build — o eas tenta de novo ao compilar —, mas fica dito, com o plano B do README.
+ * Devolve a saída push_no_app_id: ligado | ligou | sem-bundle | falhou.
+ */
+async function pushNoAppId(cliente, bundle) {
+  const planoB = 'se a assinatura do build reclamar de aps-environment, veja o plano B em publicar/README.md ("Notificações no iPhone")';
+  try {
+    const situacao = await garantirPushNoAppId(cliente, bundle);
+    const frase = {
+      ligado: `✔ Push Notifications já está ligado no App ID ${bundle}.`,
+      ligou: `✔ Push Notifications ligado no App ID ${bundle} (o expo-notifications exige; o eas refaz o perfil ao compilar).`,
+      'sem-bundle': `⚠ O App ID ${bundle} ainda não existe no portal da Apple: o eas o registra no 1º build; ${planoB}.`,
+    }[situacao];
+    process.stdout.write(`${frase}\n`);
+    return situacao;
+  } catch (erro) {
+    // A mensagem do asc.mjs traz o status e o corpo da Apple, nunca a chave.
+    process.stdout.write(`⚠ Não deu para conferir Push Notifications no App ID ${bundle} (${erro.message}): o eas tenta no build; ${planoB}.\n`);
+    return 'falhou';
+  }
+}
+
 function saida(nome, valor) {
   const arquivo = process.env.GITHUB_OUTPUT;
   const linha = `${nome}=${String(valor).replace(/[\r\n]+/g, ' ')}\n`;
@@ -287,6 +351,8 @@ async function preparar() {
   const versaoDoApp = appJson.expo?.version;
   if (!bundle) throw new Error('app.json sem expo.ios.bundleIdentifier.');
   const cliente = criarCliente({ keyId: r.config.key_id, issuerId: r.config.issuer_id, p8: r.p8 });
+  // Antes de acharApp: o build sai mesmo sem o app no App Store Connect, e assina com o App ID.
+  saida('push_no_app_id', await pushNoAppId(cliente, bundle));
   const appId = await acharApp(cliente, bundle);
   saida('app_id', appId ?? '');
   if (!appId) {

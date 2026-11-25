@@ -4,7 +4,7 @@
  * ({code, message, detail}; 404 genérico do FastAPI quando a rota não existe no deploy).
  *
  * `opcoes` liga as falhas: senha errada, conta que não é de dono, código que não existe ou
- * sem estoque, deploy sem o leitor, sem a exclusão da própria conta ou sem a proteção da conta
+ * sem estoque, deploy sem o leitor ou sem o chamado dele, sem a exclusão da própria conta ou sem a proteção da conta
  * demo, privacidade ou suporte fora, servidor fora. `chamadas` guarda o que chegou — o teste confere que
  * ninguém mandou a senha DA DEMO para a rota de excluir a própria conta (e que nada saiu).
  *
@@ -21,14 +21,17 @@ const PADRAO = {
   senha: 'segredo-demo',
   papel: 'ADMIN',
   codigos: ['7890000000000'],
-  semLeitor: false, // deploy anterior ao ADR-43
+  semLeitor: false, // deploy anterior ao ADR-43 (e, portanto, sem o chamado)
+  semChamado: false, // deploy anterior ao ADR-47: o leitor por QR, sem "Abrir no app o leitor de código"
   semExclusao: false, // deploy anterior ao ADR-45: /usuarios/me cai na rota /usuarios/{id}
   protegida: true, // a conta demo não se exclui (CONTA_DE_DEMONSTRACAO antes da senha)
   saldo: 12, // peças do código demo em estoque
   privacidade: 200,
   suporte: 200, // /suporte: a página de suporte, quando a ficha usa outra que não a privacidade
+  paginaDeCodigos: 200, // /codigos-para-teste: as etiquetas para a câmera (Apple 2.1(a)); 404 = deploy de antes
   fora: false, // /health devolve 503
   prefixo: '', // '/demo': a demo mora debaixo dele, e a loja de verdade na raiz
+  push: false, // GET /configuracao: notificacoes_push (true, false, ou undefined = servidor de antes da ADR-47)
 };
 
 export function subirDemoFalso(opcoes = {}) {
@@ -65,9 +68,18 @@ export function subirDemoFalso(opcoes = {}) {
         return json(res, 404, { detail: 'Not Found' });
       }
       if (caminho === '/health') return o.fora ? json(res, 503, { detail: 'fora' }) : json(res, 200, { status: 'ok', ambiente: 'producao' });
+      if (caminho === '/api/v1/configuracao' && req.method === 'GET') {
+        const config = { nome: 'Loja Demo', segmento: 'ROUPAS', timezone: 'America/Sao_Paulo', demonstracao: true };
+        if (o.push !== undefined) config.notificacoes_push = o.push;
+        return json(res, 200, config);
+      }
       if (caminho === '/privacidade' && req.method === 'GET') {
         res.writeHead(o.privacidade, { 'Content-Type': 'text/html; charset=utf-8' });
         return res.end('<!doctype html><title>Política de privacidade</title>');
+      }
+      if (caminho === '/codigos-para-teste' && req.method === 'GET') {
+        res.writeHead(o.paginaDeCodigos, { 'Content-Type': 'text/html; charset=utf-8' });
+        return res.end(`<!doctype html><title>Codes</title>${o.codigos.map((c) => `<svg aria-label="EAN-13 ${c}"></svg>`).join('')}`);
       }
       if (caminho === '/suporte' && req.method === 'GET') {
         res.writeHead(o.suporte, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -103,6 +115,10 @@ export function subirDemoFalso(opcoes = {}) {
         return o.semLeitor
           ? json(res, 404, { detail: 'Not Found' })
           : json(res, 404, { code: 'NAO_ENCONTRADO', message: 'Leitor não encontrado.', detail: {} });
+      }
+      if (caminho === '/api/v1/leitor/chamados/abertos' && req.method === 'GET') {
+        if (o.semLeitor || o.semChamado) return json(res, 404, { detail: 'Not Found' });
+        return json(res, 200, { items: [], total: 0, page: 1, size: Number(url.searchParams.get('size') ?? 10) });
       }
       if (caminho === '/api/v1/usuarios/me' && req.method === 'DELETE') {
         if (o.semExclusao) {

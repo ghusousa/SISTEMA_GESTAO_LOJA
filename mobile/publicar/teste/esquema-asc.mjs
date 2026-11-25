@@ -876,6 +876,58 @@ export const ROTAS = {
   },
   "POST /v1/devices": {
     "corpo": "DeviceCreateRequest"
+  },
+  "GET /v1/bundleIds": {
+    "parametros": {
+      "filter[name]": {},
+      "filter[platform]": {
+        "enum": [
+          "IOS",
+          "MAC_OS",
+          "UNIVERSAL"
+        ]
+      },
+      "filter[identifier]": {},
+      "filter[seedId]": {},
+      "filter[id]": {},
+      "sort": {
+        "enum": [
+          "name",
+          "-name",
+          "platform",
+          "-platform",
+          "identifier",
+          "-identifier",
+          "seedId",
+          "-seedId",
+          "id",
+          "-id"
+        ]
+      },
+      "fields[bundleIds]": {},
+      "fields[profiles]": {},
+      "fields[bundleIdCapabilities]": {},
+      "fields[apps]": {},
+      "limit": {
+        "maximo": 200
+      },
+      "include": {
+        "enum": [
+          "profiles",
+          "bundleIdCapabilities",
+          "app"
+        ]
+      },
+      "limit[bundleIdCapabilities]": {
+        "maximo": 50
+      },
+      "limit[profiles]": {
+        "maximo": 50
+      }
+    }
+  },
+  "POST /v1/bundleIdCapabilities": {
+    "corpo": "BundleIdCapabilityCreateRequest"
   }
 };
 
@@ -1843,6 +1895,65 @@ export const CORPOS = {
     "atributosObrigatorioNoCorpo": false,
     "relacoes": {},
     "relacoesObrigatorias": []
+  },
+  "BundleIdCapabilityCreateRequest": {
+    "tipo": "bundleIdCapabilities",
+    "id": "proibido",
+    "atributos": {
+      "capabilityType": {
+        "t": "string",
+        "enum": [
+          "ICLOUD",
+          "IN_APP_PURCHASE",
+          "GAME_CENTER",
+          "PUSH_NOTIFICATIONS",
+          "WALLET",
+          "INTER_APP_AUDIO",
+          "MAPS",
+          "ASSOCIATED_DOMAINS",
+          "PERSONAL_VPN",
+          "APP_GROUPS",
+          "HEALTHKIT",
+          "HOMEKIT",
+          "WIRELESS_ACCESSORY_CONFIGURATION",
+          "APPLE_PAY",
+          "DATA_PROTECTION",
+          "SIRIKIT",
+          "NETWORK_EXTENSIONS",
+          "MULTIPATH",
+          "HOT_SPOT",
+          "NFC_TAG_READING",
+          "CLASSKIT",
+          "AUTOFILL_CREDENTIAL_PROVIDER",
+          "ACCESS_WIFI_INFORMATION",
+          "NETWORK_CUSTOM_PROTOCOL",
+          "COREMEDIA_HLS_LOW_LATENCY",
+          "SYSTEM_EXTENSION_INSTALL",
+          "USER_MANAGEMENT",
+          "APPLE_ID_AUTH"
+        ]
+      },
+      "settings": {
+        "t": "array",
+        "nulo": true,
+        "itens": {
+          "t": "object"
+        }
+      }
+    },
+    "atributosObrigatorios": [
+      "capabilityType"
+    ],
+    "atributosObrigatorioNoCorpo": true,
+    "relacoes": {
+      "bundleId": {
+        "tipo": "bundleIds",
+        "lista": false
+      }
+    },
+    "relacoesObrigatorias": [
+      "bundleId"
+    ]
   },
   "DeviceCreateRequest": {
     "tipo": "devices",

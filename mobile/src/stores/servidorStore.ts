@@ -9,6 +9,7 @@
 import { create } from 'zustand';
 
 import { esquecerServidor, lerServidor, salvarServidor } from '@/api/servidor';
+import { novaInstalacao } from '@/lib/instalacao';
 import { chaves, queryClient } from '@/lib/queryClient';
 
 /**
@@ -29,7 +30,7 @@ interface ServidorState {
   esquecer: () => Promise<void>;
 }
 
-export const useServidorStore = create<ServidorState>((set) => ({
+export const useServidorStore = create<ServidorState>((set, get) => ({
   endereco: null,
   carregando: true,
 
@@ -41,6 +42,10 @@ export const useServidorStore = create<ServidorState>((set) => ({
   },
 
   async definir(endereco) {
+    // Outro servidor, outro id de instalação (ADR-47): dois servidores não recebem o mesmo
+    // identificador deste aparelho. O anterior já ouviu o "esqueça" no `sair` de "Trocar de
+    // servidor" (ou ouve na limpeza pendente, que guarda o endereço e o id de lá).
+    if (get().endereco !== endereco) await novaInstalacao();
     await salvarServidor(endereco);
     set({ endereco, carregando: false });
     esquecerALojaAnterior();

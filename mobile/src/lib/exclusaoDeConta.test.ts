@@ -30,6 +30,20 @@ test('a própria conta diz o que some e o que fica, e que não tem volta', () =>
   assert.match(t.fim, /^Não tem volta\./);
 });
 
+test('o registro do celular para as notificações some junto (ADR-47), com o texto do web', () => {
+  // Espelho de web/js/exclusao-de-conta.js: as duas pontas dizem a MESMA frase.
+  assert.ok(
+    textosDaExclusao({ propria: true }).some.includes(
+      'As sessões abertas em todos os aparelhos, o celular ligado como leitor e o registro dele para as notificações.',
+    ),
+  );
+  assert.ok(
+    textosDaExclusao({ propria: false, nome: 'Ana Paula' }).some.includes(
+      'As sessões abertas em todos os aparelhos caem na hora, e o celular ligado como leitor e o registro dele para as notificações também.',
+    ),
+  );
+});
+
 test('a conta de outra pessoa leva o nome e aponta o Desativar para afastamento', () => {
   const t = textosDaExclusao({ propria: false, nome: 'Ana Paula' });
   assert.ok(t.some[0].includes('Ana Paula'));

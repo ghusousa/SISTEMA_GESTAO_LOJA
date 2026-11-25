@@ -138,6 +138,15 @@ class Settings(BaseSettings):
     #: sai pelo botão "Emitir NFC-e" do detalhe da venda.
     fiscal_emitir_automatico: bool = False
 
+    # Push do chamado do leitor (ADR-47): "desligado" (padrão) ou "expo". Sem segredo: o push
+    # sai pela API pública da Expo, e a credencial da Apple é de quem publica o app, não de cada
+    # loja. Nasce desligado porque só funciona depois do passo único de quem publica (a chave
+    # APNs na Expo) e do teste no TestFlight; desligado, o chamado chega ao app ABERTO (a faixa)
+    # e o app nem pede a permissão (`GET /configuracao` diz `notificacoes_push: false`). Não é
+    # forçado na demonstração: o revisor precisa poder testar o push quando ele for ligado.
+    #: Valor desconhecido derruba o boot, como o do emissor fiscal.
+    notificacoes_push: Literal["expo", "desligado"] = "desligado"
+
     # Vercel (ADR-42): variáveis de SISTEMA que a própria Vercel põe no build e na função.
     # Fora dela nenhuma existe, e é por isso que a loja não muda nada: tudo o que depende
     # delas fica atrás de `if self.vercel`.

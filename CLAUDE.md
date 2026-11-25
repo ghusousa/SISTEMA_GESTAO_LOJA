@@ -39,6 +39,8 @@ contratos, ADRs). Mudou algo? Atualize o doc no mesmo commit.**
 .venv/bin/pytest -q                                       # testes (usa loja_test)
 .venv/bin/python -m app.cli create-admin --nome "Dona" --email x@y.com --senha ...
 .venv/bin/python scripts/e2e.py                           # cenário de um dia de loja (API no ar)
+.venv/bin/python -m app.cli testar-push --email x@y.com   # a notificação não chega? aviso de teste + recibo da Apple (ADR-47)
+.venv/bin/python -m scripts.codigos_para_teste           # refaz <raiz>/codigos-para-teste: as etiquetas da demo e o QR para a câmera da revisão da Apple
 
 # Stack completa em Docker (raiz do repo)
 ./instalar.sh                                             # instala e sobe tudo, com a demonstração em /demo (--sem-demo: sem ela)
@@ -54,10 +56,11 @@ npm start            # Expo
 npm run typecheck    # tsc --noEmit
 npm test             # camada de dinheiro (node --test via tsx)
 npm run bundle       # expo export: pega erro de import que o tsc não vê
+node assets/icone/desenhar.mjs  # refaz o ícone (iOS em RGB, Android, abertura, favicon) do desenho; ícone de exemplo a Apple recusa (2.3.8)
 npm run publicar     # ficha inteira na App Store via API (mobile/publicar/; -- --enviar submete ou REENVIA, --aguardar-build 60 espera o build,
                      #   --video-revisao arquivo|https anexa a gravação de tela, --conferir-envio só confere sem escrever,
                      #   --mesmo-build reenvia o build que a Apple devolveu — sem ela nem --build, o reenvio dele é recusado)
-node --test publicar/teste/*.test.mjs  # testes do publicador (ci.mjs, notas em inglês, guia PDF em dia, demo em <domínio>/demo)
+node --test publicar/teste/*.test.mjs  # testes do publicador (ci.mjs e o push no App ID, notas em inglês, guia PDF em dia, demo em <domínio>/demo, rótulos citados no código)
 node publicar/teste/rodar.mjs  # o publicador contra a Apple de mentira (--reais: com as capturas de media/app-store)
 node publicar/revisao/gerar-guia.mjs  # refaz o guia PDF do revisor (mudou texto, prints ou ficha/aparelhos-testados.txt)
 publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com as telas do app (export web: cabeçalho do navegador) e o guia PDF (Postgres local + seed; --sem-build)
@@ -74,7 +77,10 @@ publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com as telas do
   Fluxo router → service → repository. Um módulo **nunca** importa o repository de outro
   (só o service público). `relatorios` e `caixa` são exceção documentada: leem via SQL próprio.
 - `HTTPException` só no router. Domínio lança `AppError` (`app/core/exceptions.py`), traduzida
-  pelo handler global em `{code, message, detail}`.
+  pelo handler global em `{code, message, detail}`. O erro do banco não repete os parâmetros
+  (`hide_parameters=True` no engine); quem grava segredo não deixa o erro do banco subir (o
+  registro do aparelho vira 503, levantado FORA do `except`); número que não cabe no banco é 422
+  em qualquer rota (handler de `DBAPIError`; guarda em `tests/test_erros_do_banco.py`).
 - Toda listagem é paginada: `?page=&size=` → `{items, total, page, size}` — inclusive
   relatório (`/relatorios/estoque-baixo`); quem só quer o número pede `size=1` e lê `total`.
   A contagem conta só a tabela base quando os JOINs são 1:1 por FK obrigatória (ADR-31).
@@ -179,7 +185,8 @@ publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com as telas do
 - **Identidade da loja (ADR-26)**: nome e ramo moram numa linha de `store_config` (`CHECK id = 1`),
   não no `.env` — o dono corrige na tela, entra no backup, e as duas pontas leem da mesma rota.
   `GET /configuracao` é **aberto, sem login** (a tela de entrada precisa do nome antes da sessão)
-  e por isso só leva nome, ramo, fuso e vocabulário; documento, telefone e endereço (o CPF e a
+  e por isso só leva nome, ramo, fuso, vocabulário e as chaves `demonstracao` (ADR-46) e
+  `notificacoes_push` (ADR-47); documento, telefone e endereço (o CPF e a
   casa do dono MEI) saem por `GET /configuracao/completa`, com qualquer sessão — o recibo
   imprime. `PATCH` exige `CONFIGURAR_LOJA`, que só o dono tem. O ramo troca **só as palavras**:
   `product_variants.size/color` são dois eixos genéricos, e `app/core/segmentos.py` diz como
@@ -228,7 +235,56 @@ publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com as telas do
   se chamar `ligar()`/`desligar()` — e, se ela grava (POST que copia a lista e depois a limpa) ou
   tem campo de digitar na lista que o bipe redesenha, passa `ocupadoQuando: () => enviando ||
   digitandoEm(areaItens)`: o código de fora espera em vez de sumir. Uma aba por leitor
-  (`criarDonaDaAba`, "Duplicar aba" copia o `sessionStorage`).
+  (`criarDonaDaAba`, "Duplicar aba" copia o `sessionStorage`): quem ainda espera a resposta sobre
+  um leitor responde por ele a quem perguntou depois (hora + sorteio; a resposta leva a hora de
+  quem responde), e vence a primeira a perguntar.
+  **O chamado (ADR-47)**, sem QR: "Abrir no app o leitor de código", acima do campo de leitura das
+  cinco telas que leem código (tela nova com leitor: o `<div data-leitor-chamado>` antes do
+  `.pdv__campo`, `ligarBotaoDoCelular` no render e o `soltar` na limpeza), chama
+  o celular do MESMO login — `POST /leitor/chamados`, idempotente por `client_uuid` gravado no
+  `sessionStorage` ANTES do POST (o F5 retoma, sem órfão), um a cada 2 s (429 com `Retry-After`). É
+  um pareamento com `chamado`/`sinal`: o código sorteado nunca sai nem abre aceite, só o mesmo login
+  atende (`/atender`, a MESMA 404 `LEITOR_CHAMADO_INVALIDO` para tudo que não serve), e o SINAL de 3
+  caracteres é o que separa dois caixas com o mesmo login (a fronteira é o login; vínculo estrito é o
+  QR). `substitui_id` de um ATIVO é 409 `LEITOR_JA_LIGADO`, também no QR. A instalação do app (UUID
+  no SecureStore) vai no aceite, no atender e no bipe: reenvio, bipe e TROCOU valem por instalação,
+  e o id só vive com o leitor ligado (`_encerrar` o anula; o do que venceu sai no primeiro código
+  ou chamado feito 5 min depois do fim, `esquecer_instalacoes`, por último e com `SKIP LOCKED`). A
+  conta vem antes de qualquer pareamento (`travar_conta`, FOR KEY SHARE), na ordem da exclusão da
+  conta: senão o "Chamar de novo" e o atender se abraçam com ela (40P01). No web, a chave do
+  chamado só vale enquanto descreve a aba e só sai do `sessionStorage` com o id do chamado já
+  guardado — o F5 durante a pergunta às outras abas não perde o chamado —, e o F5 trava a área até
+  o leitor voltar. No app, vencer não avisa ninguém (status calculado): a lista de chamados se
+  reconfirma de 30 em 30 s enquanto tem chamado e esconde o vencido pelo `vence_em`. O leitor
+  ligado tem "Digitar código", pelo MESMO `aoLer` da câmera.
+  "leitor" é só o bipe; o pareamento é "leitor_pareamento". No app aberto o chamado desce como FAIXA
+  (`FaixaDoChamado.tsx`, nunca modal, não pausa câmera), e ligar é sempre um toque (faixa, cartão ou
+  notificação; link e QR nunca ligam sozinhos). Rótulo novo que a ficha da Apple cita entra em
+  `TELAS_CITADAS` (`mobile/publicar/ficha.mjs`), e o CI confere no arquivo.
+- **Notificações (ADR-47)**: o push do chamado nasce **DESLIGADO** (`NOTIFICACOES_PUSH=desligado`;
+  na demo da instalação, `DEMO_NOTIFICACOES_PUSH`) e só funciona depois do passo único de quem publica
+  (a chave APNs na Expo: `mobile/publicar/README.md`, "Notificações no iPhone"); ligar é o `.env`, sem
+  build novo, e nada disso trava o envio à Apple. `GET /configuracao` diz `notificacoes_push`, e o app
+  SÓ pede a permissão e SÓ manda o token com ela `true` — desligado, registra o aparelho sem token
+  (`PUT /notificacoes/aparelho` a cada sessão: é o que faz `SEM_CELULAR` dizer a verdade). A
+  permissão só no caminho do leitor ("Abrir o leitor", Mais → Leitor do computador), nunca ao abrir o
+  app, nunca empilhada com a da câmera. O push sai DEPOIS do commit do chamado, fora de transação,
+  com teto TOTAL de 4 s (`asyncio.timeout`), e nunca derruba o chamado (vira `FALHOU`); leva só texto
+  fixo e o sinal — nenhum id, endereço de servidor ou dado da loja. **O token é credencial ao
+  portador**: nunca em rota, log ou `repr` (nem o `message` cru da Expo, que o repete) e nunca em
+  backup — os sete `pg_dump` dos scripts (cinco `.sh`, dois `.ps1`) levam
+  `--exclude-table-data=notificacao_aparelhos`, e
+  `pg_dump` novo leva a mesma flag (o teste de texto cobra). Ele some em `_derrubar_sessoes` (trocar
+  ou redefinir a senha, desativar, excluir), no `DELETE /notificacoes/aparelho` SEM sessão (o app ao
+  sair; sem rede, uma limpeza pendente) e, passados 30 dias sem registro, na faxina do registro,
+  do login e da renovação da sessão (`SKIP LOCKED`, por último). O registro roda de novo quando a configuração muda o modo do
+  push, nunca a cada religação. Um POST por aparelho à Expo (ela recusa o lote misto inteiro), e o
+  porquê da recusa vai ao log só como código; `SEM_CHAVE_DA_APPLE` é a chave APNs que falta na Expo
+  (o passo único do README do publicador). Teste de push só com
+  `httpx.MockTransport` (o conftest reprova a Expo de verdade). O `expo-notifications` só carrega por
+  `lib/notificacoesNativas.ts`: o export web e o Expo Go nunca o importam. Espelhos: a validação do
+  token (`notificacoes/schemas.py` ↔ `tokenValido`, `lib/notificacoes.ts`), o formato do sinal
+  (servidor ↔ app) e as frases da exclusão de conta (o registro sai junto).
 - Versão: `GET /versao` diz o commit instalado E se é o mais novo. Quem sabe disso é o
   `atualizar.sh` (tem a credencial do GitHub), que grava `docker/estado/versao.json`; a API
   só lê o arquivo montado. **A API nunca fala com o GitHub** — token do código-fonte não
@@ -318,8 +374,9 @@ publicar/capturas/gerar.sh     # refaz os 20 prints da App Store com as telas do
 - **Câmera**: o leitor pede a permissão ao SISTEMA ao montar (`lib/permissaoDaCamera.ts`); a
   tela do app só aparece depois de recusada — "Abrir Ajustes" quando o iOS não pergunta mais,
   "Continuar" quando ainda pergunta. Nunca uma tela do app com "Permitir" antes do alerta (5.1.1).
-- Diálogo do app (`Confirmacao`, os de pagamento): corpo num `ScrollView` com `maxHeight` 85% e os
-  botões fora da rolagem — com o Texto Maior do iOS, sem isso os botões saem da tela.
+- Diálogo do app (`Confirmacao`, os de pagamento, a caixa do "Digitar código"): corpo num `ScrollView`
+  com `maxHeight` 85% e os botões fora da rolagem — com o Texto Maior do iOS, sem isso os botões saem
+  da tela.
 
 ## Testes
 
@@ -420,6 +477,22 @@ estoque, concorrência do último item, idempotência por `client_uuid`.
   shim — o app no aparelho está certo, quem não implementa é a plataforma web.
 - **Foco no PDV web**: ninguém clica antes de bipar. `manterFoco` devolve o cursor ao campo de
   leitura, mas sai de cena com modal aberto ou enquanto a pessoa digita em outro campo.
+- **"Voltar" morto no iPhone (iOS 26+)**: o react-native-screens 4.16, versão que o SDK 54 fixa,
+  desliga o botão ao sair de uma tela e só o religa no `didPopItem`. A tela das abas não tem
+  cabeçalho, então o religar não acha o botão, e o iOS reaproveita o botão desligado na próxima
+  tela. A partir daí nenhuma tela volta pelo toque, só pelo gesto da borda
+  (software-mansion/react-native-screens#3294, corrigido na 4.17). A correção é
+  `mobile/patches/react-native-screens+4.16.0.patch`, aplicado pelo `postinstall` (patch-package)
+  em todo `npm install`/`npm ci`, inclusive no build da Expo. Não subimos o pacote porque o JS
+  da 4.17 sobre o nativo 4.16 do Expo Go quebraria o teste por QR (ADR-14). O guarda é
+  `src/lib/voltarNoIos.test.ts`, que reprova se o patch se perder; quando o pacote subir, apague
+  o patch. É código nativo: só chega ao celular num build novo, nunca por atualização OTA (o app
+  não tem `expo-updates`: TODA mudança do app, também em JS, só chega num build novo). Do lado do
+  JS, duas armadilhas de pilha, com guarda no mesmo teste: o grupo `(app)` exporta
+  `unstable_settings = { initialRouteName: '(tabs)' }` — sem ele, o app aberto por link (o convite
+  do QR, `gestaoloja://leitor`, com o app fechado) punha a tela sozinha na pilha, sem "Voltar" e
+  sem abas —, e voltar ao Vender é `router.dismissTo('/')`, nunca `router.replace('/(app)/(tabs)')`,
+  que empilha abas novas sobre as velhas e deixa a lista e a venda escondidas embaixo.
 
 ## graphify
 

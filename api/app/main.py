@@ -83,6 +83,7 @@ def _montar_rotas() -> None:
     from app.modules.estoque.router import router as estoque_router
     from app.modules.fiscal.router import router as fiscal_router
     from app.modules.leitor.router import router as leitor_router
+    from app.modules.notificacoes.router import router as notificacoes_router
     from app.modules.relatorios.router import router as relatorios_router
     from app.modules.tempo_real.router import router as tempo_real_router
     from app.modules.usuarios.router import router as usuarios_router
@@ -113,6 +114,7 @@ def _montar_rotas() -> None:
         condicionais_router,
         contas_pagar_router,
         leitor_router,
+        notificacoes_router,
     ):
         app.include_router(r, prefix="/api/v1")
 
@@ -161,6 +163,9 @@ if _web.is_dir():
         app.mount("/legal", StaticFiles(directory=str(_legal)), name="legal")
         app.get("/privacidade", include_in_schema=False)(_pagina_legal("privacidade.html"))
         app.get("/exclusao-de-dados", include_in_schema=False)(_pagina_legal("exclusao-de-dados.html"))
+        # As etiquetas da demonstração e o passo a passo do QR, para a revisão da Apple ter o que
+        # apontar para a câmera (2.1(a)); gerada por scripts/codigos_para_teste.py.
+        app.get("/codigos-para-teste", include_in_schema=False)(_pagina_legal("codigos-para-teste.html"))
 
     @app.get("/", include_in_schema=False)
     async def _abrir_sistema(request: Request) -> RedirectResponse:

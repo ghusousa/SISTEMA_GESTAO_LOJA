@@ -78,7 +78,8 @@ if [ "$MANTER_DADOS" -eq 0 ] && [ "$FAZER_BACKUP" -eq 1 ]; then
         # corrompido só se descobre no dia em que ele é necessário.
         # `chmod 600`: é o banco inteiro (CPF, telefones, hashes de senha), e o `docker cp`
         # traz a permissão de dentro do contêiner, legível por qualquer usuário da máquina.
-        if dk compose exec -T db pg_dump -U loja -Fc -f /tmp/backup.dump loja 2>/dev/null \
+        # Sem os dados de `notificacao_aparelhos` (ADR-47): o token de push é credencial.
+        if dk compose exec -T db pg_dump --exclude-table-data=notificacao_aparelhos -U loja -Fc -f /tmp/backup.dump loja 2>/dev/null \
            && dk compose cp db:/tmp/backup.dump "$ARQUIVO_BACKUP" >/dev/null 2>&1 \
            && chmod 600 "$ARQUIVO_BACKUP"; then
             dk compose exec -T db rm -f /tmp/backup.dump >/dev/null 2>&1 || true

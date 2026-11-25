@@ -76,6 +76,7 @@ test('conferência na demo em /demo: toda rota sai debaixo do caminho, e nada va
       'POST /demo/api/v1/auth/login',
       `GET /demo/api/v1/variantes/codigo-barras/${CONTA.codigo}`,
       'GET /demo/api/v1/leitor/pareamentos/0',
+      'GET /demo/api/v1/leitor/chamados/abertos',
       'DELETE /demo/api/v1/usuarios/me',
       'POST /demo/api/v1/auth/logout',
       'GET /demo/privacidade',
@@ -84,6 +85,66 @@ test('conferência na demo em /demo: toda rota sai debaixo do caminho, e nada va
     }
   } finally {
     await demo.fechar();
+  }
+});
+
+test('demo com o leitor por QR, mas sem o chamado (deploy anterior ao ADR-47): segura o envio, sem chamar celular nenhum', async () => {
+  // As notas mandam clicar em "Abrir no app o leitor de código": sem a rota dos chamados no
+  // deploy, o revisor procuraria um botão que o web de lá não tem.
+  const velha = await subirDemoFalso({ semChamado: true });
+  try {
+    const r = await conferirServidorDemo({ ...CONTA, base: velha.base, urlPrivacidade: `${velha.base}/privacidade` });
+    assert.equal(r.problemas.length, 1, r.problemas.join('\n'));
+    assert.match(r.problemas[0], /não tem o chamado do leitor \(HTTP 404\).*"Abrir no app o leitor de código".*\.\/atualizar\.sh.*Redeploy/);
+    assert.ok(r.conferidos.includes('o leitor pelo celular tem rota no servidor'), 'o QR continua conferido à parte');
+    // Conferir só LÊ: nenhum POST de chamado (ele mandaria push aos celulares da conta demo).
+    assert.ok(!velha.chamadas.some((c) => c.metodo === 'POST' && c.caminho.startsWith('/api/v1/leitor')), 'a conferência chamou o celular');
+  } finally {
+    await velha.fechar();
+  }
+  const nova = await subirDemoFalso();
+  try {
+    const r = await conferirServidorDemo({ ...CONTA, base: nova.base, urlPrivacidade: `${nova.base}/privacidade` });
+    assert.deepEqual(r.problemas, []);
+    assert.ok(r.conferidos.includes('o chamado do leitor ("Abrir no app o leitor de código") tem rota no servidor'), r.conferidos.join(' | '));
+  } finally {
+    await nova.fechar();
+  }
+});
+
+test('push do chamado LIGADO na demo segura o envio, a não ser declarado testado; desligado ou servidor antigo passa', async () => {
+  // Ligado e sem a chave APNs na Expo, o revisor veria o pedido de notificação para um aviso
+  // que nunca chega (e "falta um passo de quem publica o app" no web): recusa por 2.1.
+  const ligado = await subirDemoFalso({ push: true });
+  try {
+    const r = await conferirServidorDemo({ ...CONTA, base: ligado.base, urlPrivacidade: `${ligado.base}/privacidade` });
+    assert.equal(r.problemas.length, 1, r.problemas.join('\n'));
+    assert.match(r.problemas[0], /push do chamado LIGADO.*NOTIFICACOES_PUSH=desligado.*DEMO_NOTIFICACOES_PUSH=desligado.*--push-testado.*PUSH_TESTADO=1/);
+    // A rota é a aberta: lida sem a conta, e nada de POST de chamado (mandaria push).
+    assert.ok(ligado.chamadas.some((c) => c.metodo === 'GET' && c.caminho === '/api/v1/configuracao'));
+    assert.ok(!ligado.chamadas.some((c) => c.metodo === 'POST' && c.caminho.startsWith('/api/v1/leitor')));
+
+    const testado = await conferirServidorDemo({
+      ...CONTA,
+      base: ligado.base,
+      urlPrivacidade: `${ligado.base}/privacidade`,
+      pushTestado: true,
+    });
+    assert.deepEqual(testado.problemas, []);
+    assert.ok(testado.conferidos.some((c) => /LIGADO na demo, declarado testado/.test(c)), testado.conferidos.join(' | '));
+  } finally {
+    await ligado.fechar();
+  }
+  for (const push of [false, undefined]) {
+    const demo = await subirDemoFalso({ push });
+    try {
+      const r = await conferirServidorDemo({ ...CONTA, base: demo.base, urlPrivacidade: `${demo.base}/privacidade` });
+      assert.deepEqual(r.problemas, [], `push=${push}`);
+      assert.deepEqual(r.avisos, [], `push=${push}`);
+      assert.ok(r.conferidos.some((c) => /push do chamado está desligado/.test(c)), r.conferidos.join(' | '));
+    } finally {
+      await demo.fechar();
+    }
   }
 });
 
@@ -178,5 +239,40 @@ test('o endereço sem o /demo cai na loja de verdade, e a conferência recusa (n
     assert.ok(!r.problemas.join('\n').includes(CONTA.senha), 'a senha não aparece');
   } finally {
     await demo.fechar();
+  }
+});
+
+test('a página dos códigos para a câmera (Apple 2.1(a)) tem de abrir e mostrar o código das notas', async () => {
+  // O build 7 voltou pedindo "um QR de demonstração ou uma imagem": as notas citam a página, e o
+  // revisor aponta a câmera para ela. Fora do ar, ou com outro código, a revisão volta de novo.
+  const boa = await subirDemoFalso();
+  try {
+    const r = await conferirServidorDemo({
+      ...CONTA,
+      base: boa.base,
+      urlPrivacidade: `${boa.base}/privacidade`,
+      urlCodigos: `${boa.base}/codigos-para-teste`,
+    });
+    assert.deepEqual(r.problemas, []);
+    assert.ok(r.conferidos.some((c) => /códigos para a câmera abre e mostra o código das notas/.test(c)), r.conferidos.join(' | '));
+  } finally {
+    await boa.fechar();
+  }
+  for (const [nome, opcoes] of [
+    ['deploy de antes, sem a página', { paginaDeCodigos: 404 }],
+    ['a página com outro código', { codigos: ['7890002000008'] }],
+  ]) {
+    const demo = await subirDemoFalso(opcoes);
+    try {
+      const r = await conferirServidorDemo({
+        ...CONTA,
+        base: demo.base,
+        urlPrivacidade: `${demo.base}/privacidade`,
+        urlCodigos: `${demo.base}/codigos-para-teste`,
+      });
+      assert.ok(r.problemas.some((p) => /página dos códigos para a câmera/.test(p)), `${nome}: ${r.problemas.join(' | ')}`);
+    } finally {
+      await demo.fechar();
+    }
   }
 });

@@ -1,21 +1,42 @@
-"""O celular como leitor do computador (ADR-43). Qualquer pessoa da equipe logada pareia:
-não há capacidade nova — ler código de barras não mostra nada que a pessoa já não veja."""
+"""O celular como leitor do computador (ADR-43, ADR-47). Qualquer pessoa da equipe logada
+pareia ou chama: não há capacidade nova — ler código de barras não mostra nada que a pessoa
+já não veja."""
 
-from fastapi import APIRouter, Request, Response, status
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 
 from app.core.deps import CurrentUser, SessionDep
+from app.core.pagination import Pagina, Paginacao
 from app.modules.auditoria.middleware import fora_do_diario
 from app.modules.leitor.schemas import (
     AceiteIn,
+    AtendimentoIn,
     BipeIn,
     BipeOut,
+    ChamadoAbertoOut,
+    ChamadoIn,
+    ChamadoOut,
     PareamentoIn,
     PareamentoOut,
+    PontaDoLeitor,
     RetiradaOut,
 )
-from app.modules.leitor.service import LeitorService
+from app.modules.leitor.service import TETO_POR_COMPUTADOR, LeitorService
 
 router = APIRouter(prefix="/leitor", tags=["leitor pelo celular"])
+
+
+def _paginacao_dos_chamados(
+    page: int = Query(1, ge=1, description="Página, começando em 1"),
+    size: int = Query(
+        TETO_POR_COMPUTADOR,
+        ge=1,
+        le=TETO_POR_COMPUTADOR,
+        description="Itens por página: o teto de vivos por login cabe numa página",
+    ),
+) -> Paginacao:
+    return Paginacao(page=page, size=size)
 
 
 @router.post(
@@ -62,9 +83,13 @@ async def obter(session: SessionDep, usuario: CurrentUser, pareamento_id: int) -
     summary="Desliga o leitor (de qualquer uma das pontas)",
 )
 async def encerrar(
-    request: Request, session: SessionDep, usuario: CurrentUser, pareamento_id: int
+    request: Request,
+    session: SessionDep,
+    usuario: CurrentUser,
+    pareamento_id: int,
+    ponta: PontaDoLeitor | None = None,
 ) -> Response:
-    if not await LeitorService(session).encerrar(pareamento_id, usuario):
+    if not await LeitorService(session).encerrar(pareamento_id, usuario, ponta):
         # Nenhum celular desligado (já tinha terminado, ou era só o código esperando): o
         # 204 deixa as duas pontas saírem sem erro, mas não é "Desligou" no diário.
         fora_do_diario(request)
@@ -78,6 +103,55 @@ async def encerrar(
 )
 async def retirar(session: SessionDep, usuario: CurrentUser, pareamento_id: int) -> RetiradaOut:
     return await LeitorService(session).retirar(pareamento_id, usuario)
+
+
+@router.post(
+    "/chamados",
+    response_model=ChamadoOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Computador: chama o celular do próprio login (idempotente por client_uuid)",
+)
+async def chamar(
+    session: SessionDep, usuario: CurrentUser, dados: ChamadoIn, resposta: Response
+) -> ChamadoOut:
+    servico = LeitorService(session)
+    chamado = await servico.chamar(dados, usuario)
+    if servico.replay:
+        resposta.status_code = status.HTTP_200_OK
+    return chamado
+
+
+@router.get(
+    "/chamados/abertos",
+    response_model=Pagina[ChamadoAbertoOut],
+    summary="Celular: os chamados do próprio login que ainda esperam",
+)
+async def chamados_abertos(
+    session: SessionDep,
+    usuario: CurrentUser,
+    p: Annotated[Paginacao, Depends(_paginacao_dos_chamados)],
+) -> Pagina[ChamadoAbertoOut]:
+    return await LeitorService(session).chamados_abertos(usuario, p)
+
+
+@router.post(
+    "/chamados/{pareamento_id}/atender",
+    response_model=PareamentoOut,
+    summary="Celular: atende o chamado do próprio login, sem código (12 h)",
+)
+async def atender(
+    request: Request,
+    session: SessionDep,
+    usuario: CurrentUser,
+    pareamento_id: int,
+    dados: AtendimentoIn,
+) -> PareamentoOut:
+    servico = LeitorService(session)
+    pareamento = await servico.atender(pareamento_id, dados, usuario)
+    if servico.replay:
+        # O reenvio da mesma instalação: nada ligou de novo.
+        fora_do_diario(request)
+    return pareamento
 
 
 @router.post(

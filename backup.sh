@@ -251,7 +251,10 @@ copiar() {
 
     # `-Fc` (formato próprio do Postgres, comprimido): restaura com pg_restore, permite
     # restaurar tabela por tabela e não depende da versão do cliente na máquina.
-    if ! dk compose exec -T db pg_dump -U loja -d loja -Fc -f /tmp/backup.dump 2>/dev/null; then
+    # Sem os DADOS de `notificacao_aparelhos` (ADR-47), em todo pg_dump: o token de push é
+    # credencial ao portador, e a cópia de fora sai legível até alguém confirmar a chave do
+    # backup. A tabela vai só como estrutura; depois de um restore, cada app registra de novo.
+    if ! dk compose exec -T db pg_dump --exclude-table-data=notificacao_aparelhos -U loja -d loja -Fc -f /tmp/backup.dump 2>/dev/null; then
         erro "O pg_dump falhou. O banco está no ar? (docker compose ps)"
         exit 1
     fi
@@ -514,7 +517,7 @@ copiar_para_nuvem() {
     # para o Drive. No Drive o nome continua `loja-AAAAMMDD-HHMMSS.dump`, o da rotação.
     local carimbo; carimbo="$(date +%Y%m%d-%H%M%S)"
     local arquivo="$DESTINO/loja-nuvem-$carimbo.dump"
-    if ! dk compose exec -T db pg_dump -U loja -d loja -Fc -f /tmp/backup.dump 2>/dev/null; then
+    if ! dk compose exec -T db pg_dump --exclude-table-data=notificacao_aparelhos -U loja -d loja -Fc -f /tmp/backup.dump 2>/dev/null; then
         anotar_backup false NULL NULL "O pg_dump falhou — o banco respondeu?"
         erro "O pg_dump falhou. O banco está no ar?"
         exit 1
@@ -680,7 +683,7 @@ restaurar() {
     preparar_destino
     local antes
     antes="$DESTINO/loja-antes-de-restaurar-$(date +%Y%m%d-%H%M%S).dump"
-    if dk compose exec -T db pg_dump -U loja -d loja -Fc -f /tmp/antes.dump 2>/dev/null \
+    if dk compose exec -T db pg_dump --exclude-table-data=notificacao_aparelhos -U loja -d loja -Fc -f /tmp/antes.dump 2>/dev/null \
         && dk compose cp db:/tmp/antes.dump "$antes" >/dev/null 2>&1 \
         && chmod 600 "$antes"; then
         ok "$antes"

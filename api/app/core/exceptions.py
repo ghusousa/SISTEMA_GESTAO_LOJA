@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import DBAPIError
 
 
 class AppError(Exception):
@@ -117,20 +118,59 @@ class MuitasTentativas(AppError):
         self.segundos = segundos
 
 
+#: A resposta ao número do pedido que não cabe na coluna (ver `numero_que_nao_cabe_no_banco`).
+NUMERO_FORA_DO_BANCO = (
+    "Um número do pedido passa do maior que o banco guarda: não existe registro com ele."
+)
+
+
+def numero_que_nao_cabe_no_banco(exc: BaseException) -> bool:
+    """O banco recusou um NÚMERO do pedido antes mesmo de rodar o comando?
+
+    Um id 99999999999 numa rota `/{id}` (a coluna é INTEGER), um `?page=` gigante (o OFFSET
+    estoura o BIGINT), um `substitui_id` enorme no corpo: o asyncpg não consegue codificar o
+    valor e desiste ANTES de mandar o comando — a origem é um `OverflowError` na cadeia do
+    erro. Isso é pedido inválido (422), não defeito do servidor (500 com traceback no log), e
+    vale para toda rota com número, de uma vez: validar cada `/{id}` da API um por um deixaria
+    a próxima rota de fora. Nenhum valor chegou ao banco, e nada mudou nele.
+    """
+    vistos: set[int] = set()
+    atual: BaseException | None = exc
+    while atual is not None and id(atual) not in vistos:
+        if isinstance(atual, OverflowError):
+            return True
+        vistos.add(id(atual))
+        atual = atual.__cause__ or atual.__context__
+    return False
+
+
 def registrar_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def _app_error(_: Request, exc: AppError) -> JSONResponse:
         # Retry-After é o cabeçalho padrão do 429: diz ao cliente (e a um humano) quantos
-        # segundos esperar. O front lê daqui para mostrar "tente de novo em X".
+        # segundos esperar. O front lê daqui para mostrar "tente de novo em X". Vale para todo
+        # 429 que saiba o prazo (a força bruta, o chamado do leitor rápido demais), e não só
+        # para um `code`: o próximo 429 ganharia o corpo sem o cabeçalho, calado.
         cabecalhos = (
             {"Retry-After": str(exc.detail["retry_after"])}
-            if exc.code == "MUITAS_TENTATIVAS" and "retry_after" in exc.detail
+            if exc.http_status == status.HTTP_429_TOO_MANY_REQUESTS
+            and "retry_after" in exc.detail
             else None
         )
         return JSONResponse(
             status_code=exc.http_status,
             content={"code": exc.code, "message": exc.message, "detail": exc.detail},
             headers=cabecalhos,
+        )
+
+    @app.exception_handler(DBAPIError)
+    async def _numero_fora_do_banco(_: Request, exc: DBAPIError) -> JSONResponse:
+        if not numero_que_nao_cabe_no_banco(exc):
+            # Qualquer outro erro do banco segue como era: 500, com o traceback no log.
+            raise exc
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            content={"code": "VALIDACAO", "message": NUMERO_FORA_DO_BANCO, "detail": {}},
         )
 
     @app.exception_handler(RequestValidationError)

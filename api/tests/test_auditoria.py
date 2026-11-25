@@ -273,6 +273,25 @@ def test_toda_rota_de_mutacao_tem_frase_no_diario():
     assert not sem_frase, f"mutações sem frase em classificar.py: {sem_frase}"
 
 
+def test_chamado_do_leitor_e_notificacoes_no_diario() -> None:
+    """O leitor por chamado (ADR-47): ligar é atender, com frase e o id do chamado; chamar é
+    como gerar o código (o ato é o atender), e o registro do aparelho é manutenção do app."""
+    ato = classificar("POST", "/leitor/chamados/41/atender")
+    assert ato is not None
+    assert (ato.acao, ato.descricao, ato.entidade, ato.entidade_id) == (
+        "LEITOR_PAREADO",
+        "Ligou o celular como leitor do computador pelo chamado #41",
+        "leitor",
+        41,
+    )
+    assert classificar("POST", "/leitor/chamados") is None
+    assert classificar("PUT", "/notificacoes/aparelho") is None
+    assert classificar("DELETE", "/notificacoes/aparelho") is None
+    # O `?ponta=` não chega aqui (a borda passa o caminho sem a query): a frase é a de sempre.
+    desligou = classificar("DELETE", "/leitor/pareamentos/7")
+    assert desligou is not None and desligou.descricao == "Desligou o celular-leitor #7"
+
+
 async def test_403_nao_entra_no_diario(client, auth_admin, auth_vendedor):
     """O diário é o que foi FEITO. Uma tentativa barrada (403) não é um ato consumado."""
     antes = (await client.get("/auditoria", headers=auth_admin)).json()["total"]

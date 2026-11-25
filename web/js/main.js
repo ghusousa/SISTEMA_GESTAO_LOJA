@@ -153,7 +153,7 @@ function molduraHtml(usuario) {
         <div class="lateral__menu">${cru(menuHtml())}</div>
         <div class="lateral__rodape">
           <button class="lateral__leitor" type="button" data-leitor-celular
-            title="Use a câmera do celular como leitor de código de barras deste computador">
+            title="Parear pelo QR (o celular de outra pessoa, ou sem o app atualizado)">
             <span aria-hidden="true">📱</span><span>Celular como leitor</span>
           </button>
           <button class="lateral__leitor is-ativo" type="button" data-leitor-selo hidden
