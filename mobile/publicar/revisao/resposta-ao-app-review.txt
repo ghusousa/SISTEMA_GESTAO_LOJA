@@ -1,6 +1,6 @@
 Hello App Review team,
 
-Thank you for the review of Gestão de Loja 1.0.0 (7). We resubmitted the app with build 8, which addresses the three points:
+Thank you for the review of Gestão de Loja 1.0.0 (7). We resubmitted the app with a new build that addresses the three points:
 
 Guideline 2.3.8 - App icon
 The placeholder icon was replaced with the final one: a shop price tag with a barcode, in the app's colors. The App Store icon, the Home Screen icon and the launch screen all come from the same artwork, so they match at every size.
@@ -13,12 +13,12 @@ https://loja-tria.vercel.app/codigos-para-teste
 The same link is in the App Review notes, together with the demo server and the demo account.
 
 Guideline 3.2 - Business
-The app is for a limited audience: the owners and staff of the small shops that run this system on their own server. We have requested Unlisted App Distribution for it. Answers to your questions:
-1. It is not restricted to a single company. Each shop that uses it is an independent small business, and inside a shop only its owner and staff use the app.
-2. Yes, it is designed for a specific group: small physical shops in Brazil (clothing, shoes, auto parts) that run the system on their own server. A shop starts using it when its server is set up, at the shop's request.
-3. None. Every feature is for the shop's staff at the counter: sales, stock, returns, cash count and reports.
-4. The owner's account is created when the shop's server is set up; the owner then creates the staff accounts in the app (Mais > Usuários). There is no public sign-up.
-5. No. There are no in-app purchases, subscriptions or paid features, and no one pays to open an account. The shop's customers pay for goods at the counter, outside the app.
+The app is for a general public audience: any small shop can download it and use it, without an invitation from us or any affiliation. The server it connects to is free and open source (MIT license): https://github.com/ghusousa/SISTEMA_GESTAO_LOJA. Answers to your questions:
+1. No. Any shop can use the app. Each shop runs its own free copy of the server, and inside a shop its owner and staff use the app.
+2. No, it is not limited to specific companies. Any company can use it on its own: the owner installs the free server on a computer of the shop with one command, following the public guide (the "Ainda não tem o sistema na loja?" link on the app's first screen opens it). No contract or approval from us is needed.
+3. All of the app's features: point of sale with the camera as barcode reader, stock, returns, cash count and reports. Anyone who installs the free server uses all of them.
+4. The installer of the free server creates the owner's account; the owner then creates the staff accounts in the app (Mais > Usuários). No invitation or pre-approved registration from us.
+5. No. The app and the server are free, with no in-app purchases, subscriptions or paid features. The shop's customers pay for goods at the counter, outside the app.
 
 If anything else is needed, we answer at the contact e-mail in the App Review notes.
 

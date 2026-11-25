@@ -3,6 +3,11 @@
 Estoque, PDV, despesas e resultado do mês — bipando o código de barras da peça, no celular ou no
 computador do balcão.
 
+**Livre e gratuito ([licença MIT](LICENSE)).** Qualquer loja instala o sistema num computador próprio,
+sem pedir a ninguém — o passo a passo está em [Instalação](#instalação), e o instalador já cria a
+conta do dono. Depois é baixar o app **Gestão de Loja** na App Store e digitar o endereço do
+servidor; a tela "Conectar à loja" do app tem o link para este guia.
+
 - **`api/`** — FastAPI + PostgreSQL. É onde ficam as regras e a verdade dos dados.
 - **`web/`** — sistema web completo, servido pela própria API. JavaScript puro, sem build.
 - **`mobile/`** — app React Native (Expo) para Android e iOS.

@@ -395,7 +395,10 @@ test('notas da revisão: citam só o anexo que vai estar lá (a Apple aceita um)
     const comVideo = lerFicha(CONFIG_PIOR_CASO, { aparelhos: SETE_APARELHOS, anexo: { tipo: 'video', nome: 'screen-recording.mp4' } }).notasRevisao;
     assert.ok(comVideo.includes('1) SCREEN RECORDING: attachment "screen-recording.mp4"'), 'o item 1 cita o vídeo');
     assert.ok(!comVideo.includes('app-review-guide.pdf') && !/attached .*guide/i.test(comVideo), 'com o vídeo anexado, as notas prometem o guia');
-    assert.ok(comVideo.startsWith("POINT OF SALE FOR SMALL SHOPS; IT NEEDS THE SHOP'S OWN SERVER. Answers to Guideline 2.1 below.\n\nDEMO SERVER"));
+    assert.ok(comVideo.startsWith("POINT OF SALE FOR ANY SMALL SHOP. It connects to the shop's own server, free and open source (MIT): github.com/ghusousa/SISTEMA_GESTAO_LOJA. Answers to Guideline 2.1 below.\n\nDEMO SERVER"));
+    // A lista pública (3.2): qualquer loja instala o servidor aberto, sem convite nosso.
+    assert.ok(comVideo.includes('ACCOUNTS: no invitation needed.') && comVideo.includes('"Ainda não tem o sistema na loja?"'), 'a conta sem convite sumiu das notas');
+    assert.ok(!/Not a consumer app/.test(comVideo), 'as notas voltaram a dizer que não é para o público');
     // A abertura "B2B APP FOR SHOP STAFF" levou a revisão do build 7 à diretriz 3.2 (app de uma
     // empresa só): o público limitado vai na resposta e no pedido de distribuição não listada.
     assert.ok(!/\bB2B\b/.test(comVideo), 'as notas voltaram a abrir com "B2B"');

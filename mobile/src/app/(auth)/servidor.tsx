@@ -14,6 +14,7 @@ import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -27,6 +28,7 @@ import { enderecoSugerido, normalizarEndereco, testarServidor } from '@/api/serv
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { Botao, Campo } from '@/components/ui';
+import { CHAMADA_DO_GUIA, GUIA_DE_INSTALACAO } from '@/lib/instalacaoDoServidor';
 import { useBarraDeStatusEscura } from '@/hooks/useBarraDeStatusEscura';
 import { ALVO_TOQUE, cores, espaco, fonte, raio } from '@/lib/tema';
 import { useServidorStore } from '@/stores/servidorStore';
@@ -107,6 +109,15 @@ export default function ConfigurarServidor() {
             quem cuida do sistema.
           </Text>
           <Text style={s.ajudaExemplo}>Exemplo: 192.168.0.10  ou  loja.minhaloja.com.br</Text>
+          {/* Quem baixou o app e ainda não tem o sistema: o servidor é grátis e aberto (Apple 3.2). */}
+          <Pressable
+            onPress={() => void Linking.openURL(GUIA_DE_INSTALACAO)}
+            accessibilityRole="link"
+            hitSlop={8}
+            style={s.instalar}
+          >
+            <Text style={s.instalarTexto}>{CHAMADA_DO_GUIA}</Text>
+          </Pressable>
         </View>
 
         <Campo
@@ -182,6 +193,13 @@ const s = StyleSheet.create({
     color: cores.textoSuave,
     marginTop: espaco.sm,
     fontVariant: ['tabular-nums'],
+  },
+  instalar: { marginTop: espaco.md, minHeight: ALVO_TOQUE, justifyContent: 'center' },
+  instalarTexto: {
+    fontSize: fonte.base,
+    color: cores.primariaClara,
+    fontWeight: '700',
+    textDecorationLine: 'underline',
   },
   rodape: {
     fontSize: fonte.pequena,
