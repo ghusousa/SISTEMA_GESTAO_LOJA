@@ -136,6 +136,8 @@ export const TELAS_CITADAS = [
   ['Excluir minha conta', 'mobile/src/app/(app)/mais/conta.tsx'],
   ['Excluir conta', 'mobile/src/app/(app)/mais/usuarios.tsx'],
   ['Conta excluída', 'mobile/src/lib/exclusaoDeConta.ts'],
+  // O link da tela "Conectar à loja" para o guia de instalação do servidor aberto (Apple 3.2).
+  ['Ainda não tem o sistema na loja?', 'mobile/src/lib/instalacaoDoServidor.ts'],
 ];
 
 /** "iPhone 17 — iOS 26.1" (o travessão pode ser hífen; depois da versão, um comentário livre). */

@@ -1,6 +1,6 @@
 IMPORTANTE — LEIA ANTES DE BAIXAR
 
-Este é o aplicativo de um sistema de gestão que roda em um SERVIDOR PRÓPRIO DA LOJA. Sem esse servidor instalado, e sem um login criado por quem administra a loja, o app não funciona: não existe cadastro nem conta de teste dentro do app. Se a sua loja ainda não tem o sistema, fale com quem cuida dele antes de baixar.
+O app funciona com o SERVIDOR DA SUA LOJA, que é gratuito e de código aberto (licença MIT): qualquer loja instala num computador próprio, sem pedir a ninguém, e o instalador já cria a conta do dono. O passo a passo abre no link "Ainda não tem o sistema na loja?" da primeira tela do app e está em github.com/ghusousa/SISTEMA_GESTAO_LOJA.
 
 O QUE O APP FAZ
 
