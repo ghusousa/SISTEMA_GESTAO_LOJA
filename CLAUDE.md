@@ -40,6 +40,7 @@ contratos, ADRs). Mudou algo? Atualize o doc no mesmo commit.**
 .venv/bin/python -m app.cli create-admin --nome "Dona" --email x@y.com --senha ...
 .venv/bin/python scripts/e2e.py                           # cenário de um dia de loja (API no ar)
 .venv/bin/python -m app.cli testar-push --email x@y.com   # a notificação não chega? aviso de teste + recibo da Apple (ADR-47)
+.venv/bin/python -m scripts.codigos_para_teste           # refaz <raiz>/codigos-para-teste: as etiquetas da demo e o QR para a câmera da revisão da Apple
 
 # Stack completa em Docker (raiz do repo)
 ./instalar.sh                                             # instala e sobe tudo, com a demonstração em /demo (--sem-demo: sem ela)
@@ -55,6 +56,7 @@ npm start            # Expo
 npm run typecheck    # tsc --noEmit
 npm test             # camada de dinheiro (node --test via tsx)
 npm run bundle       # expo export: pega erro de import que o tsc não vê
+node assets/icone/desenhar.mjs  # refaz o ícone (iOS em RGB, Android, abertura, favicon) do desenho; ícone de exemplo a Apple recusa (2.3.8)
 npm run publicar     # ficha inteira na App Store via API (mobile/publicar/; -- --enviar submete ou REENVIA, --aguardar-build 60 espera o build,
                      #   --video-revisao arquivo|https anexa a gravação de tela, --conferir-envio só confere sem escrever,
                      #   --mesmo-build reenvia o build que a Apple devolveu — sem ela nem --build, o reenvio dele é recusado)

@@ -83,7 +83,7 @@ async function chamar(url, { metodo = 'GET', token, corpo, tempoMs = ESPERA_MS, 
       signal: AbortSignal.timeout(tempoMs),
     });
   } catch (erro) {
-    return { status: 0, json: null, tipo: '', erro: erro.cause?.code ?? erro.name ?? erro.message };
+    return { status: 0, json: null, texto: '', tipo: '', erro: erro.cause?.code ?? erro.name ?? erro.message };
   }
   const texto = await r.text();
   let json = null;
@@ -92,7 +92,7 @@ async function chamar(url, { metodo = 'GET', token, corpo, tempoMs = ESPERA_MS, 
   } catch {
     /* página HTML */
   }
-  return { status: r.status, json, tipo: r.headers.get('content-type') ?? '', erro: null };
+  return { status: r.status, json, texto, tipo: r.headers.get('content-type') ?? '', erro: null };
 }
 
 const comoFalhou = (r) => (r.status ? `HTTP ${r.status}${r.json?.code ? ` ${r.json.code}` : ''}` : `sem resposta: ${r.erro}`);
@@ -107,7 +107,7 @@ const comoFalhou = (r) => (r.status ? `HTTP ${r.status}${r.json?.code ? ` ${r.js
  * problema), 'aviso' (fora dele, não abriu daqui) ou 'nao-conferido' (parou antes, no /health
  * ou no login).
  */
-export async function conferirServidorDemo({ base, servidor = base, email, senha, codigo, urlPrivacidade, urlSuporte, pushTestado = false, tempoMs = ESPERA_MS }) {
+export async function conferirServidorDemo({ base, servidor = base, email, senha, codigo, urlPrivacidade, urlSuporte, urlCodigos, pushTestado = false, tempoMs = ESPERA_MS }) {
   const problemas = [];
   const conferidos = [];
   const avisos = [];
@@ -273,6 +273,22 @@ export async function conferirServidorDemo({ base, servidor = base, email, senha
       );
     }
   }
+  // A página com as etiquetas e o passo a passo do QR que as notas citam (Apple 2.1(a): o build 7
+  // voltou pedindo "um QR de demonstração ou uma imagem"). Ela tem de abrir e mostrar o MESMO
+  // código das notas, senão o revisor aponta a câmera para uma peça que não existe lá.
+  if (urlCodigos) {
+    const pagina = await chamar(urlCodigos, comoPagina);
+    if (pagina.status === 200 && /text\/html/i.test(pagina.tipo) && pagina.texto.includes(String(codigo))) {
+      conferidos.push('a página dos códigos para a câmera abre e mostra o código das notas');
+    } else {
+      problemas.push(
+        `A página dos códigos para a câmera (${urlCodigos}) não abre ou não mostra o código ${codigo} ` +
+          `(${pagina.status === 200 ? 'sem o código' : comoFalhou(pagina)}). As notas a citam (Apple 2.1(a)): suba o servidor ` +
+          'de demonstração com web/legal/codigos-para-teste.html (api/scripts/codigos_para_teste.py) ou corrija APPLE_URL_ETIQUETAS_DEMO.',
+      );
+    }
+  }
+
   // Sem APPLE_URL_SUPORTE o suporte É a privacidade (já aberta acima); outra página também
   // vai à ficha e também tem de estar no ar — senão ninguém percebe que ela caiu. Debaixo do
   // servidor da demo, é página do sistema e segura o envio como a privacidade. Fora dele (a

@@ -47,6 +47,8 @@ in full...") só fica com o guia anexado; com o vídeo, ela sai e o item 1 cita 
 - `ficha/aparelhos-testados.txt` está vazio (só comentários) ou tem linha fora do formato;
 - não há vídeo: nem `--video-revisao`, nem um já anexado (e processado) à revisão desta versão;
 - o guia PDF commitado não é o das entradas de agora (texto, lista de aparelhos, prints);
+- a página dos códigos para a câmera (`<servidor>/codigos-para-teste`, ou `APPLE_URL_ETIQUETAS_DEMO`) não abre
+  ou não mostra o código demo: as notas a citam, e foi ela que a revisão do build 7 pediu (2.1(a));
 - o servidor de demonstração não está como as notas dizem: `GET /health` no ar; a conta demo
   entra e é de **dono**; o código de barras demo existe e tem ao menos 3 peças em estoque (as
   notas mandam vender, e o PDV recusa peça sem estoque: reponha pela Entrada na demo); a

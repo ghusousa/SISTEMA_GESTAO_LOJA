@@ -351,6 +351,7 @@ async function conferirAntesDeEnviar({ asc, app, versaoDoApp, situacao, args, ap
       codigo: config.codigo_demo,
       urlPrivacidade: privacidade,
       urlSuporte: trocarBase(config.url_suporte, config.url_servidor_demo, base),
+      urlCodigos: trocarBase(config.url_etiquetas_demo, config.url_servidor_demo, base),
       // O push ligado na demo só passa declarado testado (a chave APNs na Expo e o testar-push
       // entregue): --push-testado, ou a variável PUSH_TESTADO=1 (no GitHub, a do repositório).
       pushTestado: args.pushTestado || ['1', 'sim', 'true'].includes(String(process.env.PUSH_TESTADO ?? '').trim().toLowerCase()),

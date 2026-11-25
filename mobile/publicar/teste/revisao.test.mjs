@@ -395,7 +395,12 @@ test('notas da revisão: citam só o anexo que vai estar lá (a Apple aceita um)
     const comVideo = lerFicha(CONFIG_PIOR_CASO, { aparelhos: SETE_APARELHOS, anexo: { tipo: 'video', nome: 'screen-recording.mp4' } }).notasRevisao;
     assert.ok(comVideo.includes('1) SCREEN RECORDING: attachment "screen-recording.mp4"'), 'o item 1 cita o vídeo');
     assert.ok(!comVideo.includes('app-review-guide.pdf') && !/attached .*guide/i.test(comVideo), 'com o vídeo anexado, as notas prometem o guia');
-    assert.ok(comVideo.startsWith("B2B APP FOR SHOP STAFF; IT NEEDS THE SHOP'S SERVER. Answers to Guideline 2.1 below.\n\nDEMO SERVER"));
+    assert.ok(comVideo.startsWith("POINT OF SALE FOR SMALL SHOPS; IT NEEDS THE SHOP'S OWN SERVER. Answers to Guideline 2.1 below.\n\nDEMO SERVER"));
+    // A abertura "B2B APP FOR SHOP STAFF" levou a revisão do build 7 à diretriz 3.2 (app de uma
+    // empresa só): o público limitado vai na resposta e no pedido de distribuição não listada.
+    assert.ok(!/\bB2B\b/.test(comVideo), 'as notas voltaram a abrir com "B2B"');
+    // E o que a 2.1(a) pediu: a página com as etiquetas e o QR, logo depois do servidor da demo.
+    assert.ok(/\nCODES TO SCAN: https:\/\/\S+ \(on a computer screen\)/.test(comVideo), 'sem a página dos códigos para a câmera');
 
     const comGuia = lerFicha(CONFIG_PIOR_CASO, { aparelhos: SETE_APARELHOS, anexo: { tipo: 'guia', nome: 'app-review-guide.pdf' } }).notasRevisao;
     assert.ok(comGuia.includes('\nThe attached "app-review-guide.pdf" has them in full, with screenshots.\n'), 'com o guia anexado, a 2ª linha o cita');

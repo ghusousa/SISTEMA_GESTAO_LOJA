@@ -28,6 +28,7 @@ const PADRAO = {
   saldo: 12, // peças do código demo em estoque
   privacidade: 200,
   suporte: 200, // /suporte: a página de suporte, quando a ficha usa outra que não a privacidade
+  paginaDeCodigos: 200, // /codigos-para-teste: as etiquetas para a câmera (Apple 2.1(a)); 404 = deploy de antes
   fora: false, // /health devolve 503
   prefixo: '', // '/demo': a demo mora debaixo dele, e a loja de verdade na raiz
   push: false, // GET /configuracao: notificacoes_push (true, false, ou undefined = servidor de antes da ADR-47)
@@ -75,6 +76,10 @@ export function subirDemoFalso(opcoes = {}) {
       if (caminho === '/privacidade' && req.method === 'GET') {
         res.writeHead(o.privacidade, { 'Content-Type': 'text/html; charset=utf-8' });
         return res.end('<!doctype html><title>Política de privacidade</title>');
+      }
+      if (caminho === '/codigos-para-teste' && req.method === 'GET') {
+        res.writeHead(o.paginaDeCodigos, { 'Content-Type': 'text/html; charset=utf-8' });
+        return res.end(`<!doctype html><title>Codes</title>${o.codigos.map((c) => `<svg aria-label="EAN-13 ${c}"></svg>`).join('')}`);
       }
       if (caminho === '/suporte' && req.method === 'GET') {
         res.writeHead(o.suporte, { 'Content-Type': 'text/html; charset=utf-8' });

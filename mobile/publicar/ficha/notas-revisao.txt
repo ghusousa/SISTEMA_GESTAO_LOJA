@@ -1,4 +1,4 @@
-B2B APP FOR SHOP STAFF; IT NEEDS THE SHOP'S SERVER. Answers to Guideline 2.1 below.
+POINT OF SALE FOR SMALL SHOPS; IT NEEDS THE SHOP'S OWN SERVER. Answers to Guideline 2.1 below.
 {{SE_GUIA_ANEXADO}}The attached {{GUIA}} has them in full, with screenshots.
 
 DEMO SERVER (stays online after the review; it also serves our privacy policy)
@@ -6,23 +6,23 @@ Server: {{SERVIDOR_DEMO}}
 E-mail: {{EMAIL_DEMO}}
 Password: {{SENHA_DEMO}}
 Barcode to type: {{CODIGO_DEMO}}
-Shop OWNER account: every screen is visible. Fictitious data only, isolated from any real shop: sell, cancel, return freely.
+CODES TO SCAN: {{URL_CODIGOS}} (on a computer screen): demo barcodes, and how to show the live QR code (valid 5 min).
+Shop OWNER account: every screen is visible. Fictitious data only: sell, cancel, return freely.
 
 1) SCREEN RECORDING: attachment {{VIDEO}}, made on a physical {{APARELHO_DO_VIDEO}}. From app launch: server setup, sign-in, camera permission, a sale, creating a staff account, deleting accounts.
 
 2) TESTED ON (physical devices): {{APARELHOS_TESTADOS}}. Minimum iOS 15.1; iPhone only, portrait.
 
-3) PURPOSE: point of sale and stock control for small physical shops in Brazil (clothing, shoes, auto parts), used by the owner and staff at the counter. It replaces notebooks: barcode sales, cash/PIX/card/store credit, returns, consignment, stock by size and color, cash count, expenses, profit, reports. Not a consumer app.
+3) PURPOSE: point of sale and stock control for small physical shops in Brazil (clothing, shoes, auto parts), used by the owner and staff at the counter. Barcode sales, cash/PIX/card/store credit, returns, consignment, stock by size and color, cash count, expenses, profit, reports. Not a consumer app.
 
 4) SET UP AND ACCESS
 1. On the sign-in screen tap the GEAR (top right): "Conectar à loja" opens.
 2. In "Endereço do servidor" type the server above exactly as written (with https://) and tap "Conectar".
 3. Enter e-mail and password, tap "Entrar": the "Vender" tab (point of sale) opens.
 4. Add an item: "Ler código de barras" (camera), "Digitar código" (type the barcode above) or "Buscar" (part of a name, e.g. "cami").
-{{LINHA_ETIQUETAS}}
 5. Tap "Cobrar", "Dinheiro", then "Confirmar venda". The completed sale opens; tap "Recibo para a cliente" to see the receipt.
 More in the "Produtos", "Estoque", "Financeiro" and "Mais" tabs.
-Phone as the computer's barcode reader: open the server above in a computer browser, sign in with the same account, click "Abrir no app o leitor de código"; tap "Abrir o leitor" in the open app. Or "Ler o QR" there and Mais > Leitor do computador > "Ler o QR do computador".
+Phone as the computer's barcode reader: open the server above in a computer browser, sign in with the same account, click "Abrir no app o leitor de código"; tap "Abrir o leitor" in the open app. Or "Celular de outra pessoa? Ler o QR" there, then Mais > Leitor do computador > "Ler o QR do computador".
 
 ACCOUNTS: no sign-up. The owner creates staff accounts in Mais > Usuários > "+" (bottom right).
 ACCOUNT DELETION (5.1.1(v)), inside the app:
@@ -30,13 +30,13 @@ ACCOUNT DELETION (5.1.1(v)), inside the app:
 - Owner, a staff account: Mais > Usuários > (pessoa) > Excluir conta ("pessoa" is the person's card).
 The demo account is protected (can't be deleted) for the next reviewer: please create a staff account and delete it either way.
 
-5) EXTERNAL SERVICES: data and sign-in come only from the shop's own server (FastAPI + PostgreSQL, installed by the shop). NFC-e (Brazilian e-receipt) is optional, via an accredited issuer (Focus NFe); off in the demo. No payments in the app (the card terminal is separate; the app only records the method), no AI, no third-party sign-in, no analytics or ad SDKs. The network library only checks connectivity (empty request to Google's generate_204).
+5) EXTERNAL SERVICES: data and sign-in come only from the shop's own server (installed by the shop). NFC-e (Brazilian e-receipt) is optional, via an accredited issuer (Focus NFe); off in the demo. No payments in the app (the card terminal is separate; the app only records the method), no AI, no third-party sign-in, no analytics or ad SDKs. The network library only checks connectivity (empty request to Google's generate_204).
 
 6) REGIONS: Brazil only, in Portuguese (Brazil); the same everywhere.
 
 7) REGULATION: not a regulated industry; no third-party protected content. The optional NFC-e is issued with the shop's digital certificate.
 
-USER CONTENT: item names, photos and notes stay private to one shop's team. No publishing, feed or messaging between users, so nothing to report or block.
+USER CONTENT: item names, photos and notes stay private to one shop's team; no publishing, feed or messaging, so nothing to report or block.
 PERMISSIONS: camera (barcode reader, item photo), photos (pick an item photo), local network (only when the server is on the shop's network), notifications (optional).
 IN-APP PURCHASES: none; goods are paid at the counter.
 Contact: {{EMAIL_SUPORTE}}

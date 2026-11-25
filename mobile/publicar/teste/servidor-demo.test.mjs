@@ -241,3 +241,38 @@ test('o endereço sem o /demo cai na loja de verdade, e a conferência recusa (n
     await demo.fechar();
   }
 });
+
+test('a página dos códigos para a câmera (Apple 2.1(a)) tem de abrir e mostrar o código das notas', async () => {
+  // O build 7 voltou pedindo "um QR de demonstração ou uma imagem": as notas citam a página, e o
+  // revisor aponta a câmera para ela. Fora do ar, ou com outro código, a revisão volta de novo.
+  const boa = await subirDemoFalso();
+  try {
+    const r = await conferirServidorDemo({
+      ...CONTA,
+      base: boa.base,
+      urlPrivacidade: `${boa.base}/privacidade`,
+      urlCodigos: `${boa.base}/codigos-para-teste`,
+    });
+    assert.deepEqual(r.problemas, []);
+    assert.ok(r.conferidos.some((c) => /códigos para a câmera abre e mostra o código das notas/.test(c)), r.conferidos.join(' | '));
+  } finally {
+    await boa.fechar();
+  }
+  for (const [nome, opcoes] of [
+    ['deploy de antes, sem a página', { paginaDeCodigos: 404 }],
+    ['a página com outro código', { codigos: ['7890002000008'] }],
+  ]) {
+    const demo = await subirDemoFalso(opcoes);
+    try {
+      const r = await conferirServidorDemo({
+        ...CONTA,
+        base: demo.base,
+        urlPrivacidade: `${demo.base}/privacidade`,
+        urlCodigos: `${demo.base}/codigos-para-teste`,
+      });
+      assert.ok(r.problemas.some((p) => /página dos códigos para a câmera/.test(p)), `${nome}: ${r.problemas.join(' | ')}`);
+    } finally {
+      await demo.fechar();
+    }
+  }
+});
