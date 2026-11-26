@@ -435,6 +435,48 @@ test('preparar diz, ANTES de compilar, que a versão do app.json já foi enviada
   }
 });
 
+test('versão travada: preparar diz que build e que notas foram para a revisão, sem mostrar as notas', async () => {
+  const PRIMEIRA = readFileSync(join(MOBILE, 'publicar', 'ficha', 'notas-revisao.txt'), 'utf8').trim().split('\n')[0];
+  const cenarios = [
+    // Enviado pelo site com o build ANTIGO e as notas de uma rodada antiga (com a senha da demo).
+    {
+      opcoes: { buildAntigo: true, buildDaTravada: 'B-ANTIGO', notasDaTravada: 'OLD NOTES\nPassword: senha-que-nao-sai' },
+      esperado: [/⚠ Build na revisão: 6 — mas o mais novo da versão 1\.0\.0 é o 7\./, /⚠ Notas da revisão na Apple: DIFERENTES/, /Remover da revisão/],
+    },
+    // O build mais novo e as notas deste commit: nada a trocar.
+    {
+      opcoes: { buildDaTravada: 'B1', notasDaTravada: `${PRIMEIRA}\nPassword: senha-que-nao-sai` },
+      esperado: [/ℹ Build na revisão: 7 \(o mais novo da versão 1\.0\.0\)\./, /ℹ Notas da revisão na Apple: as deste commit/],
+      semTroca: true,
+    },
+  ];
+  for (const { opcoes, esperado, semTroca } of cenarios) {
+    const { porta, estado, fechar } = await subirMock({ versaoTravada: 'WAITING_FOR_REVIEW', versaoDoAppJson: VERSAO, ...opcoes });
+    try {
+      const pasta = mkdtempSync(join(tmpdir(), 'ci-apple-'));
+      const eas = join(pasta, 'eas.json');
+      copyFileSync(join(MOBILE, 'eas.json'), eas);
+      const { codigo, saida } = await rodarPreparar({
+        ...CHAVE,
+        ...FICHA,
+        ASC_BASE: `http://127.0.0.1:${porta}`,
+        PASTA_SAIDA: join(pasta, 'apple'),
+        EAS_JSON: eas,
+        GITHUB_OUTPUT: join(pasta, 'github-output'),
+      });
+      assert.equal(codigo, 0, saida);
+      for (const frase of esperado) assert.match(saida, frase);
+      if (semTroca) assert.doesNotMatch(saida, /Remover da revisão/);
+      assert.doesNotMatch(saida, /senha-que-nao-sai|OLD NOTES/, 'o texto das notas (com a senha da demo) nunca vai ao log');
+      // Só leitura: nenhuma escrita na Apple sobre a versão travada.
+      const escritas = estado.requisicoes.filter((r) => !r.startsWith('GET ') && /appStoreVersions|appStoreReviewDetails|reviewSubmissions/.test(r));
+      assert.deepEqual(escritas, []);
+    } finally {
+      fechar();
+    }
+  }
+});
+
 // ------------------------------------------------------------ Push Notifications no App ID (ADR-47)
 
 /** Um cliente da Apple na memória: anota cada chamada e devolve os App IDs que o teste der. */

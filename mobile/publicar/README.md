@@ -175,7 +175,13 @@ tem teto de 150 min), e a conta já parou uma vez por limite de gasto.
 **Versão já enviada ou publicada**: compilar ou enviar um build com o mesmo número do app.json
 não tem para onde ir. O passo "Conferir a versão na Apple antes de compilar" para a rodada
 ANTES de gastar o build, com a frase do que fazer (esperar a resposta da Apple, ou subir
-`"version"` no `mobile/app.json`).
+`"version"` no `mobile/app.json`). Com a versão travada, o passo "Preparar" também diz, só
+lendo a Apple, o que foi junto: o número do build preso (e se não é o mais novo da versão) e se
+as notas da revisão que estão lá são as deste commit (compara só a 1ª linha: o texto, que leva a
+senha da demo, nunca vai ao log). Foi enviado pelo site com o build ou as notas errados? Ele diz
+como trocar: "Remover da revisão" no App Store Connect e rodar de novo com `ficha` e `revisao`.
+Para só olhar, sem mexer em nada, rode com `ficha` marcada e `compilar` desmarcada: o
+"Preparar" mostra, e a ficha para na versão travada antes de escrever qualquer coisa.
 
 **Por etiqueta (funciona antes de o botão existir).** O botão "Run workflow" só aparece depois
 que o `publicar-apple.yml` chega na branch padrão. Uma etiqueta roda o modo completo a partir de

@@ -31,6 +31,58 @@ export async function situacaoDaVersao(asc, appId, versaoDoApp) {
   return { editavel, jaLancado, travada };
 }
 
+/**
+ * O que foi junto com a versão TRAVADA (em revisão, aprovada, à venda): o número do build preso
+ * a ela, o build VALID mais novo da mesma versão e se as notas da revisão que estão na Apple
+ * começam como as deste commit. Serve a quem enviou pelo site: diz, sem abrir o App Store
+ * Connect, se foram o build e as notas certos. Só leitura, e o texto das notas nunca sai daqui
+ * (elas levam a senha da conta de demonstração): só o "igual" ou "diferente" da 1ª linha.
+ */
+export async function oQueFoiComATravada(asc, appId, travada, primeiraLinhaDasNotas) {
+  const ler = async (caminho) => {
+    try {
+      return (await asc.get(caminho))?.data ?? null;
+    } catch (erro) {
+      if (erro.status === 404) return null;
+      throw erro;
+    }
+  };
+  const preso = await ler(`/v1/appStoreVersions/${travada.id}/build`);
+  const builds =
+    (await ler(
+      `/v1/builds?filter[app]=${appId}&filter[preReleaseVersion.version]=${encodeURIComponent(travada.attributes.versionString)}` +
+        '&filter[preReleaseVersion.platform]=IOS&sort=-uploadedDate&limit=10',
+    )) ?? [];
+  const maisNovo = builds.find((b) => b.attributes?.expired !== true && b.attributes?.processingState === 'VALID') ?? null;
+  const detalhe = await ler(`/v1/appStoreVersions/${travada.id}/appStoreReviewDetail`);
+  const notas = detalhe?.attributes?.notes ?? null;
+  return {
+    build: preso?.attributes?.version ?? null,
+    maisNovo: maisNovo?.attributes?.version ?? null,
+    // null: a Apple não tem notas; true/false: a 1ª linha bate (ou não) com a do repositório.
+    notasDesteCommit: notas === null ? null : notas.trim().split('\n')[0].trim() === primeiraLinhaDasNotas.trim(),
+  };
+}
+
+/** As linhas do log com o que foi junto com a versão travada (veja oQueFoiComATravada). */
+export function frasesDaTravada(versaoDoApp, { build, maisNovo, notasDesteCommit }) {
+  const frases = [];
+  const buildAntigo = Boolean(build && maisNovo && build !== maisNovo);
+  if (!build) frases.push(`⚠ Nenhum build preso à versão ${versaoDoApp} na Apple.`);
+  else if (buildAntigo) frases.push(`⚠ Build na revisão: ${build} — mas o mais novo da versão ${versaoDoApp} é o ${maisNovo}.`);
+  else frases.push(`ℹ Build na revisão: ${build} (o mais novo da versão ${versaoDoApp}).`);
+  if (notasDesteCommit === null) frases.push('⚠ Notas da revisão na Apple: nenhuma.');
+  else if (notasDesteCommit) frases.push('ℹ Notas da revisão na Apple: as deste commit (a 1ª linha bate).');
+  else frases.push('⚠ Notas da revisão na Apple: DIFERENTES das deste commit (de uma rodada antiga, ou editadas no site).');
+  if (buildAntigo || notasDesteCommit === false) {
+    frases.push(
+      '⚠ Para trocar o que está na revisão: no App Store Connect, "Remover da revisão" na versão; depois rode de novo ' +
+        'com "ficha" e "revisao" (o publicador prende o build mais novo e sobe as notas deste commit).',
+    );
+  }
+  return frases;
+}
+
 /** A frase de quando a versão do app.json já não aceita build nem edição. */
 export function mensagemDaTravada(versaoDoApp, travada) {
   return (
