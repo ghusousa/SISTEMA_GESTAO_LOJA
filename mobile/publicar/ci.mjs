@@ -44,7 +44,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { criarCliente } from './asc.mjs';
 import { SERVIDOR_DEMO_PADRAO, SO_DA_REVISAO, lerPadroes } from './ficha.mjs';
-import { mensagemDaTravada, situacaoDaVersao } from './versoes.mjs';
+import { frasesDaTravada, mensagemDaTravada, oQueFoiComATravada, situacaoDaVersao } from './versoes.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const MOBILE = resolve(AQUI, '..');
@@ -176,7 +176,7 @@ export async function acharApp(cliente, bundle) {
  */
 export async function estadoDaVersaoNaApple(cliente, appId, versaoDoApp) {
   const s = await situacaoDaVersao(cliente, appId, versaoDoApp);
-  if (s.travada) return { estado: 'travada', mensagem: mensagemDaTravada(versaoDoApp, s.travada) };
+  if (s.travada) return { estado: 'travada', mensagem: mensagemDaTravada(versaoDoApp, s.travada), travada: s.travada };
   return { estado: s.editavel ? 'editavel' : 'inexistente', mensagem: '' };
 }
 
@@ -369,8 +369,13 @@ async function preparar() {
   const versao = await estadoDaVersaoNaApple(cliente, appId, versaoDoApp);
   saida('versao_estado', versao.estado);
   saida('versao_mensagem', versao.mensagem);
-  if (versao.estado === 'travada') process.stdout.write(`⚠ ${versao.mensagem}\n`);
-  else process.stdout.write(`✔ Versão ${versaoDoApp} na Apple: ${versao.estado === 'editavel' ? 'em preparo (aceita build e ficha)' : 'ainda não existe (o publicador cria)'}.\n`);
+  if (versao.estado === 'travada') {
+    process.stdout.write(`⚠ ${versao.mensagem}\n`);
+    // Quem enviou pelo site fica sabendo se foram o build e as notas certos (só leitura).
+    const primeiraLinha = readFileSync(join(AQUI, 'ficha', 'notas-revisao.txt'), 'utf8').trim().split('\n')[0];
+    const foi = await oQueFoiComATravada(cliente, appId, versao.travada, primeiraLinha);
+    for (const frase of frasesDaTravada(versaoDoApp, foi)) process.stdout.write(`${frase}\n`);
+  } else process.stdout.write(`✔ Versão ${versaoDoApp} na Apple: ${versao.estado === 'editavel' ? 'em preparo (aceita build e ficha)' : 'ainda não existe (o publicador cria)'}.\n`);
   const caminhoEas = process.env.EAS_JSON || join(MOBILE, 'eas.json');
   const eas = comAscAppId(JSON.parse(readFileSync(caminhoEas, 'utf8')), appId);
   writeFileSync(caminhoEas, `${JSON.stringify(eas, null, 2)}\n`);

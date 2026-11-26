@@ -63,6 +63,10 @@ const PADRAO = {
   // 'READY_FOR_SALE'): não aceita build nem ficha. null = não existe.
   versaoTravada: null,
   versaoDoAppJson: '1.0.0',
+  // Na versão travada (veja acima): o id do build preso a ela ('B1' é o nº 7; 'B-ANTIGO', o nº 6,
+  // com buildAntigo) e o texto das notas da revisão. null = nada preso / sem notas.
+  buildDaTravada: null,
+  notasDaTravada: null,
   // A conta já tem disponibilidade definida: false, true (só Brasil) ou a lista dos territórios
   // à venda (ex.: ['BRA', 'USA', 'PRT'], feita no site com "todos os países").
   disponibilidade: false,
@@ -312,6 +316,8 @@ export function subirMock(opcoesDoTeste = {}) {
     // A mesma versão do app.json já enviada (ou aprovada): o appStoreState antigo acompanha.
     const antigo = o.versaoTravada === 'READY_FOR_DISTRIBUTION' ? 'READY_FOR_SALE' : o.versaoTravada;
     estado.versoes.push({ id: 'VER-TRAVADA', platform: 'IOS', versionString: o.versaoDoAppJson, appStoreState: antigo, appVersionState: o.versaoTravada });
+    if (o.buildDaTravada) estado.buildPreso['VER-TRAVADA'] = o.buildDaTravada;
+    if (o.notasDaTravada !== null) estado.revisoes['VER-TRAVADA'] = { id: 'REV-VER-TRAVADA', atributos: { notes: o.notasDaTravada } };
   }
 
   if (idiomaDoSite) {
@@ -758,9 +764,13 @@ export function subirMock(opcoesDoTeste = {}) {
       estado.consultasDeBuild += 1;
       const versaoPedida = url.searchParams.get('filter[preReleaseVersion.version]');
       const numeroPedido = url.searchParams.get('filter[version]');
+      const estadoPedido = url.searchParams.get('filter[processingState]');
+      const vencidoPedido = url.searchParams.get('filter[expired]');
       const lista = builds()
         .filter((b) => !versaoPedida || versaoPedida.split(',').includes(b.versao))
         .filter((b) => !numeroPedido || numeroPedido.split(',').includes(b.attributes.version))
+        .filter((b) => !estadoPedido || estadoPedido.split(',').includes(b.attributes.processingState))
+        .filter((b) => vencidoPedido === null || String(b.attributes.expired) === vencidoPedido)
         .sort((a, b) => b.attributes.uploadedDate.localeCompare(a.attributes.uploadedDate));
       return [200, { data: lista.map(({ id, attributes }) => ({ type: 'builds', id, attributes })) }];
     },

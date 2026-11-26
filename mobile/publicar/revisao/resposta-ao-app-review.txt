@@ -10,7 +10,7 @@ Codes to scan are on this page (open it on a computer screen and point the app's
 https://loja-tria.vercel.app/codigos-para-teste
 - Product barcodes (EAN-13) of the demo shop, to scan in "Vender" (point of sale) and in Entrada, Inventário, Devolução and Condicional.
 - The QR code for "Leitor do computador" (the phone as the computer's barcode reader) is created live by the shop's computer and is valid for 5 minutes, so it cannot be a fixed image. The page has the steps: sign in to the demo shop in a computer browser, click "Celular de outra pessoa? Ler o QR", then in the app Mais > Leitor do computador > "Ler o QR do computador".
-The same link is in the App Review notes, together with the demo server and the demo account.
+The demo server and the demo account are in the App Review notes. Where the notes differ from this message, this message is the current one.
 
 Guideline 3.2 - Business
 The app is for a general public audience: any small shop can download it and use it, without an invitation from us or any affiliation. The server it connects to is free and open source (MIT license): https://github.com/ghusousa/SISTEMA_GESTAO_LOJA. Answers to your questions:

@@ -32,6 +32,7 @@ import {
 } from '../ci.mjs';
 import { DO_MODELO_ANTIGO, lerConfig, lerPadroes } from '../ficha.mjs';
 import { subirMock } from './mock-asc.mjs';
+import { frasesDaTravada, oQueFoiComATravada } from '../versoes.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const MOBILE = resolve(AQUI, '..', '..');
@@ -433,6 +434,81 @@ test('preparar diz, ANTES de compilar, que a versão do app.json já foi enviada
       fechar();
     }
   }
+});
+
+test('versão travada: preparar diz que build e que notas foram para a revisão, sem mostrar as notas', async () => {
+  const PRIMEIRA = readFileSync(join(MOBILE, 'publicar', 'ficha', 'notas-revisao.txt'), 'utf8').trim().split('\n')[0];
+  const cenarios = [
+    // Enviado pelo site com o build ANTIGO e as notas de uma rodada antiga (com a senha da demo).
+    {
+      opcoes: { buildAntigo: true, buildDaTravada: 'B-ANTIGO', notasDaTravada: 'OLD NOTES\nPassword: senha-que-nao-sai' },
+      esperado: [/⚠ Build na revisão: 6 — mas o mais novo da versão 1\.0\.0 é o 7\./, /⚠ Notas da revisão na Apple: DIFERENTES/, /Remover da revisão/],
+    },
+    // O build mais novo e as notas deste commit: nada a trocar.
+    {
+      opcoes: { buildDaTravada: 'B1', notasDaTravada: `${PRIMEIRA}\nPassword: senha-que-nao-sai` },
+      esperado: [/ℹ Build na revisão: 7 \(o mais novo da versão 1\.0\.0\)\./, /ℹ Notas da revisão na Apple: as deste commit/],
+      semTroca: true,
+    },
+  ];
+  for (const { opcoes, esperado, semTroca } of cenarios) {
+    const { porta, estado, fechar } = await subirMock({ versaoTravada: 'WAITING_FOR_REVIEW', versaoDoAppJson: VERSAO, ...opcoes });
+    try {
+      const pasta = mkdtempSync(join(tmpdir(), 'ci-apple-'));
+      const eas = join(pasta, 'eas.json');
+      copyFileSync(join(MOBILE, 'eas.json'), eas);
+      const { codigo, saida } = await rodarPreparar({
+        ...CHAVE,
+        ...FICHA,
+        ASC_BASE: `http://127.0.0.1:${porta}`,
+        PASTA_SAIDA: join(pasta, 'apple'),
+        EAS_JSON: eas,
+        GITHUB_OUTPUT: join(pasta, 'github-output'),
+      });
+      assert.equal(codigo, 0, saida);
+      for (const frase of esperado) assert.match(saida, frase);
+      if (semTroca) assert.doesNotMatch(saida, /Remover da revisão/);
+      assert.doesNotMatch(saida, /senha-que-nao-sai|OLD NOTES/, 'o texto das notas (com a senha da demo) nunca vai ao log');
+      // Só leitura: nenhuma escrita na Apple sobre a versão travada.
+      const escritas = estado.requisicoes.filter((r) => !r.startsWith('GET ') && /appStoreVersions|appStoreReviewDetails|reviewSubmissions/.test(r));
+      assert.deepEqual(escritas, []);
+    } finally {
+      fechar();
+    }
+  }
+});
+
+test('versão travada: o build VALID mais novo vem filtrado da Apple, não da 1ª página de envios', async () => {
+  // A Apple corta a lista em `limit`, do mais novo ao mais antigo. Aqui: o 4 está preso, o 5 é
+  // o VALID mais novo, e dez envios depois dele (6 a 15) não passaram. Filtrar depois do corte
+  // não veria o 5 e daria o 4 como o mais novo.
+  const builds = [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15].map((n) => ({
+    type: 'builds',
+    id: `B${n}`,
+    attributes: { version: String(n), processingState: n <= 5 ? 'VALID' : n % 2 ? 'FAILED' : 'PROCESSING', expired: false, uploadedDate: `2026-11-${10 + n}T10:00:00Z` },
+  }));
+  const cliente = {
+    get: async (caminho) => {
+      const url = new URL(caminho, 'https://api.appstoreconnect.apple.com');
+      if (url.pathname.endsWith('/build')) return { data: builds[0] };
+      if (url.pathname.endsWith('/appStoreReviewDetail')) return { data: { attributes: { notes: 'X' } } };
+      const estado = url.searchParams.get('filter[processingState]');
+      const lista = builds
+        .filter((b) => !estado || b.attributes.processingState === estado)
+        .sort((a, b) => b.attributes.uploadedDate.localeCompare(a.attributes.uploadedDate))
+        .slice(0, Number(url.searchParams.get('limit') ?? 50));
+      return { data: lista };
+    },
+  };
+  const travada = { id: 'VER-T', attributes: { versionString: '1.0.0' } };
+  const foi = await oQueFoiComATravada(cliente, 'APP', travada, 'Y');
+  assert.equal(foi.build, '4');
+  assert.equal(foi.maisNovo, '5');
+  assert.match(frasesDaTravada('1.0.0', foi).join('\n'), /⚠ Build na revisão: 4 — mas o mais novo da versão 1\.0\.0 é o 5\./);
+  // Sem build VALID listado, não afirma que o preso é o mais novo.
+  const semLista = frasesDaTravada('1.0.0', { build: '4', maisNovo: null, notasDesteCommit: true }).join('\n');
+  assert.match(semLista, /ℹ Build na revisão: 4 \(a Apple não listou build VALID/);
+  assert.doesNotMatch(semLista, /o mais novo/);
 });
 
 // ------------------------------------------------------------ Push Notifications no App ID (ADR-47)
