@@ -441,6 +441,8 @@ Finalidade única em todos os itens coletados: **Funcionalidade do App**. Nunca 
 
 A Apple define "coletar" como transmitir dados para fora do aparelho de modo que **você ou seus parceiros** possam acessá-los. Na instalação típica o servidor é da loja e o fornecedor do software não tem acesso — o que sustentaria marcar "Dados não coletados". **Recomendo mesmo assim declarar tudo acima como coletado**, por dois fatos concretos: (a) o servidor de demonstração (`loja-tria.vercel.app`) é operado por quem publica o app, e ali há dados de teste; (b) o fornecedor atua como **operador** durante o suporte, com acesso potencial ao servidor da loja. Declarar a mais é honesto e não custa nada na revisão; declarar a menos e ser contestado custa uma rejeição por rótulo de privacidade inconsistente.
 
+**O que foi publicado (novembro de 2026, junto com a distribuição pública da seção 9):** só **Identificadores › ID do dispositivo** — Funcionalidade do App, vinculado, sem rastreamento. Com o servidor aberto, cada loja instala o seu e quem publica o app não recebe os dados dela; o único dado que sai do aparelho para um parceiro de quem publica é o token de notificação (Expo → APNs da Apple). Os dois motivos acima para declarar tudo enfraqueceram: a demonstração só tem dados fictícios e a conta dela só vai nas notas da revisão; o suporte como operador é um serviço que a loja contrata, fora do app. Se a Apple questionar o rótulo, a tabela acima é a resposta pronta: a ficha muda na tela, sem build novo.
+
 Dois campos obrigatórios que precisam bater com esta ficha: **URL da Política de Privacidade** (deve dizer, com todas as letras, que a LOJA é a controladora e o fornecedor é o operador) e **URL de Suporte**.
 
 ---
@@ -568,7 +570,7 @@ O `--enviar` do publicador (caixa "revisao" no GitHub) confere tudo o que é con
 - **Repositório público** (3.2): o app só vai à lista pública se qualquer loja puder instalar o servidor sozinha. O repositório precisa estar PÚBLICO antes do reenvio (seção 9), senão o link do app e o das notas dão 404 para o revisor.
 - `{{EMAIL_SUPORTE}}`: o e-mail de suporte (`APPLE_EMAIL_SUPORTE`; padrão `ghusousa@gmail.com`, o mesmo da política de privacidade).
 - **Servidor de demonstração no ar depois da revisão**: ele serve a política de privacidade da ficha (`<servidor>/privacidade`), que sem `APPLE_URL_SUPORTE` é também a URL de suporte. Desligá-lo derrubaria os links da App Store (5.1.1(i) e 1.5) e os do Play Console; outro endereço permanente vai em `APPLE_URL_PRIVACIDADE` (o suporte vai junto; outra página de suporte, `APPLE_URL_SUPORTE`), e o antigo só sai do ar depois que a versão com as URLs novas for aprovada.
-- Resposta na Central de Resolução: opcional (não tem API, e o reenvio já leva notas e anexo novos). Texto pronto, em inglês: `mobile/publicar/revisao/resposta-ao-app-review.txt`.
+- Resposta na Central de Resolução: opcional quando o reenvio sai pelo publicador (não tem API, e o reenvio já leva notas e anexo novos). **Obrigatória quando a versão foi mandada pelo site sem a ficha desta rodada**: as notas antigas vão junto, e só a resposta corrige o que elas dizem (o "Preparar" do workflow avisa: "Notas da revisão na Apple: DIFERENTES das deste commit"). Texto pronto, em inglês: `mobile/publicar/revisao/resposta-ao-app-review.txt`.
 
 ## Um achado do código que afeta a revisão
 
