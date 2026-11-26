@@ -764,9 +764,13 @@ export function subirMock(opcoesDoTeste = {}) {
       estado.consultasDeBuild += 1;
       const versaoPedida = url.searchParams.get('filter[preReleaseVersion.version]');
       const numeroPedido = url.searchParams.get('filter[version]');
+      const estadoPedido = url.searchParams.get('filter[processingState]');
+      const vencidoPedido = url.searchParams.get('filter[expired]');
       const lista = builds()
         .filter((b) => !versaoPedida || versaoPedida.split(',').includes(b.versao))
         .filter((b) => !numeroPedido || numeroPedido.split(',').includes(b.attributes.version))
+        .filter((b) => !estadoPedido || estadoPedido.split(',').includes(b.attributes.processingState))
+        .filter((b) => vencidoPedido === null || String(b.attributes.expired) === vencidoPedido)
         .sort((a, b) => b.attributes.uploadedDate.localeCompare(a.attributes.uploadedDate));
       return [200, { data: lista.map(({ id, attributes }) => ({ type: 'builds', id, attributes })) }];
     },
